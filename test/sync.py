@@ -72,7 +72,7 @@ with sync_playwright() as p:
     ok('Calendario personale' in nomi and all(n in nomi for n in ['dati','allegati','backup','studio','_cestino app']), 'cartelle create: %s' % nomi)
     dati = [f for f in stato_drive['files'].values() if f['name']=='dati.json']
     ok(len(dati)==1 and 'Chimica 3.1' in dati[0]['body'], 'dati.json caricato con l\'evento')
-    ok(a.locator('.sync-ind.sync-ok').count()==1, 'indicatore verde')
+    ok(a.locator('.sync-ind .sync-ok').count()==1, 'indicatore verde')
 
     # PC: stesso account, dati identici
     pc = dispositivo('PC'); pc.evaluate("new Promise(r => setTimeout(() => { Drive.login(); r(); }, 300))")

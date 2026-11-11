@@ -44,17 +44,17 @@ with sync_playwright() as p:
     pg.click('.segmenti >> text=Settimana'); pg.wait_for_selector('.gr-ev'); pg.screenshot(path='test/04-settimana.png')
     pg.click('.segmenti >> text=Giorno'); pg.screenshot(path='test/05-giorno.png')
     pg.click('.segmenti >> text=Agenda'); pg.screenshot(path='test/06-agenda.png')
-    ok(pg.locator('.agenda-giorno').count() >= 4, 'agenda elenca le occorrenze')
+    ok(pg.locator('.agenda .voce-lista:has-text("Palestra")').count() >= 4, 'agenda elenca le occorrenze')
 
     # elimina solo la seconda occorrenza
-    pg.locator('.agenda-giorno').nth(1).locator('.voce-lista').first.click()
+    pg.locator('.agenda .voce-lista:has-text("Palestra")').nth(1).click()
     pg.click('.foglio >> text=Elimina'); pg.click('.dialogo >> text=Solo questo evento')
     pg.wait_for_selector('.foglio', state='detached')
     n = pg.evaluate("occorrenzeTra(oggi(), piuGiorni(oggi(), 28)).filter(o => o.ev.titolo === 'Palestra').length")
     ok(n == 3, 'eliminata una sola occorrenza (restano %s)' % n)
 
     # modifica di tutta la serie: cambio titolo
-    pg.locator('.agenda-giorno').first.locator('.voce-lista').first.click()
+    pg.locator('.agenda .voce-lista:has-text("Palestra")').first.click()
     pg.fill('.titolo-grande', 'Palestra 2'); pg.click('.foglio-testa >> text=Salva'); pg.click('.dialogo >> text=Tutta la serie')
     pg.wait_for_selector('.foglio', state='detached')
     n = pg.evaluate("occorrenzeTra(oggi(), piuGiorni(oggi(), 28)).filter(o => o.ev.titolo === 'Palestra 2').length")
