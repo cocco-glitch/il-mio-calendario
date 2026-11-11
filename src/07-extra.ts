@@ -170,6 +170,7 @@ function testoCountdown(d: number): string { return d === 0 ? 'oggi!' : d === 1 
 function vistaEsami(): HTMLElement {
   const esami = Stato.tutti<Esame>('esame').sort((a, b) => a.data < b.data ? -1 : 1);
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+    sezioneSimulazioni(),
     esami.length ? h('section.card', null, esami.map(e => { const d = giorniA(e.data); return h('button.voce-lista' + (d < 0 ? '.passato' : ''), { onclick: () => editorEsame(e) },
       h('span.esame-giorni', null, d >= 0 ? String(d) : '✓', h('small', null, d >= 0 ? (d === 1 ? 'giorno' : 'giorni') : '')),
       h('span.voce-corpo', null, h('span.voce-titolo', null, e.nome), h('span.voce-sotto', null, dataLunga(daYmd(e.data)) + (e.ora ? ' · ' + e.ora : '') + (e.materie && e.materie.length ? ' · ' + e.materie.map(nomeMateria).join(', ') : '')))); }))

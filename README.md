@@ -9,7 +9,9 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 4 (fatta)**: aspetto (tema, accento, sfondo, carattere, dimensione testo, densità, angoli), layout (vista iniziale, ordine/visibilità dei riquadri di Oggi, sezioni della barra, barra su PC), preset (3 di base + personali), aggiunta rapida in italiano (`src/07-rapido.ts`), specchio su Google Calendar con scope `calendar.app.created` e import/export .ics (`src/06-gcal.ts`).
 - **Fase 5 (fatta)**: test completi, documentazione (`docs/MANUTENZIONE.md`, `docs/formato-studio.md`).
 
-- **0.10.0**: ripianificazione dei ritardi (`src/07-ripianifica.ts`): pulsante sotto l'indicatore del ritardo, anteprima «Giorni leggeri / Prima possibile», conferma e annulla; sposta solo i giorni, i progressi restano.
+- **0.11.0**: modalità simulazione (`src/07-simulazioni.ts`): dalla voce Simulazione/Verifica del piano o da Studio → Esami; file dalla cartella Drive «…consolidamento», conto alla rovescia 50 min, schermo acceso, avviso a 10 min, risultato letto e salvato (record `simulazione`), storico.
+- **0.10.0**: ripianificazione dei ritardi (`src/07-simulazioni.ts simulazioni a tempo (cartella Drive, timer, risultato, storico)
+src/07-ripianifica.ts`): pulsante sotto l'indicatore del ritardo, anteprima «Giorni leggeri / Prima possibile», conferma e annulla; sposta solo i giorni, i progressi restano.
 - **0.9.0** (F3 ridotta): lettura automatica del risultato dei quiz (`src/07-ripianifica.ts ripianifica gli step in ritardo (anteprima, conferma, annulla)
 src/07-cattura.ts`): alla schermata finale l'app salva punteggio, data e tipi di domanda (avviso «tocca per annullare»); «Rifai solo gli errori» finisce nella nota senza cambiare il punteggio. I file dei quiz su Drive non vengono toccati: l'osservatore si aggiunge solo alla copia aperta nell'app.
 - **0.8.0** (F2): ripassi automatici con FSRS (`src/07-memoria.ts`): l'unità è il SOTTO-STEP; quando tutte le prioritarie sono fatte entra nei ripassi (data = giorno del piano se precedente); riquadro «Ripassi di oggi» in cima a Oggi con tetto di minuti (Altro → Studio), scheda proposta a rotazione (la più debole), «🧠 ricordo %» sui sotto-step, ritenzione 0,95 nei 14 giorni prima di un esame.
@@ -28,6 +30,7 @@ python3 test/fase4.py   # aggiunta rapida, .ics, specchio Calendar, preset
 python3 test/versatile.py # corsi propri, errori, timer, statistiche, esami, trascinamento
 python3 test/f1.py      # notifiche ntfy (finto server)
 python3 test/f2.py      # ripassi FSRS (confronto con un'implementazione di riferimento)
+python3 test/simulazioni.py # simulazione a tempo (Drive e quiz finti)
 python3 test/ripianifica.py # ripianificazione dei ritardi
 python3 test/f3.py      # lettura del risultato dei quiz (quiz finto con la stessa schermata finale)
 node studio/genera.mjs  # rigenera i pacchetti studio e controlla i numeri con le schede PDF

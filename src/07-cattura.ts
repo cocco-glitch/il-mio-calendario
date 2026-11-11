@@ -30,12 +30,12 @@ const Cattura = (() => {
   /** Aggiunge l'osservatore alla copia del quiz (in fondo al body). */
   function inietta(html: string): string { return /<\/body>/i.test(html) ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, SPIA + '</body>') : html + SPIA; }
 
-  interface Contesto { frame: HTMLIFrameElement; schedaId: string; titolo: string; }
+  interface Contesto { frame: HTMLIFrameElement; schedaId: string; titolo: string; cb?: (d: RisultatoQuiz) => void; }
   let ctx: Contesto | null = null;
   let ascolto = false;
 
-  function osserva(frame: HTMLIFrameElement, schedaId: string, titolo: string): void {
-    ctx = { frame, schedaId, titolo };
+  function osserva(frame: HTMLIFrameElement, schedaId: string, titolo: string, cb?: (d: RisultatoQuiz) => void): void {
+    ctx = { frame, schedaId, titolo, cb };
     if (!ascolto) { window.addEventListener('message', ricevi); ascolto = true; }
   }
 
@@ -43,7 +43,7 @@ const Cattura = (() => {
     const d = e.data as RisultatoQuiz;
     if (!d || d.imc !== 'quiz-risultato' || !ctx || e.source !== ctx.frame.contentWindow) return;
     if (typeof d.pct !== 'number' || d.pct < 0 || d.pct > 100) return;
-    salva(ctx.schedaId, d);
+    if (ctx.cb) ctx.cb(d); else salva(ctx.schedaId, d);
   }
 
   /** Salva il risultato; restituisce la funzione per annullare. */

@@ -14,3 +14,4 @@ Una riga per scelta importante: data · decisione · motivo.
 - 2026-11-11 · F3 ridotta: risultato dei quiz salvato in automatico con «tocca per annullare» (8 s) · scelta dell'utente.
 - 2026-11-11 · «Rifai solo gli errori» non cambia il punteggio, va in nota; si salvano i tipi di domanda (`deboli`) per le statistiche future · scelta dell'utente.
 - 2026-11-11 · Ripianificazione: due modi (giorni leggeri / prima possibile) con anteprima; solo piano principale · scelta tra recupero rapido e giornate sostenibili lasciata all'utente.
+- 2026-11-11 · Simulazioni: risultato in un record `simulazione` separato (non tocca le schede di step); tempo scaduto = solo avviso, non chiude il quiz · come all'esame decide lo studente quando consegnare, ma il tempo effettivo viene registrato.

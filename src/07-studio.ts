@@ -373,10 +373,11 @@ function barra(fatte: number, tot: number, colore?: string): HTMLElement {
 /** Riga "blocco studio" per Oggi / calendario. */
 function rigaStudio(x: VoceGiorno): HTMLElement {
   const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k);
-  return h('button.voce-lista', { onclick: () => { if (t) { UI.studioSub = x.v.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
+  const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k); // v0.11: apre la modalità simulazione
+  return h('button.voce-lista', { onclick: () => { if (sim) { apriSimulazioni(); return; } if (t) { UI.studioSub = x.v.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
     h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }),
     h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
-      h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '')));
+      h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
 function testoAvanzamento(k: string, p: PkPiano): string {

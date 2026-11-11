@@ -168,6 +168,12 @@ const Drive = (() => {
     const r = await api('files', { query: { q, fields: 'files(id,name,mimeType,webViewLink,modifiedTime)', orderBy: 'modifiedTime desc', pageSize: '40' } });
     return r.files || [];
   }
+  /** v0.11: cerca cartelle per nome (sola lettura). */
+  async function cercaCartelle(testo: string): Promise<{ id: string; name: string }[]> {
+    const q = "trashed = false and mimeType = 'application/vnd.google-apps.folder' and name contains '" + testo.replace(/'/g, "\\'") + "'";
+    const r = await api('files', { query: { q, fields: 'files(id,name)', pageSize: '20' } });
+    return r.files || [];
+  }
   /** Esporta un Google Sheet (primo foglio) come CSV. */
   async function esportaCsv(id: string): Promise<string> { const r: Response = await api('files/' + id + '/export', { query: { mimeType: 'text/csv' } }); return r.text(); }
   /** Mai eliminare: sposta nel cestino dell'app. */
@@ -317,7 +323,7 @@ const Drive = (() => {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
-    elencaTutti, esportaCsv, cerca,
+    elencaTutti, esportaCsv, cerca, cercaCartelle,
     get collegato() { return !!stato.email; },
     /** true se c'è un token valido adesso (senza aprire finestre). */
     get pronto() { return !!token && Date.now() < scadenzaToken; },
