@@ -41,6 +41,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 | 07-simulazioni | cartella trovata con `Drive.cercaCartelle` (salvata in `imp().cartellaSimulazioni`), timer con Wake Lock, risultato via `Cattura.osserva(…, callback)`, record `simulazione` |
 | 07-progressi | `puntiDeboli()` somma `Progresso.deboli` per materia e `Simulazione.deboli`; `sezioneSottostepDeboli()` (media prioritarie + ricordo FSRS) |
 | 07-chiusura | riquadro serale (dalle 19), foglio di chiusura, record `giorno` (`g-YYYY-MM-DD`), `sezioneSonno()` in Statistiche (dalle 3 giornate) |
+| 07-freddo | prova a freddo: `apriQuiz(…, cb)` con callback (il risultato non passa da `Studio.segna`), record `pretest` (`pre-<k>`), confronto nell'avviso di `Cattura.salva` |
 | 07-extra | corsi creati dall'utente, registro errori, timer, statistiche, esami |
 | 07-rapido | aggiunta rapida in italiano (`interpreta()`) |
 | 07-studio | pacchetti studio, progressi, piani, syllabus, quiz in iframe, PDF (pdf.js + cache) |

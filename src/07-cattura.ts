@@ -60,7 +60,7 @@ const Cattura = (() => {
       testo = '📝 ' + riga + ' (annotato, il punteggio non cambia)';
     } else {
       Studio.segna(id, { fatta: true, data: oggiK, punteggio: d.pct, deboli: d.livelli && d.livelli.length ? d.livelli : undefined } as Partial<Progresso>);
-      testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (d.debole ? ' · punto debole: ' + d.debole : '');
+      testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
     }
     const annulla = () => {
       if (primaProg) Stato.salva(primaProg); else Stato.elimina('prog-' + id);

@@ -213,7 +213,7 @@ function serveGoogle(): boolean {
   Drive.login(); avviso('Accedi a Google, poi tocca di nuovo.'); return true;
 }
 /** Apre una mini-app quiz HTML dentro l'app, in un iframe isolato (sandbox). Il file su Drive non viene modificato. */
-async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<void> {
+async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS, cb?: (d: RisultatoQuiz) => void): Promise<void> {
   // Schede dei corsi propri: file qualsiasi (PDF → visore, HTML → iframe, altro → link)
   if (s.file && !(s.file.mime || '').includes('html') && !/\.html?$/i.test(s.file.nome)) {
     if (s.file.id && /pdf/i.test(s.file.mime || s.file.nome)) { if (serveGoogle()) return; apriPdf(s.file.id, 1, s.file.nome); return; }
@@ -222,7 +222,7 @@ async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS): Promi
   if (s.file && s.file.id) s = { ...s, quizFileId: s.file.id };
   if (!s.quizFileId && !s.file && pk.proprio) { avviso('Questa scheda non ha un file collegato.'); return; }
   if (serveGoogle()) return;
-  const v = visore(micro + ' · scheda ' + s.k + '/' + s.n, () => apriScheda(pk, m, micro, s));
+  const v = visore((cb ? '🧊 ' : '') + micro + ' · scheda ' + s.k + '/' + s.n, () => { if (!cb) apriScheda(pk, m, micro, s); else disegna(); });
   v.corpo.appendChild(h('div.vuoto.centro', null, 'Scarico il quiz da Drive…'));
   try {
     let html = await Drive.scaricaTesto(await Studio.idQuiz(pk, m, micro, s));
@@ -233,7 +233,7 @@ async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS): Promi
     svuota(v.corpo);
     const fr = h('iframe.visore-frame', { sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals', srcdoc: html, title: s.titolo }) as HTMLIFrameElement;
     v.corpo.appendChild(fr);
-    Cattura.osserva(fr, s.id, s.titolo);
+    Cattura.osserva(fr, s.id, s.titolo, cb);
   } catch (e: any) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e))); }
 }
 
@@ -459,7 +459,7 @@ function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
       h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null,
       barra(n.Pf, n.P, col),
       h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)),
-      h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size)),
+      h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size), rigaFreddo(sub.k)),
     h('div.bottoni', null,
       h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'),
       pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null),

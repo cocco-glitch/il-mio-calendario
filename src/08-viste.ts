@@ -136,7 +136,7 @@ function vistaOggi(): HTMLElement {
       switch (w) {
         case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
         case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
-        case 'studio': { const st = Studio.vociDelGiorno(g); return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.')) : null; }
+        case 'studio': { const st = Studio.vociDelGiorno(g); return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.'), bottoniFreddo(st)) : null; }
         case 'tabelle': { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; }
         case 'nota': return scheda('Nota del giorno', area);
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;

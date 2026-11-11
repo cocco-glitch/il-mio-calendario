@@ -9,7 +9,9 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 4 (fatta)**: aspetto (tema, accento, sfondo, carattere, dimensione testo, densità, angoli), layout (vista iniziale, ordine/visibilità dei riquadri di Oggi, sezioni della barra, barra su PC), preset (3 di base + personali), aggiunta rapida in italiano (`src/07-rapido.ts`), specchio su Google Calendar con scope `calendar.app.created` e import/export .ics (`src/06-gcal.ts`).
 - **Fase 5 (fatta)**: test completi, documentazione (`docs/MANUTENZIONE.md`, `docs/formato-studio.md`).
 
-- **0.13.0**: chiusura serale in 2 minuti (`src/07-chiusura.ts`): dalle 19 in cima a Oggi; step fatti / da spostare a domani, ripasso serale, concentrazione 1–5, ore di sonno (record `giorno`); in Statistiche sonno e concentrazione vs punteggi.
+- **0.14.0**: prova a freddo (`src/07-freddo.ts`): per gli step non iniziati, la prima scheda prioritaria si fa prima di studiare; il risultato va in un record `pretest` (non tocca punteggi né ripassi) e quando la scheda si fa sul serio l'avviso mostra il confronto.
+- **0.13.0**: chiusura serale in 2 minuti (`src/07-freddo.ts      prova a freddo (pretest) prima degli step nuovi
+src/07-chiusura.ts`): dalle 19 in cima a Oggi; step fatti / da spostare a domani, ripasso serale, concentrazione 1–5, ore di sonno (record `giorno`); in Statistiche sonno e concentrazione vs punteggi.
 - **0.12.0**: punti deboli (`src/07-chiusura.ts    chiusura serale della giornata, sonno/concentrazione
 src/07-progressi.ts`) in Studio → Statistiche: percentuale per tipo di domanda e materia (dai quiz e dalle simulazioni letti in automatico) e i 5 sotto-step più deboli.
 - **0.11.0**: modalità simulazione (`src/07-progressi.ts   punti deboli per tipo di domanda, sotto-step più deboli
@@ -34,6 +36,7 @@ python3 test/fase4.py   # aggiunta rapida, .ics, specchio Calendar, preset
 python3 test/versatile.py # corsi propri, errori, timer, statistiche, esami, trascinamento
 python3 test/f1.py      # notifiche ntfy (finto server)
 python3 test/f2.py      # ripassi FSRS (confronto con un'implementazione di riferimento)
+python3 test/freddo.py  # prova a freddo
 python3 test/chiusura.py # chiusura serale
 python3 test/deboli.py  # punti deboli
 python3 test/simulazioni.py # simulazione a tempo (Drive e quiz finti)
