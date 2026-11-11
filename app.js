@@ -1879,8 +1879,10 @@ const Notifiche = (() => {
         // Giorni della finestra (oggi compreso)
         for (let g = oggi(); g.getTime() <= fine; g = new Date(g.getFullYear(), g.getMonth(), g.getDate() + 1)) {
             const k = ymd(g), voci = testoVoci(g);
-            if (T.studio && voci)
-                metti({ chiave: 'studio:' + k, at: alle(g, i.ntfyMattino || PRED.mattino).getTime(), titolo: '📚 Studio di oggi', testo: voci, tag: 'books' });
+            const rip = typeof Ripassi === 'undefined' ? 0 : Ripassi.delGiorno(k).oggi.length;
+            const testoRip = rip ? '🧠 ' + rip + ' ripass' + (rip === 1 ? 'o' : 'i') + ' (~' + rip * Ripassi.MIN_SCHEDA + ' min)' : '';
+            if (T.studio && (voci || rip))
+                metti({ chiave: 'studio:' + k, at: alle(g, i.ntfyMattino || PRED.mattino).getTime(), titolo: '📚 Studio di oggi', testo: [voci, testoRip].filter(Boolean).join(' · '), tag: 'books' });
             if (T.sera && vociStudio(g).some(x => !x.v.speciale))
                 metti({ chiave: 'sera:' + k, at: alle(g, i.ntfySera || PRED.sera).getTime(), titolo: '🌙 Ripasso prima di dormire', testo: '10–15 min: richiama a memoria ' + voci + ', senza aprire il libro.', tag: 'crescent_moon', prio: 2 });
             if (T.esami)
@@ -2336,6 +2338,229 @@ function editorSchedaPropria(pk0, mat0, sub0, s0) {
             titolo.focus(); }, 50);
 }
 
+// 07-memoria.ts — Motore dei ripassi (F2): ripetizione spaziata con FSRS.
+//
+// Ogni scheda fatta ha un record 'memoria' (id 'mem-<idScheda>') con difficoltà D (1–10), stabilità S
+// (giorni) e data del prossimo ripasso. Formule pubbliche di FSRS-5 (open-spaced-repetition), parametri
+// predefiniti: probabilità di ricordare dopo t giorni R = (1 + F·t/S)^-0,5; intervallo = giorni in cui R
+// scende alla ritenzione desiderata (0,90; 0,95 nei 14 giorni prima di un esame).
+//
+// Voto ricavato dal punteggio della scheda: <50 → 1 (Di nuovo), 50–69 → 2 (Difficile), 70–89 → 3 (Bene),
+// ≥90 → 4 (Facile); senza punteggio → 3. Il voto si registra quando cambia la data della scheda
+// (ripasso nuovo) o il punteggio nello stesso giorno (correzione: si riparte dallo stato precedente).
+//
+// "Ripassi di oggi": SOTTO-STEP con data ≤ oggi, prima le più a rischio (R più bassa), con un tetto di
+// minuti al giorno (impostazione ripassoMinuti, predefinito 30) e minuti stimati per scheda (10).
+const Ripassi = (() => {
+    const W = [0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621];
+    const DECAY = -0.5, F = 19 / 81;
+    const MIN_SCHEDA = 10;
+    const giorni = (a, b) => Math.round((inizioGiorno(daDt(b)).getTime() - inizioGiorno(daDt(a)).getTime()) / 86400000);
+    const piu = (k, n) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
+    const lim = (x, a, b) => Math.min(b, Math.max(a, x));
+    function recuperabilita(t, s) { return Math.pow(1 + F * t / s, DECAY); }
+    function intervallo(s, r) { return lim(Math.round(s / F * (Math.pow(r, 1 / DECAY) - 1)), 1, 365); }
+    const d0 = (g) => lim(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10);
+    function voto(punteggio) { return punteggio == null ? 3 : punteggio < 50 ? 1 : punteggio < 70 ? 2 : punteggio < 90 ? 3 : 4; }
+    /** Un passo di FSRS: nuovo stato dopo un ripasso con voto g, t giorni dopo il precedente. */
+    function passo(st, g, t) {
+        if (!st)
+            return { d: d0(g), s: W[g - 1] };
+        const { d, s } = st;
+        let s2;
+        if (t <= 0)
+            s2 = s * Math.exp(W[17] * (g - 3 + W[18])); // stesso giorno
+        else {
+            const r = recuperabilita(t, s);
+            if (g === 1)
+                s2 = Math.min(s, W[11] * Math.pow(d, -W[12]) * (Math.pow(s + 1, W[13]) - 1) * Math.exp(W[14] * (1 - r)));
+            else
+                s2 = s * (Math.exp(W[8]) * (11 - d) * Math.pow(s, -W[9]) * (Math.exp(W[10] * (1 - r)) - 1) * (g === 2 ? W[15] : 1) * (g === 4 ? W[16] : 1) + 1);
+        }
+        const dd = d - W[6] * (g - 3) * (10 - d) / 9;
+        return { d: lim(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), s: lim(s2, 0.1, 36500) };
+    }
+    /** Ritenzione desiderata per un giorno: più alta nei 14 giorni prima di un esame. */
+    function ritenzione(giorno) {
+        const base = imp().ritenzione || 0.9;
+        const vicino = Stato.tutti('esame').some(e => { const g = giorni(giorno, e.data); return g >= 0 && g <= 14; });
+        return vicino ? Math.max(base, 0.95) : base;
+    }
+    // ---------- Unità di ripasso: il SOTTO-STEP (decisione dell'utente, 11/11) ----------
+    // Ripassare ogni scheda costerebbe ~150 ore prima dell'esame; per sotto-step ~20 ore. Quando un
+    // sotto-step è in scadenza l'app propone UNA sua scheda (la meno rifatta di recente, poi la più debole).
+    // Il sotto-step entra nei ripassi quando tutte le sue PRIORITARIE sono fatte ("apprendimento").
+    /** Giorno in cui il sotto-step è stato studiato: data del piano se precedente all'ultima spunta. */
+    function dataApprendimento(k) {
+        const t = Studio.trovaSotto(k);
+        if (!t)
+            return null;
+        const P = Studio.schedeDi(t.sub).filter(x => x.tipo === 'P');
+        const date = P.map(x => (Studio.prog(x.id) || {}).data).filter(Boolean);
+        if (!date.length)
+            return null;
+        const ultima = date.sort()[date.length - 1];
+        let piano = null;
+        for (const pp of Studio.pkPiani()) {
+            if (pp.modo === 'raffinamento')
+                continue;
+            for (const g of pp.giorni)
+                for (const v of g.voci)
+                    if (v.k === k)
+                        piano = Studio.dataVoce(v, g, pp.id);
+            if (!piano)
+                for (const c of pp.copertura || []) {
+                    const mm = /(\d{2})\/(\d{2})/.exec(c.k === k ? c.quando : '');
+                    if (mm) {
+                        const d = new Date();
+                        piano = d.getFullYear() + '-' + mm[2] + '-' + mm[1];
+                        break;
+                    }
+                }
+        }
+        return piano && piano < ultima ? piano : ultima;
+    }
+    function votoMedio(k) {
+        const t = Studio.trovaSotto(k);
+        if (!t)
+            return 3;
+        const pt = Studio.schedeDi(t.sub).filter(x => x.tipo === 'P').map(x => (Studio.prog(x.id) || {}).punteggio).filter(v => v != null);
+        return pt.length ? voto(pt.reduce((a, b) => a + b, 0) / pt.length) : 3;
+    }
+    function salvaStato(k, base, g, giorno, log, scheda) {
+        const t = base && base.ultimo ? giorni(base.ultimo, giorno) : 0;
+        const st = passo(base && base.ultimo ? { d: base.d, s: base.s } : null, g, t);
+        const prec = (mem(k) || {}).schede;
+        const m = {
+            id: 'mem-sub-' + k, type: 'memoria', updatedAt: 0, er: 'sub:' + k, d: st.d, s: st.s,
+            due: piu(giorno, intervallo(st.s, ritenzione(giorno))), ultimo: giorno,
+            n: (base ? base.n : 0) + 1, lapsi: (base ? base.lapsi : 0) + (base && base.ultimo && g === 1 ? 1 : 0),
+            log: log.slice(-50), prima: base || undefined,
+            schede: scheda ? (prec || []).concat([scheda]).slice(-30) : prec, // schede usate per i ripassi (rotazione)
+        };
+        Stato.salva(m, true);
+    }
+    function mem(k) { const m = Stato.prendi('mem-sub-' + k); return m && !m.deleted ? m : undefined; }
+    /** Primo ingresso nei ripassi (quando le prioritarie sono tutte fatte) o ricalcolo dell'apprendimento. */
+    function apprendi(k) {
+        const giorno = dataApprendimento(k);
+        if (!giorno)
+            return;
+        salvaStato(k, null, votoMedio(k), giorno, [[giorno, votoMedio(k)]]);
+    }
+    /** Chiamata da Studio.segna: una scheda è stata spuntata o ha un nuovo punteggio. */
+    function registra(id, p) {
+        const t = trovaScheda(id);
+        if (!t || !p)
+            return;
+        const k = t.k, m = mem(k);
+        if (!m) {
+            if (Studio.stepFatto(k))
+                apprendi(k);
+            return;
+        }
+        if (!p.fatta || p.punteggio == null || !p.data)
+            return;
+        const g = voto(p.punteggio), giorno = p.data;
+        if (m.n === 1 && giorno <= (m.ultimo || '')) {
+            apprendi(k);
+            return;
+        } // correzione dell'apprendimento
+        if (giorno < (m.ultimo || ''))
+            return; // data passata: ignoro
+        if (giorno === m.ultimo) { // correzione del ripasso di oggi
+            const log = (m.log || []).slice(0, -1);
+            const sc = (m.schede || []);
+            m.schede = sc.slice(0, -1);
+            Stato.salva(m, true);
+            salvaStato(k, m.prima || null, g, giorno, log.concat([[giorno, g]]), id);
+            return;
+        }
+        salvaStato(k, { d: m.d, s: m.s, due: m.due, ultimo: m.ultimo, n: m.n, lapsi: m.lapsi }, g, giorno, (m.log || []).concat([[giorno, g]]), id);
+    }
+    /** Crea le memorie mancanti dei sotto-step completati (prima installazione o dati arrivati dalla sync). */
+    function inizializza() {
+        let n = 0;
+        for (const pk of Studio.pkStep())
+            for (const mat of pk.materie)
+                for (const sub of mat.sottostep)
+                    if (!mem(sub.k) && Studio.stepFatto(sub.k)) {
+                        apprendi(sub.k);
+                        n++;
+                    }
+        return n;
+    }
+    /** Probabilità di ricordare oggi un sotto-step (0–1). */
+    function ricordo(k, giorno = ymd(new Date())) {
+        const m = mem(k);
+        if (!m || !m.ultimo)
+            return null;
+        return recuperabilita(Math.max(0, giorni(m.ultimo, giorno)), m.s);
+    }
+    /** Scheda da proporre per il ripasso: una prioritaria non usata negli ultimi ripassi, la più debole (punteggio più basso). */
+    function schedaDaProporre(k) {
+        const t = Studio.trovaSotto(k);
+        if (!t)
+            return null;
+        const P = Studio.schedeDi(t.sub).filter(x => x.tipo === 'P');
+        if (!P.length)
+            return null;
+        const usate = ((mem(k) || {}).schede || []);
+        const recenti = new Set(P.length > 1 ? usate.slice(-(P.length - 1)) : []);
+        const cand = P.filter(x => !recenti.has(x.id));
+        const punt = (x) => { const p = Studio.prog(x.id); return p && p.punteggio != null ? p.punteggio : 75; };
+        return (cand.length ? cand : P).slice().sort((a, b) => punt(a) - punt(b))[0];
+    }
+    const quanteAlGiorno = () => Math.max(1, Math.floor((imp().ripassoMinuti || 30) / MIN_SCHEDA));
+    /** Ripassi di un giorno: { oggi (entro il tetto), coda, fatti, minuti }. */
+    function delGiorno(giorno = ymd(new Date())) {
+        const tutte = Stato.tutti('memoria').filter(m => m.er.startsWith('sub:'));
+        const fatti = tutte.filter(m => m.ultimo === giorno && m.n > 1);
+        const scadute = tutte.filter(m => m.due <= giorno && m.ultimo !== giorno && m.ultimo)
+            .map(m => ({ m, k: m.er.slice(4), r: recuperabilita(Math.max(0, giorni(m.ultimo, giorno)), m.s) }))
+            .sort((a, b) => a.r - b.r);
+        const posti = Math.max(0, quanteAlGiorno() - fatti.length);
+        return { oggi: scadute.slice(0, posti), coda: scadute.slice(posti), fatti, minuti: Math.min(posti, scadute.length) * MIN_SCHEDA };
+    }
+    return { W, voto, passo, recuperabilita, intervallo, ritenzione, registra, inizializza, mem, ricordo, delGiorno, quanteAlGiorno, schedaDaProporre, dataApprendimento, MIN_SCHEDA };
+})();
+/** Trova una scheda dei pacchetti dal suo id (per aprirla dai ripassi). */
+function trovaScheda(id) {
+    for (const pk of Studio.pkStep())
+        for (const mat of pk.materie)
+            for (const sub of mat.sottostep)
+                for (const mi of sub.microstep)
+                    for (const s of mi.schede)
+                        if (s.id === id)
+                            return { pk, m: mat.m, micro: mi.n, s, k: sub.k };
+    return null;
+}
+/** Colore della probabilità di ricordare (scala unica del piano: corallo → ambra → verde → teal). */
+function coloreRicordo(r) { return r < 0.7 ? '#e8590c' : r < 0.85 ? '#f59f00' : r < 0.95 ? '#2f9e44' : '#0b7285'; }
+function chipRicordo(k) {
+    const r = Ripassi.ricordo(k);
+    if (r == null)
+        return null;
+    return h('span.chip-ricordo', { style: { color: coloreRicordo(r), borderColor: coloreRicordo(r) }, title: 'Probabilità di ricordare questo sotto-step oggi' }, '🧠 ' + Math.round(r * 100) + '%');
+}
+/** Riquadro "Ripassi di oggi" (schermata Oggi). */
+function widgetRipassi() {
+    const r = Ripassi.delGiorno();
+    if (!r.oggi.length && !r.fatti.length)
+        return null;
+    const proposta = (k) => { const sc = Ripassi.schedaDaProporre(k); return sc ? trovaScheda(sc.id) : null; };
+    const riga = (x) => {
+        const t = proposta(x.k), sub = Studio.trovaSotto(x.k);
+        if (!t || !sub)
+            return null;
+        return h('button.voce-lista', { onclick: () => apriScheda(t.pk, t.m, t.micro, t.s, true) }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + sub.sub.titolo), h('span.voce-sotto', null, 'Rifai: ' + t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ') · ricordo ', h('b', { style: { color: coloreRicordo(x.r) } }, Math.round(x.r * 100) + '%'))), icona('dx', 18));
+    };
+    const primo = r.oggi.map(x => proposta(x.k)).find(Boolean);
+    return scheda('Ripassi di oggi', h('div.tenue.piccolo', null, r.oggi.length
+        ? r.oggi.length + (r.oggi.length === 1 ? ' sotto-step' : ' sotto-step') + ' · circa ' + r.minuti + ' min. Rifai la scheda proposta (va bene anche «rifai solo gli errori») e scrivi il punteggio: l\'app decide quando riproporre il sotto-step.'
+        : '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.'), r.oggi.map(riga), r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null, primo ? h('div.bottoni', null, h('button.btn', { onclick: () => apriScheda(primo.pk, primo.m, primo.micro, primo.s, true) }, '▶ Inizia')) : null);
+}
+
 // ============================================================
 // 07-rapido.ts — Aggiunta rapida in linguaggio naturale (italiano).
 // Esempi: "domani 15-17 Chimica 3.1", "ogni lunedì 9 palestra",
@@ -2672,6 +2897,8 @@ const Studio = (() => {
         if (p.fatta && !p.data)
             p.data = ymd(new Date());
         Stato.salva(p);
+        if (!id.startsWith('step-') && typeof Ripassi !== 'undefined')
+            Ripassi.registra(id, p); // v0.7: ripasso FSRS
     }
     /** Pagine del libro: '141-144,146' o appendice 'A1-A4'. Restituisce stringhe ('141', 'A2'). */
     function pagineSet(s) {
@@ -2975,11 +3202,12 @@ async function apriPdf(fileId, pagina, titolo) {
     }
 }
 /** Foglio di una scheda: fatta, data, punteggio, nota errori, quiz, pagine del libro. */
-function apriScheda(pk, m, micro, s) {
+function apriScheda(pk, m, micro, s, ripasso = false) {
     const p = Studio.prog(s.id);
+    // Ripasso (v0.7): data di oggi e punteggio vuoto; si salva solo se scrivi il nuovo punteggio.
     const fatta = h('input', { type: 'checkbox', checked: !!(p && p.fatta) });
-    const data = h('input', { type: 'date', value: p && p.data || '' });
-    const punti = h('input', { type: 'number', min: '0', max: '100', inputMode: 'numeric', placeholder: '%', value: p && p.punteggio != null ? String(p.punteggio) : '' });
+    const data = h('input', { type: 'date', value: ripasso ? ymd(new Date()) : p && p.data || '' });
+    const punti = h('input', { type: 'number', min: '0', max: '100', inputMode: 'numeric', placeholder: ripasso && p && p.punteggio != null ? 'prima ' + p.punteggio + '%' : '%', value: !ripasso && p && p.punteggio != null ? String(p.punteggio) : '' });
     const nota = h('textarea', { rows: 3, placeholder: 'Errori, cose da rivedere…', value: p && p.nota || '' });
     const rifare = h('input', { type: 'checkbox', checked: !!(p && p.daRifare) });
     punti.oninput = () => { if (punti.value !== '')
@@ -2988,8 +3216,8 @@ function apriScheda(pk, m, micro, s) {
     const blocchi = Studio.intervalli(Studio.pagineSet(s.pagine)).split(', ').filter(Boolean);
     const apribili = pk.risorse.libri[m] ? blocchi.filter(b => /^\d/.test(b)) : [];
     const f = foglio({
-        titolo: micro + ' · scheda ' + s.k + '/' + s.n,
-        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
+        titolo: (ripasso ? '🧠 Ripasso · ' : '') + micro + ' · scheda ' + s.k + '/' + s.n,
+        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
             const pag = parseInt(b, 10);
             return h('button.chip', { onclick: async () => {
                     if (serveGoogle())
@@ -3006,6 +3234,8 @@ function apriScheda(pk, m, micro, s) {
         salva: () => { salva(); },
     });
     function salva() {
+        if (ripasso && punti.value === '')
+            return; // aprire un ripasso senza punteggio non conta
         const v = punti.value === '' ? undefined : Math.max(0, Math.min(100, parseInt(punti.value, 10) || 0));
         const prima = JSON.stringify([!!(p && p.fatta), p && p.data || '', p && p.punteggio, p && p.nota || '', !!(p && p.daRifare)]);
         if (prima === JSON.stringify([fatta.checked, data.value, v, nota.value, rifare.checked]))
@@ -3096,7 +3326,7 @@ function vistaStudio() {
         const N = Studio.numeri(m.sottostep.flatMap(Studio.schedeDi));
         return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, m.nome + (m.libro ? ' · ' + m.libro : '')), m.sottostep.map(s => {
             const n = Studio.numeri(Studio.schedeDi(s));
-            return h('button.voce-lista.sotto', { onclick: () => { UI.studioSub = s.k; disegna(); } }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, s.n + ' · ' + s.titolo), h('span.voce-sotto', null, 'Prior. ' + n.Pf + '/' + n.P + ' · Raff. ' + n.Rf + '/' + n.R + ' · pag. ' + n.pagP.size + ' / ' + n.pagR.size + ' / ' + n.pagT.size), h('span.voce-sotto', null, s.posizione), barra(n.Pf, n.P, coloreMateria(m.m))), icona('dx', 18));
+            return h('button.voce-lista.sotto', { onclick: () => { UI.studioSub = s.k; disegna(); } }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, s.n + ' · ' + s.titolo, chipRicordo(s.k)), h('span.voce-sotto', null, 'Prior. ' + n.Pf + '/' + n.P + ' · Raff. ' + n.Rf + '/' + n.R + ' · pag. ' + n.pagP.size + ' / ' + n.pagR.size + ' / ' + n.pagT.size), h('span.voce-sotto', null, s.posizione), barra(n.Pf, n.P, coloreMateria(m.m))), icona('dx', 18));
         }), h('div.totale-riga', null, 'Totale ' + m.nome + ': ' + N.P + ' prior. · ' + N.R + ' raff. · pag. ' + N.pagP.size + ' / ' + N.pagR.size + ' / ' + N.pagT.size));
     }), h('div.tenue.piccolo', null, 'pag. = prioritarie / raffinamento / totali (unione, non somma). Aggiornato: ' + pk.aggiornato + '.'), bottoneDrive());
 }
@@ -3117,7 +3347,7 @@ function bottoneDrive() {
 function vistaSottostep(pk, mat, sub) {
     const sch = Studio.schedeDi(sub), n = Studio.numeri(sch), col = coloreMateria(mat.m);
     const blocco = (eti, cls, k, f, pag) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? (mat.libro ? mat.libro + ': ' : '') + 'pp. ' + Studio.intervalli(pag) : '—'));
-    return h('div.pagina', null, h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo), h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo), h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null, barra(n.Pf, n.P, col), h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)), h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size)), h('div.bottoni', null, h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSchedaPropria(pk, mat, sub) }, '+ Aggiungi scheda') : null, !pk.risorse.libri[mat.m] ? null : (h('button.btn.neutro', { onclick: async (e) => {
+    return h('div.pagina', null, h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo), h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n, chipRicordo(sub.k)), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo), h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null, barra(n.Pf, n.P, col), h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)), h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size)), h('div.bottoni', null, h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSchedaPropria(pk, mat, sub) }, '+ Aggiungi scheda') : null, !pk.risorse.libri[mat.m] ? null : (h('button.btn.neutro', { onclick: async (e) => {
             if (serveGoogle())
                 return;
             const b = e.currentTarget, ids = new Map();
@@ -3575,13 +3805,13 @@ function taskDelGiorno(g) {
     return Stato.tutti('task').filter(t => !t.fatto && t.scadenza && t.scadenza.slice(0, 10) === k && categoriaVisibile(t.categoriaId)).sort(ordinaTask);
 }
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET = [['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET = [['ripassi', 'Ripassi di oggi'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget() {
     const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
     for (const [w] of WIDGET)
         if (!ord.includes(w))
-            ord.push(w);
+            w === 'ripassi' ? ord.unshift(w) : ord.push(w); // v0.7: i ripassi in cima
     return ord.filter(w => !(i.widgetNascosti || []).includes(w));
 }
 let timerNotaGiorno = 0;
@@ -3624,6 +3854,7 @@ function vistaOggi() {
             }
             case 'nota': return scheda('Nota del giorno', area);
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
+            case 'ripassi': return widgetRipassi();
             case 'esami': return widgetEsami();
             case 'timer': return widgetTimer();
             case 'errori': return widgetErrori();
@@ -3943,7 +4174,7 @@ function sezioneAspetto(salva) {
 function sezioneLayout(salva) {
     const i = imp(), ord = (() => { const o = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w)); for (const [w] of WIDGET)
         if (!o.includes(w))
-            o.push(w); return o; })();
+            w === 'ripassi' ? o.unshift(w) : o.push(w); return o; })();
     const nasc = new Set(i.widgetNascosti || []), tabN = new Set(i.tabNascoste || []);
     const sposta = (idx, d) => { const o = ord.slice(); const [x] = o.splice(idx, 1); o.splice(idx + d, 0, x); salva({ widget: o, preset: '' }); };
     return scheda('Layout', riga('Vista iniziale', selettore([['oggi', 'Oggi'], ['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese'], ['agenda', 'Agenda']], i.vistaIniziale, function () { salva({ vistaIniziale: this.value, preset: '' }); })), riga('Barra delle sezioni su PC', selettore([['auto', 'Laterale'], ['basso', 'In basso']], i.nav || 'auto', function () { salva({ nav: this.value, preset: '' }); })), h('div.gruppo-titolo', null, 'Riquadri di Oggi (ordine e visibilità)'), ord.map((w, idx) => h('div.widget-riga', null, h('span.nome', null, (WIDGET.find(x => x[0] === w) || [w, w])[1]), h('button.btn-ico', { 'aria-label': 'Su', disabled: idx === 0, onclick: () => sposta(idx, -1) }, '↑'), h('button.btn-ico', { 'aria-label': 'Giù', disabled: idx === ord.length - 1, onclick: () => sposta(idx, 1) }, '↓'), h('label.interruttore', { title: 'Mostra' }, h('input', { type: 'checkbox', checked: !nasc.has(w), onchange: (e) => { e.target.checked ? nasc.delete(w) : nasc.add(w); salva({ widgetNascosti: Array.from(nasc), preset: '' }); } }), h('span')))), h('div.gruppo-titolo', null, 'Sezioni nella barra'), [['cal', 'Calendario'], ['studio', 'Studio'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t), h('label.interruttore', null, h('input', { type: 'checkbox', checked: !tabN.has(s), onchange: (e) => { e.target.checked ? tabN.delete(s) : tabN.add(s); salva({ tabNascoste: Array.from(tabN), preset: '' }); } }), h('span')))));
@@ -4066,7 +4297,7 @@ function sezioneNotifiche(salva) {
 function sezioneStudio(salva) {
     const i = imp();
     const num = (k, def, min, max) => h('input', { type: 'number', min: String(min), max: String(max), inputMode: 'numeric', value: String(i[k] || def), onchange: (e) => salva({ [k]: Math.max(min, Math.min(max, parseInt(e.target.value, 10) || def)) }) });
-    return scheda('Studio', riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')), riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')), riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')));
+    return scheda('Studio', riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')), riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')), riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')), riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')), h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassi di oggi) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
 }
 // ---------- Trascinamento degli eventi (vista Giorno/Settimana) ----------
 // Tieni premuto (circa 0,3 s) e trascina per spostare; trascina la lineetta in basso per cambiare la durata.
@@ -4175,7 +4406,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.7.0';
+const VERSIONE = '0.8.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -4283,6 +4514,8 @@ async function avvia() {
         UI.vista = v;
     }
     Stato.ascolta(disegna);
+    Ripassi.inizializza();
+    Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
     Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
     Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
         disegna(); });

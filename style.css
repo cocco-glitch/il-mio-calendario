@@ -311,3 +311,5 @@ body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bo
 .gr-ev.trascino { z-index: 5; opacity: .85; box-shadow: 0 6px 18px rgba(0,0,0,.35); touch-action: none; }
 .gr-maniglia { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; cursor: ns-resize; }
 .gr-maniglia::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 18px; height: 3px; margin-left: -9px; border-radius: 2px; background: var(--c); opacity: .7; }
+/* v0.7 — probabilità di ricordare una scheda */
+.chip-ricordo { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid; border-radius: 999px; font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; }
