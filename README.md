@@ -6,7 +6,7 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 1 (fatta)**: viste Oggi / Giorno / Settimana / Mese / Agenda, eventi con ricorrenze ed eccezioni, promemoria multipli, checklist, promemoria/task con Inbox e priorità, note markdown con tag e nota del giorno, categorie con colore, ricerca globale, tema chiaro/scuro/automatico, dati offline (IndexedDB), backup JSON manuale, avvisi in-app.
 - **Fase 2 (fatta)**: login Google (GIS, scope `drive.file`), sync su `Calendario personale/dati/dati.json` (merge per record, last-write-wins, coda offline), backup giornaliero in `backup/` (ultimi 30, i vecchi vanno in `_cestino app/`), allegati (carica in `allegati/` o collega col Picker), indicatore di stato, controllo che l'account sia quello ammesso.
 - **Fase 3 (fatta)**: modulo Studio (`src/07-studio.ts`, `src/07-tabelle.ts`, formato in `docs/formato-studio.md`): pacchetti Step 1 e Step 2 (numeri verificati con le schede PDF), piano 11/11→09/12 e piano di raffinamento 10/12→10/01, copertura del syllabus (124 argomenti), spunte/punteggi/note, quiz HTML in iframe isolato, PDF del libro alla pagina con cache sul dispositivo, piano → calendario, ritardo, spostamenti, tabelle personalizzate (CSV, Google Sheet, righe con data nel calendario).
-- Fase 4 · Fase 4 Personalizzazione/notifiche · Fase 5 Rifinitura: da fare.
+- Fase 4 Personalizzazione/notifiche · Fase 5 Rifinitura: da fare.
 
 ## Comandi
 ```
