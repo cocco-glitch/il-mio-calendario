@@ -230,3 +230,26 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .sync-riga { display: flex; align-items: center; gap: 10px; font-weight: 600; padding: 4px 0 8px; }
 .allegati .voce { display: flex; align-items: center; gap: 6px; }
 .allegato { flex: 1; min-width: 0; text-align: left; padding: 10px 4px; color: var(--accento); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- Studio ---------- */
+.tab-eti { white-space: nowrap; } @media (max-width: 420px) { .tab-eti { font-size: 10px; } }
+.barra-av { height: 6px; border-radius: 3px; background: var(--sup2); overflow: hidden; margin: 6px 0 2px; } .barra-av > div { height: 100%; border-radius: 3px; transition: width .2s; }
+.numeri { display: flex; gap: 8px; } .numero { flex: 1; display: flex; flex-direction: column; } .numero strong { font-size: 20px; font-variant-numeric: tabular-nums; } .numero span { font-size: 12px; color: var(--tenue); }
+.voce-lista.sotto { align-items: center; padding: 10px 0; } .totale-riga { border-top: 1px solid var(--linea); padding-top: 8px; font-size: 13px; font-weight: 650; }
+.sub-titolo { margin: 0; font-size: 20px; } .indietro { align-self: flex-start; padding-left: 0; }
+.blocchi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+.blocco { background: var(--sup2); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; border-top: 3px solid var(--tenue); overflow-wrap: anywhere; }
+.blocco.prior { border-top-color: var(--rosso); } .blocco.raff { border-top-color: #38bdf8; } .blocco strong { font-size: 11px; letter-spacing: .04em; }
+.etichetta { display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .04em; padding: 2px 6px; border-radius: 5px; background: var(--sup2); color: var(--tenue); }
+.etichetta.prior { background: color-mix(in srgb, var(--rosso) 18%, transparent); color: var(--rosso); } .etichetta.raff { background: color-mix(in srgb, #38bdf8 20%, transparent); color: #1d8fc4; }
+.filtro { background: var(--sup); border-radius: var(--raggio); padding: 0 14px; border: 0; }
+.indicatore { width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; font-weight: 650; font-size: 14px; }
+.indicatore.pari { background: color-mix(in srgb, #2fbf8f 16%, transparent); color: #1f9a71; } .indicatore.ritardo { background: color-mix(in srgb, var(--rosso) 14%, transparent); color: var(--rosso); }
+.mese-chip.studio { background: color-mix(in srgb, var(--c) 85%, #000 0%); color: #fff; border-left-color: transparent; font-weight: 750; }
+.visore { position: fixed; inset: 0; z-index: 25; background: var(--bg); display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); }
+.visore-testa { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-bottom: 1px solid var(--linea); }
+.visore-titolo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 14px; }
+.visore-strumenti { display: flex; align-items: center; } .pdf-num { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 62px; text-align: center; }
+.visore-corpo { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; } .visore-corpo.pdf { background: #555; text-align: center; padding: 4px; }
+.visore-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; } .pdf-tela { background: #fff; display: inline-block; }
+.blocco strong { font-size: 10px; letter-spacing: 0; }

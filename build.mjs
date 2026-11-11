@@ -22,6 +22,8 @@ writeFileSync('dist/app.js', app);
 const versione = Date.now().toString(36);
 writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replace('__VERSIONE__', versione));
 writeFileSync('dist/.nojekyll', '');
+execSync('node studio/genera.mjs', { stdio: 'inherit' });
+cpSync('studio/pacchetti', 'dist/studio', { recursive: true });
 
 // Anteprima in un solo file: niente manifest/service worker.
 const html = readFileSync('public/index.html', 'utf8')

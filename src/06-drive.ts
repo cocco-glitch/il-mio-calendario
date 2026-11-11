@@ -18,8 +18,9 @@
 const G_CLIENT_ID = '1032464441107-ccv99btse1o2497kckfia1ps074n1h0c.apps.googleusercontent.com';
 const G_API_KEY = 'AIzaSyD3-PbIu4U4jmAIru6C8wwGIboFcGKY4tk';
 const G_APP_ID = '1032464441107';
-// drive.file: solo i file creati dall'app o scelti col Picker (minimo necessario).
-const G_SCOPE = 'https://www.googleapis.com/auth/drive.file openid email';
+// drive.file: scrive solo i file creati dall'app. drive.readonly: LEGGE le cartelle di studio (quiz HTML, PDF dei libri,
+// pacchetti creati da Claude). L'app non può modificare né eliminare nulla fuori dalla sua cartella.
+const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly openid email';
 // Privacy "solo mia": l'app accetta solo questo account (oltre al blocco lato Google: progetto in Testing con un solo utente di test).
 const ACCOUNT_AMMESSO = 'cocco.haloa@gmail.com';
 const CARTELLA_APP = 'Calendario personale';
@@ -146,6 +147,16 @@ const Drive = (() => {
   async function elenca(parent: string, extra = ''): Promise<any[]> {
     const r = await api('files', { query: { q: "'" + parent + "' in parents and trashed = false" + extra, fields: 'files(id,name,mimeType,size,modifiedTime,webViewLink)', orderBy: 'name', pageSize: '200' } });
     return r.files || [];
+  }
+  /** Elenco completo (tutte le pagine) dei file di una cartella. */
+  async function elencaTutti(parent: string): Promise<{ id: string; name: string }[]> {
+    const out: { id: string; name: string }[] = []; let pageToken = '';
+    do {
+      const query: Record<string, string> = { q: "'" + parent + "' in parents and trashed = false", fields: 'nextPageToken,files(id,name)', pageSize: '1000' };
+      if (pageToken) query.pageToken = pageToken;
+      const r = await api('files', { query }); out.push(...(r.files || [])); pageToken = r.nextPageToken || '';
+    } while (pageToken);
+    return out;
   }
   /** Mai eliminare: sposta nel cestino dell'app. */
   async function cestinaApp(id: string, daParent: string): Promise<void> {
@@ -292,7 +303,10 @@ const Drive = (() => {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
+    elencaTutti,
     get collegato() { return !!stato.email; },
+    /** true se c'è un token valido adesso (senza aprire finestre). */
+    get pronto() { return !!token && Date.now() < scadenzaToken; },
   };
 })();
 

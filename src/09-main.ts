@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.2.1';
+const VERSIONE = '0.3.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -23,14 +23,14 @@ function disegna(): void {
   const scrollMain = vecchioMain ? vecchioMain.scrollTop : 0;
   const stessaScheda = vecchioMain && vecchioMain.dataset.scheda === UI.scheda + (UI.scheda === 'cal' ? UI.vista : '');
 
-  const titoli: Record<Scheda, string> = { oggi: 'Oggi', cal: 'Calendario', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
-  const vista = UI.scheda === 'oggi' ? vistaOggi() : UI.scheda === 'cal' ? vistaCalendario() : UI.scheda === 'task' ? vistaTask()
+  const titoli: Record<Scheda, string> = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
+  const vista = UI.scheda === 'oggi' ? vistaOggi() : UI.scheda === 'cal' ? vistaCalendario() : UI.scheda === 'studio' ? vistaStudio() : UI.scheda === 'task' ? vistaTask()
     : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
 
   const daFare = Stato.tutti<Task>('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(oggi()))).length;
-  const schede: [Scheda, string, string][] = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
+  const schede: [Scheda, string, string][] = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
   const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.map(([s, t, ic]) =>
-    h('button' + (UI.scheda === s ? '.attivo' : ''), { onclick: () => vai(s), 'aria-current': UI.scheda === s ? 'page' : null },
+    h('button' + (UI.scheda === s ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; vai(s); }, 'aria-current': UI.scheda === s ? 'page' : null },
       h('span.tab-ico', null, icona(ic), s === 'task' && daFare ? h('span.badge', null, String(daFare)) : null),
       h('span.tab-eti', null, t))));
 
@@ -43,11 +43,11 @@ function disegna(): void {
     h('header.testata', null,
       h('h1', null, titoli[UI.scheda]),
       h('div.testata-azioni', null,
-        Drive.stato.sync === 'spento' ? null : h('button.sync-ind.' + descrSync().cls, { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa') Drive.login(); else vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)),
+        Drive.stato.sync === 'spento' ? null : h('button.sync-ind', { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa') Drive.login(); else vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)),
         h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')),
         h('button.btn-ico.solo-pc', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
     nav, main,
-    UI.scheda === 'altro' || UI.scheda === 'cerca' ? null : h('button.fab', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu', 26)),
+    UI.scheda === 'altro' || UI.scheda === 'cerca' || UI.scheda === 'studio' ? null : h('button.fab', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu', 26)),
   ]);
 
   const griglia = app.querySelector('.gr-scroll');
@@ -94,6 +94,7 @@ async function avvia(): Promise<void> {
   Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); });
   disegna();
   Drive.precarica();
+  Studio.caricaDalSito();
   if (Drive.collegato && navigator.onLine) Drive.sincronizza(false);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applicaTema);
 

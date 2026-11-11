@@ -5,7 +5,7 @@
 // (in 07-main.ts) ricostruisce la schermata a ogni cambio di dati.
 // ============================================================
 
-type Scheda = 'oggi' | 'cal' | 'task' | 'note' | 'altro' | 'cerca';
+type Scheda = 'oggi' | 'cal' | 'studio' | 'task' | 'note' | 'altro' | 'cerca';
 type VistaCal = 'giorno' | 'settimana' | 'mese' | 'agenda';
 
 const UI = {
@@ -16,6 +16,11 @@ const UI = {
   qNote: '',
   tagNote: '',
   q: '',
+  studioVista: 'schede' as 'schede' | 'piano',
+  studioStep: '',
+  studioSub: null as string | null,
+  soloPrior: false,
+  pianoScorso: false,
 };
 const ORA_PX = 52; // altezza di un'ora nella griglia oraria
 
@@ -115,7 +120,7 @@ function vistaOggi(): HTMLElement {
     ),
     scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Tocca + per aggiungerne uno.')),
     scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido),
-    scheda('Studio di oggi', vuoto('Qui compariranno gli step del piano di studio (Fase 3).')),
+    (() => { const st = Studio.vociDelGiorno(g); return Studio.pkPiano() ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.')) : null; })(),
     scheda('Nota del giorno', area),
     occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null,
   );
@@ -201,8 +206,9 @@ function vistaMese(): HTMLElement {
       onclick: () => { if (stessoGiorno(g, UI.data)) vai('cal', 'giorno', g); else { UI.data = g; disegna(); } },
     },
       h('span.mese-num', null, String(g.getDate())),
-      occ.slice(0, 3).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, o.ev.titolo)),
-      occ.length > 3 ? h('span.mese-altro', null, '+' + (occ.length - 3)) : null,
+      Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': COLORE_MATERIA[x.v.k[0]] || 'var(--tenue)' } }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k))),
+      occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, o.ev.titolo)),
+      occ.length > 2 ? h('span.mese-altro', null, '+' + (occ.length - 2)) : null,
       nTask ? h('span.mese-task', { title: nTask + ' promemoria' }) : null,
     ));
   }
@@ -212,8 +218,8 @@ function vistaMese(): HTMLElement {
     h('div.card.giorno-sel', null,
       h('div.card-titolo.riga-tra', null, h('span', null, dataLunga(UI.data)),
         h('button.btn-testo', { onclick: () => vai('cal', 'giorno', UI.data) }, 'Apri giorno')),
-      occSel.map(o => rigaOcc(o, UI.data)), taskSel.map(rigaTask),
-      !occSel.length && !taskSel.length ? vuoto('Niente in programma.') : null,
+      Studio.vociDelGiorno(UI.data).map(rigaStudio), occSel.map(o => rigaOcc(o, UI.data)), taskSel.map(rigaTask),
+      !occSel.length && !taskSel.length && !Studio.vociDelGiorno(UI.data).length ? vuoto('Niente in programma.') : null,
     ));
 }
 
@@ -251,6 +257,7 @@ function vistaGriglia(nGiorni: number): HTMLElement {
   const fascia = h('div.gr-fascia', { style: col }, h('span.gr-fascia-eti', null, 'giorno'), giorni.map(g => {
     const occ = (mappa.get(ymd(g)) || []).filter(lungo);
     return h('div.gr-fascia-col', null,
+      Studio.vociDelGiorno(g).map(x => h('button.mese-chip.studio', { style: { '--c': COLORE_MATERIA[x.v.k[0]] || 'var(--tenue)' }, onclick: () => rigaStudio(x).click() }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + (nGiorni === 1 ? ' · ' + x.v.t : ''))),
       occ.map(o => h('button.mese-chip', { style: { '--c': coloreEvento(o.ev) }, onclick: () => apriEvento(o.ev, o) }, o.ev.titolo)),
       taskDelGiorno(g).map(t => h('button.mese-chip.task', { style: { '--c': coloreEvento(t) }, onclick: () => apriTask(t) }, '○ ' + t.titolo)));
   }));
@@ -288,12 +295,12 @@ function vistaAgenda(): HTMLElement {
   const lista = h('div.agenda');
   for (let i = 0; i < 60; i++) {
     const g = piuGiorni(da, i);
-    const occ = mappa.get(ymd(g)) || [], tasks = taskDelGiorno(g);
-    if (!occ.length && !tasks.length) continue;
+    const occ = mappa.get(ymd(g)) || [], tasks = taskDelGiorno(g), st = Studio.vociDelGiorno(g);
+    if (!occ.length && !tasks.length && !st.length) continue;
     lista.appendChild(h('div.agenda-giorno' + (stessoGiorno(g, oggi()) ? '.oggi' : ''), null,
       h('button.agenda-data', { onclick: () => vai('cal', 'giorno', g) },
         h('span.agenda-num', null, String(g.getDate())), h('span.agenda-sett', null, fmt(g, { weekday: 'short' }) + ' · ' + fmt(g, { month: 'short' }))),
-      h('div.agenda-voci', null, occ.map(o => rigaOcc(o, g)), tasks.map(rigaTask))));
+      h('div.agenda-voci', null, st.map(rigaStudio), occ.map(o => rigaOcc(o, g)), tasks.map(rigaTask))));
   }
   if (!lista.firstChild) lista.appendChild(vuoto('Niente in programma nei prossimi 60 giorni.'));
   return lista;
