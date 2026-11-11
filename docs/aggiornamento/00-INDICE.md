@@ -46,7 +46,7 @@ Trasformare il calendario da "agenda che mostra cosa studiare" a **allenatore di
 |---|---|---|
 | F0 | Fondamenta (dati, design token, motore animazioni) | **fatta in versione minima** (solo dati e impostazioni) · v0.7.0 · 11/11 |
 | F1 | Notifiche vere | **Livello A (ntfy) fatto** · v0.7.0 · 11/11 — Livello B dopo l'esame |
-| F2 | Motore di ripasso (FSRS) | da fare |
+| F2 | Motore di ripasso (FSRS) | **fatta** · v0.8.0 · 11/11 — unità = sotto-step (decisione utente) |
 | F3 | Flashcard e quiz nativi + cattura punteggio | da fare |
 | F4 | Sessione di studio guidata ("Studia ora") | da fare |
 | F5 | Pianificatore adattivo | da fare |

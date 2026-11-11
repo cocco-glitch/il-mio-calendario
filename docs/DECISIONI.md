@@ -8,3 +8,6 @@ Una riga per scelta importante: data · decisione · motivo.
 - 2026-11-11 · F0 minima: solo tipi `memoria`/`notifica` e impostazioni; design system dopo l'esame · non toccare l'aspetto usato ogni giorno.
 - 2026-11-11 · Notifiche: studio del giorno 08:00, ripasso serale 21:30, silenzio 23:00–07:30 (slittano alle 7:30), categorie private con testo generico · scelte dell'utente.
 - 2026-11-11 · ntfy: invio con `mode: 'no-cors'` (parte anche senza intestazioni CORS) e registro sincronizzato per evitare doppioni tra telefono e PC · robustezza.
+- 2026-11-11 · Ripassi per SOTTO-STEP, non per scheda · per scheda ~150 h prima dell'esame (coda infinita), per sotto-step ~20 h; si propone una scheda prioritaria a rotazione, la più debole.
+- 2026-11-11 · Data di apprendimento = giorno del piano se precedente all'ultima spunta · le 89 schede erano state segnate tutte l'11/11 ma fatte prima; i progressi dell'utente NON vengono modificati.
+- 2026-11-11 · Ripasso aperto senza punteggio non conta; correzione nello stesso giorno ricalcola dallo stato precedente.

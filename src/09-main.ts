@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.7.0';
+const VERSIONE = '0.8.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -100,6 +100,8 @@ async function avvia(): Promise<void> {
   const v = imp().vistaIniziale;
   if (v && v !== 'oggi') { UI.scheda = 'cal'; UI.vista = v; }
   Stato.ascolta(disegna);
+  Ripassi.inizializza();
+  Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
   Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
   Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); });
   disegna();

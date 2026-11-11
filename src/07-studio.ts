@@ -107,6 +107,7 @@ const Studio = (() => {
     Object.assign(p, mod);
     if (p.fatta && !p.data) p.data = ymd(new Date());
     Stato.salva(p);
+    if (!id.startsWith('step-') && typeof Ripassi !== 'undefined') Ripassi.registra(id, p); // v0.7: ripasso FSRS
   }
 
   /** Pagine del libro: '141-144,146' o appendice 'A1-A4'. Restituisce stringhe ('141', 'A2'). */
@@ -303,11 +304,12 @@ async function apriPdf(fileId: string, pagina: number, titolo: string): Promise<
 }
 
 /** Foglio di una scheda: fatta, data, punteggio, nota errori, quiz, pagine del libro. */
-function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
+function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS, ripasso = false): void {
   const p = Studio.prog(s.id);
+  // Ripasso (v0.7): data di oggi e punteggio vuoto; si salva solo se scrivi il nuovo punteggio.
   const fatta = h('input', { type: 'checkbox', checked: !!(p && p.fatta) }) as HTMLInputElement;
-  const data = h('input', { type: 'date', value: p && p.data || '' }) as HTMLInputElement;
-  const punti = h('input', { type: 'number', min: '0', max: '100', inputMode: 'numeric', placeholder: '%', value: p && p.punteggio != null ? String(p.punteggio) : '' }) as HTMLInputElement;
+  const data = h('input', { type: 'date', value: ripasso ? ymd(new Date()) : p && p.data || '' }) as HTMLInputElement;
+  const punti = h('input', { type: 'number', min: '0', max: '100', inputMode: 'numeric', placeholder: ripasso && p && p.punteggio != null ? 'prima ' + p.punteggio + '%' : '%', value: !ripasso && p && p.punteggio != null ? String(p.punteggio) : '' }) as HTMLInputElement;
   const nota = h('textarea', { rows: 3, placeholder: 'Errori, cose da rivedere…', value: p && p.nota || '' }) as HTMLTextAreaElement;
   const rifare = h('input', { type: 'checkbox', checked: !!(p && p.daRifare) }) as HTMLInputElement;
   punti.oninput = () => { if (punti.value !== '') fatta.checked = true; };
@@ -315,7 +317,7 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
   const blocchi = Studio.intervalli(Studio.pagineSet(s.pagine)).split(', ').filter(Boolean);
   const apribili = pk.risorse.libri[m] ? blocchi.filter(b => /^\d/.test(b)) : [];
   const f = foglio({
-    titolo: micro + ' · scheda ' + s.k + '/' + s.n,
+    titolo: (ripasso ? '🧠 Ripasso · ' : '') + micro + ' · scheda ' + s.k + '/' + s.n,
     corpo: h('div.modulo', null,
       h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo),
         h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)),
@@ -324,7 +326,7 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
         h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')),
       pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id)))!, s); } }, 'Modifica scheda') : null,
       h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)),
-      h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'),
+      ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'),
       h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota),
       h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'),
         h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => { const pag = parseInt(b, 10); return h('button.chip', { onclick: async () => {
@@ -336,6 +338,7 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
     salva: () => { salva(); },
   });
   function salva(): void {
+    if (ripasso && punti.value === '') return; // aprire un ripasso senza punteggio non conta
     const v = punti.value === '' ? undefined : Math.max(0, Math.min(100, parseInt(punti.value, 10) || 0));
     const prima = JSON.stringify([!!(p && p.fatta), p && p.data || '', p && p.punteggio, p && p.nota || '', !!(p && p.daRifare)]);
     if (prima === JSON.stringify([fatta.checked, data.value, v, nota.value, rifare.checked])) return;
@@ -423,7 +426,7 @@ function vistaStudio(): HTMLElement {
       return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, m.nome + (m.libro ? ' · ' + m.libro : '')),
         m.sottostep.map(s => { const n = Studio.numeri(Studio.schedeDi(s)); return h('button.voce-lista.sotto', { onclick: () => { UI.studioSub = s.k; disegna(); } },
           h('span.voce-corpo', null,
-            h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, s.n + ' · ' + s.titolo),
+            h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, s.n + ' · ' + s.titolo, chipRicordo(s.k)),
             h('span.voce-sotto', null, 'Prior. ' + n.Pf + '/' + n.P + ' · Raff. ' + n.Rf + '/' + n.R + ' · pag. ' + n.pagP.size + ' / ' + n.pagR.size + ' / ' + n.pagT.size),
             h('span.voce-sotto', null, s.posizione), barra(n.Pf, n.P, coloreMateria(m.m))), icona('dx', 18)); }),
         h('div.totale-riga', null, 'Totale ' + m.nome + ': ' + N.P + ' prior. · ' + N.R + ' raff. · pag. ' + N.pagP.size + ' / ' + N.pagR.size + ' / ' + N.pagT.size));
@@ -444,7 +447,7 @@ function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
   const blocco = (eti: string, cls: string, k: number, f: number, pag: Set<string>) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? (mat.libro ? mat.libro + ': ' : '') + 'pp. ' + Studio.intervalli(pag) : '—'));
   return h('div.pagina', null,
     h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo),
-    h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo),
+    h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n, chipRicordo(sub.k)), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo),
       h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null,
       barra(n.Pf, n.P, col),
       h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)),
