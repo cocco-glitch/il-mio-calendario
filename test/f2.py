@@ -77,13 +77,13 @@ with sync_playwright() as p:
     # 4) Riquadro in Oggi, in cima
     pg.evaluate("vai('oggi')"); pg.wait_for_timeout(300)
     titoli = pg.eval_on_selector_all('.card-titolo', 'els => els.map(e => e.textContent)')
-    ok(titoli and titoli[0] == 'Ripassi di oggi', 'riquadro in cima a Oggi: %s' % titoli[:3])
-    t0 = pg.inner_text('.card >> nth=0')
+    ok(titoli and titoli[0] == 'Ripassi di oggi', 'riquadro ripassi in cima a Oggi (dopo «Studia ora»): %s' % titoli[:3])
+    t0 = pg.locator('.card', has_text='Ripassi di oggi').inner_text()
     ok('Chi 2.1' in t0 and 'Rifai:' in t0, 'riga: sotto-step e scheda da rifare')
     pg.screenshot(path='test/f2-oggi.png', full_page=True)
 
     # 5) Apro il ripasso: data di oggi, punteggio vuoto; chiudere senza punteggio non conta
-    pg.locator('.card >> nth=0').locator('.voce-lista').first.click(); pg.wait_for_selector('.foglio')
+    pg.locator('.card', has_text='Ripassi di oggi').locator('.voce-lista').first.click(); pg.wait_for_selector('.foglio')
     ok('Ripasso' in pg.inner_text('.foglio'), 'foglio in modalità ripasso')
     vals = pg.eval_on_selector_all('.foglio input[type=date], .foglio input[type=number]', 'els => els.map(e => e.value)')
     ok(vals == ['2026-11-11', ''], 'data di oggi e punteggio vuoto: %s' % vals)
