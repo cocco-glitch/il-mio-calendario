@@ -87,6 +87,13 @@ with sync_playwright() as p:
     ok(not any(x['summary'] == 'Chimica 3.1' for x in pg.evaluate("Object.values(window.__gc.ev)")), 'evento eliminato anche dallo specchio')
     pg.evaluate("(() => { const i = imp(); i.gcalCategorie = ['cat-salute']; Stato.salva(i); })()"); pg.evaluate("GCal.allinea(true)")
     ok(len(pg.evaluate("window.__gc.ev")) == 0, 'filtro categorie: copiati solo quelli scelti')
+    pg.evaluate("(() => { const i = imp(); i.gcalStudio = true; i.gcalStudioOra = '08:30'; i.gcalCategorie = []; Stato.salva(i); })()"); pg.evaluate("GCal.allinea()")
+    st = [x for x in pg.evaluate("Object.values(window.__gc.ev)") if x['summary'].startswith(('📚', 'Raffina'))]
+    ok(len(st) >= 50 and any(x['summary'] == '📚 Bio 2.2 · Bioenergetica: glicolisi, Krebs, catena respiratoria' and x['start']['dateTime'] == '2026-11-12T08:30:00' for x in st), 'piano di studio copiato con avviso alle 8:30 (%d blocchi)' % len(st))
+    pg.evaluate("Studio.sposta('B2.2', '2026-12-01')"); pg.evaluate("GCal.allinea()")
+    ok(any(x['summary'].startswith('📚 Bio 2.2') and x['start']['dateTime'].startswith('2026-12-01') for x in pg.evaluate("Object.values(window.__gc.ev)")) and len([x for x in pg.evaluate("Object.values(window.__gc.ev)") if x['summary'].startswith('📚 Bio 2.2')]) == 1, 'step spostato: spostato anche su Google Calendar, senza doppioni')
+    pg.evaluate("(() => { const i = imp(); i.gcalStudio = false; Stato.salva(i); })()"); pg.evaluate("GCal.allinea()")
+    ok(not any(x['summary'].startswith('📚') for x in pg.evaluate("Object.values(window.__gc.ev)")), 'piano tolto dallo specchio quando lo disattivi')
     # Preset e layout
     pg.click('.tabbar >> text=Altro'); pg.click('.chip >> text=Studio intenso'); pg.wait_for_timeout(200)
     ok(pg.evaluate("[document.documentElement.dataset.tema, document.documentElement.dataset.densita, imp().accento]") == ['scuro', 'compatta', '#e9a23b'], 'preset Studio intenso applicato')

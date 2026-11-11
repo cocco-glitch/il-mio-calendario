@@ -40,6 +40,12 @@ const GCal = (() => {
     return c.id;
   }
 
+  /** Id evento valido per Google (esadecimale, 32 caratteri) ricavato da una stringa. */
+  function hashHex(s: string): string {
+    let out = '';
+    for (let k = 0; k < 4; k++) { let h = 0x811c9dc5 ^ k; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } out += h.toString(16).padStart(8, '0'); }
+    return out;
+  }
   function idGoogle(id: string): string { return id.replace(/[^0-9a-f]/gi, '').toLowerCase().padEnd(5, '0'); }
   const dtG = (s: string) => s.length > 10 ? s + ':00' : s;
   function rruleIcs(rr: Ricorrenza): string {
@@ -102,6 +108,29 @@ const GCal = (() => {
           }
           nuovi[r.id] = r.updatedAt;
         } catch (e: any) { if (e.status === 401 || e.status === 403) throw e; console.warn('specchio', r.id, e); }
+      }
+      // Blocchi del piano di studio (un evento per voce, id derivato da piano+step: stabile).
+      const vivi = new Set<string>();
+      if (imp().gcalStudio) for (const p of Studio.pkPiani()) for (const g of p.giorni) for (const v of g.voci) {
+        const data = Studio.dataVoce(v, g, p.id), chiave = 'piano:' + p.id + ':' + v.k, gid = hashHex(chiave);
+        vivi.add(chiave);
+        const ora = imp().gcalStudioOra || '';
+        const firma = data + '|' + ora + '|' + v.t;
+        if (giaInviati[chiave] !== undefined && (nuovi as any)['f:' + chiave] === firma) continue;
+        const titolo = (p.modo === 'raffinamento' && !v.speciale ? 'Raffina ' : '📚 ') + (v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t);
+        const corpo: any = { id: gid, summary: titolo, description: (v.d || g.nota || '') + '\n\n(dal ' + p.titolo + ' — Il mio calendario)' };
+        if (ora) { const i = data + 'T' + ora; corpo.start = { dateTime: i + ':00', timeZone: 'Europe/Rome' }; corpo.end = { dateTime: dtStr(piuMinuti(daDt(i), 60)) + ':00', timeZone: 'Europe/Rome' }; corpo.reminders = { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] }; }
+        else { corpo.start = { date: data }; corpo.end = { date: ymd(piuGiorni(daYmd(data), 1)) }; corpo.reminders = { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] }; }
+        try {
+          try { await chiama('calendars/' + cal + '/events/' + gid, { method: 'PUT', body: JSON.stringify(corpo) }); }
+          catch (e: any) { if (e.status === 404) await chiama('calendars/' + cal + '/events', { method: 'POST', body: JSON.stringify(corpo) }); else throw e; }
+          nuovi[chiave] = 1; (nuovi as any)['f:' + chiave] = firma; n++;
+        } catch (e: any) { if (e.status === 401 || e.status === 403) throw e; }
+      }
+      // Studio disattivato (o voce sparita): tolgo i blocchi copiati prima
+      for (const chiave of Object.keys(nuovi)) if (chiave.startsWith('piano:') && !vivi.has(chiave)) {
+        try { await chiama('calendars/' + cal + '/events/' + hashHex(chiave), { method: 'DELETE' }); } catch (e: any) { if (e.status !== 404 && e.status !== 410) throw e; }
+        delete nuovi[chiave]; delete (nuovi as any)['f:' + chiave];
       }
       salvaInviati(nuovi);
       return n;

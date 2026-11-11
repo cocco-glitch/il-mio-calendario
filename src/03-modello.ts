@@ -75,6 +75,8 @@ interface Impostazioni extends Rec {
   gcal?: boolean;
   gcalId?: string;
   gcalCategorie?: string[];
+  gcalStudio?: boolean;                  // copia anche i blocchi del piano di studio
+  gcalStudioOra?: string;                // 'HH:mm' dell'avviso dello studio ('' = tutto il giorno)
 }
 interface Preset extends Rec { type: 'preset'; nome: string; valori: Partial<Impostazioni>; }
 
