@@ -73,7 +73,14 @@ function lunedi(d: Date): Date { const g = (d.getDay() + 6) % 7; return piuGiorn
 function stessoGiorno(a: Date, b: Date): boolean { return ymd(a) === ymd(b); }
 function oggi(): Date { return inizioGiorno(new Date()); }
 
-function fmt(d: Date, o: Intl.DateTimeFormatOptions): string { return new Intl.DateTimeFormat('it-IT', o).format(d); }
+// v0.17: i formattatori si creano una volta sola per combinazione di opzioni (crearli è costoso)
+const FORMATI = new Map<string, Intl.DateTimeFormat>();
+function fmt(d: Date, o: Intl.DateTimeFormatOptions): string {
+  const k = JSON.stringify(o);
+  let f = FORMATI.get(k);
+  if (!f) { f = new Intl.DateTimeFormat('it-IT', o); FORMATI.set(k, f); }
+  return f.format(d);
+}
 const GIORNI_BREVI = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
 function maiuscola(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
 function dataLunga(d: Date): string { return maiuscola(fmt(d, { weekday: 'long', day: 'numeric', month: 'long' })); }

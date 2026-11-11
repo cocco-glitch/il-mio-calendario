@@ -116,6 +116,10 @@ interface Occ { ev: Evento; inizio: Date; fine: Date; chiave: string; }
 // ---------- Stato ----------
 const Stato = (() => {
   const rec = new Map<string, Rec>();
+  const TIPI_SERVIZIO = new Set(['notifica']);       // v0.17: lapidi ripulibili dopo 7 giorni
+  const lapideScaduta = (r: Rec) => TIPI_SERVIZIO.has(r.type) && (r.updatedAt || 0) < Date.now() - 7 * 86400000;
+  let ver = 0, cacheVer = -1;                       // v0.17: versione dei dati e cache per tipo
+  const perTipo = new Map<string, Rec[]>();
   const ascoltatori: Array<() => void> = [];
   let inAttesa = false;
 
@@ -132,6 +136,7 @@ const Stato = (() => {
 
     async carica(): Promise<void> {
       for (const r of await DB.apri()) rec.set(r.id, r);
+      ver++;
       // Primo avvio: categorie e impostazioni di partenza.
       // updatedAt = 1 così, alla prima sincronizzazione, vincono sempre i dati già su Drive.
       if (!rec.has('impostazioni')) {
@@ -143,16 +148,32 @@ const Stato = (() => {
           { id: 'cat-uni', type: 'categoria', updatedAt: 1, nome: 'Uni', colore: '#e9a23b', visibile: true, ordine: 3 },
         ];
         for (const r of nuovi) if (!rec.has(r.id)) rec.set(r.id, r);
+        ver++;
         await DB.salva(nuovi);
       }
     },
 
     /** Tutti i record non eliminati di un tipo. */
     tutti<T extends Rec>(type: string): T[] {
-      const out: T[] = [];
-      rec.forEach(r => { if (r.type === type && !r.deleted) out.push(r as T); });
-      return out;
+      // v0.17: indice per tipo, ricostruito solo dopo una modifica (ver). Restituisce sempre una copia.
+      if (cacheVer !== ver) { perTipo.clear(); cacheVer = ver; }
+      let l = perTipo.get(type);
+      if (!l) { l = []; rec.forEach(r => { if (r.type === type && !r.deleted) l!.push(r); }); perTipo.set(type, l); }
+      return l.slice() as T[];
     },
+    /**
+     * v0.17: rimuove le lapidi scadute dei tipi "di servizio" (registro notifiche): non servono più alla
+     * sincronizzazione e ingrandirebbero dati.json. I dati dell'utente (eventi, schede…) non si toccano.
+     */
+    pulisci(): number {
+      const via: string[] = [];
+      rec.forEach(r => { if (r.deleted && lapideScaduta(r)) via.push(r.id); });
+      for (const id of via) rec.delete(id);
+      if (via.length) { ver++; DB.rimuovi(via); if (typeof Drive !== 'undefined') Drive.programma(); }
+      return via.length;
+    },
+    /** Numero di versione dei dati: cambia a ogni salvataggio/unione (per le cache). */
+    get ver(): number { return ver; },
     prendi<T extends Rec>(id: string): T | undefined {
       const r = rec.get(id);
       return r && !r.deleted ? (r as T) : undefined;
@@ -160,7 +181,7 @@ const Stato = (() => {
     /** Salva un record aggiornando updatedAt (serve alla sincronizzazione). */
     salva(r: Rec, silenzioso = false): void {
       r.updatedAt = Date.now();
-      rec.set(r.id, r);
+      rec.set(r.id, r); ver++;
       DB.salva([r]);
       if (!silenzioso) notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
       if (typeof Drive !== 'undefined') Drive.programma();
@@ -178,8 +199,9 @@ const Stato = (() => {
       const cambiati: Rec[] = [];
       for (const e of esterni) {
         if (!e || !e.id || !e.type) continue;
+        if (e.deleted && lapideScaduta(e) && !rec.has(e.id)) continue;   // v0.17: lapidi vecchie già ripulite
         const mio = rec.get(e.id);
-        if (!mio || (e.updatedAt || 0) > (mio.updatedAt || 0)) { rec.set(e.id, e); cambiati.push(e); }
+        if (!mio || (e.updatedAt || 0) > (mio.updatedAt || 0)) { rec.set(e.id, e); cambiati.push(e); ver++; }
       }
       if (cambiati.length) { DB.salva(cambiati); notifica(); }
       return cambiati.length;

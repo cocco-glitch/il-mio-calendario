@@ -19,10 +19,16 @@ const ICONE: Record<string, string> = {
   campana: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
 };
+const MODELLI_ICONA = new Map<string, HTMLElement>();   // v0.17: ogni icona si costruisce una volta e poi si clona
 function icona(nome: string, dim = 22): HTMLElement {
-  const s = h('span.ico');
-  s.innerHTML = '<svg viewBox="0 0 24 24" width="' + dim + '" height="' + dim + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONE[nome] || '') + '</svg>';
-  return s;
+  const k = nome + '|' + dim;
+  let m = MODELLI_ICONA.get(k);
+  if (!m) {
+    m = h('span.ico');
+    m.innerHTML = '<svg viewBox="0 0 24 24" width="' + dim + '" height="' + dim + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONE[nome] || '') + '</svg>';
+    MODELLI_ICONA.set(k, m);
+  }
+  return m.cloneNode(true) as HTMLElement;
 }
 
 /** Foglio modale a tutta altezza su telefono, centrato su PC. */

@@ -74,5 +74,20 @@ const DB = (() => {
       if (modo === 'ls') scriviLs();
       return Promise.resolve();
     },
+
+    /** v0.17: rimuove definitivamente dei record (solo per lapidi vecchie senza valore). */
+    rimuovi(ids: string[]): Promise<void> {
+      if (!ids.length) return Promise.resolve();
+      if (modo === 'idb' && idb) {
+        return new Promise((ok, ko) => {
+          const tx = idb!.transaction('records', 'readwrite'), st = tx.objectStore('records');
+          for (const id of ids) st.delete(id);
+          tx.oncomplete = () => ok(); tx.onerror = () => ko(tx.error);
+        });
+      }
+      for (const id of ids) delete mem[id];
+      if (modo === 'ls') scriviLs();
+      return Promise.resolve();
+    },
   };
 })();

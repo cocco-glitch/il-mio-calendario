@@ -9,6 +9,7 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 4 (fatta)**: aspetto (tema, accento, sfondo, carattere, dimensione testo, densità, angoli), layout (vista iniziale, ordine/visibilità dei riquadri di Oggi, sezioni della barra, barra su PC), preset (3 di base + personali), aggiunta rapida in italiano (`src/07-rapido.ts`), specchio su Google Calendar con scope `calendar.app.created` e import/export .ics (`src/06-gcal.ts`).
 - **Fase 5 (fatta)**: test completi, documentazione (`docs/MANUTENZIONE.md`, `docs/formato-studio.md`).
 
+- **0.17.0** (ottimizzazioni): indice per tipo in `Stato.tutti` e indici di pacchetti/sotto-step/schede ricostruiti solo quando i dati cambiano (`Stato.ver`), formattatori di date e icone riusati, pagine memorizzate; pulizia automatica delle lapidi vecchie del registro notifiche (`Stato.pulisci`, non rientrano dalla sync). Viste 2–3 volte più veloci (Agenda 328→114 ms, Piano 189→61 ms con CPU rallentata 4x).
 - **0.16.0**: errori ricorrenti domanda per domanda (`src/07-domande.ts`): l'osservatore legge anche «Da rivedere» (domanda, risposta corretta, spiegazione); record `domanda` con volte sbagliata/giusta; Studio → Errori: Ricorrenti / Aperte / Risolte con «mostra risposta» e «la sapevo / non la sapevo»; contano anche le simulazioni, non le prove a freddo.
 - **0.15.0**: «Studia ora» (`src/07-domande.ts     domande sbagliate e ricorrenti (dalla sezione «Da rivedere» dei quiz)
 src/07-studiaora.ts`): pulsante in cima a Oggi, scegli 25/50/90 min e l'app compone la sessione (ripassi a rischio ≤40%, prova a freddo e prioritarie dello step del giorno, errori, pause ogni ~25 min, richiamo finale), timer con la durata scelta, sessione ripresa se chiudi l'app.
@@ -32,6 +33,8 @@ Documentazione per chi modifica l'app: **`docs/MANUTENZIONE.md`**. Evoluzione pr
 
 ## Comandi
 ```
+bash test/tutti.sh      # build + tutti i test (15 gruppi)
+python3 test/prestazioni.py # prova di carico: ~4.600 record, tempi di disegno
 node build.mjs          # compila e crea dist/ (serve solo Node + tsc, nessun npm install)
 python3 test/e2e.py     # test end-to-end (Playwright per Python)
 python3 test/sync.py    # test della sincronizzazione con un finto Drive

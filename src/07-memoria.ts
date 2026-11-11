@@ -158,10 +158,15 @@ const Ripassi = (() => {
 })();
 
 /** Trova una scheda dei pacchetti dal suo id (per aprirla dai ripassi). */
+let indiceSchede: { v: number; m: Map<string, { pk: PkStep; m: string; micro: string; s: SchedaS; k: string }> } = { v: -1, m: new Map() };
 function trovaScheda(id: string): { pk: PkStep; m: string; micro: string; s: SchedaS; k: string } | null {
-  for (const pk of Studio.pkStep()) for (const mat of pk.materie) for (const sub of mat.sottostep) for (const mi of sub.microstep)
-    for (const s of mi.schede) if (s.id === id) return { pk, m: mat.m, micro: mi.n, s, k: sub.k };
-  return null;
+  if (indiceSchede.v !== Stato.ver) {        // v0.17: indice ricostruito solo quando i dati cambiano
+    const m = new Map<string, { pk: PkStep; m: string; micro: string; s: SchedaS; k: string }>();
+    for (const pk of Studio.pkStep()) for (const mat of pk.materie) for (const sub of mat.sottostep) for (const mi of sub.microstep)
+      for (const s of mi.schede) if (!m.has(s.id)) m.set(s.id, { pk, m: mat.m, micro: mi.n, s, k: sub.k });
+    indiceSchede = { v: Stato.ver, m };
+  }
+  return indiceSchede.m.get(id) || null;
 }
 
 /** Colore della probabilità di ricordare (scala unica del piano: corallo → ambra → verde → teal). */

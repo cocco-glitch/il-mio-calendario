@@ -67,8 +67,12 @@ const Studio = (() => {
       giorni: esami.map(e => ({ data: e.data, voci: [{ k: 'ESAME-' + e.id, t: '🎓 ' + e.nome + (e.ora ? ' · ' + e.ora : ''), d: e.nota || 'Esame', speciale: true }] })) });
     return out;
   }
-  function pkStep(): PkStep[] { return Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step); }
-  function pkPiani(): PkPiano[] { return Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1); }
+  // v0.17: risultati memorizzati finché i dati non cambiano (Stato.ver)
+  const memo = <T>(f: () => T) => { let v = -1, x: T; return () => { if (v !== Stato.ver) { x = f(); v = Stato.ver; } return x; }; };
+  const pkStepM = memo(() => Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step) as PkStep[]);
+  function pkStep(): PkStep[] { return pkStepM().slice(); }
+  const pkPianiM = memo(() => Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1) as PkPiano[]);
+  function pkPiani(): PkPiano[] { return pkPianiM().slice(); }
   /** Il piano principale (teoria). */
   function pkPiano(): PkPiano | null { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
 
@@ -113,12 +117,16 @@ const Studio = (() => {
   }
 
   /** Pagine del libro: '141-144,146' o appendice 'A1-A4'. Restituisce stringhe ('141', 'A2'). */
+  const cachePagine = new Map<string, string[]>();      // v0.17: stessa stringa → stesso risultato
   function pagineSet(s: string): Set<string> {
+    const c = cachePagine.get(s || '');
+    if (c) return new Set(c);
     const o = new Set<string>();
     for (const p of (s || '').split(',').map(x => x.trim()).filter(Boolean)) {
       const m = p.match(/^([A-Z]?)(\d+)(?:-[A-Z]?(\d+))?$/); if (!m) continue;
       for (let i = +m[2]; i <= +(m[3] || m[2]); i++) o.add(m[1] + i);
     }
+    cachePagine.set(s || '', Array.from(o));
     return o;
   }
   function intervalli(set: Set<string>): string {
@@ -135,8 +143,9 @@ const Studio = (() => {
       pagP: unione(P), pagR: unione(R), pagT: unione(l), pagLette: unione(l.filter(s => fatta(s.id))) };
   }
   function schedeDi(s: SottoS): SchedaS[] { return s.microstep.flatMap(m => m.schede); }
+  const indiceSotto = memo(() => { const m = new Map<string, { pk: PkStep; mat: MateriaS; sub: SottoS }>(); for (const pk of pkStepM()) for (const mat of pk.materie) for (const sub of mat.sottostep) if (!m.has(sub.k)) m.set(sub.k, { pk, mat, sub }); return m; });
   function trovaSotto(k: string): { pk: PkStep; mat: MateriaS; sub: SottoS } | null {
-    for (const pk of pkStep()) for (const mat of pk.materie) for (const sub of mat.sottostep) if (sub.k === k) return { pk, mat, sub };
+    const x = indiceSotto().get(k); if (x) return x;
     return null;
   }
   function etichetta(k: string): string { const m = /^([A-Z]+)(\d.*)$/.exec(k); return m ? infoMateria(m[1]).breve + ' ' + m[2] : k; }
