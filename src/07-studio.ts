@@ -391,8 +391,10 @@ function testoAvanzamento(k: string, p: PkPiano): string {
 function indicatoreStudio(): HTMLElement | null {
   if (!Studio.pkPiani().length) return null;
   const r = Studio.inRitardo();
-  return h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } },
+  const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } },
     r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
+  // v0.10: ripianificazione in un tocco (solo piano principale)
+  return Ripianifica.inRitardo().length ? h('div', null, ind, h('button.btn.neutro', { style: { marginTop: '8px', width: '100%' }, onclick: apriRipianifica }, '↻ Ripianifica i ritardi')) : ind;
 }
 
 // ---------- Vista STUDIO ----------

@@ -13,3 +13,4 @@ Una riga per scelta importante: data · decisione · motivo.
 - 2026-11-11 · Ripasso aperto senza punteggio non conta; correzione nello stesso giorno ricalcola dallo stato precedente.
 - 2026-11-11 · F3 ridotta: risultato dei quiz salvato in automatico con «tocca per annullare» (8 s) · scelta dell'utente.
 - 2026-11-11 · «Rifai solo gli errori» non cambia il punteggio, va in nota; si salvano i tipi di domanda (`deboli`) per le statistiche future · scelta dell'utente.
+- 2026-11-11 · Ripianificazione: due modi (giorni leggeri / prima possibile) con anteprima; solo piano principale · scelta tra recupero rapido e giornate sostenibili lasciata all'utente.

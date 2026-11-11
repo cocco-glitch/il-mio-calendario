@@ -37,6 +37,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 | 06-notifiche | notifiche via ntfy: `calcola()` (prossime 72 h), `allinea()` (invia solo le nuove/cambiate, registro `notifica`), sostituzione silenziosa con lo stesso `sequence_id` quando un evento cambia/sparisce |
 | 07-memoria | ripassi FSRS-5 per SOTTO-STEP: `passo()` (formule pubbliche, parametri predefiniti), `registra()` chiamata da `Studio.segna`, `inizializza()`, `delGiorno()` con tetto minuti, `schedaDaProporre()` a rotazione; record `memoria` id `mem-sub-<k>` |
 | 07-cattura | lettura del risultato dei quiz: `inietta()` aggiunge alla copia scaricata un osservatore (MutationObserver) che legge `.score .big`, `.score .pct`, `.lvrow`, `.weak`, `.stat` e manda `postMessage`; `salva()` con Annulla. Se il motore dei quiz cambia questi selettori, aggiornare la stringa SPIA (il file su Drive non si tocca mai) |
+| 07-ripianifica | step in ritardo del piano principale → giorni utili (esclusi SIM/VERIFICA/CHIUSURA/SPRINT/RIPOSO; Riserva max 2, altri max 3) con `Studio.sposta` |
 | 07-extra | corsi creati dall'utente, registro errori, timer, statistiche, esami |
 | 07-rapido | aggiunta rapida in italiano (`interpreta()`) |
 | 07-studio | pacchetti studio, progressi, piani, syllabus, quiz in iframe, PDF (pdf.js + cache) |
