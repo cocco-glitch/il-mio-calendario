@@ -226,10 +226,27 @@ const Drive = (() => {
     timerSync = window.setTimeout(() => sincronizza(false), 3000);
   }
 
-  async function login(): Promise<void> {
-    stato.email = '';
-    await sincronizza(true);
-    if (stato.sync === 'ok') avviso('Collegato a Google Drive come ' + stato.email);
+  /** Precarica la libreria Google, così al tocco il popup si apre subito. */
+  function precarica(): void {
+    script('https://accounts.google.com/gsi/client').then(() => {
+      if (!client) client = google.accounts.oauth2.initTokenClient({ client_id: G_CLIENT_ID, scope: G_SCOPE, callback: () => { /* impostata dopo */ } });
+    }).catch(() => { /* offline */ });
+  }
+  /** DA CHIAMARE DIRETTAMENTE DAL TOCCO (niente await prima): apre il popup Google. */
+  function login(): void {
+    if (!client) { precarica(); avviso('Sto caricando Google… tocca di nuovo tra un secondo.'); return; }
+    const primaVolta = !stato.email;
+    client.callback = async (r: any) => {
+      if (!r || !r.access_token) { cambia('errore', 'Accesso annullato o non riuscito.'); return; }
+      token = r.access_token; scadenzaToken = Date.now() + (r.expires_in - 60) * 1000;
+      if (primaVolta) stato.email = '';
+      await sincronizza(false);
+      if (stato.sync === 'ok' && primaVolta) avviso('Collegato a Google Drive come ' + stato.email);
+    };
+    client.error_callback = (e: any) => cambia('errore', e && e.type === 'popup_failed_to_open'
+      ? 'Il browser ha bloccato la finestra di Google: consenti i popup per questo sito e riprova.'
+      : 'Finestra di Google chiusa.');
+    client.requestAccessToken({ prompt: primaVolta ? 'select_account' : '', login_hint: stato.email || undefined });
   }
   function logout(): void {
     if (token) { try { google.accounts.oauth2.revoke(token, () => { /* ok */ }); } catch (_) { /* niente */ } }
@@ -273,7 +290,7 @@ const Drive = (() => {
 
   return {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
-    sincronizza, programma, login, logout,
+    sincronizza, programma, login, logout, precarica,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
     get collegato() { return !!stato.email; },
   };

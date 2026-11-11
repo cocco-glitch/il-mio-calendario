@@ -64,7 +64,7 @@ with sync_playwright() as p:
     # iPhone: login e primo sync
     a = dispositivo('A')
     a.evaluate("Stato.salva({id:'ev1',type:'evento',updatedAt:0,titolo:'Chimica 3.1',inizio:'2026-11-12T15:00',fine:'2026-11-12T17:00',tuttoIlGiorno:false,promemoria:[30]})")
-    a.evaluate("Drive.login()")
+    a.evaluate("new Promise(r => setTimeout(() => { Drive.login(); r(); }, 300))")
     try: a.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
     except Exception: print('STATO', a.evaluate("[Drive.stato.sync, Drive.stato.messaggio, window.__drive.log]")); raise
     salva_drive(a)
@@ -75,7 +75,7 @@ with sync_playwright() as p:
     ok(a.locator('.sync-ind.sync-ok').count()==1, 'indicatore verde')
 
     # PC: stesso account, dati identici
-    pc = dispositivo('PC'); pc.evaluate("Drive.login()")
+    pc = dispositivo('PC'); pc.evaluate("new Promise(r => setTimeout(() => { Drive.login(); r(); }, 300))")
     try: pc.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
     except Exception: print('STATO', pc.evaluate("[Drive.stato.sync, Drive.stato.messaggio, window.__drive.log]")); raise
     ok(pc.evaluate("Stato.prendi('ev1')?.titolo") == 'Chimica 3.1', 'il PC riceve l\'evento dal Drive')
@@ -85,7 +85,7 @@ with sync_playwright() as p:
     salva_drive(pc)
     a2 = dispositivo('A2')  # iPhone riaperto (nuovo contesto = memoria vuota, simula altro dispositivo)
     a2.evaluate("Stato.salva({id:'t2',type:'task',updatedAt:0,titolo:'Offline su iPhone',priorita:0,fatto:false})")
-    a2.evaluate("Drive.login()"); a2.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
+    a2.evaluate("new Promise(r => setTimeout(() => { Drive.login(); r(); }, 300))"); a2.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
     ok(a2.evaluate("Stato.prendi('ev1')?.titolo") == 'Chimica 3.1 bis', 'modifica del PC arrivata')
     ok(a2.evaluate("!!Stato.prendi('t1') && !!Stato.prendi('t2')"), 'unione: record di entrambi presenti')
     a2.wait_for_timeout(500); salva_drive(a2)
@@ -94,14 +94,14 @@ with sync_playwright() as p:
     ok({'ev1','t1','t2'} <= ids, 'dati.json su Drive contiene tutto')
     # eliminazione = lapide che si propaga
     a2.evaluate("Stato.elimina('t1')"); a2.wait_for_timeout(3500); a2.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000); salva_drive(a2)
-    pc2 = dispositivo('PC2'); pc2.evaluate("Drive.login()"); pc2.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
+    pc2 = dispositivo('PC2'); pc2.evaluate("new Promise(r => setTimeout(() => { Drive.login(); r(); }, 300))"); pc2.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
     ok(pc2.evaluate("Stato.prendi('t1')") is None and pc2.evaluate("Stato.rec.get('t1')?.deleted") is True, 'eliminazione propagata come lapide')
     # backup giornaliero: 1 file, non di più nello stesso giorno
     bk = [f for f in stato_drive['files'].values() if f['name'].startswith('dati-20')]
     ok(len(bk) == 1, 'backup giornaliero creato una volta (%d)' % len(bk))
     ok(not any(l.startswith('DELETE') for l in stato_drive['log']), 'nessuna DELETE verso Drive')
     # offline: coda
-    off = dispositivo('OFF'); off.evaluate("Drive.login()"); off.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
+    off = dispositivo('OFF'); off.evaluate("new Promise(r => setTimeout(() => { Drive.login(); r(); }, 300))"); off.wait_for_function("Drive.stato.sync === 'ok'", timeout=10000)
     off.context.set_offline(True)
     off.evaluate("Stato.salva({id:'t9',type:'task',updatedAt:0,titolo:'offline',priorita:0,fatto:false})"); off.wait_for_timeout(3500)
     ok(off.evaluate("Drive.stato.sync") == 'offline', 'stato offline mostrato')

@@ -14,7 +14,7 @@ with sync_playwright() as p:
     b = p.chromium.launch()
     ctx = b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome', color_scheme='dark', has_touch=True)
     pg = ctx.new_page()
-    pg.on('console', lambda m: m.type == 'error' and err.append('console: ' + m.text))
+    pg.on('console', lambda m: m.type == 'error' and 'ERR_TUNNEL' not in m.text and err.append('console: ' + m.text))
     pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.goto(URL); pg.wait_for_selector('.tabbar')
     ok(pg.evaluate('DB.modo') == 'idb', 'IndexedDB attivo')

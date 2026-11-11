@@ -423,7 +423,7 @@ function vistaAltro(): HTMLElement {
     Drive.collegato
       ? [h('div.tenue.piccolo', null, 'Account: ' + Drive.stato.email + '. Dati in "Calendario personale/dati", backup giornaliero in "backup" (ultimi 30). L\'app non elimina mai file: al massimo li sposta in "_cestino app".'),
          h('div.bottoni', null,
-           h('button.btn', { onclick: () => Drive.sincronizza(true) }, 'Sincronizza ora'),
+           h('button.btn', { onclick: () => Drive.stato.sync === 'ok' ? Drive.sincronizza(false) : Drive.login() }, 'Sincronizza ora'),
            h('button.btn.neutro', { onclick: () => chiedi('Scollegare Google Drive?', [{ testo: 'Scollega', valore: 'si', pericolo: true }], 'I dati restano sia qui sia su Drive.').then(s => { if (s) Drive.logout(); }) }, 'Scollega'))]
       : [h('div.tenue.piccolo', null, 'Collega il tuo Google Drive: i dati si salvano in una cartella "Calendario personale" e compaiono identici su iPhone e PC. Solo il tuo account potrà vederli.'),
          h('div.bottoni', null, h('button.btn', { onclick: () => Drive.login() }, 'Accedi con Google'))],
