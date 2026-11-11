@@ -1890,7 +1890,7 @@ const Notifiche = (() => {
             if (T.studio && (voci || rip))
                 metti({ chiave: 'studio:' + k, at: alle(g, i.ntfyMattino || PRED.mattino).getTime(), titolo: '📚 Studio di oggi', testo: [voci, testoRip].filter(Boolean).join(' · '), tag: 'books' });
             if (T.sera && vociStudio(g).some(x => !x.v.speciale))
-                metti({ chiave: 'sera:' + k, at: alle(g, i.ntfySera || PRED.sera).getTime(), titolo: '🌙 Ripasso prima di dormire', testo: '10–15 min: richiama a memoria ' + voci + ', senza aprire il libro.', tag: 'crescent_moon', prio: 2 });
+                metti({ chiave: 'sera:' + k, at: alle(g, i.ntfySera || PRED.sera).getTime(), titolo: '🌙 Ripasso prima di dormire', testo: '10–15 min: richiama a memoria ' + voci + ', senza aprire il libro. Poi chiudi la giornata nell\'app (2 min).', tag: 'crescent_moon', prio: 2 });
             if (T.esami)
                 for (const n of [7, 3, 1]) {
                     const target = new Date(g.getFullYear(), g.getMonth(), g.getDate() + n);
@@ -2060,6 +2060,79 @@ const Cattura = (() => {
     }
     return { inietta, osserva, salva, SPIA };
 })();
+
+// 07-chiusura.ts — Chiusura serale della giornata in 2 minuti (v0.13, tattica T28).
+//
+// Dalle 19:00 compare in cima a Oggi il riquadro "Chiudi la giornata" (finché non la chiudi).
+// Tre tocchi: step di oggi (fatti / da spostare a domani), ripasso serale fatto, concentrazione 1–5
+// e ore di sonno della notte scorsa. Si salva nel record 'giorno' (id 'g-YYYY-MM-DD').
+// Gli step lasciati indietro si spostano con Studio.sposta (i progressi restano).
+const Giornata = {
+    rec(k = ymd(new Date())) { return Stato.prendi('g-' + k) || { id: 'g-' + k, type: 'giorno', updatedAt: 0, data: k }; },
+    oraDiChiudere() { const d = new Date(); return d.getHours() >= 19 && !Giornata.rec().chiuso; },
+};
+function widgetChiusura() {
+    if (!Giornata.oraDiChiudere())
+        return null;
+    return scheda('Chiudi la giornata', h('div.tenue.piccolo', null, '2 minuti: cosa hai fatto, cosa slitta, come stai. Serve a ripianificare bene e a vedere come sonno e concentrazione influiscono sui risultati.'), h('div.bottoni', null, h('button.btn', { onclick: apriChiusura }, '🌙 Chiudi la giornata')));
+}
+function apriChiusura() {
+    const k = ymd(new Date()), g = Giornata.rec(k), domani = ymd(new Date(Date.now() + 86400000));
+    // step di oggi + quelli che questa chiusura aveva già spostato a domani (per poterli riportare)
+    const voci = Studio.vociDelGiorno(oggi()).concat(Studio.vociDelGiorno(daDt(domani)).filter(x => (g.spostati || []).includes(x.v.k)))
+        .filter(x => !x.v.speciale && x.p.modo !== 'raffinamento');
+    const sposta = new Set(g.spostati || []);
+    let focus = g.focus || 0, sonno = g.sonno || 0, serale = !!g.ripassoSerale;
+    const corpo = h('div.modulo');
+    const chip = (val, att, testo, set) => h('button.chip' + (val === att ? '.attivo' : ''), { onclick: () => { set(val); disegnaC(); } }, testo);
+    const disegnaC = () => {
+        svuota(corpo);
+        const righe = voci.map(x => {
+            const fatto = Studio.stepFatto(x.v.k, x.p), n = Studio.trovaSotto(x.v.k) ? Studio.numeri(Studio.schedeDi(Studio.trovaSotto(x.v.k).sub)) : null;
+            return h('div.widget-riga', null, h('span.nome', null, (fatto ? '✓ ' : '') + Studio.etichetta(x.v.k), h('div.tenue.piccolo', null, n ? n.Pf + '/' + n.P + ' prioritarie' : x.v.t)), fatto ? h('span.tenue.piccolo', null, 'fatto') : h('button.chip' + (sposta.has(x.v.k) ? '.attivo' : ''), { onclick: () => { sposta.has(x.v.k) ? sposta.delete(x.v.k) : sposta.add(x.v.k); disegnaC(); } }, sposta.has(x.v.k) ? '→ domani' : 'Sposta a domani'));
+        });
+        [
+            h('div.gruppo-titolo', null, 'Step di oggi'),
+            voci.length ? h('div.gruppo', null, righe) : h('div.tenue.piccolo', null, 'Nessuno step del piano oggi.'),
+            voci.some(x => !Studio.stepFatto(x.v.k, x.p)) ? h('div.tenue.piccolo', null, 'Se non lo sposti resta «in ritardo» e potrai ripianificarlo dopo.') : null,
+            h('div.gruppo-titolo', null, 'Ripasso prima di dormire'),
+            h('div.widget-riga', null, h('span.nome', null, '10–15 min di richiamo a memoria di ciò che hai studiato oggi', h('div.tenue.piccolo', null, 'Senza libro: scrivi o ripeti a voce i punti chiave, poi controlla. Il sonno fissa ciò che hai appena richiamato.')), h('label.interruttore', null, h('input', { type: 'checkbox', checked: serale, onchange: (e) => { serale = e.target.checked; } }), h('span'))),
+            h('div.gruppo-titolo', null, 'Concentrazione di oggi'),
+            h('div.chips', null, [1, 2, 3, 4, 5].map(v => chip(v, focus, ['😵', '😕', '😐', '🙂', '🔥'][v - 1] + ' ' + v, x => { focus = x; }))),
+            h('div.gruppo-titolo', null, 'Ore di sonno la notte scorsa'),
+            h('div.chips', null, [5, 6, 7, 8, 9].map(v => chip(v, sonno, (v === 5 ? '≤5' : v === 9 ? '9+' : String(v)) + ' h', x => { sonno = x; }))),
+        ].forEach(el => { if (el)
+            corpo.appendChild(el); });
+    };
+    disegnaC();
+    foglio({ titolo: 'Chiudi la giornata', corpo, etichettaSalva: 'Fatto', salva: () => {
+            for (const x of voci) {
+                const pid = x.p.id;
+                if (sposta.has(x.v.k) && !Studio.stepFatto(x.v.k, x.p))
+                    Studio.sposta(x.v.k, domani, pid);
+                else if ((g.spostati || []).includes(x.v.k) && !sposta.has(x.v.k))
+                    Studio.sposta(x.v.k, null, pid);
+            }
+            Stato.salva(Object.assign(g, { chiuso: true, focus: focus || undefined, sonno: sonno || undefined, ripassoSerale: serale, spostati: Array.from(sposta) }));
+            const dom = Studio.vociDelGiorno(daDt(domani)).map(x => x.v.speciale ? x.v.t : Studio.etichetta(x.v.k));
+            avviso('🌙 Buonanotte. Domani: ' + (dom.length ? dom.join(' + ') : 'niente dal piano') + '.', 7000);
+        } });
+}
+/** Statistiche: sonno e concentrazione rispetto ai punteggi dei quiz fatti lo stesso giorno. */
+function sezioneSonno() {
+    const giorni = Stato.tutti('giorno').filter(g => g.sonno || g.focus);
+    if (giorni.length < 3)
+        return null;
+    const punteggi = {};
+    for (const p of Stato.tutti('progresso'))
+        if (p.data && p.punteggio != null)
+            (punteggi[p.data] = punteggi[p.data] || []).push(p.punteggio);
+    const media = (l) => l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null;
+    const gruppo = (f) => media(giorni.filter(f).flatMap(g => punteggi[g.data] || []));
+    const pocoSonno = gruppo(g => !!g.sonno && g.sonno < 7), sonnoOk = gruppo(g => !!g.sonno && g.sonno >= 7);
+    const focusAlto = gruppo(g => !!g.focus && g.focus >= 4), focusBasso = gruppo(g => !!g.focus && g.focus <= 2);
+    return h('section.card', null, h('h2.card-titolo', null, 'Sonno, concentrazione e risultati'), h('div.numeri', null, numero(pocoSonno != null ? pocoSonno + '%' : '—', 'con < 7 h di sonno'), numero(sonnoOk != null ? sonnoOk + '%' : '—', 'con ≥ 7 h')), h('div.numeri', null, numero(focusBasso != null ? focusBasso + '%' : '—', 'concentrazione 1–2'), numero(focusAlto != null ? focusAlto + '%' : '—', 'concentrazione 4–5')), h('div.tenue.piccolo', null, 'Media dei punteggi dei quiz fatti in quei giorni (' + giorni.length + ' giornate chiuse). È una correlazione sui tuoi dati, non una prova: più giornate chiudi, più è affidabile.'));
+}
 
 // ============================================================
 // 07-extra.ts — Studio "versatile":
@@ -2239,7 +2312,7 @@ function vistaStatistiche() {
             o[s.m || '?'] = (o[s.m || '?'] || 0) + s.minuti; return o; });
     const max = Math.max(30, ...perGiorno.map(o => Object.values(o).reduce((a, b) => a + b, 0)));
     const peggiore = righe.filter(r => r.rit > 0).sort((a, b) => b.rit - a.rit)[0];
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('h2.card-titolo', null, 'Tempo di studio'), h('div.numeri', null, numero(durata(minutiStudio(g, g)), 'oggi'), numero(durata(minutiStudio(piuGiorni(g, -6), g)), 'ultimi 7 giorni'), numero(durata(minutiStudio(piuGiorni(g, -29), g)), 'ultimi 30')), h('div.grafico', { role: 'img', 'aria-label': 'Minuti di studio negli ultimi 14 giorni' }, perGiorno.map((o, i) => h('div.colonna', { title: dataBreve(giorni[i]) + ': ' + durata(Object.values(o).reduce((a, b) => a + b, 0)) }, h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))), h('span', null, String(giorni[i].getDate()))))), ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')), sezionePuntiDeboli(), sezioneSottostepDeboli(), peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null, righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)), h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')), barra(r.fatte, r.tot, coloreMateria(r.m)), h('div.tenue.piccolo', null, durata(r.min7) + ' negli ultimi 7 giorni · ' + r.err + ' da rifare' + (r.rit ? ' · ' + r.rit + ' step in ritardo' : '')))));
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('h2.card-titolo', null, 'Tempo di studio'), h('div.numeri', null, numero(durata(minutiStudio(g, g)), 'oggi'), numero(durata(minutiStudio(piuGiorni(g, -6), g)), 'ultimi 7 giorni'), numero(durata(minutiStudio(piuGiorni(g, -29), g)), 'ultimi 30')), h('div.grafico', { role: 'img', 'aria-label': 'Minuti di studio negli ultimi 14 giorni' }, perGiorno.map((o, i) => h('div.colonna', { title: dataBreve(giorni[i]) + ': ' + durata(Object.values(o).reduce((a, b) => a + b, 0)) }, h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))), h('span', null, String(giorni[i].getDate()))))), ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')), sezionePuntiDeboli(), sezioneSottostepDeboli(), sezioneSonno(), peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null, righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)), h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')), barra(r.fatte, r.tot, coloreMateria(r.m)), h('div.tenue.piccolo', null, durata(r.min7) + ' negli ultimi 7 giorni · ' + r.err + ' da rifare' + (r.rit ? ' · ' + r.rit + ' step in ritardo' : '')))));
 }
 // ---------- Esami ----------
 function giorniA(data) { return Math.round((daYmd(data).getTime() - oggi().getTime()) / 86400000); }
@@ -4190,13 +4263,13 @@ function taskDelGiorno(g) {
     return Stato.tutti('task').filter(t => !t.fatto && t.scadenza && t.scadenza.slice(0, 10) === k && categoriaVisibile(t.categoriaId)).sort(ordinaTask);
 }
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET = [['ripassi', 'Ripassi di oggi'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget() {
     const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
     for (const [w] of WIDGET)
         if (!ord.includes(w))
-            w === 'ripassi' ? ord.unshift(w) : ord.push(w); // v0.7: i ripassi in cima
+            (w === 'ripassi' || w === 'chiusura') ? ord.unshift(w) : ord.push(w); // v0.7: i ripassi in cima
     return ord.filter(w => !(i.widgetNascosti || []).includes(w));
 }
 let timerNotaGiorno = 0;
@@ -4240,6 +4313,7 @@ function vistaOggi() {
             case 'nota': return scheda('Nota del giorno', area);
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
             case 'ripassi': return widgetRipassi();
+            case 'chiusura': return widgetChiusura();
             case 'esami': return widgetEsami();
             case 'timer': return widgetTimer();
             case 'errori': return widgetErrori();
@@ -4559,7 +4633,7 @@ function sezioneAspetto(salva) {
 function sezioneLayout(salva) {
     const i = imp(), ord = (() => { const o = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w)); for (const [w] of WIDGET)
         if (!o.includes(w))
-            w === 'ripassi' ? o.unshift(w) : o.push(w); return o; })();
+            (w === 'ripassi' || w === 'chiusura') ? o.unshift(w) : o.push(w); return o; })();
     const nasc = new Set(i.widgetNascosti || []), tabN = new Set(i.tabNascoste || []);
     const sposta = (idx, d) => { const o = ord.slice(); const [x] = o.splice(idx, 1); o.splice(idx + d, 0, x); salva({ widget: o, preset: '' }); };
     return scheda('Layout', riga('Vista iniziale', selettore([['oggi', 'Oggi'], ['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese'], ['agenda', 'Agenda']], i.vistaIniziale, function () { salva({ vistaIniziale: this.value, preset: '' }); })), riga('Barra delle sezioni su PC', selettore([['auto', 'Laterale'], ['basso', 'In basso']], i.nav || 'auto', function () { salva({ nav: this.value, preset: '' }); })), h('div.gruppo-titolo', null, 'Riquadri di Oggi (ordine e visibilità)'), ord.map((w, idx) => h('div.widget-riga', null, h('span.nome', null, (WIDGET.find(x => x[0] === w) || [w, w])[1]), h('button.btn-ico', { 'aria-label': 'Su', disabled: idx === 0, onclick: () => sposta(idx, -1) }, '↑'), h('button.btn-ico', { 'aria-label': 'Giù', disabled: idx === ord.length - 1, onclick: () => sposta(idx, 1) }, '↓'), h('label.interruttore', { title: 'Mostra' }, h('input', { type: 'checkbox', checked: !nasc.has(w), onchange: (e) => { e.target.checked ? nasc.delete(w) : nasc.add(w); salva({ widgetNascosti: Array.from(nasc), preset: '' }); } }), h('span')))), h('div.gruppo-titolo', null, 'Sezioni nella barra'), [['cal', 'Calendario'], ['studio', 'Studio'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t), h('label.interruttore', null, h('input', { type: 'checkbox', checked: !tabN.has(s), onchange: (e) => { e.target.checked ? tabN.delete(s) : tabN.add(s); salva({ tabNascoste: Array.from(tabN), preset: '' }); } }), h('span')))));
@@ -4791,7 +4865,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.12.0';
+const VERSIONE = '0.13.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
