@@ -19,3 +19,5 @@ Una riga per scelta importante: data · decisione · motivo.
 - 2026-11-11 · Prova a freddo sulla prima scheda prioritaria dello step, risultato separato · effetto pretest (file 02 §4); non sporca punteggi e ripassi.
 - 2026-11-11 · «Studia ora»: ripassi al massimo ~40% della sessione, poi il nuovo · il nuovo resta la priorità prima dell'esame, il richiamo apre la sessione (memoria «tiepida»).
 - 2026-11-11 · Errori ricorrenti a livello di domanda, letti dalla sezione «Da rivedere» dei quiz (i file non cambiano); ricorrente = sbagliata ≥2 volte e ancora aperta · ripasso mirato prima delle simulazioni.
+- 2026-11-11 · Ottimizzazioni con cache invalidate da `Stato.ver` invece di aggiornamenti parziali del DOM · massimo guadagno con minimo rischio, `disegna()` resta semplice.
+- 2026-11-11 · Lapidi del registro notifiche rimosse dopo 7 giorni (anche quelle in arrivo dalla sync) · il registro è di servizio; i dati dell'utente mantengono le lapidi.

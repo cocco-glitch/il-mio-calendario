@@ -53,6 +53,8 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 
 Principi: `disegna()` ricostruisce la schermata a ogni modifica (semplice e sufficiente); `Stato.salva(r, true)` salva senza ridisegnare. Ogni salvataggio programma la sync Drive e lo specchio Calendar.
 
+**Cache (v0.17):** le letture costose (`Stato.tutti`, pacchetti, indici di sotto-step e schede, pagine, icone, formati di data) sono memorizzate e si invalidano da sole con `Stato.ver`, che cambia a ogni `salva`/`unisci`. Non modificare `rec` senza passare da `Stato.salva`/`unisci`, altrimenti le cache restano vecchie. Le lapidi del registro notifiche si rimuovono dopo 7 giorni (`Stato.pulisci`).
+
 ## Dati e sincronizzazione
 - Tutto è un **record** `{ id, type, updatedAt, deleted? }`. Tipi: `evento`, `task`, `nota`, `categoria`, `impostazioni`, `preset`, `pacchetto`, `progresso`, `spostamento`, `tabella`, `materia`, `sessione`, `esame`, `notifica` (registro ntfy), `memoria` (ripassi), `simulazione`, `giorno` (chiusura serale), `pretest`, `domanda`.
 - Eliminare = `deleted: true` (lapide). Unione = per record, vince `updatedAt` più alto.
