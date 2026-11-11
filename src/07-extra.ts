@@ -67,9 +67,9 @@ const Timer = (() => {
     const i = new Date(t.inizio);
     Stato.salva({ id: 'ses-' + uid(), type: 'sessione', updatedAt: 0, data: ymd(i), inizio: dtStr(i), minuti: Math.round(minuti), m: t.m, k: t.k, schedaId: t.schedaId, titolo: t.titolo } as Sessione);
   }
-  function avvia(o: { m?: string; k?: string; schedaId?: string; titolo?: string }): void {
+  function avvia(o: { m?: string; k?: string; schedaId?: string; titolo?: string; durata?: number }): void {
     const t = leggi(); if (t) registra(t, trascorsi(t) / 60);
-    scrivi({ inizio: Date.now(), durata: durate().studio, fase: 'studio', ...o });
+    scrivi({ inizio: Date.now(), fase: 'studio', ...o, durata: o.durata || durate().studio }); // v0.15: durata scelta da «Studia ora»
     avviso('▶ Timer avviato: ' + durate().studio + ' minuti' + (o.titolo ? ' · ' + o.titolo : ''));
     aggiorna(); disegna();
   }
