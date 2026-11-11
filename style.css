@@ -313,3 +313,8 @@ body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bo
 .gr-maniglia::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 18px; height: 3px; margin-left: -9px; border-radius: 2px; background: var(--c); opacity: .7; }
 /* v0.7 — probabilità di ricordare una scheda */
 .chip-ricordo { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid; border-radius: 999px; font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; }
+/* v0.11 — simulazione a tempo */
+.sim-orologio { font: 600 17px/1 -apple-system, sans-serif; font-variant-numeric: tabular-nums; padding: 4px 10px; border-radius: 999px; background: var(--sup2); }
+.sim-orologio.ultimi { background: var(--rosso); color: #fff; }
+.sim-barra { height: 4px; background: var(--sup2); flex: none; } .sim-riempi { height: 100%; width: 0; background: var(--accento); transition: width 1s linear; }
+@media (prefers-reduced-motion: reduce) { .sim-riempi { transition: none; } }

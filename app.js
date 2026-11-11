@@ -1134,6 +1134,12 @@ const Drive = (() => {
         const r = await api('files', { query: { q, fields: 'files(id,name,mimeType,webViewLink,modifiedTime)', orderBy: 'modifiedTime desc', pageSize: '40' } });
         return r.files || [];
     }
+    /** v0.11: cerca cartelle per nome (sola lettura). */
+    async function cercaCartelle(testo) {
+        const q = "trashed = false and mimeType = 'application/vnd.google-apps.folder' and name contains '" + testo.replace(/'/g, "\\'") + "'";
+        const r = await api('files', { query: { q, fields: 'files(id,name)', pageSize: '20' } });
+        return r.files || [];
+    }
     /** Esporta un Google Sheet (primo foglio) come CSV. */
     async function esportaCsv(id) { const r = await api('files/' + id + '/export', { query: { mimeType: 'text/csv' } }); return r.text(); }
     /** Mai eliminare: sposta nel cestino dell'app. */
@@ -1352,7 +1358,7 @@ const Drive = (() => {
         stato, ascolta(f) { ascoltatori.push(f); },
         sincronizza, programma, login, logout, precarica,
         caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
-        elencaTutti, esportaCsv, cerca,
+        elencaTutti, esportaCsv, cerca, cercaCartelle,
         get collegato() { return !!stato.email; },
         /** true se c'è un token valido adesso (senza aprire finestre). */
         get pronto() { return !!token && Date.now() < scadenzaToken; },
@@ -2001,8 +2007,8 @@ const Cattura = (() => {
     function inietta(html) { return /<\/body>/i.test(html) ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, SPIA + '</body>') : html + SPIA; }
     let ctx = null;
     let ascolto = false;
-    function osserva(frame, schedaId, titolo) {
-        ctx = { frame, schedaId, titolo };
+    function osserva(frame, schedaId, titolo, cb) {
+        ctx = { frame, schedaId, titolo, cb };
         if (!ascolto) {
             window.addEventListener('message', ricevi);
             ascolto = true;
@@ -2014,7 +2020,10 @@ const Cattura = (() => {
             return;
         if (typeof d.pct !== 'number' || d.pct < 0 || d.pct > 100)
             return;
-        salva(ctx.schedaId, d);
+        if (ctx.cb)
+            ctx.cb(d);
+        else
+            salva(ctx.schedaId, d);
     }
     /** Salva il risultato; restituisce la funzione per annullare. */
     function salva(id, d) {
@@ -2237,7 +2246,7 @@ function giorniA(data) { return Math.round((daYmd(data).getTime() - oggi().getTi
 function testoCountdown(d) { return d === 0 ? 'oggi!' : d === 1 ? 'domani' : d < 0 ? 'passato' : 'tra ' + d + ' giorni'; }
 function vistaEsami() {
     const esami = Stato.tutti('esame').sort((a, b) => a.data < b.data ? -1 : 1);
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, esami.length ? h('section.card', null, esami.map(e => {
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, sezioneSimulazioni(), esami.length ? h('section.card', null, esami.map(e => {
         const d = giorniA(e.data);
         return h('button.voce-lista' + (d < 0 ? '.passato' : ''), { onclick: () => editorEsame(e) }, h('span.esame-giorni', null, d >= 0 ? String(d) : '✓', h('small', null, d >= 0 ? (d === 1 ? 'giorno' : 'giorni') : '')), h('span.voce-corpo', null, h('span.voce-titolo', null, e.nome), h('span.voce-sotto', null, dataLunga(daYmd(e.data)) + (e.ora ? ' · ' + e.ora : '') + (e.materie && e.materie.length ? ' · ' + e.materie.map(nomeMateria).join(', ') : ''))));
     }))
@@ -2953,6 +2962,127 @@ function apriRipianifica() {
         } });
 }
 
+// 07-simulazioni.ts — Modalità simulazione d'esame (v0.11, tattica T14).
+//
+// Le schede di consolidamento/simulazione (31 domande, 50 minuti) stanno su Drive in una cartella
+// trovata per nome ("consolidamento" o "simulazion", modificabile salvando imp().cartellaSimulazioni).
+// La simulazione si apre a schermo intero con il conto alla rovescia (predefinito 50 min), lo schermo
+// resta acceso (Wake Lock, dove supportato), avvisi a 10 minuti dalla fine e allo scadere; il risultato
+// si legge in automatico (07-cattura) e si salva in un record 'simulazione'. I file non vengono toccati.
+const Simulazioni = (() => {
+    async function cartella() {
+        const i = imp();
+        if (i.cartellaSimulazioni)
+            return i.cartellaSimulazioni;
+        for (const t of ['consolidamento', 'simulazion', 'Simulazion']) {
+            const r = await Drive.cercaCartelle(t);
+            if (r.length) {
+                i.cartellaSimulazioni = r[0].id;
+                Stato.salva(i, true);
+                return r[0].id;
+            }
+        }
+        return null;
+    }
+    async function file() {
+        const c = await cartella();
+        if (!c)
+            return [];
+        return (await Drive.elencaTutti(c)).filter(f => /\.html?$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name, 'it', { numeric: true }));
+    }
+    const tutte = () => Stato.tutti('simulazione').sort((a, b) => (a.data + a.ora) < (b.data + b.ora) ? 1 : -1);
+    const minutiPredefiniti = () => imp().minutiSimulazione || 50;
+    return { file, tutte, minutiPredefiniti };
+})();
+/** Elenco dei file di simulazione da scegliere. */
+async function apriSimulazioni() {
+    if (serveGoogle())
+        return;
+    const corpo = h('div.modulo', null, h('div.vuoto.centro', null, 'Cerco le simulazioni su Drive…'));
+    const f = foglio({ titolo: 'Simulazione d\'esame', corpo });
+    try {
+        const lista = await Simulazioni.file();
+        svuota(corpo);
+        if (!lista.length) {
+            corpo.appendChild(h('div.vuoto', null, 'Non trovo la cartella delle simulazioni su Drive (nome con «consolidamento» o «simulazioni»).'));
+            return;
+        }
+        const fatte = Simulazioni.tutte();
+        corpo.append(h('div.tenue.piccolo', null, 'Condizioni d\'esame: ' + Simulazioni.minutiPredefiniti() + ' minuti, schermo intero, senza appunti. Attiva «Full immersion» sull\'iPhone per non ricevere notifiche.'), h('div.gruppo', null, lista.map(x => {
+            const prec = fatte.filter(s => s.fileId === x.id);
+            return h('button.voce-lista', { onclick: () => { f.chiudi(); avviaSimulazione(x.id, x.name.replace(/\.html?$/i, '')); } }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.name.replace(/\.html?$/i, '')), h('span.voce-sotto', null, prec.length ? 'Fatta ' + prec.length + (prec.length === 1 ? ' volta' : ' volte') + ' · ultima ' + (prec[0].pct != null ? prec[0].pct + '%' : '—') + ' il ' + prec[0].data.slice(8) + '/' + prec[0].data.slice(5, 7) : 'Mai fatta')), icona('dx', 18));
+        })));
+    }
+    catch (e) {
+        svuota(corpo);
+        corpo.appendChild(h('div.vuoto', null, String(e.message || e)));
+    }
+}
+/** Esegue una simulazione a tempo. */
+async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefiniti()) {
+    const inizio = Date.now(), fine = inizio + limite * 60000;
+    let lock = null, tick = 0, salvata = false, avvisato10 = false, scaduto = false;
+    const orologio = h('span.sim-orologio', { 'aria-live': 'off' }, limite + ':00');
+    const barra = h('div.sim-barra', null, h('div.sim-riempi'));
+    const v = visore('⏱ ' + nome, () => { clearInterval(tick); try {
+        lock && lock.release();
+    }
+    catch (_) { /* niente */ } });
+    v.barra.appendChild(orologio);
+    v.corpo.appendChild(h('div.vuoto.centro', null, 'Scarico la simulazione da Drive…'));
+    const aggiorna = () => {
+        const resta = Math.max(0, fine - Date.now()), m = Math.floor(resta / 60000), s = Math.floor(resta / 1000) % 60;
+        orologio.textContent = m + ':' + String(s).padStart(2, '0');
+        barra.firstChild.style.width = (100 - resta / (limite * 600)) + '%';
+        orologio.classList.toggle('ultimi', resta <= 10 * 60000);
+        if (!avvisato10 && resta <= 10 * 60000 && limite > 10) {
+            avvisato10 = true;
+            avviso('⏱ Mancano 10 minuti.', 6000);
+        }
+        if (!scaduto && resta === 0) {
+            scaduto = true;
+            avviso('⏰ Tempo scaduto: chiudi il quiz e guarda il risultato (come all\'esame, le domande senza risposta contano sbagliate).', 12000);
+        }
+    };
+    try {
+        let html = await Drive.scaricaTesto(fileId);
+        const toppa = '<script>try{window.localStorage.getItem("x")}catch(e){(function(){var m={};var s={getItem:function(k){return k in m?m[k]:null},setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}}};try{Object.defineProperty(window,"localStorage",{value:s});Object.defineProperty(window,"sessionStorage",{value:s})}catch(_){}})()}<\/script>';
+        html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, x => x + toppa) : toppa + html;
+        html = Cattura.inietta(html);
+        svuota(v.corpo);
+        const fr = h('iframe.visore-frame', { sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals', srcdoc: html, title: nome });
+        v.corpo.append(barra, fr);
+        try {
+            lock = await navigator.wakeLock?.request('screen');
+        }
+        catch (_) { /* non supportato */ }
+        tick = window.setInterval(aggiorna, 1000);
+        aggiorna();
+        Cattura.osserva(fr, 'sim:' + fileId, nome, d => {
+            if (d.errori) {
+                avviso('📝 Errori rifatti: ' + (d.giuste ?? '') + '/' + (d.totale ?? '') + ' (non cambia il risultato della simulazione)');
+                return;
+            }
+            const adesso = new Date(), minuti = Math.round((Date.now() - inizio) / 60000);
+            const rec = { id: 'sim-' + inizio, type: 'simulazione', updatedAt: 0, data: ymd(adesso), ora: hm(new Date(inizio)), fileId, nome,
+                pct: d.pct, giuste: d.giuste, totale: d.totale, deboli: d.livelli, debole: d.debole, minuti, limite };
+            Stato.salva(rec);
+            salvata = true;
+            clearInterval(tick);
+            avviso('✅ Simulazione salvata: ' + d.pct + '%' + (d.giuste != null ? ' (' + d.giuste + '/' + d.totale + ')' : '') + ' in ' + minuti + ' min' + (minuti > limite ? ' · fuori tempo di ' + (minuti - limite) + ' min' : '') + ' · tocca per annullare', 9000, () => { Stato.elimina(rec.id); avviso('Simulazione non salvata.'); });
+        });
+    }
+    catch (e) {
+        svuota(v.corpo);
+        v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e)));
+    }
+}
+/** Riquadro in Studio → Esami: storico e pulsante. */
+function sezioneSimulazioni() {
+    const s = Simulazioni.tutte();
+    return h('section.card', null, h('h2.card-titolo', null, 'Simulazioni a tempo'), h('div.bottoni', null, h('button.btn', { onclick: apriSimulazioni }, '▶ Nuova simulazione (' + Simulazioni.minutiPredefiniti() + ' min)')), s.length ? s.slice(0, 12).map(x => h('div.widget-riga', null, h('span.nome', null, x.nome, h('div.tenue.piccolo', null, x.data.slice(8) + '/' + x.data.slice(5, 7) + ' · ' + x.minuti + '/' + x.limite + ' min' + (x.debole ? ' · debole: ' + x.debole : ''))), h('b', { style: { fontVariantNumeric: 'tabular-nums' } }, x.pct != null ? x.pct + '%' : '—'))) : h('div.tenue.piccolo', null, 'Nessuna simulazione ancora. La prossima del piano: Simulazione 3, domenica 22/11.'));
+}
+
 // ============================================================
 // 07-studio.ts — Modulo STUDIO.
 // - Pacchetti studio (formato v1, docs/formato-studio.md): arrivano dal sito
@@ -3447,7 +3577,11 @@ function barra(fatte, tot, colore) {
 /** Riga "blocco studio" per Oggi / calendario. */
 function rigaStudio(x) {
     const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k);
-    return h('button.voce-lista', { onclick: () => { if (t) {
+    const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k); // v0.11: apre la modalità simulazione
+    return h('button.voce-lista', { onclick: () => { if (sim) {
+            apriSimulazioni();
+            return;
+        } if (t) {
             UI.studioSub = x.v.k;
             UI.studioVista = 'schede';
             UI.studioStep = t.pk.id;
@@ -3457,7 +3591,7 @@ function rigaStudio(x) {
             UI.studioVista = 'piano';
             UI.studioPiano = x.p.id;
             vai('studio');
-        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '')));
+        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
 function testoAvanzamento(k, p) {
@@ -4594,7 +4728,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.10.0';
+const VERSIONE = '0.11.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
