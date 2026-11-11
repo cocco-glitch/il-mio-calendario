@@ -2239,7 +2239,7 @@ function vistaStatistiche() {
             o[s.m || '?'] = (o[s.m || '?'] || 0) + s.minuti; return o; });
     const max = Math.max(30, ...perGiorno.map(o => Object.values(o).reduce((a, b) => a + b, 0)));
     const peggiore = righe.filter(r => r.rit > 0).sort((a, b) => b.rit - a.rit)[0];
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('h2.card-titolo', null, 'Tempo di studio'), h('div.numeri', null, numero(durata(minutiStudio(g, g)), 'oggi'), numero(durata(minutiStudio(piuGiorni(g, -6), g)), 'ultimi 7 giorni'), numero(durata(minutiStudio(piuGiorni(g, -29), g)), 'ultimi 30')), h('div.grafico', { role: 'img', 'aria-label': 'Minuti di studio negli ultimi 14 giorni' }, perGiorno.map((o, i) => h('div.colonna', { title: dataBreve(giorni[i]) + ': ' + durata(Object.values(o).reduce((a, b) => a + b, 0)) }, h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))), h('span', null, String(giorni[i].getDate()))))), ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')), peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null, righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)), h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')), barra(r.fatte, r.tot, coloreMateria(r.m)), h('div.tenue.piccolo', null, durata(r.min7) + ' negli ultimi 7 giorni · ' + r.err + ' da rifare' + (r.rit ? ' · ' + r.rit + ' step in ritardo' : '')))));
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('h2.card-titolo', null, 'Tempo di studio'), h('div.numeri', null, numero(durata(minutiStudio(g, g)), 'oggi'), numero(durata(minutiStudio(piuGiorni(g, -6), g)), 'ultimi 7 giorni'), numero(durata(minutiStudio(piuGiorni(g, -29), g)), 'ultimi 30')), h('div.grafico', { role: 'img', 'aria-label': 'Minuti di studio negli ultimi 14 giorni' }, perGiorno.map((o, i) => h('div.colonna', { title: dataBreve(giorni[i]) + ': ' + durata(Object.values(o).reduce((a, b) => a + b, 0)) }, h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))), h('span', null, String(giorni[i].getDate()))))), ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')), sezionePuntiDeboli(), sezioneSottostepDeboli(), peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null, righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)), h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')), barra(r.fatte, r.tot, coloreMateria(r.m)), h('div.tenue.piccolo', null, durata(r.min7) + ' negli ultimi 7 giorni · ' + r.err + ' da rifare' + (r.rit ? ' · ' + r.rit + ' step in ritardo' : '')))));
 }
 // ---------- Esami ----------
 function giorniA(data) { return Math.round((daYmd(data).getTime() - oggi().getTime()) / 86400000); }
@@ -2648,6 +2648,69 @@ function widgetRipassi() {
     return scheda('Ripassi di oggi', h('div.tenue.piccolo', null, r.oggi.length
         ? r.oggi.length + (r.oggi.length === 1 ? ' sotto-step' : ' sotto-step') + ' · circa ' + r.minuti + ' min. Rifai la scheda proposta (va bene anche «rifai solo gli errori») e scrivi il punteggio: l\'app decide quando riproporre il sotto-step.'
         : '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.'), r.oggi.map(riga), r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null, primo ? h('div.bottoni', null, h('button.btn', { onclick: () => apriScheda(primo.pk, primo.m, primo.micro, primo.s, true) }, '▶ Inizia')) : null);
+}
+
+// 07-progressi.ts — Punti deboli (v0.12, F6 ridotta). In Studio → Statistiche.
+//
+// 1) Per tipo di domanda (Sbarramento, Applicativo, Trabocchetto, Problema, Completamento…), per materia,
+//    sommando i risultati letti in automatico dai quiz (Progresso.deboli) e dalle simulazioni.
+// 2) Sotto-step più deboli: media dei punteggi delle prioritarie e probabilità di ricordarli oggi.
+function puntiDeboli() {
+    const acc = {};
+    let quiz = 0;
+    const somma = (g, l) => {
+        acc[g] = acc[g] || {};
+        for (const [tipo, ok, tot] of l) {
+            if (!tipo || !tot)
+                continue;
+            const r = acc[g][tipo] || (acc[g][tipo] = [0, 0]);
+            r[0] += ok;
+            r[1] += tot;
+        }
+    };
+    for (const p of Stato.tutti('progresso'))
+        if (p.deboli && p.deboli.length) {
+            quiz++;
+            somma(materiaDi(p.id.slice(5)) || '?', p.deboli);
+        }
+    for (const s of Stato.tutti('simulazione'))
+        if (s.deboli && s.deboli.length) {
+            quiz++;
+            somma('SIM', s.deboli);
+        }
+    const gruppi = Object.keys(acc).sort((a, b) => a === 'SIM' ? 1 : b === 'SIM' ? -1 : a.localeCompare(b)).map(g => ({
+        chiave: g, nome: g === 'SIM' ? 'Simulazioni' : nomeMateria(g), colore: g === 'SIM' ? 'var(--accento)' : coloreMateria(g),
+        righe: Object.entries(acc[g]).map(([tipo, [ok, tot]]) => ({ tipo, ok, tot })).sort((a, b) => a.ok / a.tot - b.ok / b.tot),
+    }));
+    return { gruppi, quiz };
+}
+function sezionePuntiDeboli() {
+    const { gruppi, quiz } = puntiDeboli();
+    const riga = (r, primo, colore) => {
+        const pc = Math.round(r.ok * 100 / r.tot);
+        return h('div.debole-riga', null, h('span.debole-tipo', null, r.tipo, primo && pc < 85 ? h('span.debole-tag', null, 'più debole') : null), h('span.debole-barra', null, h('span', { style: { width: pc + '%', background: pc < 70 ? coloreRicordo(0.6) : pc < 85 ? coloreRicordo(0.8) : colore } })), h('span.debole-n', null, pc + '%', h('small', null, ' ' + r.ok + '/' + r.tot)));
+    };
+    return h('section.card', null, h('h2.card-titolo', null, 'Punti deboli per tipo di domanda'), quiz ? h('div.tenue.piccolo', null, 'Da ' + quiz + (quiz === 1 ? ' quiz letto' : ' quiz letti') + ' in automatico. Dove la percentuale è bassa, allenati su quel tipo: rileggi la «Correzione» e la «Spiegazione» delle domande sbagliate.')
+        : h('div.tenue.piccolo', null, 'Si riempie da sola man mano che finisci i quiz dentro l\'app (i punteggi scritti a mano non contengono i tipi di domanda).'), gruppi.map(g => h('div.debole-gruppo', null, h('div.gruppo-titolo', { style: { color: g.colore } }, g.nome), g.righe.map((r, i) => riga(r, i === 0, g.colore)))));
+}
+function sezioneSottostepDeboli() {
+    const out = [];
+    for (const pk of Studio.pkStep())
+        for (const mat of pk.materie)
+            for (const sub of mat.sottostep) {
+                const pt = Studio.schedeDi(sub).filter(x => x.tipo === 'P').map(x => Studio.prog(x.id)).filter(p => p && p.fatta && p.punteggio != null).map(p => p.punteggio);
+                if (pt.length)
+                    out.push({ k: sub.k, titolo: sub.titolo, media: Math.round(pt.reduce((a, b) => a + b, 0) / pt.length), n: pt.length, r: Ripassi.ricordo(sub.k) });
+            }
+    if (!out.length)
+        return null;
+    out.sort((a, b) => a.media - b.media || (a.r ?? 1) - (b.r ?? 1));
+    return h('section.card', null, h('h2.card-titolo', null, 'Sotto-step più deboli'), h('div.tenue.piccolo', null, 'Media dei punteggi delle prioritarie fatte; 🧠 = probabilità di ricordarlo oggi.'), out.slice(0, 5).map(x => h('button.voce-lista', { onclick: () => { const t = Studio.trovaSotto(x.k); if (t) {
+            UI.studioStep = t.pk.id;
+            UI.studioSub = x.k;
+            UI.studioVista = 'schede';
+            disegna();
+        } } }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + x.titolo), h('span.voce-sotto', null, 'media ', h('b', { style: { color: coloreRicordo(x.media / 100) } }, x.media + '%'), ' su ' + x.n + (x.n === 1 ? ' scheda' : ' schede') + (x.r != null ? ' · 🧠 ' + Math.round(x.r * 100) + '%' : ''))), icona('dx', 18))));
 }
 
 // ============================================================
@@ -4728,7 +4791,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.11.0';
+const VERSIONE = '0.12.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);

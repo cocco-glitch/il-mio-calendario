@@ -318,3 +318,11 @@ body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bo
 .sim-orologio.ultimi { background: var(--rosso); color: #fff; }
 .sim-barra { height: 4px; background: var(--sup2); flex: none; } .sim-riempi { height: 100%; width: 0; background: var(--accento); transition: width 1s linear; }
 @media (prefers-reduced-motion: reduce) { .sim-riempi { transition: none; } }
+/* v0.12 — punti deboli */
+.debole-gruppo { margin-top: 6px; }
+.debole-riga { display: grid; grid-template-columns: 1fr 90px 74px; gap: 10px; align-items: center; padding: 6px 0; font-size: 14px; }
+.debole-tipo { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.debole-tag { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--rosso); color: #fff; }
+.debole-barra { height: 8px; border-radius: 4px; background: var(--sup2); overflow: hidden; display: block; }
+.debole-barra span { display: block; height: 100%; }
+.debole-n { text-align: right; font-variant-numeric: tabular-nums; } .debole-n small { color: var(--tenue); }
