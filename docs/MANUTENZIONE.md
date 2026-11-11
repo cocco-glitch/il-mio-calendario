@@ -39,6 +39,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 | 07-cattura | lettura del risultato dei quiz: `inietta()` aggiunge alla copia scaricata un osservatore (MutationObserver) che legge `.score .big`, `.score .pct`, `.lvrow`, `.weak`, `.stat` e manda `postMessage`; `salva()` con Annulla. Se il motore dei quiz cambia questi selettori, aggiornare la stringa SPIA (il file su Drive non si tocca mai) |
 | 07-ripianifica | step in ritardo del piano principale → giorni utili (esclusi SIM/VERIFICA/CHIUSURA/SPRINT/RIPOSO; Riserva max 2, altri max 3) con `Studio.sposta` |
 | 07-simulazioni | cartella trovata con `Drive.cercaCartelle` (salvata in `imp().cartellaSimulazioni`), timer con Wake Lock, risultato via `Cattura.osserva(…, callback)`, record `simulazione` |
+| 07-progressi | `puntiDeboli()` somma `Progresso.deboli` per materia e `Simulazione.deboli`; `sezioneSottostepDeboli()` (media prioritarie + ricordo FSRS) |
 | 07-extra | corsi creati dall'utente, registro errori, timer, statistiche, esami |
 | 07-rapido | aggiunta rapida in italiano (`interpreta()`) |
 | 07-studio | pacchetti studio, progressi, piani, syllabus, quiz in iframe, PDF (pdf.js + cache) |

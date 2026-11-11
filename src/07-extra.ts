@@ -157,6 +157,8 @@ function vistaStatistiche(): HTMLElement {
         h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))),
         h('span', null, String(giorni[i].getDate()))))),
       ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')),
+    sezionePuntiDeboli(),
+    sezioneSottostepDeboli(),
     peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null,
     righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)),
       h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')),
