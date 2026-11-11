@@ -1,0 +1,4 @@
+dist/
+build-tmp/
+test/*.png
+__pycache__/
