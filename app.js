@@ -2040,7 +2040,7 @@ const Cattura = (() => {
         }
         else {
             Studio.segna(id, { fatta: true, data: oggiK, punteggio: d.pct, deboli: d.livelli && d.livelli.length ? d.livelli : undefined });
-            testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (d.debole ? ' · punto debole: ' + d.debole : '');
+            testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
         }
         const annulla = () => {
             if (primaProg)
@@ -2498,6 +2498,67 @@ function editorSchedaPropria(pk0, mat0, sub0, s0) {
     if (!s0)
         setTimeout(() => { if (!document.activeElement || document.activeElement === document.body)
             titolo.focus(); }, 50);
+}
+
+// 07-freddo.ts — Prova a freddo (v0.14, tattica T6 "effetto pretest").
+//
+// Prima di studiare uno step nuovo (nessuna prioritaria fatta) si fa la PRIMA scheda prioritaria
+// senza aver letto niente. Il risultato NON è il punteggio della scheda, non entra nei ripassi né nelle
+// statistiche: si salva a parte (record 'pretest', id 'pre-<k>'). Provare a rispondere prima, anche
+// sbagliando, migliora quanto si impara dopo. Quando poi la stessa scheda si fa "sul serio", l'avviso
+// mostra il confronto (es. "prova a freddo 40% → 85%").
+const Freddo = {
+    rec(k) { const r = Stato.prendi('pre-' + k); return r && !r.deleted ? r : undefined; },
+    /** Lo step si presta alla prova a freddo: ha prioritarie e nessuna è ancora fatta. */
+    possibile(k) {
+        const t = Studio.trovaSotto(k);
+        if (!t)
+            return false;
+        const P = Studio.schedeDi(t.sub).filter(x => x.tipo === 'P');
+        return P.length > 0 && !P.some(x => Studio.fatta(x.id));
+    },
+    scheda(k) { const t = Studio.trovaSotto(k); return t ? Studio.schedeDi(t.sub).find(x => x.tipo === 'P') || null : null; },
+    /** Testo di confronto per l'avviso quando la scheda della prova a freddo viene fatta sul serio. */
+    confronto(schedaId, pct) {
+        const t = trovaScheda(schedaId);
+        const r = t ? Freddo.rec(t.k) : undefined;
+        if (!r || r.schedaId !== schedaId)
+            return '';
+        const d = pct - r.pct;
+        return ' · a freddo era ' + r.pct + '% (' + (d >= 0 ? '+' : '') + d + ')';
+    },
+};
+async function avviaProvaAFreddo(k) {
+    const t = Studio.trovaSotto(k), s = Freddo.scheda(k);
+    if (!t || !s)
+        return;
+    const micro = (t.sub.microstep.find(m => m.schede.some(x => x.id === s.id)) || { n: '' }).n;
+    const ok = await chiedi('Prova a freddo · ' + Studio.etichetta(k), [{ testo: 'Inizia la prova', valore: 'si' }], 'Fai la scheda «' + s.titolo + '» SENZA aver studiato: rispondi d\'istinto, anche a caso. Il risultato non conta e non cambia i tuoi punteggi. Serve a preparare il cervello: dopo, studiando, le risposte giuste si fissano meglio.');
+    if (!ok)
+        return;
+    apriQuiz(t.pk, t.mat.m, micro, s, d => {
+        if (d.errori)
+            return;
+        const r = { id: 'pre-' + k, type: 'pretest', updatedAt: 0, k, schedaId: s.id, data: ymd(new Date()), pct: d.pct, giuste: d.giuste, totale: d.totale };
+        Stato.salva(r);
+        avviso('🧊 Prova a freddo: ' + d.pct + '%. Non conta: ora studia lo step. Alla fine rifai questa scheda e guarda quanto sei migliorato.', 10000);
+    });
+}
+/** Pulsanti "Prova a freddo" per gli step di oggi non ancora iniziati (riquadro Studio di oggi). */
+function bottoniFreddo(voci) {
+    const ks = voci.filter(x => !x.v.speciale && x.p.modo !== 'raffinamento' && Freddo.possibile(x.v.k) && !Freddo.rec(x.v.k)).map(x => x.v.k);
+    if (!ks.length)
+        return null;
+    return h('div', null, h('div.tenue.piccolo', { style: { margin: '8px 0 4px' } }, 'Prima di leggere: 5–10 min a freddo sulla prima scheda (non conta, aiuta a ricordare).'), h('div.chips', null, ks.map(k => h('button.chip', { onclick: () => avviaProvaAFreddo(k) }, '🧊 Prova a freddo · ' + Studio.etichetta(k)))));
+}
+/** Riga nella scheda del sotto-step: pulsante o risultato. */
+function rigaFreddo(k) {
+    const r = Freddo.rec(k);
+    if (r)
+        return h('div.tenue.piccolo', null, '🧊 Prova a freddo del ' + r.data.slice(8) + '/' + r.data.slice(5, 7) + ': ' + r.pct + '%' + (r.giuste != null ? ' (' + r.giuste + '/' + r.totale + ')' : ''));
+    if (!Freddo.possibile(k))
+        return null;
+    return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaProvaAFreddo(k) }, '🧊 Prova a freddo (prima di studiare)'));
 }
 
 // 07-memoria.ts — Motore dei ripassi (F2): ripetizione spaziata con FSRS.
@@ -3484,7 +3545,7 @@ function serveGoogle() {
     return true;
 }
 /** Apre una mini-app quiz HTML dentro l'app, in un iframe isolato (sandbox). Il file su Drive non viene modificato. */
-async function apriQuiz(pk, m, micro, s) {
+async function apriQuiz(pk, m, micro, s, cb) {
     // Schede dei corsi propri: file qualsiasi (PDF → visore, HTML → iframe, altro → link)
     if (s.file && !(s.file.mime || '').includes('html') && !/\.html?$/i.test(s.file.nome)) {
         if (s.file.id && /pdf/i.test(s.file.mime || s.file.nome)) {
@@ -3506,7 +3567,10 @@ async function apriQuiz(pk, m, micro, s) {
     }
     if (serveGoogle())
         return;
-    const v = visore(micro + ' · scheda ' + s.k + '/' + s.n, () => apriScheda(pk, m, micro, s));
+    const v = visore((cb ? '🧊 ' : '') + micro + ' · scheda ' + s.k + '/' + s.n, () => { if (!cb)
+        apriScheda(pk, m, micro, s);
+    else
+        disegna(); });
     v.corpo.appendChild(h('div.vuoto.centro', null, 'Scarico il quiz da Drive…'));
     try {
         let html = await Drive.scaricaTesto(await Studio.idQuiz(pk, m, micro, s));
@@ -3517,7 +3581,7 @@ async function apriQuiz(pk, m, micro, s) {
         svuota(v.corpo);
         const fr = h('iframe.visore-frame', { sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals', srcdoc: html, title: s.titolo });
         v.corpo.appendChild(fr);
-        Cattura.osserva(fr, s.id, s.titolo);
+        Cattura.osserva(fr, s.id, s.titolo, cb);
     }
     catch (e) {
         svuota(v.corpo);
@@ -3805,7 +3869,7 @@ function bottoneDrive() {
 function vistaSottostep(pk, mat, sub) {
     const sch = Studio.schedeDi(sub), n = Studio.numeri(sch), col = coloreMateria(mat.m);
     const blocco = (eti, cls, k, f, pag) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? (mat.libro ? mat.libro + ': ' : '') + 'pp. ' + Studio.intervalli(pag) : '—'));
-    return h('div.pagina', null, h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo), h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n, chipRicordo(sub.k)), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo), h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null, barra(n.Pf, n.P, col), h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)), h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size)), h('div.bottoni', null, h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSchedaPropria(pk, mat, sub) }, '+ Aggiungi scheda') : null, !pk.risorse.libri[mat.m] ? null : (h('button.btn.neutro', { onclick: async (e) => {
+    return h('div.pagina', null, h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo), h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n, chipRicordo(sub.k)), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo), h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null, barra(n.Pf, n.P, col), h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)), h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size), rigaFreddo(sub.k)), h('div.bottoni', null, h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSchedaPropria(pk, mat, sub) }, '+ Aggiungi scheda') : null, !pk.risorse.libri[mat.m] ? null : (h('button.btn.neutro', { onclick: async (e) => {
             if (serveGoogle())
                 return;
             const b = e.currentTarget, ids = new Map();
@@ -4304,7 +4368,7 @@ function vistaOggi() {
             case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
             case 'studio': {
                 const st = Studio.vociDelGiorno(g);
-                return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.')) : null;
+                return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.'), bottoniFreddo(st)) : null;
             }
             case 'tabelle': {
                 const r = righeDelGiorno(g);
@@ -4865,7 +4929,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.13.0';
+const VERSIONE = '0.14.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
