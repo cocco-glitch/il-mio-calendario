@@ -2000,8 +2000,9 @@ const Cattura = (() => {
         + 'var big=document.querySelector(".score .big"),gm=big?/(\\d+)\\s*\\/\\s*(\\d+)/.exec(big.textContent):null;'
         + 'var liv=[].map.call(document.querySelectorAll(".lvrow"),function(r){var s=r.querySelector("span"),n=/(\\d+)\\s*\\/\\s*(\\d+)\\s*$/.exec(r.textContent.trim());return[s?s.textContent.trim():"",n?+n[1]:0,n?+n[2]:0]});'
         + 'var deb=null;[].forEach.call(document.querySelectorAll(".weak"),function(w){var t=w.textContent;if(/Punto debole:/.test(t))deb=t.replace(/^[\\s\\S]*Punto debole:\\s*/,"").replace(/\\s*\\([\\s\\S]*$/,"").trim()});'
+        + 'var sb=[];var rv=document.querySelector(".review");if(rv)[].forEach.call(rv.querySelectorAll("details"),function(d){var su=d.querySelector("summary"),ps=d.querySelectorAll(".inner p"),giu="",sp="";[].forEach.call(ps,function(p){var b=p.querySelector("b.r");if(b)giu=p.textContent.replace(/^\\s*Risposta corretta:\\s*/,"").trim();else if(!p.classList.contains("pair")&&!sp)sp=p.textContent.trim()});if(su)sb.push([su.textContent.trim().slice(0,400),giu.slice(0,200),sp.slice(0,400)])});'
         + 'var firma=m[1]+"|"+(gm?gm[0]:"")+"|"+retry;if(firma===inviato)return;inviato=firma;'
-        + 'parent.postMessage({imc:"quiz-risultato",pct:+m[1],giuste:gm?+gm[1]:null,totale:gm?+gm[2]:null,livelli:liv,debole:deb,errori:retry},"*")'
+        + 'parent.postMessage({imc:"quiz-risultato",pct:+m[1],giuste:gm?+gm[1]:null,totale:gm?+gm[2]:null,livelli:liv,debole:deb,errori:retry,sbagliate:sb},"*")'
         + '}catch(e){}}new MutationObserver(leggi).observe(document.documentElement,{childList:true,subtree:true,characterData:true})})();<\/script>';
     /** Aggiunge l'osservatore alla copia del quiz (in fondo al body). */
     function inietta(html) { return /<\/body>/i.test(html) ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, SPIA + '</body>') : html + SPIA; }
@@ -2032,6 +2033,7 @@ const Cattura = (() => {
         const t = trovaScheda(id), idMem = t ? 'mem-sub-' + t.k : '';
         const m0 = idMem ? Stato.prendi(idMem) : undefined, primaMem = m0 ? JSON.parse(JSON.stringify(m0)) : null;
         const quanto = d.giuste != null && d.totale != null ? d.giuste + '/' + d.totale : d.pct + '%';
+        const annullaDom = typeof Domande !== 'undefined' ? Domande.registra(id, t ? Studio.etichetta(t.k) + ' ' + t.micro + ' · ' + t.s.titolo : id, d) : () => { }; // v0.16
         let testo;
         if (d.errori) {
             const riga = 'Errori rifatti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
@@ -2043,6 +2045,7 @@ const Cattura = (() => {
             testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
         }
         const annulla = () => {
+            annullaDom();
             if (primaProg)
                 Stato.salva(primaProg);
             else
@@ -2134,6 +2137,77 @@ function sezioneSonno() {
     return h('section.card', null, h('h2.card-titolo', null, 'Sonno, concentrazione e risultati'), h('div.numeri', null, numero(pocoSonno != null ? pocoSonno + '%' : '—', 'con < 7 h di sonno'), numero(sonnoOk != null ? sonnoOk + '%' : '—', 'con ≥ 7 h')), h('div.numeri', null, numero(focusBasso != null ? focusBasso + '%' : '—', 'concentrazione 1–2'), numero(focusAlto != null ? focusAlto + '%' : '—', 'concentrazione 4–5')), h('div.tenue.piccolo', null, 'Media dei punteggi dei quiz fatti in quei giorni (' + giorni.length + ' giornate chiuse). È una correlazione sui tuoi dati, non una prova: più giornate chiudi, più è affidabile.'));
 }
 
+// 07-domande.ts — Errori ricorrenti, domanda per domanda (v0.16).
+//
+// L'osservatore dei quiz (07-cattura) legge dalla schermata finale la sezione «Da rivedere»: per ogni
+// domanda sbagliata testo, risposta corretta e spiegazione. Qui diventano record 'domanda'
+// (id 'dom-<hash scheda+testo>') con quante volte è stata sbagliata e com'è andata l'ultima volta.
+// - quiz intero: le domande già note di quella scheda che NON sono tra le sbagliate contano come giuste;
+// - «rifai solo gli errori»: aggiorna solo quelle ancora aperte;
+// - le prove a freddo non contano (lì sbagliare è normale).
+// In Studio → Errori: elenco con «mostra risposta» (prima prova a ricordare) e «la sapevo / non la sapevo».
+const Domande = (() => {
+    function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++)
+        h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+    const norm = (q) => q.replace(/\s+/g, ' ').trim().toLowerCase();
+    const tutte = () => Stato.tutti('domanda');
+    /** Registra l'esito di un quiz; restituisce la funzione per annullare. */
+    function registra(schedaId, titolo, d) {
+        const oggiK = ymd(new Date()), sb = d.sbagliate || [];
+        const mie = tutte().filter(x => x.schedaId === schedaId);
+        const prima = mie.map(x => JSON.parse(JSON.stringify(x))), nuove = [];
+        const sbagliateId = new Set();
+        for (const [q, giusta, spieg] of sb) {
+            if (!q)
+                continue;
+            const id = 'dom-' + hash(schedaId + '|' + norm(q));
+            sbagliateId.add(id);
+            const r = Stato.prendi(id);
+            if (r && !r.deleted)
+                Stato.salva(Object.assign(r, { volte: r.volte + 1, ultima: oggiK, esito: 'sbagliata', giusta: giusta || r.giusta, spieg: spieg || r.spieg }), true);
+            else {
+                nuove.push(id);
+                Stato.salva({ id, type: 'domanda', updatedAt: 0, schedaId, titolo, q, giusta, spieg: spieg || undefined, volte: 1, giuste: 0, ultima: oggiK, esito: 'sbagliata' }, true);
+            }
+        }
+        // Le domande note che stavolta non sono tra le sbagliate: giuste (nel ripasso errori, solo quelle aperte)
+        // (solo se il quiz ha mostrato «Da rivedere» o è tutto giusto: un formato diverso non deve «risolvere» nulla)
+        if (sb.length || d.pct === 100)
+            for (const r of mie) {
+                if (sbagliateId.has(r.id) || (d.errori && r.esito !== 'sbagliata'))
+                    continue;
+                Stato.salva(Object.assign(r, { giuste: r.giuste + 1, ultima: oggiK, esito: 'giusta' }), true);
+            }
+        Stato.notifica();
+        return () => { for (const r of prima)
+            Stato.salva(r, true); for (const id of nuove)
+            Stato.elimina(id); };
+    }
+    /** Aperte = ultimo esito sbagliato; ricorrenti = sbagliate almeno 2 volte e ancora aperte. */
+    const aperte = () => tutte().filter(x => x.esito === 'sbagliata');
+    const ricorrenti = () => aperte().filter(x => x.volte >= 2);
+    function segna(id, sapevo) {
+        const r = Stato.prendi(id);
+        if (!r)
+            return;
+        Stato.salva(Object.assign(r, sapevo ? { giuste: r.giuste + 1, esito: 'giusta' } : { volte: r.volte + 1, esito: 'sbagliata' }, { ultima: ymd(new Date()) }));
+    }
+    return { registra, aperte, ricorrenti, tutte, segna };
+})();
+function gruppoDomanda(x) { return x.schedaId.startsWith('sim:') ? 'Simulazioni' : nomeMateria(materiaDi(x.schedaId)); }
+/** Sezione in Studio → Errori. */
+function sezioneDomande() {
+    const filtro = UI.domFiltro || 'ricorrenti';
+    const elenco = (filtro === 'ricorrenti' ? Domande.ricorrenti() : filtro === 'aperte' ? Domande.aperte() : Domande.tutte().filter(x => x.esito === 'giusta'))
+        .sort((a, b) => b.volte - a.volte || (a.ultima < b.ultima ? 1 : -1));
+    const nR = Domande.ricorrenti().length, nA = Domande.aperte().length, nG = Domande.tutte().length - nA;
+    const voce = (x) => {
+        const risp = h('div.dom-risposta', { hidden: true }, h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'), x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null, x.esito === 'sbagliata' ? h('div.bottoni', null, h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'), h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);
+        return h('div.dom-voce', null, h('div.tenue.piccolo', null, gruppoDomanda(x) + ' · ' + x.titolo + ' · sbagliata ' + x.volte + (x.volte === 1 ? ' volta' : ' volte') + (x.giuste ? ' · giusta ' + x.giuste : '')), h('div.dom-q', null, x.q), h('button.btn-testo', { onclick: (e) => { risp.hidden = !risp.hidden; e.target.textContent = risp.hidden ? 'Prima prova a rispondere, poi mostra la risposta' : 'Nascondi'; } }, 'Prima prova a rispondere, poi mostra la risposta'), risp);
+    };
+    return h('section.card', null, h('h2.card-titolo', null, 'Domande sbagliate'), h('div.tenue.piccolo', null, 'Raccolte in automatico dai quiz fatti nell\'app (sezione «Da rivedere»). Ricorrenti = sbagliate almeno 2 volte: ripassale prima delle simulazioni.'), h('div.segmenti', null, h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR), h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA), h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)), elenco.length ? elenco.slice(0, 60).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'));
+}
+
 // ============================================================
 // 07-extra.ts — Studio "versatile":
 // - corsi di studio creati dall'utente (qualsiasi materia, esame, certificazione…)
@@ -2173,16 +2247,16 @@ function vistaErrori() {
             i.sogliaErrori = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 70));
             Stato.salva(i);
         } });
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, sezioneDomande(), h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
         const p = Studio.prog(x.s.id);
         return h('button.voce-lista', { onclick: () => apriScheda(x.pk, x.mat.m, x.mi.n, x.s) }, h('span.barra', { style: { background: coloreMateria(m) } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.mi.n + ' · ' + x.s.titolo), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (p.punteggio != null ? p.punteggio + '%' : 'segnata a mano') + (p.data ? ' · ' + fmt(daYmd(p.data), { day: 'numeric', month: 'short' }) : '') + (p.nota ? ' · ' + p.nota.slice(0, 60) : ''))));
     }))));
 }
 function widgetErrori() {
-    const n = tutteLeSchede().filter(x => daRifare(x.s.id)).length;
-    if (!n)
+    const n = tutteLeSchede().filter(x => daRifare(x.s.id)).length, nr = Domande.ricorrenti().length;
+    if (!n && !nr)
         return null;
-    return scheda('Schede da rifare', h('button.voce-lista', { onclick: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, n + (n === 1 ? ' scheda da rifare' : ' schede da rifare')), h('span.voce-sotto', null, 'Punteggio sotto il ' + sogliaErrori() + '% o segnate a mano')), icona('dx', 18)));
+    return scheda('Schede da rifare', h('button.voce-lista', { onclick: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, n + (n === 1 ? ' scheda da rifare' : ' schede da rifare') + (nr ? ' · ' + nr + (nr === 1 ? ' domanda ricorrente' : ' domande ricorrenti') : '')), h('span.voce-sotto', null, 'Punteggio sotto il ' + sogliaErrori() + '% o segnate a mano' + (nr ? '; domande sbagliate 2+ volte' : ''))), icona('dx', 18)));
 }
 const Timer = (() => {
     const CH = 'imc-timer';
@@ -3257,6 +3331,7 @@ async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefi
         aggiorna();
         Cattura.osserva(fr, 'sim:' + fileId, nome, d => {
             if (d.errori) {
+                Domande.registra('sim:' + fileId, '🧪 ' + nome, d);
                 avviso('📝 Errori rifatti: ' + (d.giuste ?? '') + '/' + (d.totale ?? '') + ' (non cambia il risultato della simulazione)');
                 return;
             }
@@ -3265,6 +3340,7 @@ async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefi
                 pct: d.pct, giuste: d.giuste, totale: d.totale, deboli: d.livelli, debole: d.debole, minuti, limite };
             Stato.salva(rec);
             salvata = true;
+            Domande.registra('sim:' + fileId, '🧪 ' + nome, d); // v0.16: domande sbagliate della simulazione
             clearInterval(tick);
             avviso('✅ Simulazione salvata: ' + d.pct + '%' + (d.giuste != null ? ' (' + d.giuste + '/' + d.totale + ')' : '') + ' in ' + minuti + ' min' + (minuti > limite ? ' · fuori tempo di ' + (minuti - limite) + ' min' : '') + ' · tocca per annullare', 9000, () => { Stato.elimina(rec.id); avviso('Simulazione non salvata.'); });
         });
@@ -5075,7 +5151,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.15.0';
+const VERSIONE = '0.16.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
