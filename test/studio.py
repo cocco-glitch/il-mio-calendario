@@ -82,9 +82,9 @@ with sync_playwright() as p:
     f11 = pg.evaluate("(() => { const n = Studio.numeri(Studio.schedeDi(Studio.trovaSotto('F1.1').sub)); return [n.P, n.R, n.pagP.size, n.pagR.size, n.pagT.size, Studio.intervalli(n.pagT)]; })()")
     ok(f11[:5] == [9, 14, 5, 10, 10], 'Fisica 1.1 con appendice A1-A6: %s' % f11)
     # piano di raffinamento: 12/12 = Chi 1.3, Bio 1.3, Fis 2.1
-    r = pg.evaluate("Studio.vociDelGiorno(daYmd('2026-12-12')).map(x => x.p.id + ':' + x.v.k)")
-    ok(r == ['piano-raffinamento:C1.3', 'piano-raffinamento:B1.3', 'piano-raffinamento:F2.1'], 'raffinamento 12/12: %s' % r)
-    ok(pg.evaluate("Studio.vociDelGiorno(daYmd('2027-01-10'))[0].v.t") == 'Riposo pre-appello', 'raffinamento fino al 10/01')
+    r = pg.evaluate("Studio.vociDelGiorno(daYmd('2026-12-13')).map(x => x.p.id + ':' + x.v.k)")
+    ok(r == ['piano-raffinamento:C1.3', 'piano-raffinamento:B1.3', 'piano-raffinamento:F2.1'], 'raffinamento 13/12: %s' % r)
+    ok(pg.evaluate("Studio.vociDelGiorno(daYmd('2027-01-09'))[0].v.t") == 'Riposo pre-appello' and pg.evaluate("Stato.tutti('esame').map(e => e.data).sort()") == ['2026-12-10', '2027-01-10'], 'raffinamento fino al 09/01, appelli 10/12 e 10/01 creati')
     ok(pg.evaluate("Studio.inRitardo().every(v => !/^R\\d/.test(v.k))"), 'il raffinamento non conta come ritardo adesso')
     # copertura
     ok(pg.evaluate("Studio.pkPiano().copertura.length") == 124, '124 argomenti del syllabus')

@@ -56,7 +56,7 @@ with sync_playwright() as p:
     # --- esami
     pg.click('.segmenti >> text=Esami'); pg.click('text=+ Aggiungi esame'); pg.fill('.foglio .titolo-grande', 'Primo appello'); pg.fill('.foglio input[type=date]', '2026-12-10'); pg.click('.foglio-testa >> text=Salva')
     pg.click('.tabbar >> text=Oggi'); txt = pg.inner_text('.pagina')
-    ok('PROSSIMI ESAMI' in txt.upper() and '28' in txt, 'Oggi: conto alla rovescia 28 giorni')
+    ok('PROSSIMI ESAMI' in txt.upper() and '28' in txt and 'Primo appello' in txt, 'Oggi: conto alla rovescia 28 giorni')
     ok(any('Primo appello' in x for x in pg.evaluate("Studio.vociDelGiorno(daYmd('2026-12-10')).map(x => x.v.t)")), 'esame nel calendario')
     pg.screenshot(path='test/43-oggi.png', full_page=True)
     # --- trascinamento (mouse) nella vista Giorno

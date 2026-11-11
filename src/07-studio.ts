@@ -78,6 +78,8 @@ const Studio = (() => {
     // mai sostituire un pacchetto con una versione più vecchia (es. sito vs Drive)
     if (mio && !mio.deleted && mio.contenuto && String(mio.contenuto.aggiornato || '') > String(c.aggiornato || '')) return false;
     Stato.salva({ id, type: 'pacchetto', updatedAt: 0, contenuto: c });
+    // esami indicati dal pacchetto: creati una volta sola (poi li gestisce l'utente)
+    for (const e of c.esami || []) if (e && e.id && !Stato.rec.has(e.id)) Stato.salva({ id: e.id, type: 'esame', updatedAt: 0, nome: e.nome, data: e.data, ora: e.ora });
     return true;
   }
   /** Pacchetti distribuiti col sito (base di partenza). */

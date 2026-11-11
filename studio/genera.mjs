@@ -90,6 +90,8 @@ const piano = { formato: 'pacchetto-studio', versione: 1, tipo: 'piano', id: 'pi
   g('12-08', 0, [s('SIM5', 'Simulazione 5', 'Maxi simulazione globale a tempo.')]),
   g('12-09', 0, [s('RIPOSO', 'Riposo', 'Defaticamento pre-esame.')]),
 ] };
+// Esami: l'app crea i record 'esame' (conto alla rovescia) se non esistono già.
+piano.esami = [{ id: 'esame-appello-1', nome: 'Primo appello semestre filtro', data: '2026-12-10' }, { id: 'esame-appello-2', nome: 'Secondo appello semestre filtro', data: '2027-01-10' }];
 // Copertura del syllabus ufficiale (dal piano): m, ud, argomento, stato (E = schede esistenti, I = integrazione, N = da creare), step, quando.
 const COP = `
 C|UD1|Atomo, numero atomico/massa, isotopi, cenni NMR|E|1.1|Dom 25/10
@@ -227,18 +229,19 @@ const TS = { 'C1.1': 'Atomo, isotopi, orbitali e configurazione elettronica', 'B
   'C1.2': 'Tavola periodica, proprietà periodiche, numero di ossidazione e nomenclatura', 'B1.2': 'Amminoacidi, proteine ed enzimi', 'F1.2': 'Vettori, trigonometria, prodotto scalare e vettoriale',
   'C1.3': 'Legame chimico, ibridazione, geometria e interazioni deboli', 'B1.3': 'Acidi nucleici, cromatina e virus', 'F2.1': 'Cinematica', 'C2.1': 'Stati della materia e gas', 'B2.1': 'La cellula: procarioti, eucarioti, membrane, organelli' };
 const tt = k => TS[k] || T[k];
-const RAF = [['12-10', 'C1.1 B1.1 F1.1'], ['12-11', 'C1.2 B1.2 F1.2'], ['12-12', 'C1.3 B1.3 F2.1'], ['12-13', 'C2.1 B2.1 F2.2'], ['12-14', 'C2.2 B2.2 F2.3'], ['12-15', 'C2.3 B2.3 F2.4'],
-  ['12-16', 'C3.1 B3.1 F3.1'], ['12-17', 'C3.2 B3.2 F3.2'], ['12-18', 'C3.3 B3.3 F3.3'], ['12-19', 'C4.1 B3.4 F3.4'], ['12-20', 'C4.2 B4.1 F3.5'], ['12-21', 'C4.3 B4.2 F4.1'],
-  ['12-22', 'C5.1 B4.3 F4.2'], ['12-23', 'C5.2 B5.1 F4.3'], ['12-24', 'C5.3 B6.1 F4.4'], ['12-25', 'B6.2']];
-const SPEC = [['12-26', 'Secondo giro Chimica', 'Errori ricorrenti, formule e calcoli (moli, gas, pH, tamponi, Nernst).'], ['12-27', 'Secondo giro Chimica', 'Organica e biomolecole (stereochimica, gruppi funzionali, meccanismi).'],
+// Appelli: 10/12/2026 e 10/01/2027 (date date dall'utente l'11/11). Il raffinamento parte il giorno dopo il primo appello.
+const RAF = [['12-11', 'C1.1 B1.1 F1.1'], ['12-12', 'C1.2 B1.2 F1.2'], ['12-13', 'C1.3 B1.3 F2.1'], ['12-14', 'C2.1 B2.1 F2.2'], ['12-15', 'C2.2 B2.2 F2.3'], ['12-16', 'C2.3 B2.3 F2.4'],
+  ['12-17', 'C3.1 B3.1 F3.1'], ['12-18', 'C3.2 B3.2 F3.2'], ['12-19', 'C3.3 B3.3 F3.3'], ['12-20', 'C4.1 B3.4 F3.4'], ['12-21', 'C4.2 B4.1 F3.5'], ['12-22', 'C4.3 B4.2 F4.1'],
+  ['12-23', 'C5.1 B4.3 F4.2'], ['12-24', 'C5.2 B5.1 F4.3'], ['12-25', 'C5.3 B6.1 F4.4'], ['12-26', 'B6.2']];
+const SPEC = [['12-27', 'Secondo giro Chimica', 'Errori ricorrenti e calcoli (moli, gas, pH, tamponi, Nernst) + organica e biomolecole.'],
   ['12-28', 'Secondo giro Biologia', 'Genetica molecolare (replicazione, trascrizione, traduzione, controllo).'], ['12-29', 'Secondo giro Biologia', 'Cellula, traffico, segnalazione, ciclo cellulare, genetica mendeliana.'],
   ['12-30', 'Secondo giro Fisica', 'Meccanica, fluidi e termodinamica (problemi).'], ['12-31', 'Secondo giro Fisica', 'Elettromagnetismo, onde, radiazioni (problemi). Giorno più leggero.'],
   ['01-01', 'Simulazione globale 1', 'A tempo.'], ['01-02', 'Revisione simulazione 1', 'Rifai le schede sbagliate.'], ['01-03', 'Simulazione globale 2', 'A tempo.'], ['01-04', 'Revisione simulazione 2', 'Rifai le schede sbagliate.'],
   ['01-05', 'Sprint punti deboli', 'Le tre materie, solo ciò che è ancora sbagliato.'], ['01-06', 'Simulazione globale 3', 'A tempo.'], ['01-07', 'Revisione simulazione 3', 'Rifai le schede sbagliate.'],
-  ['01-08', 'Ripasso formule e schemi', 'Tabelle di Chimica, Biologia, Fisica.'], ['01-09', 'Ripasso leggero', ''], ['01-10', 'Riposo pre-appello', '']];
+  ['01-08', 'Ripasso formule e schemi', 'Tabelle di Chimica, Biologia, Fisica. Ripasso leggero.'], ['01-09', 'Riposo pre-appello', 'Defaticamento: niente teoria nuova.']];
 let ng = 0;
-const raff = { formato: 'pacchetto-studio', versione: 1, tipo: 'piano', id: 'piano-raffinamento', modo: 'raffinamento', titolo: 'Piano di raffinamento 10/12 → 10/01', aggiornato: OGGI, giorniTeoria: 32,
-  nota: "Fase 1 · PRIORITÀ: rifai le prioritarie sbagliate e rileggi le pagine. Fase 2 · RAFFINA: schede di raffinamento. Le date degli appelli non le conosco: dimmele e sposto simulazioni e riposo.",
+const raff = { formato: 'pacchetto-studio', versione: 1, tipo: 'piano', id: 'piano-raffinamento', modo: 'raffinamento', titolo: 'Piano di raffinamento 11/12 → 09/01', aggiornato: OGGI, giorniTeoria: 30,
+  nota: 'Tra il primo appello (10/12) e il secondo (10/01). Fase 1 · PRIORITÀ: rifai le schede da rifare e rileggi le pagine. Fase 2 · RAFFINA: schede di raffinamento.',
   giorni: [
     ...RAF.map(([d, ks]) => ({ data: '2026-' + d, n: ++ng, voci: ks.split(' ').map(k => ({ k, t: tt(k) })) })),
     ...SPEC.map(([d, t, desc], i) => ({ data: (d.startsWith('01') ? '2027-' : '2026-') + d, n: ++ng, voci: [{ k: 'R' + i, t, d: desc, speciale: true }] })),
