@@ -102,7 +102,7 @@ function apriNuovaTabella(): void {
 async function collegaSheet(t: Tabella, importa: boolean): Promise<void> {
   if (serveGoogle()) return;
   try {
-    const [d] = await Drive.scegliConPicker({ mime: 'application/vnd.google-apps.spreadsheet' });
+    const [d] = await scegliFileDrive({ mime: 'application/vnd.google-apps.spreadsheet', titolo: 'Scegli un Google Sheet' });
     if (!d) return;
     t.sheet = { id: d.id, nome: d.name, url: d.url || 'https://docs.google.com/spreadsheets/d/' + d.id };
     if (importa || (await chiedi('Importare le righe?', [{ testo: 'Sì, importa le righe', valore: 'si' }, { testo: 'No, solo collegamento', valore: 'no' }], d.name)) === 'si') {
@@ -147,7 +147,7 @@ function cella(t: Tabella, r: Riga, col: Colonna): HTMLElement {
       box.appendChild(h('button.btn-testo', { onclick: async () => {
         const s = await chiedi(col.nome, [{ testo: 'Scegli file dal Drive', valore: 'drive' }, { testo: 'Incolla un link web', valore: 'web' }].concat(url ? [{ testo: 'Togli il link', valore: 'via' }] : []));
         if (s === 'via') { salva(''); Stato.notifica(); }
-        else if (s === 'drive') { if (serveGoogle()) return; try { const [d] = await Drive.scegliConPicker({}); if (d) { salva({ nome: d.name, url: d.url, driveId: d.id }); Stato.notifica(); } } catch (e: any) { avviso(String(e.message || e)); } }
+        else if (s === 'drive') { if (serveGoogle()) return; try { const [d] = await scegliFileDrive({}); if (d) { salva({ nome: d.name, url: d.url, driveId: d.id }); Stato.notifica(); } } catch (e: any) { avviso(String(e.message || e)); } }
         else if (s === 'web') {
           const inp = h('input', { type: 'url', placeholder: 'https://…', value: typeof v === 'string' ? v : '' }) as HTMLInputElement;
           foglio({ titolo: 'Link', corpo: h('div.modulo', null, h('div.gruppo', null, riga('Indirizzo', inp))), salva: () => { const u = inp.value.trim(); salva(u ? (/^https?:\/\//.test(u) ? u : 'https://' + u) : ''); Stato.notifica(); } });

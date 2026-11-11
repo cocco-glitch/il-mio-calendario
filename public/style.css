@@ -269,3 +269,6 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .tab .td-numero .cella { min-width: 80px; } .tab .td-spunta { text-align: center; }
 .tab .cella:focus, .tab select:focus { background: var(--sup2); }
 .cella-link { display: flex; align-items: center; gap: 4px; white-space: nowrap; } .cella-link a { color: var(--accento); max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.lista-file { display: flex; flex-direction: column; background: var(--sup); border-radius: var(--raggio); padding: 0 14px; }
+.voce-lista.scelto { background: color-mix(in srgb, var(--accento) 14%, transparent); }
+.voce-lista.scelto .voce-titolo::before { content: '✓ '; color: var(--accento); }

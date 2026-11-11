@@ -24,6 +24,7 @@ window.fetch = async (url, opz = {}) => {
   const q = u.searchParams.get('q') || '';
   if (q.includes('1U8XHeco0XMOGdOs78YVDnTn4J6r12F2P')) return j({ files: [{ id: 'QZ1', name: '2.2.4 Problemi: calcolo del calore nei cambiamenti di fase (scheda 2 di 3).html' }, { id: 'QZx', name: '2.2.4 Altro (scheda 1 di 3).html' }] });
   if (u.pathname.endsWith('/export')) return new Response('Argomento,Data,Fatto\\nOsmosi,12/11/2026,si\\nGas,13/11/2026,no', { headers: { 'content-type': 'text/csv' } });
+  if (q.includes("mimeType = 'application/vnd.google-apps.spreadsheet'")) return j({ files: [{ id: 'S1', name: 'Errori quiz', mimeType: 'application/vnd.google-apps.spreadsheet', webViewLink: 'https://docs.google.com/x', modifiedTime: '2026-11-10T10:00:00Z' }] });
   if (q.includes('1qdrWXSEUeP9DEBiIP6Twq96oxqoEWUtW')) return j({ files: [{ id: 'PDF421', name: '421-560.pdf' }] });
   return j({ files: [] });
 };
@@ -101,6 +102,10 @@ with sync_playwright() as p:
     pg.evaluate("(async () => { const t = Stato.tutti('tabella')[0]; importaRighe(t, csvRighe(await Drive.esportaCsv('S1'))); Stato.salva(t); })()"); pg.wait_for_timeout(300)
     ok(pg.evaluate("Stato.tutti('tabella')[0].righe.length") == 4 and pg.evaluate("righeDelGiorno(daYmd('2026-11-13')).length") == 1, 'import da Google Sheet (CSV) con date italiane')
     pg.screenshot(path='test/27-tabella.png', full_page=True)
+    # collegare un Google Sheet dal selettore interno (senza Picker / chiave API)
+    pg.evaluate("void collegaSheet(Stato.tutti('tabella')[0], false)"); pg.wait_for_selector('.lista-file .voce-lista'); pg.screenshot(path='test/28-scegli-sheet.png')
+    pg.click('.lista-file .voce-lista'); pg.click('.dialogo >> text=No, solo collegamento'); pg.wait_for_timeout(300)
+    ok(pg.evaluate("Stato.tutti('tabella')[0].sheet && Stato.tutti('tabella')[0].sheet.id") == 'S1', 'Google Sheet collegato senza chiave API')
     # cache PDF: la seconda apertura non riscarica
     r = pg.evaluate("""(async () => { let n = 0; const f = window.fetch; window.fetch = (u, o) => { if (String(u).includes('PDFX')) n++; return f(u, o); };
       const a = await PdfCache.prendi('PDFX'); const b = await PdfCache.prendi('PDFX'); return [n, a.length === b.length && a.length > 0, await PdfCache.presente('PDFX')]; })()""")

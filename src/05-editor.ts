@@ -112,8 +112,9 @@ function apriEvento(esistente?: Evento, occ?: Occ, preset?: { inizio: Date; tutt
   } }) as HTMLInputElement;
   const btnCarica = h('button.btn.neutro', { type: 'button', onclick: () => fileInput.click() }, 'Carica file');
   const btnCollega = h('button.btn.neutro', { type: 'button', onclick: async () => {
+    if (!Drive.pronto) { Drive.login(); avviso('Accedi a Google, poi tocca di nuovo.'); return; }
     try {
-      for (const d of await Drive.scegliConPicker({ multi: true })) allegati.push({ id: uid(), nome: d.name, driveId: d.id, mime: d.mimeType, url: d.url });
+      for (const d of await scegliFileDrive({ multi: true, titolo: 'Collega file dal Drive' })) allegati.push({ id: uid(), nome: d.name, driveId: d.id, mime: d.mimeType, url: d.url });
       disegnaAll();
     } catch (e: any) { avviso(String(e.message || e), 6000); }
   } }, 'Collega da Drive');

@@ -158,6 +158,14 @@ const Drive = (() => {
     } while (pageToken);
     return out;
   }
+  /** Cerca file nel Drive (sola lettura): per nome, opzionalmente per tipo. Più recenti prima. */
+  async function cerca(testo: string, mime?: string): Promise<{ id: string; name: string; mimeType: string; webViewLink: string; modifiedTime: string }[]> {
+    let q = "trashed = false and mimeType != 'application/vnd.google-apps.folder'";
+    if (mime) q += " and mimeType = '" + mime + "'";
+    if (testo.trim()) q += " and name contains '" + testo.trim().replace(/\\/g, '').replace(/'/g, "\\'") + "'";
+    const r = await api('files', { query: { q, fields: 'files(id,name,mimeType,webViewLink,modifiedTime)', orderBy: 'modifiedTime desc', pageSize: '40' } });
+    return r.files || [];
+  }
   /** Esporta un Google Sheet (primo foglio) come CSV. */
   async function esportaCsv(id: string): Promise<string> { const r: Response = await api('files/' + id + '/export', { query: { mimeType: 'text/csv' } }); return r.text(); }
   /** Mai eliminare: sposta nel cestino dell'app. */
@@ -306,7 +314,7 @@ const Drive = (() => {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
-    elencaTutti, esportaCsv,
+    elencaTutti, esportaCsv, cerca,
     get collegato() { return !!stato.email; },
     /** true se c'è un token valido adesso (senza aprire finestre). */
     get pronto() { return !!token && Date.now() < scadenzaToken; },
@@ -330,4 +338,42 @@ function descrSync(): { testo: string; cls: string } {
     case 'offline': return { testo: 'Offline · modifiche in coda', cls: 'sync-attesa' };
     default: return { testo: 'Errore sync: ' + s.messaggio, cls: 'sync-errore' };
   }
+}
+
+/**
+ * Selettore di file del Drive dentro l'app (sostituisce il Google Picker, che richiede la chiave API).
+ * Usa solo il login: cerca per nome tra i tuoi file. Restituisce i file scelti (vuoto se annulli).
+ */
+function scegliFileDrive(opz: { mime?: string; multi?: boolean; titolo?: string } = {}): Promise<{ id: string; name: string; mimeType: string; url: string }[]> {
+  return new Promise(ok => {
+    const scelti = new Map<string, { id: string; name: string; mimeType: string; url: string }>();
+    const lista = h('div.lista-file');
+    const campo = h('input.rapido', { type: 'search', placeholder: 'Cerca per nome…', oninput: () => { clearTimeout(timer); timer = window.setTimeout(carica, 350); } }) as HTMLInputElement;
+    let timer = 0, giro = 0, finito = false;
+    const fine = (v: { id: string; name: string; mimeType: string; url: string }[]) => { if (finito) return; finito = true; ok(v); };
+    async function carica(): Promise<void> {
+      const mio = ++giro; svuota(lista); lista.appendChild(h('div.vuoto', null, 'Cerco…'));
+      try {
+        const f = await Drive.cerca(campo.value, opz.mime); if (mio !== giro) return;
+        svuota(lista);
+        if (!f.length) lista.appendChild(h('div.vuoto', null, 'Nessun file trovato.'));
+        for (const x of f) {
+          const v = { id: x.id, name: x.name, mimeType: x.mimeType, url: x.webViewLink || 'https://drive.google.com/file/d/' + x.id + '/view' };
+          const el = h('button.voce-lista' + (scelti.has(x.id) ? '.scelto' : ''), { onclick: () => {
+            if (!opz.multi) { fs.chiudi(); fine([v]); return; }
+            if (scelti.has(x.id)) scelti.delete(x.id); else scelti.set(x.id, v);
+            el.classList.toggle('scelto', scelti.has(x.id));
+          } }, h('span.voce-corpo', null, h('span.voce-titolo', null, x.name), h('span.voce-sotto', null, fmt(new Date(x.modifiedTime), { day: 'numeric', month: 'short', year: 'numeric' }))));
+          lista.appendChild(el);
+        }
+      } catch (e: any) { svuota(lista); lista.appendChild(h('div.vuoto', null, String(e.message || e))); }
+    }
+    const fs = foglio({ titolo: opz.titolo || 'Scegli dal Drive', corpo: h('div.modulo', null, campo, lista),
+      etichettaSalva: opz.multi ? 'Aggiungi' : undefined,
+      salva: opz.multi ? () => { fine(Array.from(scelti.values())); } : undefined });
+    // chiusura con Annulla / tocco fuori: risolvo con vuoto
+    const oss = new MutationObserver(() => { if (!document.body.contains(lista)) { oss.disconnect(); fine([]); } });
+    oss.observe(document.body, { childList: true });
+    carica(); setTimeout(() => campo.focus(), 50);
+  });
 }
