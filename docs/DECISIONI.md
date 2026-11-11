@@ -11,3 +11,5 @@ Una riga per scelta importante: data · decisione · motivo.
 - 2026-11-11 · Ripassi per SOTTO-STEP, non per scheda · per scheda ~150 h prima dell'esame (coda infinita), per sotto-step ~20 h; si propone una scheda prioritaria a rotazione, la più debole.
 - 2026-11-11 · Data di apprendimento = giorno del piano se precedente all'ultima spunta · le 89 schede erano state segnate tutte l'11/11 ma fatte prima; i progressi dell'utente NON vengono modificati.
 - 2026-11-11 · Ripasso aperto senza punteggio non conta; correzione nello stesso giorno ricalcola dallo stato precedente.
+- 2026-11-11 · F3 ridotta: risultato dei quiz salvato in automatico con «tocca per annullare» (8 s) · scelta dell'utente.
+- 2026-11-11 · «Rifai solo gli errori» non cambia il punteggio, va in nota; si salvano i tipi di domanda (`deboli`) per le statistiche future · scelta dell'utente.

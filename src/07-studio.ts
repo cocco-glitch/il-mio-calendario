@@ -22,7 +22,9 @@ interface Copertura { m: string; ud: string; a: string; stato: 'E' | 'I' | 'N'; 
 interface PkPiano { tipo: 'piano'; id: string; modo?: 'raffinamento'; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; copertura?: Copertura[]; }
 /** Una voce del piano nel giorno in cui cade (tenendo conto degli spostamenti). */
 interface VoceGiorno { v: VocePiano; g: GiornoPiano; spostata: boolean; p: PkPiano; }
-interface Progresso extends Rec { type: 'progresso'; fatta: boolean; data?: string; punteggio?: number; nota?: string; daRifare?: boolean; }
+interface Progresso extends Rec { type: 'progresso'; fatta: boolean; data?: string; punteggio?: number; nota?: string; daRifare?: boolean;
+  deboli?: [string, number, number][];   // v0.9: per tipo di domanda [tipo, giuste, totale], letto dal quiz
+}
 
 // ---------- Materie (generiche) ----------
 // Una materia ha un CODICE di lettere maiuscole (C, B, F, ANA, STAT…). Le chiavi dei sotto-step sono
@@ -227,8 +229,11 @@ async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS): Promi
     // Nell'iframe isolato localStorage non esiste: ne fornisco uno in memoria, solo a schermo.
     const toppa = '<script>try{window.localStorage.getItem("x")}catch(e){(function(){var m={};var s={getItem:function(k){return k in m?m[k]:null},setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}}};try{Object.defineProperty(window,"localStorage",{value:s});Object.defineProperty(window,"sessionStorage",{value:s})}catch(_){}})()}<\/script>';
     html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, x => x + toppa) : html.replace(/<html[^>]*>/i, x => x + toppa);
+    html = Cattura.inietta(html); // v0.9: legge il risultato finale (il file su Drive non cambia)
     svuota(v.corpo);
-    v.corpo.appendChild(h('iframe.visore-frame', { sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals', srcdoc: html, title: s.titolo }));
+    const fr = h('iframe.visore-frame', { sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals', srcdoc: html, title: s.titolo }) as HTMLIFrameElement;
+    v.corpo.appendChild(fr);
+    Cattura.osserva(fr, s.id, s.titolo);
   } catch (e: any) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e))); }
 }
 
