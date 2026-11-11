@@ -34,6 +34,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 | 05-editor | editor evento / promemoria / nota |
 | 06-drive | login GIS, Drive API, sync, backup, allegati, selettore file interno `scegliFileDrive()` |
 | 06-gcal | specchio su Google Calendar, import/export .ics |
+| 06-notifiche | notifiche via ntfy: `calcola()` (prossime 72 h), `allinea()` (invia solo le nuove/cambiate, registro `notifica`), sostituzione silenziosa con lo stesso `sequence_id` quando un evento cambia/sparisce |
 | 07-extra | corsi creati dall'utente, registro errori, timer, statistiche, esami |
 | 07-rapido | aggiunta rapida in italiano (`interpreta()`) |
 | 07-studio | pacchetti studio, progressi, piani, syllabus, quiz in iframe, PDF (pdf.js + cache) |
@@ -44,7 +45,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 Principi: `disegna()` ricostruisce la schermata a ogni modifica (semplice e sufficiente); `Stato.salva(r, true)` salva senza ridisegnare. Ogni salvataggio programma la sync Drive e lo specchio Calendar.
 
 ## Dati e sincronizzazione
-- Tutto è un **record** `{ id, type, updatedAt, deleted? }`. Tipi: `evento`, `task`, `nota`, `categoria`, `impostazioni`, `preset`, `pacchetto`, `progresso`, `spostamento`, `tabella`, `materia`, `sessione`, `esame`.
+- Tutto è un **record** `{ id, type, updatedAt, deleted? }`. Tipi: `evento`, `task`, `nota`, `categoria`, `impostazioni`, `preset`, `pacchetto`, `progresso`, `spostamento`, `tabella`, `materia`, `sessione`, `esame`, `notifica` (registro ntfy), `memoria` (ripassi, da F2).
 - Eliminare = `deleted: true` (lapide). Unione = per record, vince `updatedAt` più alto.
 - Backup giornaliero `backup/dati-YYYY-MM-DD.json`, ultimi 30 (i vecchi in `_cestino app`).
 - Google: Client ID, chiave API (non più usata: niente Picker) e account ammesso in cima a `06-drive.ts`. Scope: `drive.file`, `drive.readonly`, e `calendar.app.created` solo con lo specchio attivo. Progetto Google Cloud in modalità Testing, unico utente di test = l'utente.
@@ -57,7 +58,8 @@ Principi: `disegna()` ricostruisce la schermata a ogni modifica (semplice e suff
 5. Piani e syllabus: si aggiornano in `studio/genera.mjs` (sezioni piano, COP, RAF). Formato completo in `docs/formato-studio.md`.
 
 ## Cose note / possibili sviluppi
-- Notifiche: in-app (ad app aperta) + specchio Google Calendar. Web Push (Livello 3) non fatto: richiede un Cloudflare Worker ed è meno affidabile su iOS.
+- Notifiche: in-app + **ntfy** (v0.7, Altro → Notifiche sul telefono) + specchio Google Calendar. Limite ntfy.sh: programmazione max 3 giorni avanti e niente annullamento sul server (si sostituisce in silenzio dopo il vecchio orario). Web Push con Cloudflare Worker: dopo l'esame (piano F1 Livello B).
+- Piano di aggiornamento v1.0: `docs/aggiornamento/` (leggere `00-INDICE.md`); decisioni in `docs/DECISIONI.md`.
 - PIN locale opzionale non fatto (i dati sono comunque solo sul dispositivo dell'utente e sul suo Drive).
 
 ## Evoluzione

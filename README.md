@@ -9,6 +9,7 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 4 (fatta)**: aspetto (tema, accento, sfondo, carattere, dimensione testo, densità, angoli), layout (vista iniziale, ordine/visibilità dei riquadri di Oggi, sezioni della barra, barra su PC), preset (3 di base + personali), aggiunta rapida in italiano (`src/07-rapido.ts`), specchio su Google Calendar con scope `calendar.app.created` e import/export .ics (`src/06-gcal.ts`).
 - **Fase 5 (fatta)**: test completi, documentazione (`docs/MANUTENZIONE.md`, `docs/formato-studio.md`).
 
+- **0.7.0** (aggiornamento v1.0, fasi F0+F1): notifiche sul telefono anche ad app chiusa tramite ntfy (`src/06-notifiche.ts`): promemoria, studio del giorno, ripasso serale, esami/simulazioni vicini, orari silenziosi, categorie private; tipi di dati per i ripassi (F2). Piano completo in `docs/aggiornamento/`.
 - **0.6.0**: studio per qualsiasi corso (materie generiche, corsi creati nell'app), registro errori, timer Pomodoro, statistiche, esami con conto alla rovescia, trascinamento degli eventi.
 
 Documentazione per chi modifica l'app: **`docs/MANUTENZIONE.md`**. Evoluzione prevista: **`docs/PROGRESSIONE.md`**.
@@ -21,6 +22,7 @@ python3 test/sync.py    # test della sincronizzazione con un finto Drive
 python3 test/studio.py  # test del modulo Studio
 python3 test/fase4.py   # aggiunta rapida, .ics, specchio Calendar, preset
 python3 test/versatile.py # corsi propri, errori, timer, statistiche, esami, trascinamento
+python3 test/f1.py      # notifiche ntfy (finto server)
 node studio/genera.mjs  # rigenera i pacchetti studio e controlla i numeri con le schede PDF
 ```
 `dist/` è il sito da pubblicare (GitHub Pages). `dist/anteprima.html` è la stessa app in un solo file.
@@ -33,6 +35,7 @@ src/03-modello.ts     tipi dei dati, stato (Stato), ricorrenze, logica promemori
 src/04-componenti.ts  foglio modale, dialogo, avviso, campo ricorrenza, icone
 src/05-editor.ts      editor di evento / promemoria / nota
 src/06-gcal.ts        specchio Google Calendar, .ics
+src/06-notifiche.ts   notifiche sul telefono via ntfy (finestra di 72 h, registro anti-doppioni)
 src/06-drive.ts       Google: login, Drive API, Picker, sync, backup, allegati
 src/07-extra.ts       corsi propri, errori, timer, statistiche, esami
 src/07-rapido.ts      aggiunta rapida in linguaggio naturale

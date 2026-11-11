@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.6.1';
+const VERSIONE = '0.7.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -100,6 +100,7 @@ async function avvia(): Promise<void> {
   const v = imp().vistaIniziale;
   if (v && v !== 'oggi') { UI.scheda = 'cal'; UI.vista = v; }
   Stato.ascolta(disegna);
+  Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
   Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); });
   disegna();
   Drive.precarica();
@@ -110,6 +111,7 @@ async function avvia(): Promise<void> {
 
   controllaAvvisi();
   setInterval(controllaAvvisi, 30000);
+  Notifiche.programma();
   // Al ritorno sull'app (es. dalla Home dell'iPhone) aggiorno giorno e avvisi.
   let giornoMostrato = ymd(new Date());
   document.addEventListener('visibilitychange', () => {
@@ -117,6 +119,7 @@ async function avvia(): Promise<void> {
     controllaAvvisi();
     Timer.aggiorna();
     if (Drive.collegato) Drive.sincronizza(false);
+    Notifiche.programma();
     if (giornoMostrato !== ymd(new Date())) { giornoMostrato = ymd(new Date()); UI.data = oggi(); }
     if (!document.querySelector('.foglio-sfondo')) disegna();
   });

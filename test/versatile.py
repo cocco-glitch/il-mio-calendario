@@ -15,7 +15,7 @@ with sync_playwright() as p:
     ctx = b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome', color_scheme='dark', has_touch=True)
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.clock.install(time='2026-11-12T09:00:00+01:00')
-    pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("Studio.pkStep().length === 2")
+    pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("Studio.pkStep().length >= 3")
     # --- corso proprio
     pg.click('.tabbar >> text=Studio'); pg.click('.chip >> text=+ Nuovo corso')
     pg.wait_for_timeout(150); pg.fill('.foglio .titolo-grande', 'Inglese B2')

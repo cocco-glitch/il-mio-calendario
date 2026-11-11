@@ -44,8 +44,8 @@ Trasformare il calendario da "agenda che mostra cosa studiare" a **allenatore di
 ## Stato delle fasi (da aggiornare)
 | Fase | Nome | Stato |
 |---|---|---|
-| F0 | Fondamenta (dati, design token, motore animazioni) | da fare |
-| F1 | Notifiche vere | da fare |
+| F0 | Fondamenta (dati, design token, motore animazioni) | **fatta in versione minima** (solo dati e impostazioni) · v0.7.0 · 11/11 |
+| F1 | Notifiche vere | **Livello A (ntfy) fatto** · v0.7.0 · 11/11 — Livello B dopo l'esame |
 | F2 | Motore di ripasso (FSRS) | da fare |
 | F3 | Flashcard e quiz nativi + cattura punteggio | da fare |
 | F4 | Sessione di studio guidata ("Studia ora") | da fare |

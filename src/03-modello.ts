@@ -77,7 +77,37 @@ interface Impostazioni extends Rec {
   gcalCategorie?: string[];
   gcalStudio?: boolean;                  // copia anche i blocchi del piano di studio
   gcalStudioOra?: string;                // 'HH:mm' dell'avviso dello studio ('' = tutto il giorno)
+  // v0.7 — Notifiche sul telefono tramite ntfy (vedi 06-notifiche.ts). Tutto facoltativo.
+  ntfy?: boolean;                        // attive
+  ntfyTopic?: string;                    // codice segreto (il "topic" è la password)
+  ntfyServer?: string;                   // predefinito https://ntfy.sh
+  ntfyTipi?: { promemoria?: boolean; studio?: boolean; sera?: boolean; esami?: boolean };
+  ntfyMattino?: string;                  // 'HH:mm' riepilogo dello studio (predef. 08:00)
+  ntfySera?: string;                     // 'HH:mm' ripasso serale (predef. 21:30)
+  ntfySilenzioDa?: string;               // orari silenziosi (predef. 23:00–07:30)
+  ntfySilenzioA?: string;
+  ntfyPrivate?: string[];                // id delle categorie con testo generico
+  // v0.7 — Ripassi (F2)
+  ripassoMinuti?: number;                // tetto giornaliero dei ripassi (predef. 30)
+  ritenzione?: number;                   // ritenzione desiderata FSRS (predef. 0.90)
 }
+/**
+ * v0.7 — Scheda di memoria di un "elemento da ricordare" (scheda quiz, carta, errore, pagine).
+ * id = 'mem-' + idElemento. Usata dal motore di ripasso FSRS (F2).
+ */
+interface Memoria extends Rec {
+  type: 'memoria';
+  er: string;                            // es. 'scheda:C-2.2.4-2'
+  d: number;                             // difficoltà (1–10)
+  s: number;                             // stabilità in giorni
+  due: string;                           // prossimo ripasso 'YYYY-MM-DD'
+  ultimo?: string;                       // ultimo ripasso 'YYYY-MM-DD'
+  n: number;                             // ripassi fatti
+  lapsi: number;                         // volte dimenticato
+  log?: [string, number, number?, number?][]; // [giorno, voto 1–4, sicurezza 1–3, secondi], ultimi 50
+}
+/** v0.7 — Registro delle notifiche programmate su ntfy (uno per notifica, per non mandarle due volte). */
+interface NotificaReg extends Rec { type: 'notifica'; at: number; h: string; titolo: string; }
 interface Preset extends Rec { type: 'preset'; nome: string; valori: Partial<Impostazioni>; }
 
 /** Una singola occorrenza di un evento (anche non ricorrente). */

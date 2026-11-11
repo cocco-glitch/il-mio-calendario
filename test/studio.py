@@ -37,7 +37,7 @@ with sync_playwright() as p:
     pg.clock.install(time='2026-11-12T09:00:00+01:00')   # "oggi" = giovedì 12/11/2026
     pg.add_init_script(FINTO)
     pg.add_init_script("window.PK2 = () => Studio.pkStep().find(p => p.id === 'step-2')")
-    pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("Studio.pkStep().length === 2 && Studio.pkPiani().length === 2 && !!Studio.pkPiano()")
+    pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("Studio.pkStep().length >= 3 && Studio.pkPiani().length === 2 && !!Studio.pkPiano()")
     # criterio: il 12/11 mostra Bio 2.2 + Chi 2.3
     v = pg.evaluate("Studio.vociDelGiorno(daYmd('2026-11-12')).map(x => Studio.etichetta(x.v.k))")
     ok(v == ['Bio 2.2', 'Chi 2.3'], '12/11 dal piano: %s' % v)
@@ -51,7 +51,7 @@ with sync_playwright() as p:
     tot = pg.evaluate("(() => { const s = PK2().materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)); const n = Studio.numeri(s); return [n.P, n.R]; })()")
     ok(tot == [111, 35], 'totale Step 2: %s' % tot)
     # viste native
-    pg.click('.tabbar >> text=Studio'); pg.wait_for_selector('.voce-lista.sotto'); pg.screenshot(path='test/22-studio.png', full_page=True)
+    pg.evaluate("UI.studioStep = PK2().id"); pg.click('.tabbar >> text=Studio'); pg.wait_for_selector('.voce-lista.sotto'); pg.screenshot(path='test/22-studio.png', full_page=True)
     pg.locator('.voce-lista.sotto', has_text='2.2 · Liquidi').click(); pg.wait_for_selector('.blocchi'); pg.screenshot(path='test/23-sottostep.png', full_page=True)
     ok(pg.locator('.voce-lista.task').count() == 12, '12 schede in Chimica 2.2')
     # spunto una scheda con un tocco, poi apro il foglio di un'altra e apro il quiz

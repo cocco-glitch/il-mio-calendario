@@ -466,6 +466,7 @@ function vistaAltro(): HTMLElement {
     sezionePreset(salvaImp),
     scheda('Categorie', cats, nuovaCat),
     sezioneStudio(salvaImp),
+    sezioneNotifiche(salvaImp),
     sezioneCalendari(salvaImp),
     scheda('I miei dati',
       h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'),
@@ -556,7 +557,7 @@ function sezioneCalendari(salva: SalvaImp): HTMLElement {
     const a = h('a', { href: URL.createObjectURL(new Blob([esportaIcs()], { type: 'text/calendar' })), download: 'il-mio-calendario-' + ymd(new Date()) + '.ics' }) as HTMLAnchorElement;
     document.body.appendChild(a); a.click(); a.remove();
   };
-  return scheda('Notifiche e altri calendari',
+  return scheda('Google Calendar e file .ics',
     h('div.tenue.piccolo', null, 'Gli avvisi dentro l\'app arrivano solo ad app aperta. Per le notifiche vere sull\'iPhone attiva lo specchio: gli eventi vengono copiati in un calendario Google dedicato («' + GCal.GCAL_NOME + '») e le notifiche arrivano dall\'app Google Calendar o da Calendario di iOS (aggiungendo il tuo account Google). L\'app può toccare solo quel calendario, non gli altri tuoi.'),
     h('div.widget-riga', null, h('span.nome', null, 'Specchio su Google Calendar'),
       h('label.interruttore', null, h('input', { type: 'checkbox', checked: !!i.gcal, onchange: (e: Event) => {
@@ -574,6 +575,48 @@ function sezioneCalendari(salva: SalvaImp): HTMLElement {
       h('button.btn.neutro', { onclick: () => GCal.allinea(true).then(n => avviso('Ricopiati ' + n + ' elementi.')).catch(err => { if (String(err.message).match(/NOLOGIN|403|401/)) { Drive.login(); avviso('Autorizza Google Calendar e riprova.'); } else avviso(String(err.message || err), 8000); }) }, 'Ricopia tutto ora')] : null,
     h('div.gruppo-titolo', null, 'File .ics'),
     h('div.bottoni', null, h('button.btn.neutro', { onclick: () => fileIcs.click() }, 'Importa .ics'), h('button.btn.neutro', { onclick: esporta }, 'Esporta .ics'), fileIcs));
+}
+
+// ---------- v0.7: Notifiche sul telefono (ntfy) ----------
+function sezioneNotifiche(salva: SalvaImp): HTMLElement {
+  const i = imp(), T = Object.assign({ promemoria: true, studio: true, sera: true, esami: true }, i.ntfyTipi || {});
+  const priv = new Set(i.ntfyPrivate || []);
+  const interr = (on: boolean, cambia: (v: boolean) => void) => h('label.interruttore', null, h('input', { type: 'checkbox', checked: on, onchange: (e: Event) => cambia((e.target as HTMLInputElement).checked) }), h('span'));
+  const ora = (k: 'ntfyMattino' | 'ntfySera' | 'ntfySilenzioDa' | 'ntfySilenzioA', def: string) => h('input', { type: 'time', value: (i as any)[k] || def, onchange: (e: Event) => salva({ [k]: (e.target as HTMLInputElement).value || def } as any) });
+  const tipo = (k: keyof typeof T, nome: string, nota: string) => h('div.widget-riga', null, h('span.nome', null, nome, h('div.tenue.piccolo', null, nota)), interr(!!T[k], v => salva({ ntfyTipi: Object.assign({}, T, { [k]: v }) })));
+  const copia = (t: string) => { try { navigator.clipboard.writeText(t).then(() => avviso('Codice copiato: incollalo nell\'app ntfy.')); } catch (_) { avviso(t, 15000); } };
+  const futuri = Stato.tutti<NotificaReg>('notifica').filter(r => r.at > Date.now()).length;
+  return scheda('Notifiche sul telefono',
+    h('div.tenue.piccolo', null, 'Avvisi anche ad app chiusa, tramite l\'app gratuita ntfy. L\'app programma le notifiche dei prossimi 3 giorni ogni volta che la apri o modifichi qualcosa.'),
+    h('div.widget-riga', null, h('span.nome', null, 'Notifiche sul telefono'), interr(!!i.ntfy, v => { if (v) { Notifiche.attiva(); avviso('Attivate: segui i 3 passi qui sotto.', 6000); } else salva({ ntfy: false }); })),
+    i.ntfy && i.ntfyTopic ? [
+      h('div.gruppo-titolo', null, 'Collega l\'iPhone (una volta sola)'),
+      h('ol.tenue.piccolo', { style: { paddingLeft: '18px', margin: '4px 0 8px' } },
+        h('li', null, 'Installa «ntfy» dall\'App Store (gratis) e consenti le notifiche.'),
+        h('li', null, 'In ntfy tocca «+», incolla il codice qui sotto e tocca «Subscribe».'),
+        h('li', null, 'Torna qui e tocca «Prova»: deve arrivare «✅ Notifiche attive».')),
+      h('div.widget-riga', null, h('code', { style: { fontSize: '12px', wordBreak: 'break-all' } }, i.ntfyTopic), h('button.btn.neutro', { onclick: () => copia(i.ntfyTopic!) }, 'Copia')),
+      h('div.bottoni', null,
+        h('button.btn', { onclick: () => Notifiche.prova().then(() => avviso('Inviata: controlla il telefono.')).catch(e => avviso('Invio non riuscito: ' + (e.message || e), 8000)) }, 'Prova'),
+        h('button.btn.neutro', { onclick: () => Notifiche.allinea().then(n => avviso(n ? 'Mandate ' + n + ' notifiche.' : 'Già tutto programmato.')) }, 'Riprogramma ora'),
+        h('button.btn.neutro', { onclick: async () => { const r = await chiedi('Nuovo codice?', [{ testo: 'Genera nuovo codice', valore: 'si', pericolo: true }], 'Il vecchio smette di ricevere. Dovrai iscriverti in ntfy al nuovo codice.'); if (r) { Notifiche.rigenera(); avviso('Nuovo codice creato.'); } } }, 'Nuovo codice')),
+      h('div.tenue.piccolo', null, futuri + ' notifiche programmate nei prossimi giorni.'),
+      h('div.gruppo-titolo', null, 'Cosa ricevere'),
+      tipo('promemoria', 'Promemoria di eventi e task', 'quelli impostati negli eventi e nei promemoria con orario'),
+      tipo('studio', 'Studio di oggi', 'la mattina: gli step del piano del giorno'),
+      tipo('sera', 'Ripasso prima di dormire', 'la sera dei giorni di studio: 10–15 min di richiamo'),
+      tipo('esami', 'Esami e simulazioni vicini', '7, 3 e 1 giorno prima'),
+      h('div.gruppo-titolo', null, 'Orari'),
+      riga('Studio di oggi', ora('ntfyMattino', Notifiche.PRED.mattino)),
+      riga('Ripasso serale', ora('ntfySera', Notifiche.PRED.sera)),
+      riga('Silenzio dalle', ora('ntfySilenzioDa', Notifiche.PRED.silDa)),
+      riga('alle', ora('ntfySilenzioA', Notifiche.PRED.silA)),
+      h('div.tenue.piccolo', null, 'Le notifiche che cadono nel silenzio arrivano alla fine del silenzio.'),
+      h('div.gruppo-titolo', null, 'Categorie private (testo generico)'),
+      h('div.tenue.piccolo', null, 'I testi passano dal server pubblico ntfy.sh senza cifratura. Per queste categorie arriva solo «Promemoria».'),
+      categorie().map(c => h('div.widget-riga', null, h('span.nome', null, h('span.campione', { style: { background: c.colore, display: 'inline-block', width: '12px', height: '12px', marginRight: '8px', verticalAlign: 'middle' } }), c.nome),
+        interr(priv.has(c.id), v => { v ? priv.add(c.id) : priv.delete(c.id); salva({ ntfyPrivate: Array.from(priv) }); }))),
+    ] : null);
 }
 
 function sezioneStudio(salva: SalvaImp): HTMLElement {
