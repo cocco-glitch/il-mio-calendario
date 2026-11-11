@@ -75,7 +75,7 @@ const Notifiche = (() => {
       const rip = typeof Ripassi === 'undefined' ? 0 : Ripassi.delGiorno(k).oggi.length;
       const testoRip = rip ? '🧠 ' + rip + ' ripass' + (rip === 1 ? 'o' : 'i') + ' (~' + rip * Ripassi.MIN_SCHEDA + ' min)' : '';
       if (T.studio && (voci || rip)) metti({ chiave: 'studio:' + k, at: alle(g, i.ntfyMattino || PRED.mattino).getTime(), titolo: '📚 Studio di oggi', testo: [voci, testoRip].filter(Boolean).join(' · '), tag: 'books' });
-      if (T.sera && vociStudio(g).some(x => !x.v.speciale)) metti({ chiave: 'sera:' + k, at: alle(g, i.ntfySera || PRED.sera).getTime(), titolo: '🌙 Ripasso prima di dormire', testo: '10–15 min: richiama a memoria ' + voci + ', senza aprire il libro.', tag: 'crescent_moon', prio: 2 });
+      if (T.sera && vociStudio(g).some(x => !x.v.speciale)) metti({ chiave: 'sera:' + k, at: alle(g, i.ntfySera || PRED.sera).getTime(), titolo: '🌙 Ripasso prima di dormire', testo: '10–15 min: richiama a memoria ' + voci + ', senza aprire il libro. Poi chiudi la giornata nell\'app (2 min).', tag: 'crescent_moon', prio: 2 });
       if (T.esami) for (const n of [7, 3, 1]) {
         const target = new Date(g.getFullYear(), g.getMonth(), g.getDate() + n);
         for (const x of vociStudio(target)) {

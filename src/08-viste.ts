@@ -89,11 +89,11 @@ function taskDelGiorno(g: Date): Task[] {
 }
 
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET: [string, string][] = [['ripassi', 'Ripassi di oggi'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET: [string, string][] = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget(): string[] {
   const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
-  for (const [w] of WIDGET) if (!ord.includes(w)) w === 'ripassi' ? ord.unshift(w) : ord.push(w); // v0.7: i ripassi in cima
+  for (const [w] of WIDGET) if (!ord.includes(w)) (w === 'ripassi' || w === 'chiusura') ? ord.unshift(w) : ord.push(w); // v0.7: i ripassi in cima
   return ord.filter(w => !(i.widgetNascosti || []).includes(w));
 }
 let timerNotaGiorno = 0;
@@ -141,6 +141,7 @@ function vistaOggi(): HTMLElement {
         case 'nota': return scheda('Nota del giorno', area);
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
         case 'ripassi': return widgetRipassi();
+        case 'chiusura': return widgetChiusura();
         case 'esami': return widgetEsami();
         case 'timer': return widgetTimer();
         case 'errori': return widgetErrori();
@@ -500,7 +501,7 @@ function sezioneAspetto(salva: SalvaImp): HTMLElement {
 }
 
 function sezioneLayout(salva: SalvaImp): HTMLElement {
-  const i = imp(), ord = (() => { const o = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w)); for (const [w] of WIDGET) if (!o.includes(w)) w === 'ripassi' ? o.unshift(w) : o.push(w); return o; })();
+  const i = imp(), ord = (() => { const o = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w)); for (const [w] of WIDGET) if (!o.includes(w)) (w === 'ripassi' || w === 'chiusura') ? o.unshift(w) : o.push(w); return o; })();
   const nasc = new Set(i.widgetNascosti || []), tabN = new Set(i.tabNascoste || []);
   const sposta = (idx: number, d: number) => { const o = ord.slice(); const [x] = o.splice(idx, 1); o.splice(idx + d, 0, x); salva({ widget: o, preset: '' }); };
   return scheda('Layout',
