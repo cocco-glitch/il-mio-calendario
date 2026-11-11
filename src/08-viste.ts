@@ -89,6 +89,13 @@ function taskDelGiorno(g: Date): Task[] {
 }
 
 // ---------- OGGI (Home/Dashboard) ----------
+const WIDGET: [string, string][] = [['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+/** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
+function ordineWidget(): string[] {
+  const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
+  for (const [w] of WIDGET) if (!ord.includes(w)) ord.push(w);
+  return ord.filter(w => !(i.widgetNascosti || []).includes(w));
+}
 let timerNotaGiorno = 0;
 function vistaOggi(): HTMLElement {
   const g = oggi();
@@ -124,12 +131,18 @@ function vistaOggi(): HTMLElement {
       h('div.oggi-giorno', null, String(g.getDate())),
       h('div', null, h('div.oggi-sett', null, maiuscola(fmt(g, { weekday: 'long' }))), h('div.tenue', null, maiuscola(fmt(g, { month: 'long', year: 'numeric' })))),
     ),
-    scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Tocca + per aggiungerne uno.')),
-    scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido),
-    (() => { const st = Studio.vociDelGiorno(g); return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.')) : null; })(),
-    (() => { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; })(),
-    scheda('Nota del giorno', area),
-    occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null,
+    campoRapido(),
+    ordineWidget().map(w => {
+      switch (w) {
+        case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
+        case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
+        case 'studio': { const st = Studio.vociDelGiorno(g); return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.')) : null; }
+        case 'tabelle': { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; }
+        case 'nota': return scheda('Nota del giorno', area);
+        case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
+      }
+      return null;
+    }),
   );
 }
 
@@ -166,7 +179,7 @@ function vistaCalendario(): HTMLElement {
       h('button' + (UI.vista === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.vista = v; disegna(); } }, t))),
   );
   const corpo = UI.vista === 'mese' ? vistaMese() : UI.vista === 'agenda' ? vistaAgenda() : vistaGriglia(UI.vista === 'giorno' ? 1 : 7);
-  const el = h('div.pagina.cal', null, barra, corpo);
+  const el = h('div.pagina.cal', null, barra, UI.vista === 'agenda' || UI.vista === 'mese' ? campoRapido() : null, corpo);
 
   // Scorrimento orizzontale col dito per cambiare periodo.
   let x0 = 0, y0 = 0;
@@ -445,12 +458,11 @@ function vistaAltro(): HTMLElement {
 
   return h('div.pagina', null,
     sezDrive,
-    scheda('Aspetto',
-      riga('Tema', selettore([['auto', 'Automatico'], ['chiaro', 'Chiaro'], ['scuro', 'Scuro']], i.tema, function (this: HTMLSelectElement) { salvaImp({ tema: this.value as Impostazioni['tema'] }); })),
-      riga('Colore accento', h('input', { type: 'color', value: i.accento, onchange: (e: Event) => salvaImp({ accento: (e.target as HTMLInputElement).value }) })),
-      riga('Vista iniziale', selettore([['oggi', 'Oggi'], ['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese'], ['agenda', 'Agenda']], i.vistaIniziale, function (this: HTMLSelectElement) { salvaImp({ vistaIniziale: this.value as Impostazioni['vistaIniziale'] }); })),
-    ),
+    sezioneAspetto(salvaImp),
+    sezioneLayout(salvaImp),
+    sezionePreset(salvaImp),
     scheda('Categorie', cats, nuovaCat),
+    sezioneCalendari(salvaImp),
     scheda('I miei dati',
       h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'),
       anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null,
@@ -460,4 +472,98 @@ function vistaAltro(): HTMLElement {
     ),
     h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE),
   );
+}
+
+// ---------- Impostazioni: aspetto, layout, preset, calendari esterni ----------
+type SalvaImp = (mod: Partial<Impostazioni>) => void;
+const ACCENTI = ['#6c8cff', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
+const CAMPI_ASPETTO: (keyof Impostazioni)[] = ['tema', 'accento', 'sfondo', 'font', 'scala', 'densita', 'raggio', 'widget', 'widgetNascosti', 'tabNascoste', 'nav', 'vistaIniziale'];
+
+function sezioneAspetto(salva: SalvaImp): HTMLElement {
+  const i = imp(), sel = (o: [string, string][], v: string, k: keyof Impostazioni, num = false) => selettore(o, v, function (this: HTMLSelectElement) { salva({ [k]: num ? +this.value : this.value, preset: '' } as any); });
+  return scheda('Aspetto',
+    riga('Tema', sel([['auto', 'Automatico'], ['chiaro', 'Chiaro'], ['scuro', 'Scuro']], i.tema, 'tema')),
+    riga('Colore accento', h('span.anteprima-tema', null, ACCENTI.map(c => h('button.campione' + (c === i.accento ? '.attivo' : ''), { style: { background: c }, 'aria-label': 'Accento ' + c, onclick: () => salva({ accento: c, preset: '' }) })),
+      h('input', { type: 'color', value: i.accento, 'aria-label': 'Altro colore', onchange: (e: Event) => salva({ accento: (e.target as HTMLInputElement).value, preset: '' }) }))),
+    riga('Sfondo', h('input', { type: 'color', value: i.sfondo || (document.documentElement.dataset.tema === 'scuro' ? '#0e1014' : '#f4f5f8'), onchange: (e: Event) => salva({ sfondo: (e.target as HTMLInputElement).value, preset: '' }) }),
+      i.sfondo ? h('button.btn-testo', { onclick: () => salva({ sfondo: '', preset: '' }) }, 'Del tema') : null),
+    riga('Carattere', sel([['sistema', 'Sistema'], ['arrotondato', 'Arrotondato'], ['serif', 'Serif'], ['mono', 'Monospazio']], i.font || 'sistema', 'font')),
+    riga('Dimensione testo', sel([['0.9', 'Piccolo'], ['1', 'Normale'], ['1.1', 'Grande'], ['1.25', 'Molto grande']], String(i.scala || 1), 'scala', true)),
+    riga('Densità', sel([['comoda', 'Comoda'], ['compatta', 'Compatta']], i.densita || 'comoda', 'densita')),
+    riga('Angoli', sel([['4', 'Squadrati'], ['10', 'Leggeri'], ['14', 'Arrotondati'], ['22', 'Molto arrotondati']], String(i.raggio != null ? i.raggio : 14), 'raggio', true)));
+}
+
+function sezioneLayout(salva: SalvaImp): HTMLElement {
+  const i = imp(), ord = (() => { const o = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w)); for (const [w] of WIDGET) if (!o.includes(w)) o.push(w); return o; })();
+  const nasc = new Set(i.widgetNascosti || []), tabN = new Set(i.tabNascoste || []);
+  const sposta = (idx: number, d: number) => { const o = ord.slice(); const [x] = o.splice(idx, 1); o.splice(idx + d, 0, x); salva({ widget: o, preset: '' }); };
+  return scheda('Layout',
+    riga('Vista iniziale', selettore([['oggi', 'Oggi'], ['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese'], ['agenda', 'Agenda']], i.vistaIniziale, function (this: HTMLSelectElement) { salva({ vistaIniziale: this.value as Impostazioni['vistaIniziale'], preset: '' }); })),
+    riga('Barra delle sezioni su PC', selettore([['auto', 'Laterale'], ['basso', 'In basso']], i.nav || 'auto', function (this: HTMLSelectElement) { salva({ nav: this.value as Impostazioni['nav'], preset: '' }); })),
+    h('div.gruppo-titolo', null, 'Riquadri di Oggi (ordine e visibilità)'),
+    ord.map((w, idx) => h('div.widget-riga', null,
+      h('span.nome', null, (WIDGET.find(x => x[0] === w) || [w, w])[1]),
+      h('button.btn-ico', { 'aria-label': 'Su', disabled: idx === 0, onclick: () => sposta(idx, -1) }, '↑'),
+      h('button.btn-ico', { 'aria-label': 'Giù', disabled: idx === ord.length - 1, onclick: () => sposta(idx, 1) }, '↓'),
+      h('label.interruttore', { title: 'Mostra' }, h('input', { type: 'checkbox', checked: !nasc.has(w), onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? nasc.delete(w) : nasc.add(w); salva({ widgetNascosti: Array.from(nasc), preset: '' }); } }), h('span')))),
+    h('div.gruppo-titolo', null, 'Sezioni nella barra'),
+    [['cal', 'Calendario'], ['studio', 'Studio'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t),
+      h('label.interruttore', null, h('input', { type: 'checkbox', checked: !tabN.has(s), onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? tabN.delete(s) : tabN.add(s); salva({ tabNascoste: Array.from(tabN), preset: '' }); } }), h('span')))));
+}
+
+const PRESET_BASE: { nome: string; valori: Partial<Impostazioni> }[] = [
+  { nome: 'Predefinito', valori: { tema: 'auto', accento: '#6c8cff', sfondo: '', font: 'sistema', scala: 1, densita: 'comoda', raggio: 14, widget: [], widgetNascosti: [], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
+  { nome: 'Studio intenso', valori: { tema: 'scuro', accento: '#e9a23b', sfondo: '', font: 'sistema', scala: 1, densita: 'compatta', raggio: 10, widget: ['studio', 'impegni', 'promemoria', 'tabelle', 'nota', 'domani'], widgetNascosti: ['domani'], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
+  { nome: 'Minimal', valori: { tema: 'chiaro', accento: '#64748b', sfondo: '#ffffff', font: 'sistema', scala: 1, densita: 'comoda', raggio: 4, widget: ['impegni', 'promemoria', 'studio', 'nota', 'tabelle', 'domani'], widgetNascosti: ['tabelle', 'domani'], tabNascoste: ['note'], nav: 'auto', vistaIniziale: 'oggi' } },
+];
+function sezionePreset(salva: SalvaImp): HTMLElement {
+  const i = imp(), miei = Stato.tutti<Preset>('preset').sort((a, b) => a.nome.localeCompare(b.nome));
+  const applica = (nome: string, v: Partial<Impostazioni>) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); avviso('Preset «' + nome + '» applicato'); };
+  return scheda('Preset',
+    h('div.chips', null,
+      PRESET_BASE.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: () => applica(p.nome, p.valori) }, p.nome)),
+      miei.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: async () => {
+        const s = await chiedi(p.nome, [{ testo: 'Applica', valore: 'a' }, { testo: 'Sovrascrivi con l\'aspetto attuale', valore: 's' }, { testo: 'Elimina preset', valore: 'd', pericolo: true }]);
+        if (s === 'a') applica(p.nome, p.valori);
+        else if (s === 's') { p.valori = valoriAttuali(); Stato.salva(p); avviso('Preset aggiornato'); }
+        else if (s === 'd') Stato.elimina(p.id);
+      } }, '★ ' + p.nome))),
+    h('button.btn.neutro', { style: { marginTop: '8px' }, onclick: () => {
+      const nome = h('input.titolo-grande', { type: 'text', placeholder: 'Nome del preset (es. Esami)' }) as HTMLInputElement;
+      foglio({ titolo: 'Salva preset', corpo: h('div.modulo', null, nome, h('div.tenue.piccolo', null, 'Salva tema, colori, carattere, densità e layout attuali.')),
+        salva: () => { const n = nome.value.trim(); if (!n) return false; Stato.salva({ id: 'preset-' + uid(), type: 'preset', updatedAt: 0, nome: n, valori: valoriAttuali() }); salva({ preset: n }); } });
+      setTimeout(() => nome.focus(), 50);
+    } }, 'Salva l\'aspetto attuale come preset'));
+}
+function valoriAttuali(): Partial<Impostazioni> { const i = imp(), v: any = {}; for (const k of CAMPI_ASPETTO) if ((i as any)[k] !== undefined) v[k] = JSON.parse(JSON.stringify((i as any)[k])); return v; }
+
+function sezioneCalendari(salva: SalvaImp): HTMLElement {
+  const i = imp(), cats = new Set(i.gcalCategorie || []);
+  const fileIcs = h('input', { type: 'file', accept: '.ics,text/calendar', style: { display: 'none' }, onchange: () => {
+    const f = fileIcs.files && fileIcs.files[0]; if (!f) return;
+    f.text().then(async txt => {
+      const opz = [{ testo: 'Nessuna categoria', valore: '' }].concat(categorie().map(c => ({ testo: c.nome, valore: c.id })));
+      const cat = await chiedi('In quale categoria?', opz, f.name);
+      if (cat === null) return;
+      const n = importaIcs(txt, cat || undefined); avviso(n ? 'Importati ' + n + ' eventi da ' + f.name : 'Nessun evento trovato nel file.');
+    });
+  } }) as HTMLInputElement;
+  const esporta = () => {
+    const a = h('a', { href: URL.createObjectURL(new Blob([esportaIcs()], { type: 'text/calendar' })), download: 'il-mio-calendario-' + ymd(new Date()) + '.ics' }) as HTMLAnchorElement;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  return scheda('Notifiche e altri calendari',
+    h('div.tenue.piccolo', null, 'Gli avvisi dentro l\'app arrivano solo ad app aperta. Per le notifiche vere sull\'iPhone attiva lo specchio: gli eventi vengono copiati in un calendario Google dedicato («' + GCal.GCAL_NOME + '») e le notifiche arrivano dall\'app Google Calendar o da Calendario di iOS (aggiungendo il tuo account Google). L\'app può toccare solo quel calendario, non gli altri tuoi.'),
+    h('div.widget-riga', null, h('span.nome', null, 'Specchio su Google Calendar'),
+      h('label.interruttore', null, h('input', { type: 'checkbox', checked: !!i.gcal, onchange: (e: Event) => {
+        const on = (e.target as HTMLInputElement).checked;
+        salva({ gcal: on });
+        if (on) { Drive.login(); setTimeout(() => GCal.allinea(true).then(n => avviso('Specchio attivo: ' + n + ' elementi copiati su Google Calendar.')).catch(err => avviso('Specchio: ' + (err.message || err), 8000)), 2500); }
+      } }), h('span'))),
+    i.gcal ? [h('div.gruppo-titolo', null, 'Categorie da copiare (nessuna scelta = tutte)'),
+      categorie().map(c => h('div.widget-riga', null, h('span.nome', null, h('span.campione', { style: { background: c.colore, display: 'inline-block', width: '12px', height: '12px', marginRight: '8px', verticalAlign: 'middle' } }), c.nome),
+        h('label.interruttore', null, h('input', { type: 'checkbox', checked: cats.has(c.id), onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? cats.add(c.id) : cats.delete(c.id); salva({ gcalCategorie: Array.from(cats) }); GCal.allinea(true).catch(() => { /* niente */ }); } }), h('span')))),
+      h('button.btn.neutro', { onclick: () => GCal.allinea(true).then(n => avviso('Ricopiati ' + n + ' elementi.')).catch(err => { if (String(err.message).match(/NOLOGIN|403|401/)) { Drive.login(); avviso('Autorizza Google Calendar e riprova.'); } else avviso(String(err.message || err), 8000); }) }, 'Ricopia tutto ora')] : null,
+    h('div.gruppo-titolo', null, 'File .ics'),
+    h('div.bottoni', null, h('button.btn.neutro', { onclick: () => fileIcs.click() }, 'Importa .ics'), h('button.btn.neutro', { onclick: esporta }, 'Esporta .ics'), fileIcs));
 }

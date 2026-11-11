@@ -6,7 +6,8 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 1 (fatta)**: viste Oggi / Giorno / Settimana / Mese / Agenda, eventi con ricorrenze ed eccezioni, promemoria multipli, checklist, promemoria/task con Inbox e priorità, note markdown con tag e nota del giorno, categorie con colore, ricerca globale, tema chiaro/scuro/automatico, dati offline (IndexedDB), backup JSON manuale, avvisi in-app.
 - **Fase 2 (fatta)**: login Google (GIS, scope `drive.file`), sync su `Calendario personale/dati/dati.json` (merge per record, last-write-wins, coda offline), backup giornaliero in `backup/` (ultimi 30, i vecchi vanno in `_cestino app/`), allegati (carica in `allegati/` o collega col Picker), indicatore di stato, controllo che l'account sia quello ammesso.
 - **Fase 3 (fatta)**: modulo Studio (`src/07-studio.ts`, `src/07-tabelle.ts`, formato in `docs/formato-studio.md`): pacchetti Step 1 e Step 2 (numeri verificati con le schede PDF), piano 11/11→09/12 e piano di raffinamento 10/12→10/01, copertura del syllabus (124 argomenti), spunte/punteggi/note, quiz HTML in iframe isolato, PDF del libro alla pagina con cache sul dispositivo, piano → calendario, ritardo, spostamenti, tabelle personalizzate (CSV, Google Sheet, righe con data nel calendario).
-- Fase 4 Personalizzazione/notifiche · Fase 5 Rifinitura: da fare.
+- **Fase 4 (fatta)**: aspetto (tema, accento, sfondo, carattere, dimensione testo, densità, angoli), layout (vista iniziale, ordine/visibilità dei riquadri di Oggi, sezioni della barra, barra su PC), preset (3 di base + personali), aggiunta rapida in italiano (`src/07-rapido.ts`), specchio su Google Calendar con scope `calendar.app.created` e import/export .ics (`src/06-gcal.ts`).
+- Fase 5 Rifinitura: da fare.
 
 ## Comandi
 ```
@@ -14,6 +15,7 @@ node build.mjs          # compila e crea dist/ (serve solo Node + tsc, nessun np
 python3 test/e2e.py     # test end-to-end (Playwright per Python)
 python3 test/sync.py    # test della sincronizzazione con un finto Drive
 python3 test/studio.py  # test del modulo Studio
+python3 test/fase4.py   # aggiunta rapida, .ics, specchio Calendar, preset
 node studio/genera.mjs  # rigenera i pacchetti studio e controlla i numeri con le schede PDF
 ```
 `dist/` è il sito da pubblicare (GitHub Pages). `dist/anteprima.html` è la stessa app in un solo file.
@@ -25,7 +27,9 @@ src/02-db.ts          salvataggio locale: IndexedDB → localStorage → memoria
 src/03-modello.ts     tipi dei dati, stato (Stato), ricorrenze, logica promemoria
 src/04-componenti.ts  foglio modale, dialogo, avviso, campo ricorrenza, icone
 src/05-editor.ts      editor di evento / promemoria / nota
+src/06-gcal.ts        specchio Google Calendar, .ics
 src/06-drive.ts       Google: login, Drive API, Picker, sync, backup, allegati
+src/07-rapido.ts      aggiunta rapida in linguaggio naturale
 src/07-studio.ts      modulo Studio (pacchetti, progressi, piani, syllabus, quiz, PDF)
 src/07-tabelle.ts     tabelle personalizzate
 src/08-viste.ts       le schermate (UI = stato dell'interfaccia)

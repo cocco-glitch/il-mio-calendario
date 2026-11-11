@@ -24,6 +24,8 @@ const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleap
 // Privacy "solo mia": l'app accetta solo questo account (oltre al blocco lato Google: progetto in Testing con un solo utente di test).
 const ACCOUNT_AMMESSO = 'cocco.haloa@gmail.com';
 const CARTELLA_APP = 'Calendario personale';
+/** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
+function scopeAttuale(): string { try { return G_SCOPE + (imp().gcal ? ' https://www.googleapis.com/auth/calendar.app.created' : ''); } catch (_) { return G_SCOPE; } }
 const SOTTOCARTELLE = ['dati', 'allegati', 'backup', 'studio', '_cestino app'] as const;
 type NomeSotto = typeof SOTTOCARTELLE[number];
 
@@ -74,7 +76,7 @@ const Drive = (() => {
       };
       client.error_callback = () => ok(false);
       try {
-        client.requestAccessToken(interattivo ? { prompt: '', login_hint: stato.email || undefined } : { prompt: 'none', login_hint: stato.email || undefined });
+        client.requestAccessToken(interattivo ? { prompt: '', scope: scopeAttuale(), login_hint: stato.email || undefined } : { prompt: 'none', scope: scopeAttuale(), login_hint: stato.email || undefined });
       } catch (_) { ok(false); }
     });
   }
@@ -231,6 +233,7 @@ const Drive = (() => {
       stato.ultimoSync = Date.now(); LS.set('ultimoSync', stato.ultimoSync);
       applicaTema();
       cambia('ok');
+      if (typeof GCal !== 'undefined' && GCal.attivo()) GCal.allinea().catch(e => { if (String(e.message).includes('403') || String(e.message) === 'NOLOGIN') cambia('attesa', 'Tocca per autorizzare Google Calendar.'); });
     } catch (e: any) {
       const m = String(e && e.message || e);
       if (m === 'NOLOGIN') cambia(stato.email ? 'attesa' : 'spento', stato.email ? 'Tocca per accedere di nuovo a Google.' : '');
@@ -267,7 +270,7 @@ const Drive = (() => {
     client.error_callback = (e: any) => cambia('errore', e && e.type === 'popup_failed_to_open'
       ? 'Il browser ha bloccato la finestra di Google: consenti i popup per questo sito e riprova.'
       : 'Finestra di Google chiusa.');
-    client.requestAccessToken({ prompt: primaVolta ? 'select_account' : '', login_hint: stato.email || undefined });
+    client.requestAccessToken({ prompt: primaVolta ? 'select_account' : '', scope: scopeAttuale(), login_hint: stato.email || undefined });
   }
   function logout(): void {
     if (token) { try { google.accounts.oauth2.revoke(token, () => { /* ok */ }); } catch (_) { /* niente */ } }

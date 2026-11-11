@@ -272,3 +272,20 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .lista-file { display: flex; flex-direction: column; background: var(--sup); border-radius: var(--raggio); padding: 0 14px; }
 .voce-lista.scelto { background: color-mix(in srgb, var(--accento) 14%, transparent); }
 .voce-lista.scelto .voce-titolo::before { content: '✓ '; color: var(--accento); }
+
+/* ---------- Fase 4: personalizzazione ---------- */
+body { font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif); }
+#app { zoom: var(--scala, 1); height: calc(100dvh / var(--scala, 1)); }
+:root[data-densita="compatta"] .voce-lista { min-height: 38px; padding: 4px 0; }
+:root[data-densita="compatta"] .card { padding: 8px 12px; } :root[data-densita="compatta"] .pagina { gap: 8px; }
+:root[data-densita="compatta"] .mese-cella { min-height: 60px; }
+@media (min-width: 900px) { :root[data-nav="basso"] #app { grid-template: "testa" auto "main" 1fr "nav" auto / 100%; }
+  :root[data-nav="basso"] .tabbar { flex-direction: row; border-right: 0; border-top: 1px solid var(--linea); padding: 0; }
+  :root[data-nav="basso"] .tabbar button { flex: 1; flex-direction: column; height: var(--tab-h); gap: 2px; justify-content: center; border-radius: 0; } :root[data-nav="basso"] .tab-eti { font-size: 11px; } }
+.rapido-box { display: flex; flex-direction: column; gap: 4px; }
+.rapido-anteprima { font-size: 13px; color: var(--accento); font-weight: 600; padding: 0 4px; min-height: 0; } .rapido-anteprima:empty { display: none; }
+.widget-riga { display: flex; align-items: center; gap: 8px; min-height: 48px; border-top: 1px solid var(--linea); } .widget-riga:first-of-type { border-top: 0; }
+.widget-riga span.nome { flex: 1; font-weight: 550; }
+.anteprima-tema { display: flex; gap: 6px; flex-wrap: wrap; }
+.campione { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--sup); box-shadow: 0 0 0 1px var(--linea); }
+.campione.attivo { box-shadow: 0 0 0 2px var(--accento); }

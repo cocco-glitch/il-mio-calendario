@@ -2,15 +2,23 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.4.1';
+const VERSIONE = '0.5.0';
 
 function applicaTema(): void {
   const i = imp();
   const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
-  document.documentElement.style.setProperty('--accento', i.accento);
+  const r = document.documentElement, st = r.style;
+  st.setProperty('--accento', i.accento);
+  if (i.sfondo) st.setProperty('--bg', i.sfondo); else st.removeProperty('--bg');
+  const FONT: Record<string, string> = { sistema: '', arrotondato: 'ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif', serif: 'ui-serif, "New York", Georgia, "Times New Roman", serif', mono: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' };
+  if (i.font && FONT[i.font]) st.setProperty('--font', FONT[i.font]); else st.removeProperty('--font');
+  st.setProperty('--scala', String(i.scala || 1));
+  st.setProperty('--raggio', (i.raggio != null ? i.raggio : 14) + 'px');
+  r.dataset.densita = i.densita || 'comoda';
+  r.dataset.nav = i.nav || 'auto';
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', scuro ? '#0e1014' : '#f4f5f8');
+  if (meta) meta.setAttribute('content', i.sfondo || (scuro ? '#0e1014' : '#f4f5f8'));
 }
 
 /** Ricostruisce l'intera schermata (le viste sono leggere: va benissimo così). */
@@ -29,7 +37,8 @@ function disegna(): void {
 
   const daFare = Stato.tutti<Task>('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(oggi()))).length;
   const schede: [Scheda, string, string][] = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
-  const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.map(([s, t, ic]) =>
+  const nascoste = imp().tabNascoste || [];
+  const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) =>
     h('button' + (UI.scheda === s ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; vai(s); }, 'aria-current': UI.scheda === s ? 'page' : null },
       h('span.tab-ico', null, icona(ic), s === 'task' && daFare ? h('span.badge', null, String(daFare)) : null),
       h('span.tab-eti', null, t))));

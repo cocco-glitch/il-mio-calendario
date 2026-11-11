@@ -60,7 +60,23 @@ interface Impostazioni extends Rec {
   tema: 'auto' | 'chiaro' | 'scuro';
   accento: string;
   vistaIniziale: 'oggi' | 'giorno' | 'settimana' | 'mese' | 'agenda';
+  // Fase 4 — aspetto e layout (tutti facoltativi: valori assenti = predefiniti)
+  sfondo?: string;                       // colore di sfondo personalizzato ('' = del tema)
+  font?: 'sistema' | 'arrotondato' | 'serif' | 'mono';
+  scala?: number;                        // dimensione testo: 0.9 … 1.25
+  densita?: 'compatta' | 'comoda';
+  raggio?: number;                       // angoli arrotondati in px
+  widget?: string[];                     // ordine dei riquadri di Oggi
+  widgetNascosti?: string[];
+  tabNascoste?: string[];                // sezioni nascoste dalla barra
+  nav?: 'auto' | 'basso';
+  preset?: string;                       // nome dell'ultimo preset applicato
+  // Google Calendar (specchio)
+  gcal?: boolean;
+  gcalId?: string;
+  gcalCategorie?: string[];
 }
+interface Preset extends Rec { type: 'preset'; nome: string; valori: Partial<Impostazioni>; }
 
 /** Una singola occorrenza di un evento (anche non ricorrente). */
 interface Occ { ev: Evento; inizio: Date; fine: Date; chiave: string; }
@@ -116,6 +132,7 @@ const Stato = (() => {
       DB.salva([r]);
       if (!silenzioso) notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
       if (typeof Drive !== 'undefined') Drive.programma();
+      if (typeof GCal !== 'undefined' && (r.type === 'evento' || r.type === 'task')) GCal.programma();
     },
     /** Eliminazione "morbida": il record resta come lapide per la sync. */
     elimina(id: string): void {
