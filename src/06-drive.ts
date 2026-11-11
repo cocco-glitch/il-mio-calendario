@@ -95,7 +95,7 @@ const Drive = (() => {
     const r = await fetch(url.toString(), { ...opz, headers: { Authorization: 'Bearer ' + t, ...(opz.headers || {}) } });
     if (r.status === 401) { token = ''; throw new Error('NOLOGIN'); }
     if (!r.ok) { const txt = await r.text(); throw new Error('Drive ' + r.status + ': ' + txt.slice(0, 200)); }
-    if (opz.query && opz.query.alt === 'media') return r; // download: restituisco la Response grezza
+    if ((opz.query && opz.query.alt === 'media') || percorso.endsWith('/export')) return r; // download: restituisco la Response grezza
     const ct = r.headers.get('content-type') || '';
     return ct.includes('json') ? r.json() : r;
   }
@@ -158,6 +158,8 @@ const Drive = (() => {
     } while (pageToken);
     return out;
   }
+  /** Esporta un Google Sheet (primo foglio) come CSV. */
+  async function esportaCsv(id: string): Promise<string> { const r: Response = await api('files/' + id + '/export', { query: { mimeType: 'text/csv' } }); return r.text(); }
   /** Mai eliminare: sposta nel cestino dell'app. */
   async function cestinaApp(id: string, daParent: string): Promise<void> {
     await api('files/' + id, { method: 'PATCH', query: { addParents: cartelle['_cestino app'], removeParents: daParent, fields: 'id' } });
@@ -274,7 +276,7 @@ const Drive = (() => {
     return { id: uid(), nome: file.name, driveId: id, mime: file.type, url: 'https://drive.google.com/file/d/' + id + '/view' };
   }
   /** Google Picker per scegliere un file esistente (lo rende accessibile all'app). */
-  async function scegliConPicker(opz: { cartelle?: boolean; multi?: boolean } = {}): Promise<{ id: string; name: string; mimeType: string; url: string }[]> {
+  async function scegliConPicker(opz: { cartelle?: boolean; multi?: boolean; mime?: string } = {}): Promise<{ id: string; name: string; mimeType: string; url: string }[]> {
     const t = await tokenValido(true);
     if (!t) throw new Error('Accedi a Google prima.');
     await script('https://apis.google.com/js/api.js');
@@ -283,6 +285,7 @@ const Drive = (() => {
       const vista = new google.picker.DocsView(opz.cartelle ? google.picker.ViewId.FOLDERS : google.picker.ViewId.DOCS)
         .setIncludeFolders(true).setParent('root');
       if (opz.cartelle) vista.setSelectFolderEnabled(true).setMimeTypes('application/vnd.google-apps.folder');
+      if (opz.mime) vista.setMimeTypes(opz.mime);
       let b = new google.picker.PickerBuilder()
         .setOAuthToken(t).setDeveloperKey(G_API_KEY).setAppId(G_APP_ID)
         .setLocale('it').setTitle(opz.cartelle ? 'Scegli una cartella' : 'Scegli un file')
@@ -303,7 +306,7 @@ const Drive = (() => {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
-    elencaTutti,
+    elencaTutti, esportaCsv,
     get collegato() { return !!stato.email; },
     /** true se c'è un token valido adesso (senza aprire finestre). */
     get pronto() { return !!token && Date.now() < scadenzaToken; },

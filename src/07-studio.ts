@@ -17,7 +17,10 @@ interface LibroS { nome: string; offset: number; blocco: number; cartella: strin
 interface PkStep { tipo: 'step'; id: string; step: number; titolo: string; aggiornato: string; risorse: { libri: Record<string, LibroS>; quiz: Record<string, string> }; materie: MateriaS[]; }
 interface VocePiano { k: string; t: string; d?: string; speciale?: boolean; }
 interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }
-interface PkPiano { tipo: 'piano'; id: string; titolo: string; aggiornato: string; giorniTeoria: number; giorni: GiornoPiano[]; }
+interface Copertura { m: string; ud: string; a: string; stato: 'E' | 'I' | 'N'; k: string; quando: string; }
+interface PkPiano { tipo: 'piano'; id: string; modo?: 'raffinamento'; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; copertura?: Copertura[]; }
+/** Una voce del piano nel giorno in cui cade (tenendo conto degli spostamenti). */
+interface VoceGiorno { v: VocePiano; g: GiornoPiano; spostata: boolean; p: PkPiano; }
 interface Progresso extends Rec { type: 'progresso'; fatta: boolean; data?: string; punteggio?: number; nota?: string; }
 
 const NOME_MATERIA: Record<string, string> = { C: 'Chimica', B: 'Biologia', F: 'Fisica' };
@@ -26,7 +29,9 @@ const COLORE_MATERIA: Record<string, string> = { C: '#e9a23b', B: '#2fbf8f', F: 
 
 const Studio = (() => {
   function pkStep(): PkStep[] { return Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step); }
-  function pkPiano(): PkPiano | null { const r = Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).find(c => c && c.tipo === 'piano'); return r || null; }
+  function pkPiani(): PkPiano[] { return Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1); }
+  /** Il piano principale (teoria). */
+  function pkPiano(): PkPiano | null { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
 
   /** Inserisce/aggiorna un pacchetto. I progressi stanno altrove: non si perdono. */
   function importa(c: any): boolean {
@@ -65,17 +70,22 @@ const Studio = (() => {
     Stato.salva(p);
   }
 
-  function pagineSet(s: string): Set<number> {
-    const o = new Set<number>();
-    for (const p of s.split(',').map(x => x.trim()).filter(Boolean)) { const [a, b] = p.split('-').map(Number); for (let i = a; i <= (b || a); i++) o.add(i); }
+  /** Pagine del libro: '141-144,146' o appendice 'A1-A4'. Restituisce stringhe ('141', 'A2'). */
+  function pagineSet(s: string): Set<string> {
+    const o = new Set<string>();
+    for (const p of (s || '').split(',').map(x => x.trim()).filter(Boolean)) {
+      const m = p.match(/^([A-Z]?)(\d+)(?:-[A-Z]?(\d+))?$/); if (!m) continue;
+      for (let i = +m[2]; i <= +(m[3] || m[2]); i++) o.add(m[1] + i);
+    }
     return o;
   }
-  function intervalli(set: Set<number>): string {
-    const v = Array.from(set).sort((a, b) => a - b), out: string[] = [];
-    for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++; out.push(i === j ? '' + v[i] : v[i] + '–' + v[j]); i = j; }
+  function intervalli(set: Set<string>): string {
+    const ord = (x: string) => /^\d/.test(x) ? +x : 100000 + +x.slice(1);
+    const v = Array.from(set).sort((a, b) => ord(a) - ord(b)), out: string[] = [];
+    for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && ord(v[j + 1]) === ord(v[j]) + 1) j++; out.push(i === j ? v[i] : v[i] + '–' + v[j]); i = j; }
     return out.join(', ');
   }
-  function unione(l: SchedaS[]): Set<number> { const o = new Set<number>(); l.forEach(s => pagineSet(s.pagine).forEach(p => o.add(p))); return o; }
+  function unione(l: SchedaS[]): Set<string> { const o = new Set<string>(); l.forEach(s => pagineSet(s.pagine).forEach(p => o.add(p))); return o; }
   /** Numeri di un insieme di schede (come nella tabella riepilogo della scheda PDF). */
   function numeri(l: SchedaS[]) {
     const P = l.filter(s => s.tipo === 'P'), R = l.filter(s => s.tipo === 'R');
@@ -90,29 +100,34 @@ const Studio = (() => {
   function etichetta(k: string): string { return /^[CBF]\d/.test(k) ? BREVE_MATERIA[k[0]] + ' ' + k.slice(1) : k; }
 
   // ---------- Piano ----------
-  function dataVoce(v: VocePiano, g: GiornoPiano): string { const sp = Stato.prendi<Rec>('sp-' + v.k); return sp ? sp.data : g.data; }
-  /** Uno step è completato quando tutte le sue prioritarie sono fatte (o è spuntato a mano se le schede non esistono ancora). */
-  function stepFatto(k: string): boolean {
-    const t = trovaSotto(k);
-    if (t) { const n = numeri(schedeDi(t.sub)); return n.P > 0 && n.Pf === n.P; }
-    return fatta('step-' + k);
+  // Chiavi degli spostamenti: 'sp-<k>' per il piano principale, 'sp-<idPiano>-<k>' per gli altri.
+  const idSp = (k: string, pid = 'piano') => pid === 'piano' ? 'sp-' + k : 'sp-' + pid + '-' + k;
+  function dataVoce(v: VocePiano, g: GiornoPiano, pid = 'piano'): string { const sp = Stato.prendi<Rec>(idSp(v.k, pid)); return sp ? sp.data : g.data; }
+  /**
+   * Uno step è completato quando tutte le sue prioritarie sono fatte; nel piano di raffinamento
+   * quando sono fatte anche tutte le schede di raffinamento. Senza pacchetto si spunta a mano.
+   */
+  function stepFatto(k: string, p?: PkPiano): boolean {
+    const t = trovaSotto(k), raff = !!(p && p.modo === 'raffinamento');
+    if (t) { const n = numeri(schedeDi(t.sub)); return raff ? n.R + n.P > 0 && n.Rf === n.R && n.Pf === n.P : n.P > 0 && n.Pf === n.P; }
+    return fatta(raff ? 'step-raff-' + k : 'step-' + k);
   }
-  function vociDelGiorno(g: Date): { v: VocePiano; g: GiornoPiano; spostata: boolean }[] {
-    const p = pkPiano(); if (!p) return [];
-    const k = ymd(g), out: { v: VocePiano; g: GiornoPiano; spostata: boolean }[] = [];
-    for (const gg of p.giorni) for (const v of gg.voci) if (dataVoce(v, gg) === k) out.push({ v, g: gg, spostata: gg.data !== k });
+  function segnaStepAMano(k: string, p: PkPiano, si: boolean): void { segna(p.modo === 'raffinamento' ? 'step-raff-' + k : 'step-' + k, { fatta: si }); }
+  function vociDelGiorno(g: Date): VoceGiorno[] {
+    const k = ymd(g), out: VoceGiorno[] = [];
+    for (const p of pkPiani()) for (const gg of p.giorni) for (const v of gg.voci) if (dataVoce(v, gg, p.id) === k) out.push({ v, g: gg, spostata: gg.data !== k, p });
     return out;
   }
-  /** Step (non speciali) con data già passata e non completati. */
+  /** Step (non speciali) con data già passata e non completati, in tutti i piani. */
   function inRitardo(): VocePiano[] {
-    const p = pkPiano(); if (!p) return [];
     const oggiK = ymd(oggi()), out: VocePiano[] = [];
-    for (const g of p.giorni) for (const v of g.voci) if (!v.speciale && dataVoce(v, g) < oggiK && !stepFatto(v.k)) out.push(v);
+    for (const p of pkPiani()) for (const g of p.giorni) for (const v of g.voci) if (!v.speciale && dataVoce(v, g, p.id) < oggiK && !stepFatto(v.k, p)) out.push(v);
     return out;
   }
-  function sposta(k: string, data: string | null): void {
-    if (data) Stato.salva({ id: 'sp-' + k, type: 'spostamento', updatedAt: 0, data });
-    else if (Stato.rec.get('sp-' + k)) Stato.elimina('sp-' + k);
+  function sposta(k: string, data: string | null, pid = 'piano'): void {
+    const id = idSp(k, pid);
+    if (data) Stato.salva({ id, type: 'spostamento', updatedAt: 0, data });
+    else if (Stato.rec.get(id)) Stato.elimina(id);
   }
 
   // ---------- Risorse su Drive ----------
@@ -139,7 +154,7 @@ const Studio = (() => {
     return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
   }
 
-  return { pkStep, pkPiano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+  return { pkStep, pkPiano, pkPiani, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
     dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 
@@ -172,7 +187,44 @@ async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS): Promi
 
 declare const pdfjsLib: any;
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
-/** Visualizzatore PDF integrato (pdf.js): apre il file Drive alla pagina indicata, scaricando solo i pezzi che servono. */
+/**
+ * Cache dei PDF dei libri sul dispositivo (Cache Storage): il primo apertura scarica il file intero
+ * mostrando l'avanzamento, le successive sono istantanee e funzionano anche offline.
+ * Tiene al massimo MAX file (i meno usati escono per primi).
+ */
+const PdfCache = (() => {
+  const NOME = 'imc-pdf', MAX = 10, CH = 'imc-pdf-uso';
+  const url = (id: string) => location.origin + '/__pdf/' + id;
+  const uso = (): Record<string, number> => { try { return JSON.parse(localStorage.getItem(CH) || '{}'); } catch (_) { return {}; } };
+  const segna = (u: Record<string, number>) => { try { localStorage.setItem(CH, JSON.stringify(u)); } catch (_) { /* niente */ } };
+  async function cache(): Promise<Cache | null> { try { return await caches.open(NOME); } catch (_) { return null; } }
+  async function presente(id: string): Promise<boolean> { const c = await cache(); return !!(c && await c.match(url(id))); }
+  async function prendi(id: string, avanz?: (fatti: number, tot: number) => void): Promise<Uint8Array> {
+    const c = await cache(), u = uso();
+    const vecchia = c && await c.match(url(id));
+    if (vecchia) { u[id] = Date.now(); segna(u); return new Uint8Array(await vecchia.arrayBuffer()); }
+    const token = await Drive.tokenValido(false);
+    if (!token) throw new Error('Accedi a Google per scaricare il PDF.');
+    const r = await fetch('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media', { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok || !r.body) throw new Error('Download non riuscito (' + r.status + ').');
+    const tot = parseInt(r.headers.get('content-length') || '0', 10), pezzi: Uint8Array[] = [], lettore = r.body.getReader();
+    let fatti = 0;
+    for (;;) { const { done, value } = await lettore.read(); if (done) break; pezzi.push(value); fatti += value.length; if (avanz) avanz(fatti, tot); }
+    const tutto = new Uint8Array(fatti); let pos = 0; for (const p of pezzi) { tutto.set(p, pos); pos += p.length; }
+    if (c) {
+      try {
+        await c.put(url(id), new Response(tutto.slice(0), { headers: { 'content-type': 'application/pdf' } }));
+        u[id] = Date.now();
+        for (const vecchio of Object.keys(u).sort((a, b) => u[b] - u[a]).slice(MAX)) { await c.delete(url(vecchio)); delete u[vecchio]; }
+        segna(u);
+      } catch (_) { /* spazio esaurito: lo uso senza salvarlo */ }
+    }
+    return tutto;
+  }
+  return { prendi, presente };
+})();
+
+/** Visualizzatore PDF integrato (pdf.js), alla pagina indicata. */
 async function apriPdf(fileId: string, pagina: number, titolo: string): Promise<void> {
   if (serveGoogle()) return;
   const v = visore(titolo);
@@ -180,8 +232,9 @@ async function apriPdf(fileId: string, pagina: number, titolo: string): Promise<
   try {
     await new Promise<void>((ok, ko) => { if (typeof pdfjsLib !== 'undefined') return ok(); const s = document.createElement('script'); s.src = PDFJS + 'pdf.min.js'; s.onload = () => ok(); s.onerror = () => ko(new Error('Impossibile caricare il lettore PDF (serve la rete).')); document.head.appendChild(s); });
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
-    const token = await Drive.tokenValido(false);
-    const doc = await pdfjsLib.getDocument({ url: 'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', httpHeaders: { Authorization: 'Bearer ' + token }, rangeChunkSize: 524288, disableAutoFetch: true, disableStream: true }).promise;
+    const dati = await PdfCache.prendi(fileId, (f, t) => { stato.textContent = 'Scarico il PDF… ' + (t ? Math.round(f / t * 100) + '%' : Math.round(f / 1048576) + ' MB') + ' (solo la prima volta)'; });
+    stato.textContent = 'Apro il PDF…';
+    const doc = await pdfjsLib.getDocument({ data: dati }).promise;
     let p = Math.min(Math.max(1, pagina), doc.numPages), zoom = 1, giro = 0;
     const tela = h('canvas.pdf-tela') as HTMLCanvasElement, num = h('span.pdf-num');
     async function mostra(): Promise<void> {
@@ -213,6 +266,7 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
   punti.oninput = () => { if (punti.value !== '') fatta.checked = true; };
   const L = pk.risorse.libri[m];
   const blocchi = Studio.intervalli(Studio.pagineSet(s.pagine)).split(', ').filter(Boolean);
+  const apribili = blocchi.filter(b => /^\d/.test(b));
   const f = foglio({
     titolo: micro + ' · scheda ' + s.k + '/' + s.n,
     corpo: h('div.modulo', null,
@@ -221,8 +275,8 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
       h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, 'Apri il quiz'),
       h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti)),
       h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota),
-      h('div.gruppo', null, h('div.gruppo-titolo', null, 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ')),
-        h('div.chips', { style: { margin: '4px 0 10px' } }, blocchi.map(b => { const pag = parseInt(b, 10); return h('button.chip', { onclick: async () => {
+      h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'),
+        h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => { const pag = parseInt(b, 10); return h('button.chip', { onclick: async () => {
           if (serveGoogle()) return;
           try { const r = await Studio.pdfPagina(pk, m, pag); apriPdf(r.id, r.pagina, r.nome); } catch (e: any) { avviso(String(e.message || e), 6000); }
         } }, 'Apri p. ' + b); })),
@@ -239,18 +293,18 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
 }
 
 /** Foglio per spostare uno step del piano su un altro giorno (i progressi restano). */
-function apriSposta(v: VocePiano, g: GiornoPiano): void {
-  const attuale = Studio.dataVoce(v, g);
+function apriSposta(v: VocePiano, g: GiornoPiano, p: PkPiano): void {
+  const attuale = Studio.dataVoce(v, g, p.id);
   const data = h('input', { type: 'date', value: attuale }) as HTMLInputElement;
-  const riserve = (Studio.pkPiano()!.giorni).filter(x => x.voci.some(y => /^RISERVA/.test(y.k)) || x.nota && /leggero/i.test(x.nota));
+  const riserve = p.giorni.filter(x => x.voci.some(y => /^RISERVA/.test(y.k)) || x.nota && /leggero/i.test(x.nota));
   const f = foglio({
     titolo: 'Sposta ' + Studio.etichetta(v.k),
     corpo: h('div.modulo', null,
       h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, v.t), h('div.tenue.piccolo', null, 'Nel piano: ' + dataLunga(daYmd(g.data)))),
       h('div.gruppo', null, riga('Nuovo giorno', data),
         h('div.chips', { style: { margin: '4px 0 10px' } }, riserve.map(r => h('button.chip', { onclick: () => { data.value = r.data; } }, fmt(daYmd(r.data), { day: 'numeric', month: 'short' }) + (r.voci[0].speciale ? ' · ' + r.voci[0].t : ' · leggero'))))),
-      attuale !== g.data ? h('button.btn.neutro', { onclick: () => { Studio.sposta(v.k, null); f.chiudi(); } }, 'Rimetti al giorno del piano') : null),
-    salva: () => { if (data.value) Studio.sposta(v.k, data.value === g.data ? null : data.value); },
+      attuale !== g.data ? h('button.btn.neutro', { onclick: () => { Studio.sposta(v.k, null, p.id); f.chiudi(); } }, 'Rimetti al giorno del piano') : null),
+    salva: () => { if (data.value) Studio.sposta(v.k, data.value === g.data ? null : data.value, p.id); },
   });
 }
 
@@ -258,16 +312,24 @@ function barra(fatte: number, tot: number, colore?: string): HTMLElement {
   return h('div.barra-av', { role: 'progressbar', 'aria-valuenow': String(fatte), 'aria-valuemax': String(tot) }, h('div', { style: { width: (tot ? (fatte / tot) * 100 : 0) + '%', background: colore || 'var(--accento)' } }));
 }
 /** Riga "blocco studio" per Oggi / calendario. */
-function rigaStudio(x: { v: VocePiano; g: GiornoPiano; spostata: boolean }): HTMLElement {
-  const fatto = !x.v.speciale && Studio.stepFatto(x.v.k), t = Studio.trovaSotto(x.v.k);
-  const n = t ? Studio.numeri(Studio.schedeDi(t.sub)) : null;
-  return h('button.voce-lista', { onclick: () => { if (t) { UI.studioSub = x.v.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; vai('studio'); } } },
-    h('span.barra', { style: { background: COLORE_MATERIA[x.v.k[0]] || 'var(--tenue)' } }),
-    h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
-      h('span.voce-sotto', null, x.v.speciale ? x.v.d : n ? n.Pf + '/' + n.P + ' prioritarie · ' + n.pagP.size + ' pag.' : 'schede da creare', x.spostata ? ' · spostato' : '')));
+function rigaStudio(x: VoceGiorno): HTMLElement {
+  const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k);
+  return h('button.voce-lista', { onclick: () => { if (t) { UI.studioSub = x.v.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
+    h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : COLORE_MATERIA[x.v.k[0]] } }),
+    h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
+      h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '')));
+}
+/** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
+function testoAvanzamento(k: string, p: PkPiano): string {
+  const t = Studio.trovaSotto(k);
+  if (!t) return p.modo === 'raffinamento' ? 'schede in preparazione' : 'schede da creare';
+  const n = Studio.numeri(Studio.schedeDi(t.sub));
+  if (p.modo !== 'raffinamento') return n.Pf + '/' + n.P + ' prioritarie · ' + n.pagP.size + ' pag. · ' + n.R + ' raff.';
+  const piu = Array.from(n.pagR).filter(x => !n.pagP.has(x)).length;
+  return '1 · priorità: rifai le prioritarie sbagliate, rileggi ' + n.pagP.size + ' pag. · 2 · raffina: ' + n.Rf + '/' + n.R + ' schede (+' + piu + ' pag.)';
 }
 function indicatoreStudio(): HTMLElement | null {
-  if (!Studio.pkPiano()) return null;
+  if (!Studio.pkPiani().length) return null;
   const r = Studio.inRitardo();
   return h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } },
     r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
@@ -279,10 +341,17 @@ function vistaStudio(): HTMLElement {
   if (!pks.length && !piano) return h('div.pagina', null, vuoto('Nessun pacchetto di studio. Apri l\'app online una volta per scaricarli, oppure usa "Aggiorna da Drive".'), bottoneDrive());
   if (UI.studioSub) { const t = Studio.trovaSotto(UI.studioSub); if (t) return vistaSottostep(t.pk, t.mat, t.sub); UI.studioSub = null; }
   const pk = pks.find(p => p.id === UI.studioStep) || pks[pks.length - 1];
-  const seg = h('div.segmenti', { role: 'tablist' },
-    h('button' + (UI.studioVista === 'schede' ? '.attivo' : ''), { onclick: () => { UI.studioVista = 'schede'; disegna(); } }, 'Schede'),
-    h('button' + (UI.studioVista === 'piano' ? '.attivo' : ''), { onclick: () => { UI.studioVista = 'piano'; disegna(); } }, 'Piano'));
-  if (UI.studioVista === 'piano' && piano) return h('div.pagina', null, seg, indicatoreStudio(), vistaPiano(piano));
+  const voci: [typeof UI.studioVista, string][] = [['schede', 'Schede'], ['piano', 'Piano'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
+  const seg = h('div.segmenti', { role: 'tablist' }, voci.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.studioVista = v; UI.pianoScorso = false; disegna(); } }, t)));
+  if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
+  if (UI.studioVista === 'syllabus' && piano) return h('div.pagina', null, seg, vistaCopertura(piano));
+  if (UI.studioVista === 'piano' && piano) {
+    const piani = Studio.pkPiani(), scelto = piani.find(p => p.id === UI.studioPiano) || piani.find(p => { const g = p.giorni; return g.length && ymd(oggi()) <= g[g.length - 1].data; }) || piano;
+    return h('div.pagina', null, seg, indicatoreStudio(),
+      piani.length > 1 ? h('div.chips', null, piani.map(p => h('button.chip' + (p.id === scelto.id ? '.attivo' : ''), { onclick: () => { UI.studioPiano = p.id; UI.pianoScorso = false; disegna(); } }, p.titolo))) : null,
+      scelto.nota ? h('div.tenue.piccolo', null, scelto.nota) : null,
+      vistaPiano(scelto));
+  }
   if (!pk) return h('div.pagina', null, seg, vuoto('Nessuna scheda di studio caricata.'), bottoneDrive());
 
   const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
@@ -314,7 +383,7 @@ function bottoneDrive(): HTMLElement {
 
 function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
   const sch = Studio.schedeDi(sub), n = Studio.numeri(sch), col = COLORE_MATERIA[mat.m];
-  const blocco = (eti: string, cls: string, k: number, f: number, pag: Set<number>) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? mat.libro + ': pp. ' + Studio.intervalli(pag) : '—'));
+  const blocco = (eti: string, cls: string, k: number, f: number, pag: Set<string>) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? mat.libro + ': pp. ' + Studio.intervalli(pag) : '—'));
   return h('div.pagina', null,
     h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo),
     h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo),
@@ -322,6 +391,16 @@ function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
       barra(n.Pf, n.P, col),
       h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)),
       h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size)),
+    h('button.btn.neutro', { onclick: async (e: Event) => {
+      if (serveGoogle()) return;
+      const b = e.currentTarget as HTMLButtonElement, ids = new Map<string, string>();
+      try {
+        for (const p of Array.from(n.pagT).filter(x => /^\d/.test(x))) { const r = await Studio.pdfPagina(pk, mat.m, +p); ids.set(r.id, r.nome); }
+        let i = 0;
+        for (const id of Array.from(ids.keys())) { i++; await PdfCache.prendi(id, (f, t) => { b.textContent = 'Scarico PDF ' + i + '/' + ids.size + '… ' + (t ? Math.round(f / t * 100) + '%' : ''); }); }
+        b.textContent = 'PDF del libro pronti anche offline ✓';
+      } catch (err: any) { b.textContent = 'Scarica i PDF del libro'; avviso(String(err.message || err), 6000); }
+    } }, 'Scarica i PDF del libro (apertura immediata)'),
     h('label.riga.filtro', null, h('span.riga-eti', null, 'Solo prioritarie'), h('span.interruttore', null, h('input', { type: 'checkbox', checked: UI.soloPrior, onchange: (e: Event) => { UI.soloPrior = (e.target as HTMLInputElement).checked; disegna(); } }), h('span'))),
     sub.microstep.map(mi => {
       const lista = mi.schede.filter(s => !UI.soloPrior || s.tipo === 'P').sort((a, b) => a.k - b.k); if (!lista.length) return null;
@@ -341,25 +420,45 @@ function vistaPiano(piano: PkPiano): HTMLElement {
   const oggiK = ymd(oggi()), lista = h('div.agenda');
   // raggruppo per data effettiva (tenendo conto degli spostamenti)
   const perData = new Map<string, { v: VocePiano; g: GiornoPiano }[]>();
-  for (const g of piano.giorni) { if (!perData.has(g.data)) perData.set(g.data, []); for (const v of g.voci) { const d = Studio.dataVoce(v, g); if (!perData.has(d)) perData.set(d, []); perData.get(d)!.push({ v, g }); } }
+  for (const g of piano.giorni) { if (!perData.has(g.data)) perData.set(g.data, []); for (const v of g.voci) { const d = Studio.dataVoce(v, g, piano.id); if (!perData.has(d)) perData.set(d, []); perData.get(d)!.push({ v, g }); } }
   for (const d of Array.from(perData.keys()).sort()) {
     const g = daYmd(d), gp = piano.giorni.find(x => x.data === d), voci = perData.get(d)!;
     lista.appendChild(h('div.agenda-giorno' + (d === oggiK ? '.oggi' : ''), { id: d === oggiK ? 'piano-oggi' : null },
       h('div.agenda-data', null, h('span.agenda-num', null, String(g.getDate())), h('span.agenda-sett', null, fmt(g, { weekday: 'short' }) + ' · ' + fmt(g, { month: 'short' })), gp && gp.n ? h('span.agenda-sett', null, 'g. ' + gp.n + '/' + piano.giorniTeoria) : null),
       h('div.agenda-voci', null,
         voci.map(({ v, g: go }) => {
-          const fatto = !v.speciale && Studio.stepFatto(v.k), t = Studio.trovaSotto(v.k), tardi = !v.speciale && !fatto && d < oggiK;
+          const fatto = !v.speciale && Studio.stepFatto(v.k, piano), t = Studio.trovaSotto(v.k), tardi = !v.speciale && !fatto && d < oggiK;
           return h('div.voce-lista.task' + (fatto ? '.fatto' : ''), null,
             v.speciale ? h('span.barra', { style: { background: 'var(--tenue)' } })
-              : h('button.spunta' + (fatto ? '.on' : ''), { style: { '--c': COLORE_MATERIA[v.k[0]] }, 'aria-label': 'Step completato', onclick: () => { if (t) { UI.studioSub = v.k; disegna(); } else Studio.segna('step-' + v.k, { fatta: !fatto }); } }, fatto ? '✓' : ''),
+              : h('button.spunta' + (fatto ? '.on' : ''), { style: { '--c': COLORE_MATERIA[v.k[0]] }, 'aria-label': 'Step completato', onclick: () => { if (t) { UI.studioSub = v.k; disegna(); } else Studio.segnaStepAMano(v.k, piano, !fatto); } }, fatto ? '✓' : ''),
             h('button.voce-corpo', { onclick: () => { if (t) { UI.studioSub = v.k; disegna(); } } },
               h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t),
-              h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? v.d : t ? (() => { const n = Studio.numeri(Studio.schedeDi(t.sub)); return n.Pf + '/' + n.P + ' prioritarie · ' + n.pagP.size + ' pag. · ' + n.R + ' raff.'; })() : 'schede da creare', tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')),
-            v.speciale ? null : h('button.btn-testo', { onclick: () => apriSposta(v, go) }, 'Sposta'));
+              h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? v.d : testoAvanzamento(v.k, piano), tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')),
+            v.speciale ? null : h('button.btn-testo', { onclick: () => apriSposta(v, go, piano) }, 'Sposta'));
         }),
         !voci.length ? h('div.tenue.piccolo', { style: { padding: '8px 0' } }, 'Step spostati altrove.') : null,
         gp && gp.nota ? h('div.tenue.piccolo', { style: { padding: '4px 0' } }, gp.nota) : null)));
   }
   setTimeout(() => { const el = document.getElementById('piano-oggi'); if (el && !UI.pianoScorso) { UI.pianoScorso = true; el.scrollIntoView({ block: 'start' }); } }, 30);
   return lista;
+}
+
+// ---------- Copertura del syllabus ----------
+function vistaCopertura(piano: PkPiano): HTMLElement {
+  const cop = piano.copertura || [];
+  if (!cop.length) return vuoto('Il piano non contiene la tabella di copertura.');
+  const ETI: Record<string, [string, string]> = { E: ['Schede esistenti', 'stato-e'], I: ['Integrazione', 'stato-i'], N: ['Da creare', 'stato-n'] };
+  const filtrate = cop.filter(c => (!UI.copMateria || c.m === UI.copMateria) && (!UI.copStato || c.stato === UI.copStato));
+  const conta = (st: string) => cop.filter(c => (!UI.copMateria || c.m === UI.copMateria) && c.stato === st).length;
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+    h('div.chips', null, [['', 'Tutte'], ['C', 'Chimica'], ['B', 'Biologia'], ['F', 'Fisica']].map(([m, t]) => h('button.chip' + (UI.copMateria === m ? '.attivo' : ''), { onclick: () => { UI.copMateria = m; disegna(); } }, t))),
+    h('div.chips', null, h('button.chip' + (!UI.copStato ? '.attivo' : ''), { onclick: () => { UI.copStato = ''; disegna(); } }, 'Tutti · ' + (conta('E') + conta('I') + conta('N'))),
+      ['E', 'I', 'N'].map(st => h('button.chip' + (UI.copStato === st ? '.attivo' : ''), { onclick: () => { UI.copStato = st; disegna(); } }, ETI[st][0] + ' · ' + conta(st)))),
+    ['C', 'B', 'F'].filter(m => filtrate.some(c => c.m === m)).map(m => h('section.card', null, h('h2.card-titolo', { style: { color: COLORE_MATERIA[m] } }, NOME_MATERIA[m] + ' — copertura del syllabus'),
+      filtrate.filter(c => c.m === m).map(c => {
+        const t = Studio.trovaSotto(c.k), fatto = Studio.stepFatto(c.k, piano);
+        return h('button.voce-lista', { onclick: () => { if (t) { UI.studioSub = c.k; disegna(); } } },
+          h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal', fontWeight: '550' } }, (fatto ? '✓ ' : '') + c.a),
+            h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, h('span.etichetta.' + ETI[c.stato][1], null, ETI[c.stato][0]), ' ' + c.ud + ' · Step ' + c.k.slice(1) + ' · ' + c.quando)));
+      }))));
 }

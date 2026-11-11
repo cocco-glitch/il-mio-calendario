@@ -253,3 +253,19 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .visore-corpo { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; } .visore-corpo.pdf { background: #555; text-align: center; padding: 4px; }
 .visore-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; } .pdf-tela { background: #fff; display: inline-block; }
 .blocco strong { font-size: 10px; letter-spacing: 0; }
+.etichetta.stato-e { background: color-mix(in srgb, #2fbf8f 18%, transparent); color: #1f9a71; } .etichetta.stato-i { background: color-mix(in srgb, #e9a23b 22%, transparent); color: #b87710; } .etichetta.stato-n { background: color-mix(in srgb, var(--rosso) 15%, transparent); color: var(--rosso); }
+.segmenti button { font-size: 13px; }
+
+/* ---------- Tabelle ---------- */
+.titolo-tab { font-size: 20px; font-weight: 750; background: transparent !important; flex: 1; min-width: 0; padding-left: 0 !important; }
+.collegamento { color: var(--accento); font-weight: 600; text-decoration: none; }
+.tab-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; background: var(--sup); border-radius: var(--raggio); box-shadow: var(--ombra); }
+.tab { border-collapse: collapse; min-width: 100%; font-size: 14px; }
+.tab th { position: sticky; top: 0; background: var(--sup2); text-align: left; font-size: 12px; font-weight: 700; color: var(--tenue); white-space: nowrap; padding: 0 2px 0 8px; }
+.tab th button { min-height: 40px; padding: 0 4px; font-weight: 700; } .tab .th-mod { opacity: .55; font-size: 12px; } .th-piu button { font-size: 20px; color: var(--accento); padding: 0 12px; }
+.tab td { border-top: 1px solid var(--linea); padding: 2px 4px; vertical-align: middle; }
+.tab .cella, .tab select { min-height: 38px; background: transparent; border-color: transparent; padding: 6px; width: 100%; min-width: 110px; }
+.tab textarea.cella { resize: none; overflow: hidden; min-width: 150px; line-height: 1.3; }
+.tab .td-numero .cella { min-width: 80px; } .tab .td-spunta { text-align: center; }
+.tab .cella:focus, .tab select:focus { background: var(--sup2); }
+.cella-link { display: flex; align-items: center; gap: 4px; white-space: nowrap; } .cella-link a { color: var(--accento); max-width: 160px; overflow: hidden; text-overflow: ellipsis; }

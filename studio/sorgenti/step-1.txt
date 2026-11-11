@@ -1,0 +1,202 @@
+# Sorgente Step 1 (stesso formato di step-2.txt). Generato da schede PDF + file "Step 1.x - schede da fare e ridondanti".
+@C 1.1 | Atomo, isotopi, orbitali e configurazione elettronica | Svolto · già svolto da calendario Dom 25/10 | Simulazione 3 Dom 22/11 · Sprint Chimica Sab 05/12 · raffinamento 10/12–10/01
+= 13 8 18 23 23
+P 1.1.1 1/2 | Classificazione della materia: sostanze pure e miscele | 26-28
+R 1.1.1 2/2 | Elementi, composti, formule ed elementi biologici | 26-32
+R 1.1.2 1/3 | La teoria atomica di Dalton | 25,30
+P 1.1.2 2/3 | Le leggi ponderali: Lavoisier e Proust | 30-31
+P 1.1.2 3/3 | Problemi sulle leggi ponderali | 30-31
+R 1.1.3 1/3 | Protoni, neutroni ed elettroni | 32-37
+P 1.1.3 2/3 | Numero atomico, numero di massa e identificazione degli atomi | 33-35
+P 1.1.3 3/3 | Problemi su protoni, neutroni ed elettroni | 33-35
+P 1.1.4 1/3 | Gli isotopi | 35-36
+R 1.1.4 2/3 | Massa atomica e peso atomico | 32,36-37
+P 1.1.4 3/3 | Problemi sulla media ponderata delle masse | 36-37
+R 1.1.5 1/3 | Il modello di Bohr e la quantizzazione dell'energia | 42-44,55
+P 1.1.5 2/3 | Sottogusci, orbitali e loro forma | 43-44
+P 1.1.5 3/3 | Problemi sulla capacità di gusci e sottogusci | 43-44
+R 1.1.6 1/3 | Meccanica quantistica: orbitale, onda-particella, Pauli e spin | 44-45,55
+P 1.1.6 2/3 | I quattro numeri quantici | 43-45,55
+P 1.1.6 3/3 | Problemi sui numeri quantici | 43-44,55
+P 1.1.7 1/4 | Le tre regole di riempimento degli orbitali | 44-45
+R 1.1.7 2/4 | Scrivere le configurazioni elettroniche dei primi elementi | 45-48
+P 1.1.7 3/4 | Problemi sulla configurazione elettronica | 44-49
+R 1.1.7 4/4 | Elettroni di valenza, strutture di Lewis e posizione nella tavola | 48-50
+@C 1.2 | Tavola periodica, proprietà periodiche, numero di ossidazione e nomenclatura | Svolto · già svolto da calendario Mer 28/10 | Simulazione 3 Dom 22/11 · Sprint Chimica Sab 05/12 · raffinamento 10/12–10/01
+= 17 13 20 24 24
+P 1.2.1 1/2 | Gruppi, periodi e ordine degli elementi | 37-42 | UD1.1-1.2 Atomo: slide 62-79
+R 1.2.1 2/2 | Numerazione dei gruppi e collocazione degli elementi | 37-42 | UD1.1-1.2 Atomo: slide 62-79
+R 1.2.2 1/2 | Metalli, non metalli e metalloidi | 29,39 | UD1.1-1.2 Atomo: slide 62-79
+P 1.2.2 2/2 | Le famiglie alcalini, alcalino-terrosi, alogeni e gas nobili | 39,50 | UD1.1-1.2 Atomo: slide 62-79
+R 1.2.3 1/2 | Elettroni di valenza e blocchi s, p, d, f | 50 | UD1.1-1.2 Atomo: slide 62-79
+P 1.2.3 2/2 | Dalla configurazione elettronica alla posizione nella tavola | 50 | UD1.1-1.2 Atomo: slide 62-79
+P 1.2.4 1/2 | Raggio atomico e andamento periodico | 51 | UD1.1-1.2 Atomo: slide 62-79
+P 1.2.4 2/2 | Raggio ionico e specie isoelettroniche | 51,57,60 | UD1.1-1.2 Atomo: slide 62-79
+P 1.2.5 1/2 | Energia di ionizzazione | 53 | UD1.1-1.2 Atomo: slide 62-79
+R 1.2.5 2/2 | Affinità elettronica | 53-54 | UD1.1-1.2 Atomo: slide 62-79
+P 1.2.6 1/2 | Elettronegatività | 62 | UD1.1-1.2 Atomo: slide 62-79
+R 1.2.6 2/2 | Elettronegatività, tipo di legame e confronto tra le proprietà periodiche | 51-54,62-64 | UD1.1-1.2 Atomo: slide 62-79
+P 1.2.7 1/2 | Regola dell'ottetto e formazione degli ioni | 57,60,63 | UD1.1-1.2 Atomo: slide 62-79
+R 1.2.7 2/2 | Carica e nomi degli ioni | 57,59-60,63-64 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.8 1/3 | Regole per il numero di ossidazione | 61-62 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+R 1.2.8 2/3 | Calcolare il numero di ossidazione nei composti |  | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.8 3/3 | Problemi sul numero di ossidazione |  | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.9 1/2 | Ossidi basici e ossidi acidi | 65,76 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+R 1.2.9 2/2 | Nomenclatura degli ossidi, perossidi e superossidi | 65-67,76 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.10 1/1 | Idrossidi | 65-68 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+R 1.2.11 1/2 | Idruri | 76 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.11 2/2 | Idracidi | 76 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.12 1/2 | Ossiacidi, formazione e nomenclatura tradizionale | 76 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+R 1.2.12 2/2 | Ossiacidi del cloro e prefissi ipo- e per- | 76 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.13 1/2 | Ioni poliatomici e ossianioni, nitrato, solfato, fosfato, carbonato | 61 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+R 1.2.13 2/2 | Ossianioni del cloro, idrogenoanioni e altri ioni poliatomici | 61 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.14 1/3 | Sali: formazione e nomenclatura | 63-67 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+R 1.2.14 2/3 | Sali con metalli a numero di ossidazione variabile e sali acidi | 65-67 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+P 1.2.14 3/3 | Problemi sulla scrittura delle formule dei sali | 63-67 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+R 1.2.15 1/1 | Composti inorganici di interesse biomedico | 68 | UD1.4 Mole e Nomenclatura (tutta la lezione)
+@C 1.3 | Legame chimico, ibridazione, geometria e interazioni deboli | Svolto · già svolto da calendario Sab 31/10 | Simulazione 3 Dom 22/11 · Sprint Chimica Sab 05/12 · raffinamento 10/12–10/01
+= 15 14 26 22 31
+R 1.3.1 1/3 | Regola dell'ottetto e perché gli atomi si legano | 57,61-63 | UD1.3 Legami chimici: slide 2-5, 23-24
+P 1.3.1 2/3 | Energia, lunghezza e ordine di legame | 68 | UD1.3 Legami chimici: slide 9-14
+R 1.3.1 3/3 | Problemi su energia, lunghezza e ordine di legame | 68 | UD1.3 Legami chimici: slide 9-14, 28-29
+P 1.3.2 1/2 | Elettronegatività e tipo di legame | 61-62 | UD1.3 Legami chimici: slide 6-8, 22
+R 1.3.2 2/2 | Problemi sulla differenza di elettronegatività | 62 | UD1.3 Legami chimici: slide 6-8, 22-23
+P 1.3.3 1/3 | Il legame ionico e il reticolo cristallino | 63 | UD1.3 Legami chimici: slide 23-24
+R 1.3.3 2/3 | Problemi: formule dei composti ionici | 63-64 | UD1.3 Legami chimici: slide 23-26
+R 1.3.3 3/3 | Il legame metallico e il confronto tra i tipi di legame | 61 | UD1.3 Legami chimici: slide 5, 27
+P 1.3.4 1/4 | Legame covalente omopolare e polare | 68-71 | UD1.3 Legami chimici: slide 12-19
+P 1.3.4 2/4 | Il legame di coordinazione (dativo) | 69-71 | UD1.3 Legami chimici: slide 15, 20-21
+R 1.3.4 3/4 | Legami sigma e pi greco | 68 | UD1.3 Legami chimici: slide 13, 28-29
+P 1.3.4 4/4 | Problemi: contare legami, doppietti, sigma e pi | 68-75 | UD1.3 Legami chimici: slide 14, 25-29, 42-47
+P 1.3.5 1/4 | Strutture di Lewis | 71-75 | UD1.3 Legami chimici: slide 25-26
+R 1.3.5 2/4 | Eccezioni alla regola dell'ottetto | 75 | UD1.3 Legami chimici: slide 2
+R 1.3.5 3/4 | La risonanza | 77-79 | UD1.3 Legami chimici: slide 48-50
+P 1.3.5 4/4 | Problemi su elettroni di valenza, Lewis e risonanza | 71-75,77-79 | UD1.3 Legami chimici: slide 25-26, 48-50
+P 1.3.6 1/3 | Teoria VSEPR e geometrie di base | 80-84 | UD1.3 Legami chimici: slide 30-32
+R 1.3.6 2/3 | Doppietti liberi e deformazione degli angoli | 80-84 | UD1.3 Legami chimici: slide 30-32
+P 1.3.6 3/3 | Problemi: dalla formula alla geometria | 80-84 | UD1.3 Legami chimici: slide 30-32
+P 1.3.7 1/3 | Ibridazione: concetto e orbitali sp3 | 85 | UD1.3 Legami chimici: slide 33-47
+R 1.3.7 2/3 | Ibridazione sp2 e sp | 85 | UD1.3 Legami chimici: slide 33-47
+P 1.3.7 3/3 | Problemi: ibridazione, angoli e legami | 68,80-85 | UD1.3 Legami chimici: slide 28-29, 33-47
+R 1.3.8 1/2 | Dipoli di legame e momento dipolare | 88 | UD1.3 Legami chimici: slide 51-54
+P 1.3.8 2/2 | Problemi: prevedere la polarità delle molecole | 80-88 | UD1.3 Legami chimici: slide 30-32, 51-54
+P 1.3.9 1/2 | Interazioni deboli: classificazione ed energie | 129-130 | UD1.3 Legami chimici: slide 55-58
+R 1.3.9 2/2 | Forze di London e dipolo-dipolo | 130-131 | UD1.3 Legami chimici: slide 59-61
+P 1.3.10 1/3 | Il legame a idrogeno | 132 | UD1.3 Legami chimici: slide 62-65
+R 1.3.10 2/3 | Problemi sul legame a idrogeno (Esempio 5.8) | 132-134 | UD1.3 Legami chimici: slide 62-65
+R 1.3.10 3/3 | Effetto idrofobico e confronto tra interazioni | 130-132 | UD1.3 Legami chimici: slide 55-68
+@B 1.1 | Acqua, gruppi funzionali, carboidrati e lipidi | Svolto · già svolto da calendario Lun 26/10 | Simulazione 3 Dom 22/11 · Sprint Biologia Ven 04/12 · raffinamento 10/12–10/01
+= 10 8 15 13 15
+R 1.1.1 1/4 | Legami chimici e struttura dell'acqua | 2-3
+P 1.1.1 2/4 | Le proprietà dell'acqua | 2-4
+P 1.1.1 3/4 | L'acqua come solvente e le molecole anfipatiche | 4-6
+R 1.1.1 4/4 | Problemi sull'acqua: cariche, legami a idrogeno e composizione | 2-4
+R 1.1.2 1/3 | Il carbonio e gli idrocarburi | 6-7
+P 1.1.2 2/3 | I gruppi funzionali | 7-8
+R 1.1.2 3/3 | Problemi su condensazione, idrolisi e tetravalenza | 6-7,11-12
+P 1.1.3 1/6 | Classificazione dei carboidrati | 8-9
+R 1.1.3 2/6 | Stereoisomeria e serie D e L | 9
+R 1.1.3 3/6 | Forme cicliche e anomeri | 9-11
+P 1.1.3 4/6 | Legame glicosidico e disaccaridi | 10-12
+P 1.1.3 5/6 | I polisaccaridi | 12-13
+P 1.1.3 6/6 | Problemi sui carboidrati | 8-13
+R 1.1.4 1/5 | Caratteristiche dei lipidi e acidi grassi | 13-14
+P 1.1.4 2/5 | Classificazione dei lipidi e trigliceridi | 14
+P 1.1.4 3/5 | Fosfogliceridi e sfingolipidi | 14-16
+R 1.1.4 4/5 | Steroidi e confronto tra le classi di lipidi | 13-16
+P 1.1.4 5/5 | Problemi sui lipidi | 13-16
+@B 1.2 | Amminoacidi, proteine ed enzimi | Svolto · già svolto da calendario Gio 29/10 | Simulazione 3 Dom 22/11 · Sprint Biologia Ven 04/12 · raffinamento 10/12–10/01
+= 13 8 12 12 14
+P 1.2.1 1/4 | Struttura e classificazione degli amminoacidi | 17-19 | UD1 Lezione 4 (tutta la lezione)
+R 1.2.1 2/4 | Ionizzazione, carica netta e punto isoelettrico | 17-19 | UD1 Lezione 4 (tutta la lezione)
+P 1.2.1 3/4 | Il legame peptidico e le catene polipeptidiche | 17-19 | UD1 Lezione 4 (tutta la lezione)
+R 1.2.1 4/4 | Problemi su legami peptidici, acqua, massa e carica | 17-21 | UD1 Lezione 4 (tutta la lezione)
+P 1.2.2 1/3 | Classificazione delle proteine e struttura primaria | 18-21 | UD1 Lezione 4 (tutta la lezione)
+P 1.2.2 2/3 | Struttura secondaria, α-elica e foglietto β | 20-22 | UD1 Lezione 4 (tutta la lezione)
+R 1.2.2 3/3 | Problemi su α-elica, foglietto β e struttura secondaria | 20-22
+P 1.2.3 1/4 | Struttura terziaria, ponti disolfuro e domini | 21-23 | UD1 Lezione 4 (tutta la lezione)
+P 1.2.3 2/4 | Struttura quaternaria e complessi proteici | 23-24 | UD1 Lezione 4 (tutta la lezione)
+P 1.2.3 3/4 | Denaturazione e rinaturazione delle proteine | 24-25
+R 1.2.3 4/4 | Problemi su ponti disolfuro, subunità e denaturazione | 21-25
+P 1.2.4 1/3 | Enzimi, energia di attivazione e catalisi | 16,129 | UD1 Lezione 4; UD3.2 Cinetica (tutta la lezione)
+P 1.2.4 2/3 | Sito attivo, specificità e modelli di riconoscimento | 21-23 | UD1 Lezione 4; UD3.2 Cinetica (tutta la lezione)
+R 1.2.4 3/3 | Cofattori, coenzimi e gruppi prostetici | 130-131 | UD3.2 Cinetica (tutta la lezione)
+P 1.2.5 1/3 | Fattori che influenzano l'attività enzimatica | 24-25 | UD3.2 Cinetica (tutta la lezione)
+P 1.2.5 2/3 | Cinetica enzimatica, saturazione, Vmax e Km |  | UD3.2 Cinetica (tutta la lezione)
+R 1.2.5 3/3 | Problemi di cinetica enzimatica |  | UD3.2 Cinetica (tutta la lezione)
+P 1.2.6 1/4 | Inibizione enzimatica reversibile e irreversibile |  | UD3.2 Cinetica; UD1 Lezione 4 (tutta la lezione)
+P 1.2.6 2/4 | Regolazione allosterica | 25-26 | UD1 Lezione 4 (tutta la lezione)
+R 1.2.6 3/4 | Modificazione covalente e modificazioni post-traduzionali | 25-26 | UD1 Lezione 4 (tutta la lezione)
+R 1.2.6 4/4 | Problemi su inibizione, fosforilazione e regolazione | 26 | UD3.2 Cinetica; UD1 Lezione 4 (tutta la lezione)
+@B 1.3 | Acidi nucleici, cromatina e virus | Svolto · già svolto da calendario Sab 31/10 | Simulazione 3 Dom 22/11 · Sprint Biologia Ven 04/12 · raffinamento 10/12–10/01
+= 12 11 21 20 23
+R 1.3.1 1/2 | Dalla nucleina al principio trasformante | 27-29
+P 1.3.1 2/2 | Hershey e Chase e la scoperta della doppia elica | 28-30 | U1 L3 Acidi nucleici (tutta la lezione)
+P 1.3.2 1/2 | Componenti del nucleotide: zucchero, base e fosfato | 29-32 | U1 L3 Acidi nucleici (tutta la lezione)
+R 1.3.2 2/2 | Nucleosidi, nucleotidi e ATP | 31-32 | U1 L3 Acidi nucleici (tutta la lezione)
+P 1.3.3 1/2 | Il legame fosfodiestere e la polarità 5′→3′ | 32-33 | U1 L3 Acidi nucleici (tutta la lezione)
+R 1.3.3 2/2 | Problemi su catene polinucleotidiche e sequenze | 29-34 | U1 L3 Acidi nucleici (tutta la lezione)
+P 1.3.4 1/5 | Complementarità, antiparallelismo e legami a idrogeno | 33-36 | U1 L3 Acidi nucleici (tutta la lezione)
+R 1.3.4 2/5 | Parametri della doppia elica, solchi, DNA-B e DNA-Z | 33-34 | U1 L3 Acidi nucleici (tutta la lezione)
+R 1.3.4 3/5 | Palindromi e appaiamenti non canonici | 34-35
+P 1.3.4 4/5 | Problemi sulle regole di Chargaff | 28-29,33-34 | U1 L3 Acidi nucleici (tutta la lezione)
+R 1.3.4 5/5 | Problemi su lunghezze, giri d'elica e nucleosomi | 33-34,37-39 | U1 L3 Acidi nucleici (tutta la lezione)
+P 1.3.5 1/2 | Struttura dell'RNA e confronto con il DNA | 27,35-36 | U1 L3 Acidi nucleici (tutta la lezione)
+P 1.3.5 2/2 | Tipi e funzioni degli RNA | 35-36 | U1 L3 Acidi nucleici (tutta la lezione)
+R 1.3.6 1/3 | Parametri fisici del DNA e superavvolgimento | 36-37,40
+P 1.3.6 2/3 | Istoni e nucleosoma | 37-39
+R 1.3.6 3/3 | Livelli di compattamento, eucromatina ed eterocromatina | 37-39
+P 1.3.7 1/3 | Struttura e composizione dei virus | 61-64 | U1 L1 Virus (tutta la lezione)
+R 1.3.7 2/3 | Morfologia, dimensioni e batteriofagi | 61-64 | U1 L1 Virus (tutta la lezione)
+R 1.3.7 3/3 | Classificazione per genoma e specificità d'ospite | 63-64 | U1 L1 Virus (tutta la lezione)
+P 1.3.8 1/4 | Ciclo replicativo dei virus eucariotici | 64-65 | U1 L1 Virus (tutta la lezione)
+P 1.3.8 2/4 | Retrovirus, HIV e virus oncogeni | 65-66 | U1 L1 Virus (tutta la lezione)
+P 1.3.8 3/4 | Batteriofagi: ciclo litico e ciclo lisogenico | 66-68 | U1 L1 Virus (tutta la lezione)
+R 1.3.8 4/4 | Viroidi, satelliti e prioni | 68-69
+@F 1.1 | Grandezze, SI, conversioni, analisi dimensionale, errori | Svolto · già svolto da calendario Mar 27/10 | Simulazione 3 Dom 22/11 · Sprint Fisica Dom 06/12 · raffinamento 10/12–10/01
+= 9 14 5 10 10
+R 1.1.1 1/3 | Grandezze fisiche, misura e unità | 2-3 | Dispensa Step 1.1
+P 1.1.1 2/3 | Le sette grandezze fondamentali del S.I. | 3-5 | Dispensa Step 1.1
+R 1.1.1 3/3 | Unità derivate e sistemi di unità | 3-5 | Dispensa Step 1.1
+R 1.1.2 1/3 | Prefissi del Sistema Internazionale | 5 | Dispensa Step 1.1, §1 Sistema Internazionale
+R 1.1.2 2/3 | Potenze di 10 e notazione scientifica |  | Dispensa Step 1.1
+P 1.1.2 3/3 | Problemi con potenze di 10 e prefissi | 5 | Dispensa Step 1.1, §1
+R 1.1.3 1/5 | Conversioni di lunghezza, tempo e velocità | 5 | Dispensa Step 1.1
+R 1.1.3 2/5 | Conversioni di superfici, volumi e densità | 5 | Dispensa Step 1.1
+R 1.1.3 3/5 | Conversioni di pressione, energia, potenza e angoli | 5 | Dispensa Step 1.1
+P 1.1.3 4/5 | Problemi di conversione: velocità, volumi e densità | 5 | Dispensa Step 1.1
+P 1.1.3 5/5 | Problemi di conversione: pressione, energia e portata | 5 | Dispensa Step 1.1
+P 1.1.4 1/4 | Equazioni dimensionali delle grandezze | 2-3 | Dispensa Step 1.1, §2 Analisi dimensionale
+R 1.1.4 2/4 | Omogeneità dimensionale | 3 | Dispensa Step 1.1, §2 Analisi dimensionale
+R 1.1.4 3/4 | Analisi dimensionale applicata alle formule | 2-3 | Dispensa Step 1.1, §2 Analisi dimensionale
+P 1.1.4 4/4 | Problemi di analisi dimensionale | 2-3 | Dispensa Step 1.1, §2 Analisi dimensionale
+P 1.1.5 1/3 | Errori sistematici e accidentali | A1 | Dispensa Step 1.1, §3 Teoria degli errori di misura
+P 1.1.5 2/3 | Errore assoluto, relativo e percentuale |  | Dispensa Step 1.1, §3 Teoria degli errori di misura
+R 1.1.5 3/3 | Media, semidispersione e scrittura del risultato | A1-A4 | Dispensa Step 1.1, §3 Teoria degli errori di misura
+P 1.1.6 1/3 | Regole di propagazione degli errori |  | Dispensa Step 1.1, §3 Teoria degli errori di misura
+R 1.1.6 2/3 | Problemi di propagazione: somme e differenze |  | Dispensa Step 1.1, §3 Teoria degli errori di misura
+R 1.1.6 3/3 | Problemi di propagazione: prodotti e quozienti |  | Dispensa Step 1.1, §3 Teoria degli errori di misura
+R 1.1.7 1/2 | Media, varianza e deviazione standard | A2-A4
+R 1.1.7 2/2 | Distribuzione gaussiana e grafici sperimentali | A4-A6
+@F 1.2 | Vettori, trigonometria, prodotto scalare e vettoriale | Svolto · già svolto da calendario Ven 30/10 | Simulazione 3 Dom 22/11 · Sprint Fisica Dom 06/12 · raffinamento 10/12–10/01
+= 9 11 10 11 11
+P 1.2.1 1/2 | Grandezze scalari e vettoriali, definizioni ed esempi | 6-7
+R 1.2.1 2/2 | Modulo, direzione, verso e sistema di riferimento | 6-8
+R 1.2.2 1/4 | Somma e differenza di vettori, metodo grafico | 7-8
+R 1.2.2 2/4 | Somma e differenza di vettori con le componenti | 6-8,12
+P 1.2.2 3/4 | Problemi sulla somma di vettori, moduli, Pitagora, minimo e massimo | 7-8
+R 1.2.2 4/4 | Problemi sulla somma e la differenza con le componenti | 7-8,12
+R 1.2.3 1/5 | Funzioni trigonometriche, seno, coseno, tangente | 12-13,19-22
+P 1.2.3 2/5 | Componenti di un vettore dal modulo e dall'angolo | 6-7,19-22
+R 1.2.3 3/5 | Modulo e direzione di un vettore dalle sue componenti | 6-7,12,20
+P 1.2.3 4/5 | Problemi di scomposizione di forze e velocità | 7,20
+R 1.2.3 5/5 | Problemi, modulo e angolo dalle componenti, risultante di più forze | 7,12,20
+P 1.2.4 1/4 | Prodotto scalare, definizione e proprietà | 8-9
+R 1.2.4 2/4 | Prodotto scalare con le componenti e angolo tra due vettori | 8-9,12
+R 1.2.4 3/4 | Prodotto scalare e lavoro, problemi applicativi | 8-9
+P 1.2.4 4/4 | Problemi sul prodotto scalare | 8-9,12
+R 1.2.5 1/5 | Prodotto vettoriale, definizione e modulo | 9-10
+P 1.2.5 2/5 | Prodotto vettoriale, direzione, verso e proprietà | 9-10,12
+R 1.2.5 3/5 | Prodotto vettoriale con le componenti (Esempio 1.2) | 9-10,12
+P 1.2.5 4/5 | Momento di una forza e confronto tra prodotto scalare e vettoriale | 8-10
+P 1.2.5 5/5 | Problemi sul prodotto vettoriale | 9-10,12

@@ -16,7 +16,13 @@ const UI = {
   qNote: '',
   tagNote: '',
   q: '',
-  studioVista: 'schede' as 'schede' | 'piano',
+  studioVista: 'schede' as 'schede' | 'piano' | 'syllabus' | 'tabelle',
+  studioPiano: '',
+  copMateria: '',
+  copStato: '',
+  tabella: null as string | null,
+  tabQ: '',
+  tabOrd: '',
   studioStep: '',
   studioSub: null as string | null,
   soloPrior: false,
@@ -120,7 +126,8 @@ function vistaOggi(): HTMLElement {
     ),
     scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Tocca + per aggiungerne uno.')),
     scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido),
-    (() => { const st = Studio.vociDelGiorno(g); return Studio.pkPiano() ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.')) : null; })(),
+    (() => { const st = Studio.vociDelGiorno(g); return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.')) : null; })(),
+    (() => { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; })(),
     scheda('Nota del giorno', area),
     occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null,
   );
@@ -206,7 +213,7 @@ function vistaMese(): HTMLElement {
       onclick: () => { if (stessoGiorno(g, UI.data)) vai('cal', 'giorno', g); else { UI.data = g; disegna(); } },
     },
       h('span.mese-num', null, String(g.getDate())),
-      Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': COLORE_MATERIA[x.v.k[0]] || 'var(--tenue)' } }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k))),
+      Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : COLORE_MATERIA[x.v.k[0]] } }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k))),
       occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, o.ev.titolo)),
       occ.length > 2 ? h('span.mese-altro', null, '+' + (occ.length - 2)) : null,
       nTask ? h('span.mese-task', { title: nTask + ' promemoria' }) : null,
@@ -218,7 +225,7 @@ function vistaMese(): HTMLElement {
     h('div.card.giorno-sel', null,
       h('div.card-titolo.riga-tra', null, h('span', null, dataLunga(UI.data)),
         h('button.btn-testo', { onclick: () => vai('cal', 'giorno', UI.data) }, 'Apri giorno')),
-      Studio.vociDelGiorno(UI.data).map(rigaStudio), occSel.map(o => rigaOcc(o, UI.data)), taskSel.map(rigaTask),
+      Studio.vociDelGiorno(UI.data).map(rigaStudio), righeDelGiorno(UI.data).map(rigaTabellaGiorno), occSel.map(o => rigaOcc(o, UI.data)), taskSel.map(rigaTask),
       !occSel.length && !taskSel.length && !Studio.vociDelGiorno(UI.data).length ? vuoto('Niente in programma.') : null,
     ));
 }
@@ -257,7 +264,7 @@ function vistaGriglia(nGiorni: number): HTMLElement {
   const fascia = h('div.gr-fascia', { style: col }, h('span.gr-fascia-eti', null, 'giorno'), giorni.map(g => {
     const occ = (mappa.get(ymd(g)) || []).filter(lungo);
     return h('div.gr-fascia-col', null,
-      Studio.vociDelGiorno(g).map(x => h('button.mese-chip.studio', { style: { '--c': COLORE_MATERIA[x.v.k[0]] || 'var(--tenue)' }, onclick: () => rigaStudio(x).click() }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + (nGiorni === 1 ? ' · ' + x.v.t : ''))),
+      Studio.vociDelGiorno(g).map(x => h('button.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : COLORE_MATERIA[x.v.k[0]] }, onclick: () => rigaStudio(x).click() }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + (nGiorni === 1 ? ' · ' + x.v.t : ''))),
       occ.map(o => h('button.mese-chip', { style: { '--c': coloreEvento(o.ev) }, onclick: () => apriEvento(o.ev, o) }, o.ev.titolo)),
       taskDelGiorno(g).map(t => h('button.mese-chip.task', { style: { '--c': coloreEvento(t) }, onclick: () => apriTask(t) }, '○ ' + t.titolo)));
   }));

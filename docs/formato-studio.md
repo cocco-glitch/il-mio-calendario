@@ -42,3 +42,8 @@ I progressi dell'utente sono record separati (`prog-<id scheda>`), quindi **non 
 ## Come un futuro Claude crea un pacchetto
 1. Scrivere `studio/sorgenti/step-N.txt` (formato spiegato in testa a `step-2.txt`), con la riga `=` dei numeri attesi per ogni sotto-step.
 2. `node studio/genera.mjs`: deve stampare `ok` per ogni sotto-step. 3. `node build.mjs` e pubblicare; oppure caricare il JSON in `Calendario personale/studio/` (solo con l'ok dell'utente).
+
+## Aggiunte (v1, compatibili)
+- **Pagine in appendice**: `"pagine": "A1-A4"` (lettera + numero). Contano nei totali ma non si aprono come PDF.
+- **Copertura del syllabus** nel piano principale: `"copertura": [{ "m": "C", "ud": "UD3", "a": "argomento", "stato": "E|I|N", "k": "C3.2", "quando": "Lun 16/11" }]` (E = schede esistenti, I = integrazione, N = da creare).
+- **Più piani**: ogni pacchetto `tipo: "piano"` con `id` diverso è un piano a sé (es. `piano-raffinamento`). Con `"modo": "raffinamento"` uno step è "fatto" quando sono spuntate prioritarie **e** raffinamento. Gli spostamenti dei piani diversi dal principale sono `sp-<idPiano>-<k>`.
