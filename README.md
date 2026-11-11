@@ -9,7 +9,9 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 4 (fatta)**: aspetto (tema, accento, sfondo, carattere, dimensione testo, densità, angoli), layout (vista iniziale, ordine/visibilità dei riquadri di Oggi, sezioni della barra, barra su PC), preset (3 di base + personali), aggiunta rapida in italiano (`src/07-rapido.ts`), specchio su Google Calendar con scope `calendar.app.created` e import/export .ics (`src/06-gcal.ts`).
 - **Fase 5 (fatta)**: test completi, documentazione (`docs/MANUTENZIONE.md`, `docs/formato-studio.md`).
 
-- **0.15.0**: «Studia ora» (`src/07-studiaora.ts`): pulsante in cima a Oggi, scegli 25/50/90 min e l'app compone la sessione (ripassi a rischio ≤40%, prova a freddo e prioritarie dello step del giorno, errori, pause ogni ~25 min, richiamo finale), timer con la durata scelta, sessione ripresa se chiudi l'app.
+- **0.16.0**: errori ricorrenti domanda per domanda (`src/07-domande.ts`): l'osservatore legge anche «Da rivedere» (domanda, risposta corretta, spiegazione); record `domanda` con volte sbagliata/giusta; Studio → Errori: Ricorrenti / Aperte / Risolte con «mostra risposta» e «la sapevo / non la sapevo»; contano anche le simulazioni, non le prove a freddo.
+- **0.15.0**: «Studia ora» (`src/07-domande.ts     domande sbagliate e ricorrenti (dalla sezione «Da rivedere» dei quiz)
+src/07-studiaora.ts`): pulsante in cima a Oggi, scegli 25/50/90 min e l'app compone la sessione (ripassi a rischio ≤40%, prova a freddo e prioritarie dello step del giorno, errori, pause ogni ~25 min, richiamo finale), timer con la durata scelta, sessione ripresa se chiudi l'app.
 - **0.14.0**: prova a freddo (`src/07-studiaora.ts   «Studia ora»: sessione composta, avanzamento, timer
 src/07-freddo.ts`): per gli step non iniziati, la prima scheda prioritaria si fa prima di studiare; il risultato va in un record `pretest` (non tocca punteggi né ripassi) e quando la scheda si fa sul serio l'avviso mostra il confronto.
 - **0.13.0**: chiusura serale in 2 minuti (`src/07-freddo.ts      prova a freddo (pretest) prima degli step nuovi
@@ -38,6 +40,7 @@ python3 test/fase4.py   # aggiunta rapida, .ics, specchio Calendar, preset
 python3 test/versatile.py # corsi propri, errori, timer, statistiche, esami, trascinamento
 python3 test/f1.py      # notifiche ntfy (finto server)
 python3 test/f2.py      # ripassi FSRS (confronto con un'implementazione di riferimento)
+python3 test/domande.py # errori ricorrenti
 python3 test/studiaora.py # Studia ora
 python3 test/freddo.py  # prova a freddo
 python3 test/chiusura.py # chiusura serale

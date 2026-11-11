@@ -32,6 +32,7 @@ function vistaErrori(): HTMLElement {
     const i = imp() as any; i.sogliaErrori = Math.max(0, Math.min(100, parseInt((e.target as HTMLInputElement).value, 10) || 70)); Stato.salva(i);
   } });
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+    sezioneDomande(),
     h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'),
       riga('Soglia', soglia, h('span.dopo', null, '%'))),
     lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'),
@@ -46,10 +47,10 @@ function vistaErrori(): HTMLElement {
       }))));
 }
 function widgetErrori(): HTMLElement | null {
-  const n = tutteLeSchede().filter(x => daRifare(x.s.id)).length;
-  if (!n) return null;
+  const n = tutteLeSchede().filter(x => daRifare(x.s.id)).length, nr = Domande.ricorrenti().length;
+  if (!n && !nr) return null;
   return scheda('Schede da rifare', h('button.voce-lista', { onclick: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
-    h('span.voce-corpo', null, h('span.voce-titolo', null, n + (n === 1 ? ' scheda da rifare' : ' schede da rifare')), h('span.voce-sotto', null, 'Punteggio sotto il ' + sogliaErrori() + '% o segnate a mano')), icona('dx', 18)));
+    h('span.voce-corpo', null, h('span.voce-titolo', null, n + (n === 1 ? ' scheda da rifare' : ' schede da rifare') + (nr ? ' · ' + nr + (nr === 1 ? ' domanda ricorrente' : ' domande ricorrenti') : '')), h('span.voce-sotto', null, 'Punteggio sotto il ' + sogliaErrori() + '% o segnate a mano' + (nr ? '; domande sbagliate 2+ volte' : ''))), icona('dx', 18)));
 }
 
 // ---------- Timer di studio (Pomodoro) ----------

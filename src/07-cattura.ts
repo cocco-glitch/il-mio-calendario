@@ -13,7 +13,9 @@
 // quiz ("Domanda 1 di 3 · ripasso errori"). Se un quiz ha un formato diverso, non succede nulla:
 // il punteggio si scrive a mano come prima.
 
-interface RisultatoQuiz { imc: 'quiz-risultato'; pct: number; giuste: number | null; totale: number | null; livelli: [string, number, number][]; debole: string | null; errori: boolean; }
+interface RisultatoQuiz { imc: 'quiz-risultato'; pct: number; giuste: number | null; totale: number | null; livelli: [string, number, number][]; debole: string | null; errori: boolean;
+  sbagliate?: [string, string, string][];   // v0.16: [domanda, risposta corretta, spiegazione] dalla sezione «Da rivedere»
+}
 
 const Cattura = (() => {
   const SPIA = '<script>(function(){var retry=false,inviato=null;function leggi(){try{'
@@ -23,8 +25,9 @@ const Cattura = (() => {
     + 'var big=document.querySelector(".score .big"),gm=big?/(\\d+)\\s*\\/\\s*(\\d+)/.exec(big.textContent):null;'
     + 'var liv=[].map.call(document.querySelectorAll(".lvrow"),function(r){var s=r.querySelector("span"),n=/(\\d+)\\s*\\/\\s*(\\d+)\\s*$/.exec(r.textContent.trim());return[s?s.textContent.trim():"",n?+n[1]:0,n?+n[2]:0]});'
     + 'var deb=null;[].forEach.call(document.querySelectorAll(".weak"),function(w){var t=w.textContent;if(/Punto debole:/.test(t))deb=t.replace(/^[\\s\\S]*Punto debole:\\s*/,"").replace(/\\s*\\([\\s\\S]*$/,"").trim()});'
+    + 'var sb=[];var rv=document.querySelector(".review");if(rv)[].forEach.call(rv.querySelectorAll("details"),function(d){var su=d.querySelector("summary"),ps=d.querySelectorAll(".inner p"),giu="",sp="";[].forEach.call(ps,function(p){var b=p.querySelector("b.r");if(b)giu=p.textContent.replace(/^\\s*Risposta corretta:\\s*/,"").trim();else if(!p.classList.contains("pair")&&!sp)sp=p.textContent.trim()});if(su)sb.push([su.textContent.trim().slice(0,400),giu.slice(0,200),sp.slice(0,400)])});'
     + 'var firma=m[1]+"|"+(gm?gm[0]:"")+"|"+retry;if(firma===inviato)return;inviato=firma;'
-    + 'parent.postMessage({imc:"quiz-risultato",pct:+m[1],giuste:gm?+gm[1]:null,totale:gm?+gm[2]:null,livelli:liv,debole:deb,errori:retry},"*")'
+    + 'parent.postMessage({imc:"quiz-risultato",pct:+m[1],giuste:gm?+gm[1]:null,totale:gm?+gm[2]:null,livelli:liv,debole:deb,errori:retry,sbagliate:sb},"*")'
     + '}catch(e){}}new MutationObserver(leggi).observe(document.documentElement,{childList:true,subtree:true,characterData:true})})();<\/script>';
 
   /** Aggiunge l'osservatore alla copia del quiz (in fondo al body). */
@@ -53,6 +56,7 @@ const Cattura = (() => {
     const t = trovaScheda(id), idMem = t ? 'mem-sub-' + t.k : '';
     const m0 = idMem ? Stato.prendi<Rec>(idMem) : undefined, primaMem = m0 ? JSON.parse(JSON.stringify(m0)) : null;
     const quanto = d.giuste != null && d.totale != null ? d.giuste + '/' + d.totale : d.pct + '%';
+    const annullaDom = typeof Domande !== 'undefined' ? Domande.registra(id, t ? Studio.etichetta(t.k) + ' ' + t.micro + ' · ' + t.s.titolo : id, d) : () => { /* niente */ }; // v0.16
     let testo: string;
     if (d.errori) {
       const riga = 'Errori rifatti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
@@ -63,6 +67,7 @@ const Cattura = (() => {
       testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
     }
     const annulla = () => {
+      annullaDom();
       if (primaProg) Stato.salva(primaProg); else Stato.elimina('prog-' + id);
       if (idMem) { if (primaMem) Stato.salva(primaMem); else if (Stato.prendi<Rec>(idMem)) Stato.elimina(idMem); }
       avviso('Annullato: risultato non salvato.');

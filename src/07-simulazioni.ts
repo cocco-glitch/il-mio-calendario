@@ -84,11 +84,12 @@ async function avviaSimulazione(fileId: string, nome: string, limite = Simulazio
     try { lock = await (navigator as any).wakeLock?.request('screen'); } catch (_) { /* non supportato */ }
     tick = window.setInterval(aggiorna, 1000); aggiorna();
     Cattura.osserva(fr, 'sim:' + fileId, nome, d => {
-      if (d.errori) { avviso('📝 Errori rifatti: ' + (d.giuste ?? '') + '/' + (d.totale ?? '') + ' (non cambia il risultato della simulazione)'); return; }
+      if (d.errori) { Domande.registra('sim:' + fileId, '🧪 ' + nome, d); avviso('📝 Errori rifatti: ' + (d.giuste ?? '') + '/' + (d.totale ?? '') + ' (non cambia il risultato della simulazione)'); return; }
       const adesso = new Date(), minuti = Math.round((Date.now() - inizio) / 60000);
       const rec: Simulazione = { id: 'sim-' + inizio, type: 'simulazione', updatedAt: 0, data: ymd(adesso), ora: hm(new Date(inizio)), fileId, nome,
         pct: d.pct, giuste: d.giuste, totale: d.totale, deboli: d.livelli, debole: d.debole, minuti, limite };
       Stato.salva(rec); salvata = true;
+      Domande.registra('sim:' + fileId, '🧪 ' + nome, d); // v0.16: domande sbagliate della simulazione
       clearInterval(tick);
       avviso('✅ Simulazione salvata: ' + d.pct + '%' + (d.giuste != null ? ' (' + d.giuste + '/' + d.totale + ')' : '') + ' in ' + minuti + ' min' + (minuti > limite ? ' · fuori tempo di ' + (minuti - limite) + ' min' : '') + ' · tocca per annullare', 9000, () => { Stato.elimina(rec.id); avviso('Simulazione non salvata.'); });
     });

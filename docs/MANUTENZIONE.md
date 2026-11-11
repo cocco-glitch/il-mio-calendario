@@ -43,6 +43,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 | 07-chiusura | riquadro serale (dalle 19), foglio di chiusura, record `giorno` (`g-YYYY-MM-DD`), `sezioneSonno()` in Statistiche (dalle 3 giornate) |
 | 07-freddo | prova a freddo: `apriQuiz(…, cb)` con callback (il risultato non passa da `Studio.segna`), record `pretest` (`pre-<k>`), confronto nell'avviso di `Cattura.salva` |
 | 07-studiaora | `StudiaOra.componi(minuti)` (ordine: ripassi ≤40%, freddo/prioritarie del giorno, errori, pause, richiamo), stato in localStorage `imc-studia-ora`, `Timer.avvia({durata})` |
+| 07-domande | `Domande.registra(scheda, titolo, risultato)` da `Cattura.salva` e dalle simulazioni (con annulla); giuste contate solo se il quiz mostra «Da rivedere» o fa 100%; `sezioneDomande()` in Errori |
 | 07-extra | corsi creati dall'utente, registro errori, timer, statistiche, esami |
 | 07-rapido | aggiunta rapida in italiano (`interpreta()`) |
 | 07-studio | pacchetti studio, progressi, piani, syllabus, quiz in iframe, PDF (pdf.js + cache) |
@@ -53,7 +54,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 Principi: `disegna()` ricostruisce la schermata a ogni modifica (semplice e sufficiente); `Stato.salva(r, true)` salva senza ridisegnare. Ogni salvataggio programma la sync Drive e lo specchio Calendar.
 
 ## Dati e sincronizzazione
-- Tutto è un **record** `{ id, type, updatedAt, deleted? }`. Tipi: `evento`, `task`, `nota`, `categoria`, `impostazioni`, `preset`, `pacchetto`, `progresso`, `spostamento`, `tabella`, `materia`, `sessione`, `esame`, `notifica` (registro ntfy), `memoria` (ripassi), `simulazione`, `giorno` (chiusura serale).
+- Tutto è un **record** `{ id, type, updatedAt, deleted? }`. Tipi: `evento`, `task`, `nota`, `categoria`, `impostazioni`, `preset`, `pacchetto`, `progresso`, `spostamento`, `tabella`, `materia`, `sessione`, `esame`, `notifica` (registro ntfy), `memoria` (ripassi), `simulazione`, `giorno` (chiusura serale), `pretest`, `domanda`.
 - Eliminare = `deleted: true` (lapide). Unione = per record, vince `updatedAt` più alto.
 - Backup giornaliero `backup/dati-YYYY-MM-DD.json`, ultimi 30 (i vecchi in `_cestino app`).
 - Google: Client ID, chiave API (non più usata: niente Picker) e account ammesso in cima a `06-drive.ts`. Scope: `drive.file`, `drive.readonly`, e `calendar.app.created` solo con lo specchio attivo. Progetto Google Cloud in modalità Testing, unico utente di test = l'utente.

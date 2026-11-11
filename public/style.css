@@ -329,3 +329,8 @@ body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bo
 /* v0.15 — Studia ora */
 .btn.studia-ora { width: 100%; font-size: 18px; padding: 14px; }
 .voce-lista.sessione-ora { background: color-mix(in srgb, var(--accento) 12%, transparent); border-radius: 10px; }
+/* v0.16 — domande sbagliate */
+.dom-voce { padding: 10px 0; border-top: 1px solid var(--linea); display: grid; gap: 6px; }
+.dom-q { font-weight: 600; line-height: 1.4; }
+.dom-risposta { display: grid; gap: 6px; padding: 8px 10px; border-radius: 10px; background: var(--sup2); }
+.dom-risposta[hidden] { display: none; }

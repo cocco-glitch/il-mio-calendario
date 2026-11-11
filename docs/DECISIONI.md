@@ -18,3 +18,4 @@ Una riga per scelta importante: data · decisione · motivo.
 - 2026-11-11 · Chiusura serale: un solo rituale la sera (sonno della notte prima chiesto qui, non al mattino) · un tocco in meno al giorno.
 - 2026-11-11 · Prova a freddo sulla prima scheda prioritaria dello step, risultato separato · effetto pretest (file 02 §4); non sporca punteggi e ripassi.
 - 2026-11-11 · «Studia ora»: ripassi al massimo ~40% della sessione, poi il nuovo · il nuovo resta la priorità prima dell'esame, il richiamo apre la sessione (memoria «tiepida»).
+- 2026-11-11 · Errori ricorrenti a livello di domanda, letti dalla sezione «Da rivedere» dei quiz (i file non cambiano); ricorrente = sbagliata ≥2 volte e ancora aperta · ripasso mirato prima delle simulazioni.
