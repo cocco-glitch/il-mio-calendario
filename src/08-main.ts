@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.1.0';
+const VERSIONE = '0.2.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -43,6 +43,7 @@ function disegna(): void {
     h('header.testata', null,
       h('h1', null, titoli[UI.scheda]),
       h('div.testata-azioni', null,
+        Drive.stato.sync === 'spento' ? null : h('button.sync-ind.' + descrSync().cls, { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa') Drive.sincronizza(true); else vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)),
         h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')),
         h('button.btn-ico.solo-pc', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
     nav, main,
@@ -90,7 +91,9 @@ async function avvia(): Promise<void> {
   const v = imp().vistaIniziale;
   if (v && v !== 'oggi') { UI.scheda = 'cal'; UI.vista = v; }
   Stato.ascolta(disegna);
+  Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); });
   disegna();
+  if (Drive.collegato && navigator.onLine) Drive.sincronizza(false);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applicaTema);
 
   controllaAvvisi();
@@ -100,6 +103,7 @@ async function avvia(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     controllaAvvisi();
+    if (Drive.collegato) Drive.sincronizza(false);
     if (giornoMostrato !== ymd(new Date())) { giornoMostrato = ymd(new Date()); UI.data = oggi(); }
     if (!document.querySelector('.foglio-sfondo')) disegna();
   });

@@ -92,6 +92,32 @@ function apriEvento(esistente?: Evento, occ?: Occ, preset?: { inizio: Date; tutt
   }
   disegnaCheck();
 
+  // Allegati Drive: carico un file nella cartella dell'app oppure collego un file esistente col Picker.
+  const allegati: Allegato[] = (ev.allegati || []).map(a => ({ ...a }));
+  const zonaAll = h('div.allegati');
+  function disegnaAll(): void {
+    svuota(zonaAll);
+    if (!allegati.length) zonaAll.appendChild(h('div.tenue.piccolo', null, Drive.collegato ? 'Nessun allegato.' : 'Collega Google Drive da Altro → Google Drive per usare gli allegati.'));
+    allegati.forEach((a, i) => zonaAll.appendChild(h('div.voce', null,
+      h('button.allegato', { type: 'button', onclick: () => apriAllegato(a) }, '📎 ', a.nome),
+      h('button.btn-ico', { type: 'button', 'aria-label': 'Togli allegato', onclick: () => { allegati.splice(i, 1); disegnaAll(); } }, icona('x', 18)))));
+  }
+  disegnaAll();
+  const fileInput = h('input', { type: 'file', multiple: true, style: { display: 'none' }, onchange: async () => {
+    const files = Array.from(fileInput.files || []); fileInput.value = '';
+    for (const f of files) {
+      avviso('Carico ' + f.name + '…', 2500);
+      try { allegati.push(await Drive.caricaAllegato(f)); disegnaAll(); } catch (e: any) { avviso('Caricamento fallito: ' + (e.message || e), 6000); }
+    }
+  } }) as HTMLInputElement;
+  const btnCarica = h('button.btn.neutro', { type: 'button', onclick: () => fileInput.click() }, 'Carica file');
+  const btnCollega = h('button.btn.neutro', { type: 'button', onclick: async () => {
+    try {
+      for (const d of await Drive.scegliConPicker({ multi: true })) allegati.push({ id: uid(), nome: d.name, driveId: d.id, mime: d.mimeType, url: d.url });
+      disegnaAll();
+    } catch (e: any) { avviso(String(e.message || e), 6000); }
+  } }, 'Collega da Drive');
+
   const corpo = h('div.modulo', null,
     titolo,
     h('div.gruppo', null, riga('Tutto il giorno', tutto), zonaDate, rip.el),
@@ -99,7 +125,7 @@ function apriEvento(esistente?: Evento, occ?: Occ, preset?: { inizio: Date; tutt
     h('div.gruppo', null, h('div.gruppo-titolo', null, 'Promemoria'), zonaProm, selProm),
     h('div.gruppo', null, h('div.gruppo-titolo', null, 'Checklist'), zonaCheck, nuovaVoce),
     h('div.gruppo', null, h('div.gruppo-titolo', null, 'Note'), note),
-    h('div.gruppo.tenue', null, 'Allegati dal Drive: in arrivo con la Fase 2.'),
+    h('div.gruppo', null, h('div.gruppo-titolo', null, 'Allegati Drive'), zonaAll, h('div.bottoni', null, btnCarica, btnCollega), fileInput),
   );
 
   function raccogli(): Evento | null {
@@ -116,6 +142,7 @@ function apriEvento(esistente?: Evento, occ?: Occ, preset?: { inizio: Date; tutt
     ev.promemoria = Array.from(prom).sort((a, b) => a - b);
     ev.checklist = voci.filter(x => x.testo.trim());
     ev.rrule = rip.valore();
+    ev.allegati = allegati;
     return ev;
   }
 

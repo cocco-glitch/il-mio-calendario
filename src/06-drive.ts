@@ -1,0 +1,299 @@
+// ============================================================
+// 06-drive.ts — Google: login (Google Identity Services), Drive API v3,
+// Picker, sincronizzazione, backup, allegati. Nessun backend.
+//
+// COME FUNZIONA LA SYNC
+// - Su Drive, nella cartella dell'app, c'è `dati/dati.json`: l'elenco di
+//   TUTTI i record (anche le lapidi `deleted`). È la fonte di verità.
+// - Sync = scarico dati.json → Stato.unisci (vince updatedAt più alto) →
+//   se ho modifiche locali più nuove, ricarico il file unito.
+// - Le modifiche locali vengono accodate (coda offline = tutti i record con
+//   updatedAt > ultimoSyncRiuscito) e spedite al prossimo sync.
+// - Una volta al giorno, prima di sovrascrivere, copio il file in
+//   `backup/dati-YYYY-MM-DD.json` e tengo gli ultimi 30.
+// - L'app NON elimina mai file di Drive: al massimo li sposta in
+//   `_cestino app/` dentro la sua cartella.
+// ============================================================
+
+const G_CLIENT_ID = '1032464441107-ccv99btse1o2497kckfia1ps074n1h0c.apps.googleusercontent.com';
+const G_API_KEY = 'AIzaSyD3-PbIu4U4jmAIru6C8wwGIboFcGKY4tk';
+const G_APP_ID = '1032464441107';
+// drive.file: solo i file creati dall'app o scelti col Picker (minimo necessario).
+const G_SCOPE = 'https://www.googleapis.com/auth/drive.file openid email';
+// Privacy "solo mia": l'app accetta solo questo account (oltre al blocco lato Google: progetto in Testing con un solo utente di test).
+const ACCOUNT_AMMESSO = 'cocco.haloa@gmail.com';
+const CARTELLA_APP = 'Calendario personale';
+const SOTTOCARTELLE = ['dati', 'allegati', 'backup', 'studio', '_cestino app'] as const;
+type NomeSotto = typeof SOTTOCARTELLE[number];
+
+declare const google: any;
+declare const gapi: any;
+
+type StatoSync = 'spento' | 'ok' | 'attesa' | 'incorso' | 'errore' | 'offline';
+
+const Drive = (() => {
+  let token = '';
+  let scadenzaToken = 0;
+  let client: any = null;
+  let cartelle: Record<string, string> = {};   // nome → id (cache in localStorage)
+  let idDati = '';
+  let timerSync = 0;
+  let inCorso = false;
+  const stato = { sync: 'spento' as StatoSync, messaggio: '', email: '', ultimoSync: 0 };
+  const ascoltatori: Array<() => void> = [];
+
+  const LS = {
+    get<T>(k: string, def: T): T { try { const v = localStorage.getItem('imc-' + k); return v ? JSON.parse(v) : def; } catch (_) { return def; } },
+    set(k: string, v: any) { try { localStorage.setItem('imc-' + k, JSON.stringify(v)); } catch (_) { /* niente */ } },
+  };
+  cartelle = LS.get('cartelle', {});
+  idDati = LS.get('idDati', '');
+  stato.email = LS.get('email', '');
+  stato.ultimoSync = LS.get('ultimoSync', 0);
+  if (stato.email) stato.sync = 'attesa';
+
+  function cambia(s: StatoSync, msg = ''): void { stato.sync = s; stato.messaggio = msg; ascoltatori.forEach(f => f()); }
+
+  function script(src: string): Promise<void> {
+    return new Promise((ok, ko) => {
+      if (document.querySelector('script[src="' + src + '"]')) return ok();
+      const s = document.createElement('script'); s.src = src; s.async = true; s.onload = () => ok(); s.onerror = () => ko(new Error('Impossibile caricare ' + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  /** Ottiene un token. interattivo=false prova in silenzio (sessione Google già attiva). */
+  async function accedi(interattivo: boolean): Promise<boolean> {
+    await script('https://accounts.google.com/gsi/client');
+    return new Promise(ok => {
+      if (!client) client = google.accounts.oauth2.initTokenClient({ client_id: G_CLIENT_ID, scope: G_SCOPE, callback: () => { /* impostata sotto */ } });
+      client.callback = (r: any) => {
+        if (r && r.access_token) { token = r.access_token; scadenzaToken = Date.now() + (r.expires_in - 60) * 1000; ok(true); }
+        else ok(false);
+      };
+      client.error_callback = () => ok(false);
+      try {
+        client.requestAccessToken(interattivo ? { prompt: '', login_hint: stato.email || undefined } : { prompt: 'none', login_hint: stato.email || undefined });
+      } catch (_) { ok(false); }
+    });
+  }
+
+  async function tokenValido(interattivo = false): Promise<string> {
+    if (token && Date.now() < scadenzaToken) return token;
+    if (await accedi(false)) return token;
+    if (interattivo && await accedi(true)) return token;
+    return '';
+  }
+
+  /** Chiamata REST a Drive. Rilancia l'errore con testo leggibile. */
+  async function api(percorso: string, opz: RequestInit & { query?: Record<string, string> } = {}, base = 'https://www.googleapis.com/drive/v3/'): Promise<any> {
+    const t = await tokenValido(false);
+    if (!t) throw new Error('NOLOGIN');
+    const url = new URL(base + percorso);
+    if (opz.query) for (const k in opz.query) url.searchParams.set(k, opz.query[k]);
+    const r = await fetch(url.toString(), { ...opz, headers: { Authorization: 'Bearer ' + t, ...(opz.headers || {}) } });
+    if (r.status === 401) { token = ''; throw new Error('NOLOGIN'); }
+    if (!r.ok) { const txt = await r.text(); throw new Error('Drive ' + r.status + ': ' + txt.slice(0, 200)); }
+    if (opz.query && opz.query.alt === 'media') return r; // download: restituisco la Response grezza
+    const ct = r.headers.get('content-type') || '';
+    return ct.includes('json') ? r.json() : r;
+  }
+
+  async function chiSono(): Promise<string> {
+    const r = await api('', { }, 'https://www.googleapis.com/oauth2/v3/userinfo');
+    return r.email || '';
+  }
+
+  /** Trova (o crea) una cartella per nome dentro `parent`. */
+  async function cartella(nome: string, parent: string): Promise<string> {
+    const q = "name = '" + nome.replace(/'/g, "\\'") + "' and mimeType = 'application/vnd.google-apps.folder' and '" + parent + "' in parents and trashed = false";
+    const r = await api('files', { query: { q, fields: 'files(id,name)', spaces: 'drive' } });
+    if (r.files && r.files.length) return r.files[0].id;
+    const c = await api('files', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nome, mimeType: 'application/vnd.google-apps.folder', parents: [parent] }), query: { fields: 'id' } });
+    return c.id;
+  }
+  async function preparaCartelle(): Promise<void> {
+    if (cartelle.app && cartelle['_cestino app']) return;
+    const app = await cartella(CARTELLA_APP, 'root');
+    const nuove: Record<string, string> = { app };
+    for (const n of SOTTOCARTELLE) nuove[n] = await cartella(n, app);
+    cartelle = nuove; LS.set('cartelle', cartelle);
+  }
+  function idCartella(n: NomeSotto | 'app'): string { return cartelle[n]; }
+
+  /** Carica (crea o aggiorna) un file; contenuto testo o Blob. Ritorna l'id. */
+  async function carica(nome: string, parent: string, contenuto: Blob | string, mime: string, idEsistente?: string): Promise<string> {
+    const meta = idEsistente ? { name: nome } : { name: nome, parents: [parent] };
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+    form.append('file', contenuto instanceof Blob ? contenuto : new Blob([contenuto], { type: mime }));
+    const r = await api('files' + (idEsistente ? '/' + idEsistente : ''), { method: idEsistente ? 'PATCH' : 'POST', body: form, query: { uploadType: 'multipart', fields: 'id,name,size,modifiedTime' } }, 'https://www.googleapis.com/upload/drive/v3/');
+    return r.id;
+  }
+  async function scaricaTesto(id: string): Promise<string> {
+    const r: Response = await api('files/' + id, { query: { alt: 'media' } });
+    return r.text();
+  }
+  async function scaricaBlob(id: string): Promise<Blob> {
+    const r: Response = await api('files/' + id, { query: { alt: 'media' } });
+    return r.blob();
+  }
+  async function trovaFile(nome: string, parent: string): Promise<{ id: string; modifiedTime: string } | null> {
+    const q = "name = '" + nome.replace(/'/g, "\\'") + "' and '" + parent + "' in parents and trashed = false";
+    const r = await api('files', { query: { q, fields: 'files(id,name,modifiedTime)', orderBy: 'modifiedTime desc' } });
+    return r.files && r.files[0] || null;
+  }
+  async function elenca(parent: string, extra = ''): Promise<any[]> {
+    const r = await api('files', { query: { q: "'" + parent + "' in parents and trashed = false" + extra, fields: 'files(id,name,mimeType,size,modifiedTime,webViewLink)', orderBy: 'name', pageSize: '200' } });
+    return r.files || [];
+  }
+  /** Mai eliminare: sposta nel cestino dell'app. */
+  async function cestinaApp(id: string, daParent: string): Promise<void> {
+    await api('files/' + id, { method: 'PATCH', query: { addParents: cartelle['_cestino app'], removeParents: daParent, fields: 'id' } });
+  }
+
+  // ---------- Backup giornaliero ----------
+  async function backupSeServe(testoAttuale: string): Promise<void> {
+    const oggiK = ymd(new Date());
+    if (LS.get('ultimoBackup', '') === oggiK) return;
+    const dir = idCartella('backup');
+    // un altro dispositivo può averlo già fatto oggi: controllo su Drive
+    if (await trovaFile('dati-' + oggiK + '.json', dir)) { LS.set('ultimoBackup', oggiK); return; }
+    await carica('dati-' + oggiK + '.json', dir, testoAttuale, 'application/json');
+    LS.set('ultimoBackup', oggiK);
+    // conservo gli ultimi 30: i più vecchi vanno in _cestino app (mai eliminati)
+    const tutti = (await elenca(dir, " and name contains 'dati-'")).sort((a, b) => a.name < b.name ? 1 : -1);
+    for (const f of tutti.slice(30)) await cestinaApp(f.id, dir);
+  }
+
+  // ---------- Sincronizzazione ----------
+  async function sincronizza(forzaLogin = false): Promise<void> {
+    if (inCorso) return;
+    if (!navigator.onLine) { cambia('offline', 'Sei offline: le modifiche partiranno appena torna la rete.'); return; }
+    inCorso = true;
+    cambia('incorso');
+    try {
+      if (!await tokenValido(forzaLogin)) throw new Error('NOLOGIN');
+      if (!stato.email) {
+        const email = await chiSono();
+        if (email.toLowerCase() !== ACCOUNT_AMMESSO) {
+          try { google.accounts.oauth2.revoke(token, () => { /* ok */ }); } catch (_) { /* niente */ }
+          token = '';
+          throw new Error('Questa app è privata: l\'account ' + email + ' non è autorizzato.');
+        }
+        stato.email = email; LS.set('email', stato.email);
+      }
+      await preparaCartelle();
+
+      // 1. scarico il file remoto
+      let remoti: Rec[] = [];
+      if (!idDati) { const f = await trovaFile('dati.json', idCartella('dati')); if (f) { idDati = f.id; LS.set('idDati', idDati); } }
+      let testoRemoto = '';
+      if (idDati) {
+        try { testoRemoto = await scaricaTesto(idDati); } catch (e: any) { if (String(e.message).includes('404')) { idDati = ''; LS.set('idDati', ''); } else throw e; }
+      }
+      if (testoRemoto) {
+        try { const j = JSON.parse(testoRemoto); remoti = Array.isArray(j) ? j : j.records || []; } catch (_) { throw new Error('Il file dati.json su Drive non è leggibile: non lo sovrascrivo.'); }
+      }
+      // 2. unisco (vince l'updatedAt più alto, per record)
+      Stato.unisci(remoti);
+      // 3. se ho qualcosa di più nuovo del remoto, ricarico
+      const remotiMap = new Map(remoti.map(r => [r.id, r.updatedAt || 0]));
+      const miei = Stato.esporta();
+      const daSpedire = miei.some(r => (r.updatedAt || 0) > (remotiMap.get(r.id) || 0));
+      if (daSpedire || !idDati) {
+        if (testoRemoto) await backupSeServe(testoRemoto);
+        const testo = JSON.stringify({ formato: 'il-mio-calendario', versione: 1, salvatoIl: new Date().toISOString(), records: miei });
+        idDati = await carica('dati.json', idCartella('dati'), testo, 'application/json', idDati || undefined);
+        LS.set('idDati', idDati);
+      }
+      stato.ultimoSync = Date.now(); LS.set('ultimoSync', stato.ultimoSync);
+      applicaTema();
+      cambia('ok');
+    } catch (e: any) {
+      const m = String(e && e.message || e);
+      if (m === 'NOLOGIN') cambia(stato.email ? 'attesa' : 'spento', stato.email ? 'Tocca per accedere di nuovo a Google.' : '');
+      else if (m.includes('Failed to fetch')) cambia('offline', 'Rete assente o Google non raggiungibile.');
+      else cambia('errore', m);
+    } finally { inCorso = false; }
+  }
+
+  /** Sync "a breve": dopo una modifica aspetto 3 s per raggruppare. */
+  function programma(): void {
+    if (!stato.email) return;
+    clearTimeout(timerSync);
+    if (stato.sync !== 'incorso') cambia('attesa');
+    timerSync = window.setTimeout(() => sincronizza(false), 3000);
+  }
+
+  async function login(): Promise<void> {
+    stato.email = '';
+    await sincronizza(true);
+    if (stato.sync === 'ok') avviso('Collegato a Google Drive come ' + stato.email);
+  }
+  function logout(): void {
+    if (token) { try { google.accounts.oauth2.revoke(token, () => { /* ok */ }); } catch (_) { /* niente */ } }
+    token = ''; stato.email = ''; stato.ultimoSync = 0;
+    LS.set('email', ''); LS.set('ultimoSync', 0);
+    cambia('spento');
+  }
+
+  // ---------- Allegati ----------
+  async function caricaAllegato(file: File, parent?: string): Promise<Allegato> {
+    if (!await tokenValido(true)) throw new Error('Accedi a Google per caricare allegati.');
+    await preparaCartelle();
+    const id = await carica(file.name, parent || idCartella('allegati'), file, file.type || 'application/octet-stream');
+    return { id: uid(), nome: file.name, driveId: id, mime: file.type, url: 'https://drive.google.com/file/d/' + id + '/view' };
+  }
+  /** Google Picker per scegliere un file esistente (lo rende accessibile all'app). */
+  async function scegliConPicker(opz: { cartelle?: boolean; multi?: boolean } = {}): Promise<{ id: string; name: string; mimeType: string; url: string }[]> {
+    const t = await tokenValido(true);
+    if (!t) throw new Error('Accedi a Google prima.');
+    await script('https://apis.google.com/js/api.js');
+    await new Promise<void>(ok => gapi.load('picker', () => ok()));
+    return new Promise(ok => {
+      const vista = new google.picker.DocsView(opz.cartelle ? google.picker.ViewId.FOLDERS : google.picker.ViewId.DOCS)
+        .setIncludeFolders(true).setParent('root');
+      if (opz.cartelle) vista.setSelectFolderEnabled(true).setMimeTypes('application/vnd.google-apps.folder');
+      let b = new google.picker.PickerBuilder()
+        .setOAuthToken(t).setDeveloperKey(G_API_KEY).setAppId(G_APP_ID)
+        .setLocale('it').setTitle(opz.cartelle ? 'Scegli una cartella' : 'Scegli un file')
+        .addView(vista)
+        .setCallback((d: any) => {
+          if (d.action === google.picker.Action.PICKED) ok((d.docs || []).map((x: any) => ({ id: x.id, name: x.name, mimeType: x.mimeType, url: x.url })));
+          else if (d.action === google.picker.Action.CANCEL) ok([]);
+        });
+      if (opz.multi) b = b.enableFeature(google.picker.Feature.MULTISELECT_ENABLED);
+      if (!opz.cartelle) b = b.enableFeature(google.picker.Feature.NAV_HIDDEN);
+      b.build().setVisible(true);
+    });
+  }
+
+  window.addEventListener('online', () => { if (stato.email) sincronizza(false); });
+
+  return {
+    stato, ascolta(f: () => void) { ascoltatori.push(f); },
+    sincronizza, programma, login, logout,
+    caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
+    get collegato() { return !!stato.email; },
+  };
+})();
+
+/** Apre un allegato: link Drive in una nuova scheda (il viewer in-app arriva con la Fase 3). */
+function apriAllegato(a: Allegato): void {
+  const url = a.url || (a.driveId ? 'https://drive.google.com/file/d/' + a.driveId + '/view' : '');
+  if (url) window.open(url, '_blank', 'noopener');
+}
+
+/** Testo e colore dell'indicatore di stato sync. */
+function descrSync(): { testo: string; cls: string } {
+  const s = Drive.stato;
+  switch (s.sync) {
+    case 'spento': return { testo: 'Drive non collegato', cls: 'sync-spento' };
+    case 'ok': return { testo: 'Sincronizzato' + (s.ultimoSync ? ' · ' + hm(new Date(s.ultimoSync)) : ''), cls: 'sync-ok' };
+    case 'attesa': return { testo: s.messaggio || 'In attesa di sincronizzazione', cls: 'sync-attesa' };
+    case 'incorso': return { testo: 'Sincronizzo…', cls: 'sync-attesa' };
+    case 'offline': return { testo: 'Offline · modifiche in coda', cls: 'sync-attesa' };
+    default: return { testo: 'Errore sync: ' + s.messaggio, cls: 'sync-errore' };
+  }
+}

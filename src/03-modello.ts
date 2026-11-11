@@ -11,7 +11,7 @@ interface Ricorrenza {
   count?: number;                    // numero di ripetizioni
 }
 interface VoceChecklist { id: string; testo: string; fatto: boolean; }
-interface Allegato { id: string; nome: string; driveId?: string; url?: string; }
+interface Allegato { id: string; nome: string; driveId?: string; url?: string; mime?: string; }
 
 interface Evento extends Rec {
   type: 'evento';
@@ -115,6 +115,7 @@ const Stato = (() => {
       rec.set(r.id, r);
       DB.salva([r]);
       if (!silenzioso) notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
+      if (typeof Drive !== 'undefined') Drive.programma();
     },
     /** Eliminazione "morbida": il record resta come lapide per la sync. */
     elimina(id: string): void {

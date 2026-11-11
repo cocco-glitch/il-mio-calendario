@@ -221,3 +221,12 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
   .pagina { padding-bottom: 24px; } .gr-scroll { padding-bottom: 0; } .giorno-sel, .agenda { margin-bottom: 24px; padding-bottom: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------- Drive / sync ---------- */
+.sync-ind { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; }
+.sync-pallino { width: 10px; height: 10px; border-radius: 50%; background: var(--tenue); flex: none; display: inline-block; }
+.sync-ok { background: #2fbf8f; } .sync-attesa { background: #e9a23b; animation: pulsa 1.4s infinite; } .sync-errore { background: var(--rosso); } .sync-spento { background: var(--tenue); }
+@keyframes pulsa { 50% { opacity: .35; } }
+.sync-riga { display: flex; align-items: center; gap: 10px; font-weight: 600; padding: 4px 0 8px; }
+.allegati .voce { display: flex; align-items: center; gap: 6px; }
+.allegato { flex: 1; min-width: 0; text-align: left; padding: 10px 4px; color: var(--accento); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

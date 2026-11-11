@@ -46,6 +46,7 @@ function rigaOcc(o: Occ, giorno?: Date): HTMLElement {
     ),
     o.ev.rrule ? h('span.tenue', { title: testoRicorrenza(o.ev.rrule) }, icona('ripeti', 16)) : null,
     (o.ev.promemoria || []).length ? h('span.tenue', null, icona('campana', 16)) : null,
+    (o.ev.allegati || []).length ? h('span.tenue', null, '📎') : null,
   );
 }
 function etichettaScadenza(t: Task): string {
@@ -416,7 +417,20 @@ function vistaAltro(): HTMLElement {
   };
   const memoria = { idb: 'sul dispositivo (IndexedDB)', ls: 'sul dispositivo (ridotto)', mem: 'solo temporaneo: questa finestra non permette il salvataggio' }[DB.modo];
 
+  const ds = descrSync();
+  const sezDrive = scheda('Google Drive',
+    h('div.sync-riga', null, h('span.sync-pallino.' + ds.cls), h('span', null, ds.testo)),
+    Drive.collegato
+      ? [h('div.tenue.piccolo', null, 'Account: ' + Drive.stato.email + '. Dati in "Calendario personale/dati", backup giornaliero in "backup" (ultimi 30). L\'app non elimina mai file: al massimo li sposta in "_cestino app".'),
+         h('div.bottoni', null,
+           h('button.btn', { onclick: () => Drive.sincronizza(true) }, 'Sincronizza ora'),
+           h('button.btn.neutro', { onclick: () => chiedi('Scollegare Google Drive?', [{ testo: 'Scollega', valore: 'si', pericolo: true }], 'I dati restano sia qui sia su Drive.').then(s => { if (s) Drive.logout(); }) }, 'Scollega'))]
+      : [h('div.tenue.piccolo', null, 'Collega il tuo Google Drive: i dati si salvano in una cartella "Calendario personale" e compaiono identici su iPhone e PC. Solo il tuo account potrà vederli.'),
+         h('div.bottoni', null, h('button.btn', { onclick: () => Drive.login() }, 'Accedi con Google'))],
+  );
+
   return h('div.pagina', null,
+    sezDrive,
     scheda('Aspetto',
       riga('Tema', selettore([['auto', 'Automatico'], ['chiaro', 'Chiaro'], ['scuro', 'Scuro']], i.tema, function (this: HTMLSelectElement) { salvaImp({ tema: this.value as Impostazioni['tema'] }); })),
       riga('Colore accento', h('input', { type: 'color', value: i.accento, onchange: (e: Event) => salvaImp({ accento: (e.target as HTMLInputElement).value }) })),
@@ -424,12 +438,12 @@ function vistaAltro(): HTMLElement {
     ),
     scheda('Categorie', cats, nuovaCat),
     scheda('I miei dati',
-      h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '. Google Drive: in arrivo con la Fase 2.'),
+      h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'),
       anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null,
       h('div.bottoni', null,
         h('button.btn', { onclick: esporta }, 'Esporta backup'),
         h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport),
     ),
-    h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE + ' · Fase 1'),
+    h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE),
   );
 }
