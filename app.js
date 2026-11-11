@@ -85,7 +85,17 @@ function inizioGiorno(d) { return new Date(d.getFullYear(), d.getMonth(), d.getD
 function lunedi(d) { const g = (d.getDay() + 6) % 7; return piuGiorni(inizioGiorno(d), -g); }
 function stessoGiorno(a, b) { return ymd(a) === ymd(b); }
 function oggi() { return inizioGiorno(new Date()); }
-function fmt(d, o) { return new Intl.DateTimeFormat('it-IT', o).format(d); }
+// v0.17: i formattatori si creano una volta sola per combinazione di opzioni (crearli è costoso)
+const FORMATI = new Map();
+function fmt(d, o) {
+    const k = JSON.stringify(o);
+    let f = FORMATI.get(k);
+    if (!f) {
+        f = new Intl.DateTimeFormat('it-IT', o);
+        FORMATI.set(k, f);
+    }
+    return f.format(d);
+}
 const GIORNI_BREVI = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
 function maiuscola(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function dataLunga(d) { return maiuscola(fmt(d, { weekday: 'long', day: 'numeric', month: 'long' })); }
@@ -218,6 +228,25 @@ const DB = (() => {
                 scriviLs();
             return Promise.resolve();
         },
+        /** v0.17: rimuove definitivamente dei record (solo per lapidi vecchie senza valore). */
+        rimuovi(ids) {
+            if (!ids.length)
+                return Promise.resolve();
+            if (modo === 'idb' && idb) {
+                return new Promise((ok, ko) => {
+                    const tx = idb.transaction('records', 'readwrite'), st = tx.objectStore('records');
+                    for (const id of ids)
+                        st.delete(id);
+                    tx.oncomplete = () => ok();
+                    tx.onerror = () => ko(tx.error);
+                });
+            }
+            for (const id of ids)
+                delete mem[id];
+            if (modo === 'ls')
+                scriviLs();
+            return Promise.resolve();
+        },
     };
 })();
 
@@ -227,6 +256,10 @@ const DB = (() => {
 // ---------- Stato ----------
 const Stato = (() => {
     const rec = new Map();
+    const TIPI_SERVIZIO = new Set(['notifica']); // v0.17: lapidi ripulibili dopo 7 giorni
+    const lapideScaduta = (r) => TIPI_SERVIZIO.has(r.type) && (r.updatedAt || 0) < Date.now() - 7 * 86400000;
+    let ver = 0, cacheVer = -1; // v0.17: versione dei dati e cache per tipo
+    const perTipo = new Map();
     const ascoltatori = [];
     let inAttesa = false;
     function notifica() {
@@ -242,6 +275,7 @@ const Stato = (() => {
         async carica() {
             for (const r of await DB.apri())
                 rec.set(r.id, r);
+            ver++;
             // Primo avvio: categorie e impostazioni di partenza.
             // updatedAt = 1 così, alla prima sincronizzazione, vincono sempre i dati già su Drive.
             if (!rec.has('impostazioni')) {
@@ -255,16 +289,46 @@ const Stato = (() => {
                 for (const r of nuovi)
                     if (!rec.has(r.id))
                         rec.set(r.id, r);
+                ver++;
                 await DB.salva(nuovi);
             }
         },
         /** Tutti i record non eliminati di un tipo. */
         tutti(type) {
-            const out = [];
-            rec.forEach(r => { if (r.type === type && !r.deleted)
-                out.push(r); });
-            return out;
+            // v0.17: indice per tipo, ricostruito solo dopo una modifica (ver). Restituisce sempre una copia.
+            if (cacheVer !== ver) {
+                perTipo.clear();
+                cacheVer = ver;
+            }
+            let l = perTipo.get(type);
+            if (!l) {
+                l = [];
+                rec.forEach(r => { if (r.type === type && !r.deleted)
+                    l.push(r); });
+                perTipo.set(type, l);
+            }
+            return l.slice();
         },
+        /**
+         * v0.17: rimuove le lapidi scadute dei tipi "di servizio" (registro notifiche): non servono più alla
+         * sincronizzazione e ingrandirebbero dati.json. I dati dell'utente (eventi, schede…) non si toccano.
+         */
+        pulisci() {
+            const via = [];
+            rec.forEach(r => { if (r.deleted && lapideScaduta(r))
+                via.push(r.id); });
+            for (const id of via)
+                rec.delete(id);
+            if (via.length) {
+                ver++;
+                DB.rimuovi(via);
+                if (typeof Drive !== 'undefined')
+                    Drive.programma();
+            }
+            return via.length;
+        },
+        /** Numero di versione dei dati: cambia a ogni salvataggio/unione (per le cache). */
+        get ver() { return ver; },
         prendi(id) {
             const r = rec.get(id);
             return r && !r.deleted ? r : undefined;
@@ -273,6 +337,7 @@ const Stato = (() => {
         salva(r, silenzioso = false) {
             r.updatedAt = Date.now();
             rec.set(r.id, r);
+            ver++;
             DB.salva([r]);
             if (!silenzioso)
                 notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
@@ -295,10 +360,13 @@ const Stato = (() => {
             for (const e of esterni) {
                 if (!e || !e.id || !e.type)
                     continue;
+                if (e.deleted && lapideScaduta(e) && !rec.has(e.id))
+                    continue; // v0.17: lapidi vecchie già ripulite
                 const mio = rec.get(e.id);
                 if (!mio || (e.updatedAt || 0) > (mio.updatedAt || 0)) {
                     rec.set(e.id, e);
                     cambiati.push(e);
+                    ver++;
                 }
             }
             if (cambiati.length) {
@@ -490,10 +558,16 @@ const ICONE = {
     campana: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
 };
+const MODELLI_ICONA = new Map(); // v0.17: ogni icona si costruisce una volta e poi si clona
 function icona(nome, dim = 22) {
-    const s = h('span.ico');
-    s.innerHTML = '<svg viewBox="0 0 24 24" width="' + dim + '" height="' + dim + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONE[nome] || '') + '</svg>';
-    return s;
+    const k = nome + '|' + dim;
+    let m = MODELLI_ICONA.get(k);
+    if (!m) {
+        m = h('span.ico');
+        m.innerHTML = '<svg viewBox="0 0 24 24" width="' + dim + '" height="' + dim + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONE[nome] || '') + '</svg>';
+        MODELLI_ICONA.set(k, m);
+    }
+    return m.cloneNode(true);
 }
 /** Foglio modale a tutta altezza su telefono, centrato su PC. */
 function foglio(opz) {
@@ -2822,15 +2896,20 @@ const Ripassi = (() => {
     return { W, voto, passo, recuperabilita, intervallo, ritenzione, registra, inizializza, mem, ricordo, delGiorno, quanteAlGiorno, schedaDaProporre, dataApprendimento, MIN_SCHEDA };
 })();
 /** Trova una scheda dei pacchetti dal suo id (per aprirla dai ripassi). */
+let indiceSchede = { v: -1, m: new Map() };
 function trovaScheda(id) {
-    for (const pk of Studio.pkStep())
-        for (const mat of pk.materie)
-            for (const sub of mat.sottostep)
-                for (const mi of sub.microstep)
-                    for (const s of mi.schede)
-                        if (s.id === id)
-                            return { pk, m: mat.m, micro: mi.n, s, k: sub.k };
-    return null;
+    if (indiceSchede.v !== Stato.ver) { // v0.17: indice ricostruito solo quando i dati cambiano
+        const m = new Map();
+        for (const pk of Studio.pkStep())
+            for (const mat of pk.materie)
+                for (const sub of mat.sottostep)
+                    for (const mi of sub.microstep)
+                        for (const s of mi.schede)
+                            if (!m.has(s.id))
+                                m.set(s.id, { pk, m: mat.m, micro: mi.n, s, k: sub.k });
+        indiceSchede = { v: Stato.ver, m };
+    }
+    return indiceSchede.m.get(id) || null;
 }
 /** Colore della probabilità di ricordare (scala unica del piano: corallo → ambra → verde → teal). */
 function coloreRicordo(r) { return r < 0.7 ? '#e8590c' : r < 0.85 ? '#f59f00' : r < 0.95 ? '#2f9e44' : '#0b7285'; }
@@ -3568,8 +3647,15 @@ const Studio = (() => {
                 giorni: esami.map(e => ({ data: e.data, voci: [{ k: 'ESAME-' + e.id, t: '🎓 ' + e.nome + (e.ora ? ' · ' + e.ora : ''), d: e.nota || 'Esame', speciale: true }] })) });
         return out;
     }
-    function pkStep() { return Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step); }
-    function pkPiani() { return Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1); }
+    // v0.17: risultati memorizzati finché i dati non cambiano (Stato.ver)
+    const memo = (f) => { let v = -1, x; return () => { if (v !== Stato.ver) {
+        x = f();
+        v = Stato.ver;
+    } return x; }; };
+    const pkStepM = memo(() => Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step));
+    function pkStep() { return pkStepM().slice(); }
+    const pkPianiM = memo(() => Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1));
+    function pkPiani() { return pkPianiM().slice(); }
     /** Il piano principale (teoria). */
     function pkPiano() { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
     /** Inserisce/aggiorna un pacchetto. I progressi stanno altrove: non si perdono. */
@@ -3632,7 +3718,11 @@ const Studio = (() => {
             Ripassi.registra(id, p); // v0.7: ripasso FSRS
     }
     /** Pagine del libro: '141-144,146' o appendice 'A1-A4'. Restituisce stringhe ('141', 'A2'). */
+    const cachePagine = new Map(); // v0.17: stessa stringa → stesso risultato
     function pagineSet(s) {
+        const c = cachePagine.get(s || '');
+        if (c)
+            return new Set(c);
         const o = new Set();
         for (const p of (s || '').split(',').map(x => x.trim()).filter(Boolean)) {
             const m = p.match(/^([A-Z]?)(\d+)(?:-[A-Z]?(\d+))?$/);
@@ -3641,6 +3731,7 @@ const Studio = (() => {
             for (let i = +m[2]; i <= +(m[3] || m[2]); i++)
                 o.add(m[1] + i);
         }
+        cachePagine.set(s || '', Array.from(o));
         return o;
     }
     function intervalli(set) {
@@ -3663,12 +3754,15 @@ const Studio = (() => {
             pagP: unione(P), pagR: unione(R), pagT: unione(l), pagLette: unione(l.filter(s => fatta(s.id))) };
     }
     function schedeDi(s) { return s.microstep.flatMap(m => m.schede); }
+    const indiceSotto = memo(() => { const m = new Map(); for (const pk of pkStepM())
+        for (const mat of pk.materie)
+            for (const sub of mat.sottostep)
+                if (!m.has(sub.k))
+                    m.set(sub.k, { pk, mat, sub }); return m; });
     function trovaSotto(k) {
-        for (const pk of pkStep())
-            for (const mat of pk.materie)
-                for (const sub of mat.sottostep)
-                    if (sub.k === k)
-                        return { pk, mat, sub };
+        const x = indiceSotto().get(k);
+        if (x)
+            return x;
         return null;
     }
     function etichetta(k) { const m = /^([A-Z]+)(\d.*)$/.exec(k); return m ? infoMateria(m[1]).breve + ' ' + m[2] : k; }
@@ -5151,7 +5245,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.16.0';
+const VERSIONE = '0.17.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -5260,6 +5354,7 @@ async function avvia() {
     }
     Stato.ascolta(disegna);
     Ripassi.inizializza();
+    Stato.pulisci(); // v0.17: lapidi vecchie del registro notifiche
     Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
     Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
     Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
