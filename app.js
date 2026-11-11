@@ -2850,6 +2850,109 @@ function campoRapido() {
     return h('div.rapido-box', null, campo, anteprima);
 }
 
+// 07-ripianifica.ts — Ripianifica gli step in ritardo del piano principale (F5 ridotta, v0.10).
+//
+// Gli step non completati con data passata vengono spostati in avanti con Studio.sposta(): i progressi
+// non cambiano mai, cambia solo il giorno (record 'spostamento'). Due modi, scelti nell'anteprima:
+//  - "prima possibile": il primo giorno utile con meno di 3 step;
+//  - "giorni leggeri": il giorno utile con meno step (a parità, il più vicino).
+// Giorni utili: da domani all'ultimo giorno prima della chiusura della teoria; esclusi simulazioni,
+// verifica, chiusura, sprint, riposo. Le "Riserva" accettano al massimo 2 step, gli altri 3.
+const Ripianifica = (() => {
+    const VIETATI = /^(SIM|VERIFICA|CHIUSURA|SPRINT|RIPOSO)/;
+    const piu = (k, n) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
+    /** Step in ritardo del piano principale, nell'ordine del piano. */
+    function inRitardo(oggiK = ymd(new Date())) {
+        const p = Studio.pkPiano();
+        if (!p || p.modo === 'raffinamento')
+            return [];
+        const out = [];
+        for (const g of p.giorni)
+            for (const v of g.voci) {
+                const d = Studio.dataVoce(v, g, p.id);
+                if (!v.speciale && d < oggiK && !Studio.stepFatto(v.k, p))
+                    out.push({ k: v.k, t: v.t, da: d });
+            }
+        return out;
+    }
+    /** Giorni utili con il loro carico attuale (step non speciali che cadono quel giorno). */
+    function giorniUtili(oggiK) {
+        const p = Studio.pkPiano();
+        if (!p)
+            return [];
+        const fine = (p.giorni.find(g => g.voci.some(v => /^CHIUSURA/.test(v.k))) || p.giorni[p.giorni.length - 1]).data;
+        const carico = {}, tipo = {};
+        for (const g of p.giorni)
+            for (const v of g.voci) {
+                const d = Studio.dataVoce(v, g, p.id);
+                if (v.speciale) {
+                    if (g.data === d)
+                        tipo[d] = VIETATI.test(v.k) ? 'no' : (tipo[d] || 'riserva');
+                }
+                else
+                    carico[d] = (carico[d] || 0) + 1;
+            }
+        const out = [];
+        for (let d = piu(oggiK, 1); d < fine; d = piu(d, 1)) {
+            if (tipo[d] === 'no')
+                continue;
+            out.push({ data: d, carico: carico[d] || 0, max: tipo[d] === 'riserva' ? 2 : 3 });
+        }
+        return out;
+    }
+    /** Proposta: per ogni step in ritardo, il nuovo giorno (null se non c'è posto prima della chiusura). */
+    function proponi(modo, oggiK = ymd(new Date())) {
+        const giorni = giorniUtili(oggiK);
+        return inRitardo(oggiK).map(x => {
+            const liberi = giorni.filter(g => g.carico < g.max);
+            let scelto = liberi[0];
+            if (modo === 'leggeri' && liberi.length)
+                scelto = liberi.reduce((a, b) => b.carico < a.carico ? b : a);
+            if (scelto)
+                scelto.carico++;
+            return { ...x, a: scelto ? scelto.data : null };
+        });
+    }
+    function applica(prop) {
+        const p = Studio.pkPiano(), prima = prop.map(x => ({ k: x.k, sp: Stato.prendi(p.id === 'piano' ? 'sp-' + x.k : 'sp-' + p.id + '-' + x.k) }));
+        for (const x of prop)
+            if (x.a)
+                Studio.sposta(x.k, x.a, p.id);
+        return () => { for (const x of prima)
+            Studio.sposta(x.k, x.sp && !x.sp.deleted ? x.sp.data : null, p.id); };
+    }
+    return { inRitardo, giorniUtili, proponi, applica };
+})();
+const giornoBreve = (k) => { const d = daDt(k); return ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'][d.getDay()] + ' ' + k.slice(8, 10) + '/' + k.slice(5, 7); };
+/** Foglio con anteprima e conferma. */
+function apriRipianifica() {
+    let modo = 'leggeri';
+    const corpo = h('div.modulo');
+    const disegnaProp = () => {
+        svuota(corpo);
+        const prop = Ripianifica.proponi(modo);
+        [
+            h('div.segmenti', { role: 'tablist' }, h('button' + (modo === 'leggeri' ? '.attivo' : ''), { onclick: () => { modo = 'leggeri'; disegnaProp(); } }, 'Giorni leggeri'), h('button' + (modo === 'presto' ? '.attivo' : ''), { onclick: () => { modo = 'presto'; disegnaProp(); } }, 'Prima possibile')),
+            h('div.tenue.piccolo', null, modo === 'leggeri'
+                ? 'Mette gli step dove il piano è più leggero (giorni con meno step, Riserve): giornate più sostenibili.'
+                : 'Recupera subito: il primo giorno con meno di 3 step. Si torna in pari prima, ma con giornate più piene.'),
+            h('div.gruppo', null, prop.length ? prop.map(x => h('div.widget-riga', null, h('span.nome', null, Studio.etichetta(x.k), h('div.tenue.piccolo', null, x.t)), h('span', { style: { whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' } }, giornoBreve(x.da) + ' → ', x.a ? h('b', null, giornoBreve(x.a)) : h('b', { style: { color: 'var(--rosso)' } }, 'nessun posto')))) : h('div.vuoto', null, 'Nessuno step in ritardo: sei in pari. 🎉')),
+            prop.some(x => !x.a) ? h('div.tenue.piccolo', { style: { color: 'var(--rosso)' } }, 'Alcuni step non trovano posto prima della chiusura: vanno fatti in un giorno di sprint o accorpati.') : null,
+            h('div.tenue.piccolo', null, 'Cambia solo il giorno: le schede fatte e i punteggi restano.'),
+        ].forEach(el => { if (el)
+            corpo.appendChild(el); });
+        corpo._prop = prop;
+    };
+    disegnaProp();
+    foglio({ titolo: 'Ripianifica i ritardi', corpo, etichettaSalva: 'Conferma', salva: () => {
+            const prop = corpo._prop;
+            if (!prop.length)
+                return;
+            const annulla = Ripianifica.applica(prop);
+            avviso('Spostati ' + prop.filter(x => x.a).length + ' step · tocca per annullare', 8000, () => { annulla(); avviso('Spostamenti annullati.'); });
+        } });
+}
+
 // ============================================================
 // 07-studio.ts — Modulo STUDIO.
 // - Pacchetti studio (formato v1, docs/formato-studio.md): arrivano dal sito
@@ -3372,7 +3475,9 @@ function indicatoreStudio() {
     if (!Studio.pkPiani().length)
         return null;
     const r = Studio.inRitardo();
-    return h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
+    const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
+    // v0.10: ripianificazione in un tocco (solo piano principale)
+    return Ripianifica.inRitardo().length ? h('div', null, ind, h('button.btn.neutro', { style: { marginTop: '8px', width: '100%' }, onclick: apriRipianifica }, '↻ Ripianifica i ritardi')) : ind;
 }
 // ---------- Vista STUDIO ----------
 function vistaStudio() {
@@ -4489,7 +4594,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.9.0';
+const VERSIONE = '0.10.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
