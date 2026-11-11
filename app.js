@@ -1806,6 +1806,170 @@ function importaIcs(testo, categoriaId) {
     return n;
 }
 
+// 06-notifiche.ts — Notifiche sul telefono tramite ntfy (Livello A del piano, docs/aggiornamento/06-NOTIFICHE.md).
+//
+// Come funziona: l'app calcola le notifiche delle prossime 72 ore e le manda SUBITO al server ntfy
+// con l'orario di consegna (`delay` = timestamp Unix). Il server le consegna all'ora giusta all'app
+// ntfy dell'iPhone, iscritta allo stesso codice segreto (topic). Su ntfy.sh si programma al massimo
+// 3 giorni avanti: per questo a ogni apertura/modifica l'app riprogramma la finestra.
+//
+// Non mandare doppioni: ogni notifica ha una chiave stabile (es. 'ev:<occorrenza>:<minuti>') e un
+// record 'notifica' sincronizzato (id 'ntf-<hash chiave>') con orario e impronta del contenuto.
+// Anche se l'app è aperta su più dispositivi, una notifica già registrata non si rimanda.
+//
+// Limite di ntfy: una notifica programmata non si può annullare sul server. Se un evento cambia o
+// sparisce, l'app manda, 5 secondi dopo il vecchio orario, un messaggio silenzioso con lo stesso
+// sequence_id che SOSTITUISCE quella vecchia ("Annullato" / "Spostato alle …").
+const Notifiche = (() => {
+    const FINESTRA = 72 * 3600000; // 3 giorni (limite di ntfy.sh)
+    const MAX_PER_GIRO = 40; // sotto il limite di raffica del server pubblico
+    const PRED = { mattino: '08:00', sera: '21:30', silDa: '23:00', silA: '07:30' };
+    let timer = 0, inCorso = false;
+    const server = () => (imp().ntfyServer || 'https://ntfy.sh').replace(/\/+$/, '');
+    const tipi = () => Object.assign({ promemoria: true, studio: true, sera: true, esami: true }, imp().ntfyTipi || {});
+    const attive = () => !!(imp().ntfy && imp().ntfyTopic);
+    const linkApp = () => location.origin + location.pathname.replace(/[^/]*$/, '');
+    function minDi(hhmm) { const [a, b] = hhmm.split(':').map(Number); return (a || 0) * 60 + (b || 0); }
+    function alle(g, hhmm) { const d = new Date(g); const m = minDi(hhmm); d.setHours(Math.floor(m / 60), m % 60, 0, 0); return d; }
+    function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++)
+        h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+    function nuovoTopic() {
+        const b = new Uint8Array(24);
+        crypto.getRandomValues(b);
+        return 'imc-' + Array.from(b, x => 'abcdefghijklmnopqrstuvwxyz0123456789'[x % 36]).join('');
+    }
+    /** Orari silenziosi: se l'orario cade dentro, slitta alla fine del silenzio. */
+    function fuoriSilenzio(t) {
+        const i = imp(), da = minDi(i.ntfySilenzioDa || PRED.silDa), a = minDi(i.ntfySilenzioA || PRED.silA);
+        const d = new Date(t), m = d.getHours() * 60 + d.getMinutes();
+        const dentro = da > a ? (m >= da || m < a) : (m >= da && m < a);
+        if (!dentro)
+            return t;
+        const fine = alle(d, i.ntfySilenzioA || PRED.silA);
+        if (m >= da && da > a)
+            fine.setDate(fine.getDate() + 1); // es. 23:30 → 07:30 del giorno dopo
+        return fine.getTime();
+    }
+    function privata(catId) { return !!catId && (imp().ntfyPrivate || []).includes(catId); }
+    function vociStudio(g) { return typeof Studio === 'undefined' ? [] : Studio.vociDelGiorno(g); }
+    function testoVoci(g) {
+        return vociStudio(g).map(x => x.v.speciale ? x.v.t : Studio.etichetta(x.v.k)).join(' + ');
+    }
+    /** Tutte le notifiche desiderate tra adesso e adesso+72h. */
+    function calcola(adesso = Date.now()) {
+        const fine = adesso + FINESTRA, T = tipi(), i = imp(), out = [];
+        const metti = (d) => { d.at = fuoriSilenzio(d.at); if (d.at > adesso + 15000 && d.at <= fine)
+            out.push(d); };
+        if (T.promemoria) {
+            for (const o of occorrenzeTra(new Date(adesso - 86400000), new Date(fine + 86400000))) {
+                const priv = privata(o.ev.categoriaId);
+                for (const min of o.ev.promemoria || []) {
+                    const at = o.inizio.getTime() - min * 60000;
+                    const quando = o.ev.tuttoIlGiorno ? dataRelativa(o.inizio) : (min === 0 ? 'adesso' : (min < 60 ? 'tra ' + min + ' min' : dataRelativa(o.inizio).toLowerCase() + ' alle ' + hm(o.inizio)));
+                    metti({ chiave: 'ev:' + o.chiave + ':' + min, at, titolo: priv ? 'Promemoria' : o.ev.titolo, testo: priv ? 'Hai un impegno ' + quando : quando + (o.ev.tuttoIlGiorno ? '' : ' · ore ' + hm(o.inizio)) + (o.ev.luogo && !priv ? ' · ' + o.ev.luogo : ''), tag: 'bell' });
+                }
+            }
+            for (const t of Stato.tutti('task')) {
+                if (t.fatto || !t.scadenza || t.scadenza.length <= 10)
+                    continue;
+                const priv = privata(t.categoriaId);
+                metti({ chiave: 'task:' + t.id + ':' + t.scadenza, at: daDt(t.scadenza).getTime(), titolo: priv ? 'Promemoria' : t.titolo, testo: 'Scade adesso', tag: 'ballot_box_with_check' });
+            }
+        }
+        // Giorni della finestra (oggi compreso)
+        for (let g = oggi(); g.getTime() <= fine; g = new Date(g.getFullYear(), g.getMonth(), g.getDate() + 1)) {
+            const k = ymd(g), voci = testoVoci(g);
+            if (T.studio && voci)
+                metti({ chiave: 'studio:' + k, at: alle(g, i.ntfyMattino || PRED.mattino).getTime(), titolo: '📚 Studio di oggi', testo: voci, tag: 'books' });
+            if (T.sera && vociStudio(g).some(x => !x.v.speciale))
+                metti({ chiave: 'sera:' + k, at: alle(g, i.ntfySera || PRED.sera).getTime(), titolo: '🌙 Ripasso prima di dormire', testo: '10–15 min: richiama a memoria ' + voci + ', senza aprire il libro.', tag: 'crescent_moon', prio: 2 });
+            if (T.esami)
+                for (const n of [7, 3, 1]) {
+                    const target = new Date(g.getFullYear(), g.getMonth(), g.getDate() + n);
+                    for (const x of vociStudio(target)) {
+                        if (!x.v.speciale || !/^(SIM|VERIFICA|ESAME-)/.test(x.v.k))
+                            continue;
+                        metti({ chiave: 'esame:' + x.v.k + ':' + n, at: alle(g, i.ntfyMattino || PRED.mattino).getTime() + 60000, titolo: (n === 1 ? '⏰ Domani: ' : '🎯 Tra ' + n + ' giorni: ') + x.v.t.replace(/^🎓 /, ''), testo: n === 1 ? 'Oggi ripasso leggero e dormi bene: il sonno fissa ciò che sai.' : 'Inizia a dare priorità ai ripassi e agli errori.', tag: 'dart', prio: 4 });
+                    }
+                }
+        }
+        return out;
+    }
+    /** Invio a ntfy. mode 'no-cors': la richiesta parte anche se il server non manda le intestazioni CORS. */
+    async function invia(m) {
+        const corpo = { topic: imp().ntfyTopic, title: m.titolo, message: m.testo, click: linkApp(), sequence_id: 'imc' + hash(m.chiave) };
+        if (m.tag)
+            corpo.tags = [m.tag];
+        if (m.prio)
+            corpo.priority = m.prio;
+        if (m.at && m.at > Date.now() + 10000)
+            corpo.delay = String(Math.floor(m.at / 1000));
+        await fetch(server() + '/', { method: 'POST', mode: 'no-cors', body: JSON.stringify(corpo) });
+    }
+    const impronta = (d) => hash(d.at + '|' + d.titolo + '|' + d.testo);
+    const idReg = (chiave) => 'ntf-' + hash(chiave);
+    /** Allinea il server ntfy con le notifiche desiderate. Restituisce quante ne ha mandate. */
+    async function allinea() {
+        if (!attive() || inCorso || !navigator.onLine)
+            return 0;
+        inCorso = true;
+        let inviati = 0;
+        try {
+            const adesso = Date.now(), voluti = calcola(adesso), visti = new Set();
+            for (const d of voluti) {
+                if (inviati >= MAX_PER_GIRO)
+                    break;
+                const id = idReg(d.chiave), reg = Stato.prendi(id), h = impronta(d);
+                visti.add(id);
+                if (reg && !reg.deleted && reg.h === h)
+                    continue;
+                // Cambiata e la vecchia è ancora in attesa: subito dopo il vecchio orario la sostituisco in silenzio.
+                if (reg && !reg.deleted && reg.at > adesso && reg.at !== d.at) {
+                    await invia({ chiave: d.chiave, at: reg.at + 5000, titolo: '↪ ' + reg.titolo, testo: 'Spostato: ' + dataRelativa(new Date(d.at)).toLowerCase() + ' alle ' + hm(new Date(d.at)), prio: 1 });
+                    inviati++;
+                }
+                await invia(d);
+                inviati++;
+                Stato.salva({ id, type: 'notifica', updatedAt: 0, at: d.at, h, titolo: d.titolo }, true);
+            }
+            // Notifiche registrate in futuro che non servono più: annullo (sostituzione silenziosa) e chiudo il registro.
+            for (const reg of Stato.tutti('notifica')) {
+                if (visti.has(reg.id))
+                    continue;
+                if (reg.at > adesso + 15000 && reg.at <= adesso + FINESTRA && inviati < MAX_PER_GIRO) {
+                    await invia({ chiave: reg.id, at: reg.at + 5000, titolo: '✕ Annullato', testo: reg.titolo, prio: 1 });
+                    inviati++;
+                    Stato.elimina(reg.id);
+                }
+                else if (reg.at < adesso - 86400000)
+                    Stato.elimina(reg.id); // vecchie: pulizia
+            }
+        }
+        catch (e) {
+            console.warn('ntfy:', e);
+        }
+        finally {
+            inCorso = false;
+        }
+        return inviati;
+    }
+    /** Programma un allineamento tra qualche secondo (le modifiche ravvicinate si accorpano). */
+    function programma() { if (!attive())
+        return; clearTimeout(timer); timer = setTimeout(() => { allinea(); }, 4000); }
+    function attiva() { const i = imp(); if (!i.ntfyTopic)
+        i.ntfyTopic = nuovoTopic(); i.ntfy = true; Stato.salva(i); return i.ntfyTopic; }
+    function rigenera() {
+        for (const r of Stato.tutti('notifica'))
+            Stato.elimina(r.id); // il nuovo topic riparte da zero
+        const i = imp();
+        i.ntfyTopic = nuovoTopic();
+        Stato.salva(i);
+        return i.ntfyTopic;
+    }
+    async function prova() { await invia({ chiave: 'prova:' + Date.now(), titolo: '✅ Notifiche attive', testo: 'Il mio calendario può avvisarti anche ad app chiusa.', tag: 'white_check_mark' }); }
+    return { calcola, allinea, programma, attiva, rigenera, prova, attive, server, PRED, nuovoTopic, fuoriSilenzio };
+})();
+
 // ============================================================
 // 07-extra.ts — Studio "versatile":
 // - corsi di studio creati dall'utente (qualsiasi materia, esame, certificazione…)
@@ -3768,7 +3932,7 @@ function vistaAltro() {
                     Drive.logout(); }) }, 'Scollega'))]
         : [h('div.tenue.piccolo', null, 'Collega il tuo Google Drive: i dati si salvano in una cartella "Calendario personale" e compaiono identici su iPhone e PC. Solo il tuo account potrà vederli.'),
             h('div.bottoni', null, h('button.btn', { onclick: () => Drive.login() }, 'Accedi con Google'))]);
-    return h('div.pagina', null, sezDrive, sezioneAspetto(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp), scheda('Categorie', cats, nuovaCat), sezioneStudio(salvaImp), sezioneCalendari(salvaImp), scheda('I miei dati', h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'), anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null, h('div.bottoni', null, h('button.btn', { onclick: esporta }, 'Esporta backup'), h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport)), h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE));
+    return h('div.pagina', null, sezDrive, sezioneAspetto(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp), scheda('Categorie', cats, nuovaCat), sezioneStudio(salvaImp), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp), scheda('I miei dati', h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'), anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null, h('div.bottoni', null, h('button.btn', { onclick: esporta }, 'Esporta backup'), h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport)), h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE));
 }
 const ACCENTI = ['#6c8cff', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
 const CAMPI_ASPETTO = ['tema', 'accento', 'sfondo', 'font', 'scala', 'densita', 'raggio', 'widget', 'widgetNascosti', 'tabNascoste', 'nav', 'vistaIniziale'];
@@ -3836,7 +4000,7 @@ function sezioneCalendari(salva) {
         a.click();
         a.remove();
     };
-    return scheda('Notifiche e altri calendari', h('div.tenue.piccolo', null, 'Gli avvisi dentro l\'app arrivano solo ad app aperta. Per le notifiche vere sull\'iPhone attiva lo specchio: gli eventi vengono copiati in un calendario Google dedicato («' + GCal.GCAL_NOME + '») e le notifiche arrivano dall\'app Google Calendar o da Calendario di iOS (aggiungendo il tuo account Google). L\'app può toccare solo quel calendario, non gli altri tuoi.'), h('div.widget-riga', null, h('span.nome', null, 'Specchio su Google Calendar'), h('label.interruttore', null, h('input', { type: 'checkbox', checked: !!i.gcal, onchange: (e) => {
+    return scheda('Google Calendar e file .ics', h('div.tenue.piccolo', null, 'Gli avvisi dentro l\'app arrivano solo ad app aperta. Per le notifiche vere sull\'iPhone attiva lo specchio: gli eventi vengono copiati in un calendario Google dedicato («' + GCal.GCAL_NOME + '») e le notifiche arrivano dall\'app Google Calendar o da Calendario di iOS (aggiungendo il tuo account Google). L\'app può toccare solo quel calendario, non gli altri tuoi.'), h('div.widget-riga', null, h('span.nome', null, 'Specchio su Google Calendar'), h('label.interruttore', null, h('input', { type: 'checkbox', checked: !!i.gcal, onchange: (e) => {
             const on = e.target.checked;
             salva({ gcal: on });
             if (on) {
@@ -3854,6 +4018,50 @@ function sezioneCalendari(salva) {
             }
             else
                 avviso(String(err.message || err), 8000); }) }, 'Ricopia tutto ora')] : null, h('div.gruppo-titolo', null, 'File .ics'), h('div.bottoni', null, h('button.btn.neutro', { onclick: () => fileIcs.click() }, 'Importa .ics'), h('button.btn.neutro', { onclick: esporta }, 'Esporta .ics'), fileIcs));
+}
+// ---------- v0.7: Notifiche sul telefono (ntfy) ----------
+function sezioneNotifiche(salva) {
+    const i = imp(), T = Object.assign({ promemoria: true, studio: true, sera: true, esami: true }, i.ntfyTipi || {});
+    const priv = new Set(i.ntfyPrivate || []);
+    const interr = (on, cambia) => h('label.interruttore', null, h('input', { type: 'checkbox', checked: on, onchange: (e) => cambia(e.target.checked) }), h('span'));
+    const ora = (k, def) => h('input', { type: 'time', value: i[k] || def, onchange: (e) => salva({ [k]: e.target.value || def }) });
+    const tipo = (k, nome, nota) => h('div.widget-riga', null, h('span.nome', null, nome, h('div.tenue.piccolo', null, nota)), interr(!!T[k], v => salva({ ntfyTipi: Object.assign({}, T, { [k]: v }) })));
+    const copia = (t) => { try {
+        navigator.clipboard.writeText(t).then(() => avviso('Codice copiato: incollalo nell\'app ntfy.'));
+    }
+    catch (_) {
+        avviso(t, 15000);
+    } };
+    const futuri = Stato.tutti('notifica').filter(r => r.at > Date.now()).length;
+    return scheda('Notifiche sul telefono', h('div.tenue.piccolo', null, 'Avvisi anche ad app chiusa, tramite l\'app gratuita ntfy. L\'app programma le notifiche dei prossimi 3 giorni ogni volta che la apri o modifichi qualcosa.'), h('div.widget-riga', null, h('span.nome', null, 'Notifiche sul telefono'), interr(!!i.ntfy, v => { if (v) {
+        Notifiche.attiva();
+        avviso('Attivate: segui i 3 passi qui sotto.', 6000);
+    }
+    else
+        salva({ ntfy: false }); })), i.ntfy && i.ntfyTopic ? [
+        h('div.gruppo-titolo', null, 'Collega l\'iPhone (una volta sola)'),
+        h('ol.tenue.piccolo', { style: { paddingLeft: '18px', margin: '4px 0 8px' } }, h('li', null, 'Installa «ntfy» dall\'App Store (gratis) e consenti le notifiche.'), h('li', null, 'In ntfy tocca «+», incolla il codice qui sotto e tocca «Subscribe».'), h('li', null, 'Torna qui e tocca «Prova»: deve arrivare «✅ Notifiche attive».')),
+        h('div.widget-riga', null, h('code', { style: { fontSize: '12px', wordBreak: 'break-all' } }, i.ntfyTopic), h('button.btn.neutro', { onclick: () => copia(i.ntfyTopic) }, 'Copia')),
+        h('div.bottoni', null, h('button.btn', { onclick: () => Notifiche.prova().then(() => avviso('Inviata: controlla il telefono.')).catch(e => avviso('Invio non riuscito: ' + (e.message || e), 8000)) }, 'Prova'), h('button.btn.neutro', { onclick: () => Notifiche.allinea().then(n => avviso(n ? 'Mandate ' + n + ' notifiche.' : 'Già tutto programmato.')) }, 'Riprogramma ora'), h('button.btn.neutro', { onclick: async () => { const r = await chiedi('Nuovo codice?', [{ testo: 'Genera nuovo codice', valore: 'si', pericolo: true }], 'Il vecchio smette di ricevere. Dovrai iscriverti in ntfy al nuovo codice.'); if (r) {
+                Notifiche.rigenera();
+                avviso('Nuovo codice creato.');
+            } } }, 'Nuovo codice')),
+        h('div.tenue.piccolo', null, futuri + ' notifiche programmate nei prossimi giorni.'),
+        h('div.gruppo-titolo', null, 'Cosa ricevere'),
+        tipo('promemoria', 'Promemoria di eventi e task', 'quelli impostati negli eventi e nei promemoria con orario'),
+        tipo('studio', 'Studio di oggi', 'la mattina: gli step del piano del giorno'),
+        tipo('sera', 'Ripasso prima di dormire', 'la sera dei giorni di studio: 10–15 min di richiamo'),
+        tipo('esami', 'Esami e simulazioni vicini', '7, 3 e 1 giorno prima'),
+        h('div.gruppo-titolo', null, 'Orari'),
+        riga('Studio di oggi', ora('ntfyMattino', Notifiche.PRED.mattino)),
+        riga('Ripasso serale', ora('ntfySera', Notifiche.PRED.sera)),
+        riga('Silenzio dalle', ora('ntfySilenzioDa', Notifiche.PRED.silDa)),
+        riga('alle', ora('ntfySilenzioA', Notifiche.PRED.silA)),
+        h('div.tenue.piccolo', null, 'Le notifiche che cadono nel silenzio arrivano alla fine del silenzio.'),
+        h('div.gruppo-titolo', null, 'Categorie private (testo generico)'),
+        h('div.tenue.piccolo', null, 'I testi passano dal server pubblico ntfy.sh senza cifratura. Per queste categorie arriva solo «Promemoria».'),
+        categorie().map(c => h('div.widget-riga', null, h('span.nome', null, h('span.campione', { style: { background: c.colore, display: 'inline-block', width: '12px', height: '12px', marginRight: '8px', verticalAlign: 'middle' } }), c.nome), interr(priv.has(c.id), v => { v ? priv.add(c.id) : priv.delete(c.id); salva({ ntfyPrivate: Array.from(priv) }); }))),
+    ] : null);
 }
 function sezioneStudio(salva) {
     const i = imp();
@@ -3967,7 +4175,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.6.1';
+const VERSIONE = '0.7.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -4075,6 +4283,7 @@ async function avvia() {
         UI.vista = v;
     }
     Stato.ascolta(disegna);
+    Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
     Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
         disegna(); });
     disegna();
@@ -4086,6 +4295,7 @@ async function avvia() {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applicaTema);
     controllaAvvisi();
     setInterval(controllaAvvisi, 30000);
+    Notifiche.programma();
     // Al ritorno sull'app (es. dalla Home dell'iPhone) aggiorno giorno e avvisi.
     let giornoMostrato = ymd(new Date());
     document.addEventListener('visibilitychange', () => {
@@ -4095,6 +4305,7 @@ async function avvia() {
         Timer.aggiorna();
         if (Drive.collegato)
             Drive.sincronizza(false);
+        Notifiche.programma();
         if (giornoMostrato !== ymd(new Date())) {
             giornoMostrato = ymd(new Date());
             UI.data = oggi();
