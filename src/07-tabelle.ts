@@ -96,7 +96,7 @@ function apriNuovaTabella(): void {
       t.righe.push({ id: uid(), c: {} });
       Stato.salva(t); UI.tabella = t.id; disegna();
     } });
-  setTimeout(() => nome.focus(), 50);
+  setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) nome.focus(); }, 50);
 }
 
 async function collegaSheet(t: Tabella, importa: boolean): Promise<void> {

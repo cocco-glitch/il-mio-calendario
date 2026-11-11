@@ -16,7 +16,7 @@ const UI = {
   qNote: '',
   tagNote: '',
   q: '',
-  studioVista: 'schede' as 'schede' | 'piano' | 'syllabus' | 'tabelle',
+  studioVista: 'schede' as 'schede' | 'piano' | 'errori' | 'statistiche' | 'esami' | 'syllabus' | 'tabelle',
   studioPiano: '',
   copMateria: '',
   copStato: '',
@@ -89,7 +89,7 @@ function taskDelGiorno(g: Date): Task[] {
 }
 
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET: [string, string][] = [['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET: [string, string][] = [['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget(): string[] {
   const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
@@ -140,6 +140,9 @@ function vistaOggi(): HTMLElement {
         case 'tabelle': { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; }
         case 'nota': return scheda('Nota del giorno', area);
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
+        case 'esami': return widgetEsami();
+        case 'timer': return widgetTimer();
+        case 'errori': return widgetErrori();
       }
       return null;
     }),
@@ -226,7 +229,7 @@ function vistaMese(): HTMLElement {
       onclick: () => { if (stessoGiorno(g, UI.data)) vai('cal', 'giorno', g); else { UI.data = g; disegna(); } },
     },
       h('span.mese-num', null, String(g.getDate())),
-      Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : COLORE_MATERIA[x.v.k[0]] } }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k))),
+      Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : coloreChiave(x.v.k) } }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k))),
       occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, o.ev.titolo)),
       occ.length > 2 ? h('span.mese-altro', null, '+' + (occ.length - 2)) : null,
       nTask ? h('span.mese-task', { title: nTask + ' promemoria' }) : null,
@@ -277,7 +280,7 @@ function vistaGriglia(nGiorni: number): HTMLElement {
   const fascia = h('div.gr-fascia', { style: col }, h('span.gr-fascia-eti', null, 'giorno'), giorni.map(g => {
     const occ = (mappa.get(ymd(g)) || []).filter(lungo);
     return h('div.gr-fascia-col', null,
-      Studio.vociDelGiorno(g).map(x => h('button.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : COLORE_MATERIA[x.v.k[0]] }, onclick: () => rigaStudio(x).click() }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + (nGiorni === 1 ? ' · ' + x.v.t : ''))),
+      Studio.vociDelGiorno(g).map(x => h('button.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : coloreChiave(x.v.k) }, onclick: () => rigaStudio(x).click() }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + (nGiorni === 1 ? ' · ' + x.v.t : ''))),
       occ.map(o => h('button.mese-chip', { style: { '--c': coloreEvento(o.ev) }, onclick: () => apriEvento(o.ev, o) }, o.ev.titolo)),
       taskDelGiorno(g).map(t => h('button.mese-chip.task', { style: { '--c': coloreEvento(t) }, onclick: () => apriTask(t) }, '○ ' + t.titolo)));
   }));
@@ -295,10 +298,10 @@ function vistaGriglia(nGiorni: number): HTMLElement {
     });
     for (const v of impagina((mappa.get(ymd(g)) || []).filter(o => !lungo(o)), g)) {
       const breve = v.e - v.s < 45;
-      colonna.appendChild(h('button.gr-ev' + (breve ? '.breve' : ''), {
+      colonna.appendChild(trascinabile(h('button.gr-ev' + (breve ? '.breve' : ''), {
         style: { top: (v.s / 60) * ORA_PX + 'px', height: Math.max(20, ((v.e - v.s) / 60) * ORA_PX - 2) + 'px', left: (v.col / v.ncol) * 100 + '%', width: 'calc(' + 100 / v.ncol + '% - 2px)', '--c': coloreEvento(v.o.ev) },
         onclick: (e: Event) => { e.stopPropagation(); apriEvento(v.o.ev, v.o); },
-      }, h('span.gr-ev-tit', null, v.o.ev.titolo), breve ? null : h('span.gr-ev-ora', null, hm(v.o.inizio) + (nGiorni === 1 ? ' – ' + hm(v.o.fine) : ''), v.o.ev.luogo && nGiorni === 1 ? ' · ' + v.o.ev.luogo : null)));
+      }, h('span.gr-ev-tit', null, v.o.ev.titolo), breve ? null : h('span.gr-ev-ora', null, hm(v.o.inizio) + (nGiorni === 1 ? ' – ' + hm(v.o.fine) : ''), v.o.ev.luogo && nGiorni === 1 ? ' · ' + v.o.ev.luogo : null), h('span.gr-maniglia', { 'aria-hidden': 'true' })), v.o, nGiorni));
     }
     if (stessoGiorno(g, oggi())) {
       const ora = new Date();
@@ -462,6 +465,7 @@ function vistaAltro(): HTMLElement {
     sezioneLayout(salvaImp),
     sezionePreset(salvaImp),
     scheda('Categorie', cats, nuovaCat),
+    sezioneStudio(salvaImp),
     sezioneCalendari(salvaImp),
     scheda('I miei dati',
       h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'),
@@ -532,7 +536,7 @@ function sezionePreset(salva: SalvaImp): HTMLElement {
       const nome = h('input.titolo-grande', { type: 'text', placeholder: 'Nome del preset (es. Esami)' }) as HTMLInputElement;
       foglio({ titolo: 'Salva preset', corpo: h('div.modulo', null, nome, h('div.tenue.piccolo', null, 'Salva tema, colori, carattere, densità e layout attuali.')),
         salva: () => { const n = nome.value.trim(); if (!n) return false; Stato.salva({ id: 'preset-' + uid(), type: 'preset', updatedAt: 0, nome: n, valori: valoriAttuali() }); salva({ preset: n }); } });
-      setTimeout(() => nome.focus(), 50);
+      setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) nome.focus(); }, 50);
     } }, 'Salva l\'aspetto attuale come preset'));
 }
 function valoriAttuali(): Partial<Impostazioni> { const i = imp(), v: any = {}; for (const k of CAMPI_ASPETTO) if ((i as any)[k] !== undefined) v[k] = JSON.parse(JSON.stringify((i as any)[k])); return v; }
@@ -570,4 +574,71 @@ function sezioneCalendari(salva: SalvaImp): HTMLElement {
       h('button.btn.neutro', { onclick: () => GCal.allinea(true).then(n => avviso('Ricopiati ' + n + ' elementi.')).catch(err => { if (String(err.message).match(/NOLOGIN|403|401/)) { Drive.login(); avviso('Autorizza Google Calendar e riprova.'); } else avviso(String(err.message || err), 8000); }) }, 'Ricopia tutto ora')] : null,
     h('div.gruppo-titolo', null, 'File .ics'),
     h('div.bottoni', null, h('button.btn.neutro', { onclick: () => fileIcs.click() }, 'Importa .ics'), h('button.btn.neutro', { onclick: esporta }, 'Esporta .ics'), fileIcs));
+}
+
+function sezioneStudio(salva: SalvaImp): HTMLElement {
+  const i = imp() as any;
+  const num = (k: string, def: number, min: number, max: number) => h('input', { type: 'number', min: String(min), max: String(max), inputMode: 'numeric', value: String(i[k] || def), onchange: (e: Event) => salva({ [k]: Math.max(min, Math.min(max, parseInt((e.target as HTMLInputElement).value, 10) || def)) } as any) });
+  return scheda('Studio',
+    riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')),
+    riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')),
+    riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')));
+}
+
+// ---------- Trascinamento degli eventi (vista Giorno/Settimana) ----------
+// Tieni premuto (circa 0,3 s) e trascina per spostare; trascina la lineetta in basso per cambiare la durata.
+// Passi di 15 minuti; nella settimana si può spostare anche di giorno. Le serie chiedono "solo questo / tutta la serie".
+const PASSO = 15;
+function trascinabile(el: HTMLElement, o: Occ, nGiorni: number): HTMLElement {
+  let x0 = 0, y0 = 0, attivo = false, ridim = false, dMin = 0, dGiorni = 0, timer = 0, larg = 0, mosso = false, pid = -1;
+  const reset = () => { clearTimeout(timer); el.classList.remove('trascino'); el.style.transform = ''; el.style.height = el.dataset.h || el.style.height; attivo = false; pid = -1; };
+  el.addEventListener('pointerdown', (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    x0 = e.clientX; y0 = e.clientY; mosso = false; dMin = 0; dGiorni = 0; pid = e.pointerId;
+    ridim = (e.target as HTMLElement).classList.contains('gr-maniglia');
+    larg = (el.parentElement as HTMLElement).getBoundingClientRect().width;
+    el.dataset.h = el.style.height;
+    const parti = () => { attivo = true; el.classList.add('trascino'); try { el.setPointerCapture(pid); } catch (_) { /* niente */ } try { navigator.vibrate && navigator.vibrate(15); } catch (_) { /* niente */ } };
+    if (e.pointerType === 'mouse' || ridim) parti(); else timer = window.setTimeout(parti, 300);
+  });
+  el.addEventListener('pointermove', (e: PointerEvent) => {
+    if (e.pointerId !== pid) return;
+    const dx = e.clientX - x0, dy = e.clientY - y0;
+    if (!attivo) { if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearTimeout(timer); return; }
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) mosso = true;
+    dMin = Math.round((dy / ORA_PX) * 60 / PASSO) * PASSO;
+    if (ridim) { const h0 = parseFloat(el.dataset.h || '0'); el.style.height = Math.max(ORA_PX / 4, h0 + (dMin / 60) * ORA_PX) + 'px'; return; }
+    dGiorni = nGiorni > 1 ? Math.round(dx / larg) : 0;
+    el.style.transform = 'translate(' + dGiorni * larg + 'px,' + (dMin / 60) * ORA_PX + 'px)';
+  });
+  el.addEventListener('touchmove', (e: TouchEvent) => { if (attivo) e.preventDefault(); }, { passive: false });
+  const fine = (e: PointerEvent) => {
+    if (e.pointerId !== pid) return;
+    const eraAttivo = attivo && mosso, dm = dMin, dg = dGiorni, r = ridim;
+    reset();
+    if (!eraAttivo || (!dm && !dg)) return;
+    el.dataset.trascinato = '1'; setTimeout(() => delete el.dataset.trascinato, 50);
+    spostaOccorrenza(o, r ? 0 : dm + dg * 1440, dm);
+  };
+  el.addEventListener('pointerup', fine);
+  el.addEventListener('pointercancel', (e: PointerEvent) => { if (e.pointerId === pid) reset(); });
+  // dopo un trascinamento non deve aprirsi l'editor
+  el.addEventListener('click', (e: Event) => { if (el.dataset.trascinato) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+  return el;
+}
+/** Sposta un'occorrenza: deltaInizio (min) sposta tutto, deltaFine (min) allunga/accorcia solo la fine (ridimensionamento). */
+async function spostaOccorrenza(o: Occ, deltaInizio: number, deltaFine: number): Promise<void> {
+  const ridim = deltaInizio === 0;
+  const nuovoI = piuMinuti(o.inizio, deltaInizio), nuovaF = piuMinuti(o.fine, ridim ? deltaFine : deltaInizio);
+  if (nuovaF <= nuovoI) return;
+  const ev = Stato.prendi<Evento>(o.ev.id); if (!ev) return;
+  if (!ev.rrule) { ev.inizio = dtStr(nuovoI); ev.fine = dtStr(nuovaF); Stato.salva(ev); avviso('Spostato: ' + ev.titolo + ' · ' + dataBreve(nuovoI) + ' ' + hm(nuovoI) + '–' + hm(nuovaF)); return; }
+  const s = await chiedi('Evento ricorrente', [{ testo: 'Solo questo evento', valore: 'uno' }, { testo: 'Tutta la serie', valore: 'tutti' }], ev.titolo);
+  if (s === 'uno') {
+    ev.exdate = (ev.exdate || []).concat([o.chiave]); Stato.salva(ev);
+    Stato.salva({ ...JSON.parse(JSON.stringify(ev)), id: uid(), rrule: undefined, exdate: undefined, serieId: ev.id, inizio: dtStr(nuovoI), fine: dtStr(nuovaF) });
+  } else if (s === 'tutti') {
+    const i0 = piuMinuti(daDt(ev.inizio), deltaInizio), f0 = piuMinuti(daDt(ev.fine), ridim ? deltaFine : deltaInizio);
+    ev.inizio = dtStr(i0); ev.fine = dtStr(f0); Stato.salva(ev);
+  }
 }

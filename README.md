@@ -9,7 +9,9 @@ App personale (PWA) di calendario, promemoria, note e studio. Local-first, zero 
 - **Fase 4 (fatta)**: aspetto (tema, accento, sfondo, carattere, dimensione testo, densità, angoli), layout (vista iniziale, ordine/visibilità dei riquadri di Oggi, sezioni della barra, barra su PC), preset (3 di base + personali), aggiunta rapida in italiano (`src/07-rapido.ts`), specchio su Google Calendar con scope `calendar.app.created` e import/export .ics (`src/06-gcal.ts`).
 - **Fase 5 (fatta)**: test completi, documentazione (`docs/MANUTENZIONE.md`, `docs/formato-studio.md`).
 
-Documentazione per chi modifica l'app: **`docs/MANUTENZIONE.md`**.
+- **0.6.0**: studio per qualsiasi corso (materie generiche, corsi creati nell'app), registro errori, timer Pomodoro, statistiche, esami con conto alla rovescia, trascinamento degli eventi.
+
+Documentazione per chi modifica l'app: **`docs/MANUTENZIONE.md`**. Evoluzione prevista: **`docs/PROGRESSIONE.md`**.
 
 ## Comandi
 ```
@@ -18,6 +20,7 @@ python3 test/e2e.py     # test end-to-end (Playwright per Python)
 python3 test/sync.py    # test della sincronizzazione con un finto Drive
 python3 test/studio.py  # test del modulo Studio
 python3 test/fase4.py   # aggiunta rapida, .ics, specchio Calendar, preset
+python3 test/versatile.py # corsi propri, errori, timer, statistiche, esami, trascinamento
 node studio/genera.mjs  # rigenera i pacchetti studio e controlla i numeri con le schede PDF
 ```
 `dist/` è il sito da pubblicare (GitHub Pages). `dist/anteprima.html` è la stessa app in un solo file.
@@ -31,6 +34,7 @@ src/04-componenti.ts  foglio modale, dialogo, avviso, campo ricorrenza, icone
 src/05-editor.ts      editor di evento / promemoria / nota
 src/06-gcal.ts        specchio Google Calendar, .ics
 src/06-drive.ts       Google: login, Drive API, Picker, sync, backup, allegati
+src/07-extra.ts       corsi propri, errori, timer, statistiche, esami
 src/07-rapido.ts      aggiunta rapida in linguaggio naturale
 src/07-studio.ts      modulo Studio (pacchetti, progressi, piani, syllabus, quiz, PDF)
 src/07-tabelle.ts     tabelle personalizzate

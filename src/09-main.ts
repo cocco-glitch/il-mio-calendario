@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.5.1';
+const VERSIONE = '0.6.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -103,6 +103,7 @@ async function avvia(): Promise<void> {
   Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); });
   disegna();
   Drive.precarica();
+  Timer.parti();
   Studio.caricaDalSito();
   if (Drive.collegato && navigator.onLine) Drive.sincronizza(false);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applicaTema);
@@ -114,6 +115,7 @@ async function avvia(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     controllaAvvisi();
+    Timer.aggiorna();
     if (Drive.collegato) Drive.sincronizza(false);
     if (giornoMostrato !== ymd(new Date())) { giornoMostrato = ymd(new Date()); UI.data = oggi(); }
     if (!document.querySelector('.foglio-sfondo')) disegna();

@@ -9,25 +9,62 @@
 //   Uno step spostato è un record type 'spostamento' (id 'sp-<chiave>').
 // ============================================================
 
-interface SchedaS { id: string; k: number; n: number; titolo: string; tipo: 'P' | 'R'; problemi: boolean; pagine: string; slide?: string; quizFile: string; quizFileId?: string; }
+interface FileS { id?: string; nome: string; mime?: string; url?: string; }
+interface SchedaS { id: string; k: number; n: number; titolo: string; tipo: 'P' | 'R'; problemi: boolean; pagine: string; slide?: string; quizFile: string; quizFileId?: string; file?: FileS; }
 interface MicroS { n: string; schede: SchedaS[]; }
-interface SottoS { k: string; n: string; titolo: string; posizione: string; ripasso?: string; svolto?: boolean; microstep: MicroS[]; }
+interface SottoS { k: string; n: string; titolo: string; posizione: string; ripasso?: string; svolto?: boolean; data?: string; microstep: MicroS[]; }
 interface MateriaS { m: string; nome: string; libro: string; sottostep: SottoS[]; }
 interface LibroS { nome: string; offset: number; blocco: number; cartella: string; file: Record<string, string>; }
-interface PkStep { tipo: 'step'; id: string; step: number; titolo: string; aggiornato: string; risorse: { libri: Record<string, LibroS>; quiz: Record<string, string> }; materie: MateriaS[]; }
+interface PkStep { tipo: 'step'; id: string; step: number; titolo: string; aggiornato: string; proprio?: boolean; descrizione?: string; risorse: { libri: Record<string, LibroS>; quiz: Record<string, string> }; materie: MateriaS[]; }
 interface VocePiano { k: string; t: string; d?: string; speciale?: boolean; }
 interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }
 interface Copertura { m: string; ud: string; a: string; stato: 'E' | 'I' | 'N'; k: string; quando: string; }
 interface PkPiano { tipo: 'piano'; id: string; modo?: 'raffinamento'; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; copertura?: Copertura[]; }
 /** Una voce del piano nel giorno in cui cade (tenendo conto degli spostamenti). */
 interface VoceGiorno { v: VocePiano; g: GiornoPiano; spostata: boolean; p: PkPiano; }
-interface Progresso extends Rec { type: 'progresso'; fatta: boolean; data?: string; punteggio?: number; nota?: string; }
+interface Progresso extends Rec { type: 'progresso'; fatta: boolean; data?: string; punteggio?: number; nota?: string; daRifare?: boolean; }
 
-const NOME_MATERIA: Record<string, string> = { C: 'Chimica', B: 'Biologia', F: 'Fisica' };
-const BREVE_MATERIA: Record<string, string> = { C: 'Chi', B: 'Bio', F: 'Fis' };
-const COLORE_MATERIA: Record<string, string> = { C: '#e9a23b', B: '#2fbf8f', F: '#6c8cff' };
+// ---------- Materie (generiche) ----------
+// Una materia ha un CODICE di lettere maiuscole (C, B, F, ANA, STAT…). Le chiavi dei sotto-step sono
+// codice + numero ("C2.3", "ANA1.2"). Nome, sigla e colore vengono, in ordine: dal record 'materia'
+// (modificabile dall'utente), dal pacchetto che la contiene, dai valori di base sotto.
+const MATERIE_BASE: Record<string, { nome: string; breve: string; colore: string }> = {
+  C: { nome: 'Chimica', breve: 'Chi', colore: '#e9a23b' }, B: { nome: 'Biologia', breve: 'Bio', colore: '#2fbf8f' }, F: { nome: 'Fisica', breve: 'Fis', colore: '#6c8cff' },
+};
+const PALETTE_MATERIE = ['#e9a23b', '#2fbf8f', '#6c8cff', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#14b8a6', '#eab308', '#ec4899'];
+interface MateriaRec extends Rec { type: 'materia'; codice: string; nome: string; breve?: string; colore: string; }
+function materiaDi(k: string): string { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; }
+function infoMateria(code: string): { nome: string; breve: string; colore: string } {
+  const r = Stato.prendi<MateriaRec>('mat-' + code);
+  const base = MATERIE_BASE[code];
+  let nome = r ? r.nome : base ? base.nome : '', colore = r ? r.colore : base ? base.colore : '';
+  if (!nome || !colore) for (const pk of Studio.pkStep()) { const m = pk.materie.find(x => x.m === code); if (m) { nome = nome || m.nome; colore = colore || (m as any).colore || ''; break; } }
+  if (!colore) { let hsh = 0; for (const ch of code) hsh = (hsh * 31 + ch.charCodeAt(0)) >>> 0; colore = PALETTE_MATERIE[hsh % PALETTE_MATERIE.length]; }
+  nome = nome || code;
+  return { nome, breve: (r && r.breve) || (base && base.breve) || nome.slice(0, 3), colore };
+}
+const nomeMateria = (c: string) => infoMateria(c).nome;
+const coloreMateria = (c: string) => infoMateria(c).colore;
+/** Colore di una chiave di step ("C2.3") o grigio per le voci speciali. */
+const coloreChiave = (k: string) => materiaDi(k) ? coloreMateria(materiaDi(k)) : '#7c8597';
 
 const Studio = (() => {
+  /**
+   * "Piani" ricavati da altri dati: i corsi creati dall'utente (sotto-step con data) e gli esami.
+   * Così compaiono nel calendario, in Oggi e nel ritardo come gli step del piano principale.
+   */
+  function pianiVirtuali(): PkPiano[] {
+    const out: PkPiano[] = [];
+    for (const pk of pkStep().filter(p => p.proprio)) {
+      const giorni: GiornoPiano[] = [];
+      for (const m of pk.materie) for (const s of m.sottostep) if (s.data) giorni.push({ data: s.data, voci: [{ k: s.k, t: s.titolo }] });
+      if (giorni.length) out.push({ tipo: 'piano', id: 'v-' + pk.id, titolo: pk.titolo, aggiornato: pk.aggiornato, giorniTeoria: 0, giorni });
+    }
+    const esami = Stato.tutti<Rec>('esame');
+    if (esami.length) out.push({ tipo: 'piano', id: 'v-esami', titolo: 'Esami', aggiornato: '', giorniTeoria: 0,
+      giorni: esami.map(e => ({ data: e.data, voci: [{ k: 'ESAME-' + e.id, t: '🎓 ' + e.nome + (e.ora ? ' · ' + e.ora : ''), d: e.nota || 'Esame', speciale: true }] })) });
+    return out;
+  }
   function pkStep(): PkStep[] { return Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step); }
   function pkPiani(): PkPiano[] { return Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1); }
   /** Il piano principale (teoria). */
@@ -97,7 +134,7 @@ const Studio = (() => {
     for (const pk of pkStep()) for (const mat of pk.materie) for (const sub of mat.sottostep) if (sub.k === k) return { pk, mat, sub };
     return null;
   }
-  function etichetta(k: string): string { return /^[CBF]\d/.test(k) ? BREVE_MATERIA[k[0]] + ' ' + k.slice(1) : k; }
+  function etichetta(k: string): string { const m = /^([A-Z]+)(\d.*)$/.exec(k); return m ? infoMateria(m[1]).breve + ' ' + m[2] : k; }
 
   // ---------- Piano ----------
   // Chiavi degli spostamenti: 'sp-<k>' per il piano principale, 'sp-<idPiano>-<k>' per gli altri.
@@ -115,13 +152,13 @@ const Studio = (() => {
   function segnaStepAMano(k: string, p: PkPiano, si: boolean): void { segna(p.modo === 'raffinamento' ? 'step-raff-' + k : 'step-' + k, { fatta: si }); }
   function vociDelGiorno(g: Date): VoceGiorno[] {
     const k = ymd(g), out: VoceGiorno[] = [];
-    for (const p of pkPiani()) for (const gg of p.giorni) for (const v of gg.voci) if (dataVoce(v, gg, p.id) === k) out.push({ v, g: gg, spostata: gg.data !== k, p });
+    for (const p of [...pkPiani(), ...pianiVirtuali()]) for (const gg of p.giorni) for (const v of gg.voci) if (dataVoce(v, gg, p.id) === k) out.push({ v, g: gg, spostata: gg.data !== k, p });
     return out;
   }
   /** Step (non speciali) con data già passata e non completati, in tutti i piani. */
   function inRitardo(): VocePiano[] {
     const oggiK = ymd(oggi()), out: VocePiano[] = [];
-    for (const p of pkPiani()) for (const g of p.giorni) for (const v of g.voci) if (!v.speciale && dataVoce(v, g, p.id) < oggiK && !stepFatto(v.k, p)) out.push(v);
+    for (const p of [...pkPiani(), ...pianiVirtuali()]) for (const g of p.giorni) for (const v of g.voci) if (!v.speciale && dataVoce(v, g, p.id) < oggiK && !stepFatto(v.k, p)) out.push(v);
     return out;
   }
   function sposta(k: string, data: string | null, pid = 'piano'): void {
@@ -154,7 +191,7 @@ const Studio = (() => {
     return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
   }
 
-  return { pkStep, pkPiano, pkPiani, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+  return { pkStep, pkPiano, pkPiani, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
     dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 
@@ -172,6 +209,13 @@ function serveGoogle(): boolean {
 }
 /** Apre una mini-app quiz HTML dentro l'app, in un iframe isolato (sandbox). Il file su Drive non viene modificato. */
 async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<void> {
+  // Schede dei corsi propri: file qualsiasi (PDF → visore, HTML → iframe, altro → link)
+  if (s.file && !(s.file.mime || '').includes('html') && !/\.html?$/i.test(s.file.nome)) {
+    if (s.file.id && /pdf/i.test(s.file.mime || s.file.nome)) { if (serveGoogle()) return; apriPdf(s.file.id, 1, s.file.nome); return; }
+    if (s.file.url) { window.open(s.file.url, '_blank', 'noopener'); return; }
+  }
+  if (s.file && s.file.id) s = { ...s, quizFileId: s.file.id };
+  if (!s.quizFileId && !s.file && pk.proprio) { avviso('Questa scheda non ha un file collegato.'); return; }
   if (serveGoogle()) return;
   const v = visore(micro + ' · scheda ' + s.k + '/' + s.n, () => apriScheda(pk, m, micro, s));
   v.corpo.appendChild(h('div.vuoto.centro', null, 'Scarico il quiz da Drive…'));
@@ -263,17 +307,22 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
   const data = h('input', { type: 'date', value: p && p.data || '' }) as HTMLInputElement;
   const punti = h('input', { type: 'number', min: '0', max: '100', inputMode: 'numeric', placeholder: '%', value: p && p.punteggio != null ? String(p.punteggio) : '' }) as HTMLInputElement;
   const nota = h('textarea', { rows: 3, placeholder: 'Errori, cose da rivedere…', value: p && p.nota || '' }) as HTMLTextAreaElement;
+  const rifare = h('input', { type: 'checkbox', checked: !!(p && p.daRifare) }) as HTMLInputElement;
   punti.oninput = () => { if (punti.value !== '') fatta.checked = true; };
-  const L = pk.risorse.libri[m];
+  const L = pk.risorse.libri[m] || { nome: mat0(pk, m).libro || 'libro' } as LibroS;
   const blocchi = Studio.intervalli(Studio.pagineSet(s.pagine)).split(', ').filter(Boolean);
-  const apribili = blocchi.filter(b => /^\d/.test(b));
+  const apribili = pk.risorse.libri[m] ? blocchi.filter(b => /^\d/.test(b)) : [];
   const f = foglio({
     titolo: micro + ' · scheda ' + s.k + '/' + s.n,
     corpo: h('div.modulo', null,
       h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo),
         h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)),
-      h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, 'Apri il quiz'),
-      h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti)),
+      h('div.bottoni', null,
+        h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'),
+        h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')),
+      pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id)))!, s); } }, 'Modifica scheda') : null,
+      h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)),
+      h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'),
       h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota),
       h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'),
         h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => { const pag = parseInt(b, 10); return h('button.chip', { onclick: async () => {
@@ -286,9 +335,9 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS): void {
   });
   function salva(): void {
     const v = punti.value === '' ? undefined : Math.max(0, Math.min(100, parseInt(punti.value, 10) || 0));
-    const prima = JSON.stringify([!!(p && p.fatta), p && p.data || '', p && p.punteggio, p && p.nota || '']);
-    if (prima === JSON.stringify([fatta.checked, data.value, v, nota.value])) return;
-    Studio.segna(s.id, { fatta: fatta.checked, data: data.value || undefined, punteggio: v, nota: nota.value || undefined });
+    const prima = JSON.stringify([!!(p && p.fatta), p && p.data || '', p && p.punteggio, p && p.nota || '', !!(p && p.daRifare)]);
+    if (prima === JSON.stringify([fatta.checked, data.value, v, nota.value, rifare.checked])) return;
+    Studio.segna(s.id, { fatta: fatta.checked, data: data.value || undefined, punteggio: v, nota: nota.value || undefined, daRifare: rifare.checked });
   }
 }
 
@@ -315,7 +364,7 @@ function barra(fatte: number, tot: number, colore?: string): HTMLElement {
 function rigaStudio(x: VoceGiorno): HTMLElement {
   const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k);
   return h('button.voce-lista', { onclick: () => { if (t) { UI.studioSub = x.v.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
-    h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : COLORE_MATERIA[x.v.k[0]] } }),
+    h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }),
     h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
       h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '')));
 }
@@ -326,7 +375,8 @@ function testoAvanzamento(k: string, p: PkPiano): string {
   const n = Studio.numeri(Studio.schedeDi(t.sub));
   if (p.modo !== 'raffinamento') return n.Pf + '/' + n.P + ' prioritarie · ' + n.pagP.size + ' pag. · ' + n.R + ' raff.';
   const piu = Array.from(n.pagR).filter(x => !n.pagP.has(x)).length;
-  return '1 · priorità: rifai le prioritarie sbagliate, rileggi ' + n.pagP.size + ' pag. · 2 · raffina: ' + n.Rf + '/' + n.R + ' schede (+' + piu + ' pag.)';
+  const err = Studio.schedeDi(t.sub).filter(s => daRifare(s.id)).length;
+  return '1 · priorità: ' + (err ? err + ' schede da rifare' : 'rifai le prioritarie sbagliate') + ', rileggi ' + n.pagP.size + ' pag. · 2 · raffina: ' + n.Rf + '/' + n.R + ' schede (+' + piu + ' pag.)';
 }
 function indicatoreStudio(): HTMLElement | null {
   if (!Studio.pkPiani().length) return null;
@@ -338,12 +388,14 @@ function indicatoreStudio(): HTMLElement | null {
 // ---------- Vista STUDIO ----------
 function vistaStudio(): HTMLElement {
   const pks = Studio.pkStep(), piano = Studio.pkPiano();
-  if (!pks.length && !piano) return h('div.pagina', null, vuoto('Nessun pacchetto di studio. Apri l\'app online una volta per scaricarli, oppure usa "Aggiorna da Drive".'), bottoneDrive());
   if (UI.studioSub) { const t = Studio.trovaSotto(UI.studioSub); if (t) return vistaSottostep(t.pk, t.mat, t.sub); UI.studioSub = null; }
   const pk = pks.find(p => p.id === UI.studioStep) || pks[pks.length - 1];
-  const voci: [typeof UI.studioVista, string][] = [['schede', 'Schede'], ['piano', 'Piano'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
-  const seg = h('div.segmenti', { role: 'tablist' }, voci.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.studioVista = v; UI.pianoScorso = false; disegna(); } }, t)));
+  const voci: [typeof UI.studioVista, string][] = [['schede', 'Schede'], ['piano', 'Piano'], ['errori', 'Errori'], ['statistiche', 'Statistiche'], ['esami', 'Esami'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
+  const seg = h('div.segmenti.scorre', { role: 'tablist' }, voci.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.studioVista = v; UI.pianoScorso = false; disegna(); } }, t)));
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
+  if (UI.studioVista === 'errori') return h('div.pagina', null, seg, vistaErrori());
+  if (UI.studioVista === 'statistiche') return h('div.pagina', null, seg, vistaStatistiche());
+  if (UI.studioVista === 'esami') return h('div.pagina', null, seg, vistaEsami());
   if (UI.studioVista === 'syllabus' && piano) return h('div.pagina', null, seg, vistaCopertura(piano));
   if (UI.studioVista === 'piano' && piano) {
     const piani = Studio.pkPiani(), scelto = piani.find(p => p.id === UI.studioPiano) || piani.find(p => { const g = p.giorni; return g.length && ymd(oggi()) <= g[g.length - 1].data; }) || piano;
@@ -352,22 +404,26 @@ function vistaStudio(): HTMLElement {
       scelto.nota ? h('div.tenue.piccolo', null, scelto.nota) : null,
       vistaPiano(scelto));
   }
-  if (!pk) return h('div.pagina', null, seg, vuoto('Nessuna scheda di studio caricata.'), bottoneDrive());
+  if (UI.studioVista !== 'schede') UI.studioVista = 'schede';
+  if (!pk) return h('div.pagina', null, seg, vuoto('Nessun corso di studio. Crea il tuo corso (qualsiasi materia o esame) oppure aggiorna i pacchetti dal Drive.'), h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio'), bottoneDrive());
 
   const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
   return h('div.pagina', null, seg, indicatoreStudio(),
-    pks.length > 1 ? h('div.chips', null, pks.map(p => h('button.chip' + (p.id === pk.id ? '.attivo' : ''), { onclick: () => { UI.studioStep = p.id; disegna(); } }, p.titolo))) : null,
+    h('div.chips', null, pks.map(p => h('button.chip' + (p.id === pk.id ? '.attivo' : ''), { onclick: () => { UI.studioStep = p.id; disegna(); } }, (p.proprio ? '★ ' : '') + p.titolo)),
+      h('button.chip', { onclick: () => editorCorso() }, '+ Nuovo corso')),
+    pk.proprio ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => editorCorso(pk) }, 'Modifica corso'), h('button.btn.neutro', { onclick: () => editorSottostep(pk) }, '+ Aggiungi argomento')) : null,
+    pk.descrizione ? h('div.tenue.piccolo', null, pk.descrizione) : null,
     h('section.card', null, h('h2.card-titolo', null, pk.titolo + ' · totale'),
       h('div.numeri', null, numero(T.Pf + '/' + T.P, 'prioritarie'), numero(T.Rf + '/' + T.R, 'raffinamento'), numero(T.pagLette.size + '/' + T.pagT.size, 'pagine lette')),
       barra(T.Pf, T.P)),
     pk.materie.map(m => {
       const N = Studio.numeri(m.sottostep.flatMap(Studio.schedeDi));
-      return h('section.card', null, h('h2.card-titolo', { style: { color: COLORE_MATERIA[m.m] } }, m.nome + ' · ' + m.libro),
+      return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, m.nome + (m.libro ? ' · ' + m.libro : '')),
         m.sottostep.map(s => { const n = Studio.numeri(Studio.schedeDi(s)); return h('button.voce-lista.sotto', { onclick: () => { UI.studioSub = s.k; disegna(); } },
           h('span.voce-corpo', null,
             h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, s.n + ' · ' + s.titolo),
             h('span.voce-sotto', null, 'Prior. ' + n.Pf + '/' + n.P + ' · Raff. ' + n.Rf + '/' + n.R + ' · pag. ' + n.pagP.size + ' / ' + n.pagR.size + ' / ' + n.pagT.size),
-            h('span.voce-sotto', null, s.posizione), barra(n.Pf, n.P, COLORE_MATERIA[m.m])), icona('dx', 18)); }),
+            h('span.voce-sotto', null, s.posizione), barra(n.Pf, n.P, coloreMateria(m.m))), icona('dx', 18)); }),
         h('div.totale-riga', null, 'Totale ' + m.nome + ': ' + N.P + ' prior. · ' + N.R + ' raff. · pag. ' + N.pagP.size + ' / ' + N.pagR.size + ' / ' + N.pagT.size));
     }),
     h('div.tenue.piccolo', null, 'pag. = prioritarie / raffinamento / totali (unione, non somma). Aggiornato: ' + pk.aggiornato + '.'),
@@ -382,8 +438,8 @@ function bottoneDrive(): HTMLElement {
 }
 
 function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
-  const sch = Studio.schedeDi(sub), n = Studio.numeri(sch), col = COLORE_MATERIA[mat.m];
-  const blocco = (eti: string, cls: string, k: number, f: number, pag: Set<string>) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? mat.libro + ': pp. ' + Studio.intervalli(pag) : '—'));
+  const sch = Studio.schedeDi(sub), n = Studio.numeri(sch), col = coloreMateria(mat.m);
+  const blocco = (eti: string, cls: string, k: number, f: number, pag: Set<string>) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? (mat.libro ? mat.libro + ': ' : '') + 'pp. ' + Studio.intervalli(pag) : '—'));
   return h('div.pagina', null,
     h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo),
     h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo),
@@ -391,7 +447,11 @@ function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
       barra(n.Pf, n.P, col),
       h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)),
       h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size)),
-    h('button.btn.neutro', { onclick: async (e: Event) => {
+    h('div.bottoni', null,
+      h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'),
+      pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null),
+    pk.proprio ? h('button.btn.neutro', { onclick: () => editorSchedaPropria(pk, mat, sub) }, '+ Aggiungi scheda') : null,
+    !pk.risorse.libri[mat.m] ? null : (h('button.btn.neutro', { onclick: async (e: Event) => {
       if (serveGoogle()) return;
       const b = e.currentTarget as HTMLButtonElement, ids = new Map<string, string>();
       try {
@@ -400,7 +460,7 @@ function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
         for (const id of Array.from(ids.keys())) { i++; await PdfCache.prendi(id, (f, t) => { b.textContent = 'Scarico PDF ' + i + '/' + ids.size + '… ' + (t ? Math.round(f / t * 100) + '%' : ''); }); }
         b.textContent = 'PDF del libro pronti anche offline ✓';
       } catch (err: any) { b.textContent = 'Scarica i PDF del libro'; avviso(String(err.message || err), 6000); }
-    } }, 'Scarica i PDF del libro (apertura immediata)'),
+    } }, 'Scarica i PDF del libro (apertura immediata)')),
     h('label.riga.filtro', null, h('span.riga-eti', null, 'Solo prioritarie'), h('span.interruttore', null, h('input', { type: 'checkbox', checked: UI.soloPrior, onchange: (e: Event) => { UI.soloPrior = (e.target as HTMLInputElement).checked; disegna(); } }), h('span'))),
     sub.microstep.map(mi => {
       const lista = mi.schede.filter(s => !UI.soloPrior || s.tipo === 'P').sort((a, b) => a.k - b.k); if (!lista.length) return null;
@@ -430,7 +490,7 @@ function vistaPiano(piano: PkPiano): HTMLElement {
           const fatto = !v.speciale && Studio.stepFatto(v.k, piano), t = Studio.trovaSotto(v.k), tardi = !v.speciale && !fatto && d < oggiK;
           return h('div.voce-lista.task' + (fatto ? '.fatto' : ''), null,
             v.speciale ? h('span.barra', { style: { background: 'var(--tenue)' } })
-              : h('button.spunta' + (fatto ? '.on' : ''), { style: { '--c': COLORE_MATERIA[v.k[0]] }, 'aria-label': 'Step completato', onclick: () => { if (t) { UI.studioSub = v.k; disegna(); } else Studio.segnaStepAMano(v.k, piano, !fatto); } }, fatto ? '✓' : ''),
+              : h('button.spunta' + (fatto ? '.on' : ''), { style: { '--c': coloreChiave(v.k) }, 'aria-label': 'Step completato', onclick: () => { if (t) { UI.studioSub = v.k; disegna(); } else Studio.segnaStepAMano(v.k, piano, !fatto); } }, fatto ? '✓' : ''),
             h('button.voce-corpo', { onclick: () => { if (t) { UI.studioSub = v.k; disegna(); } } },
               h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t),
               h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? v.d : testoAvanzamento(v.k, piano), tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')),
@@ -451,10 +511,10 @@ function vistaCopertura(piano: PkPiano): HTMLElement {
   const filtrate = cop.filter(c => (!UI.copMateria || c.m === UI.copMateria) && (!UI.copStato || c.stato === UI.copStato));
   const conta = (st: string) => cop.filter(c => (!UI.copMateria || c.m === UI.copMateria) && c.stato === st).length;
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-    h('div.chips', null, [['', 'Tutte'], ['C', 'Chimica'], ['B', 'Biologia'], ['F', 'Fisica']].map(([m, t]) => h('button.chip' + (UI.copMateria === m ? '.attivo' : ''), { onclick: () => { UI.copMateria = m; disegna(); } }, t))),
+    h('div.chips', null, [['', 'Tutte']].concat(Array.from(new Set(cop.map(c => c.m))).map(m => [m, nomeMateria(m)])).map(([m, t]) => h('button.chip' + (UI.copMateria === m ? '.attivo' : ''), { onclick: () => { UI.copMateria = m; disegna(); } }, t))),
     h('div.chips', null, h('button.chip' + (!UI.copStato ? '.attivo' : ''), { onclick: () => { UI.copStato = ''; disegna(); } }, 'Tutti · ' + (conta('E') + conta('I') + conta('N'))),
       ['E', 'I', 'N'].map(st => h('button.chip' + (UI.copStato === st ? '.attivo' : ''), { onclick: () => { UI.copStato = st; disegna(); } }, ETI[st][0] + ' · ' + conta(st)))),
-    ['C', 'B', 'F'].filter(m => filtrate.some(c => c.m === m)).map(m => h('section.card', null, h('h2.card-titolo', { style: { color: COLORE_MATERIA[m] } }, NOME_MATERIA[m] + ' — copertura del syllabus'),
+    Array.from(new Set(cop.map(c => c.m))).filter(m => filtrate.some(c => c.m === m)).map(m => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' — copertura del syllabus'),
       filtrate.filter(c => c.m === m).map(c => {
         const t = Studio.trovaSotto(c.k), fatto = Studio.stepFatto(c.k, piano);
         return h('button.voce-lista', { onclick: () => { if (t) { UI.studioSub = c.k; disegna(); } } },
@@ -462,3 +522,5 @@ function vistaCopertura(piano: PkPiano): HTMLElement {
             h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, h('span.etichetta.' + ETI[c.stato][1], null, ETI[c.stato][0]), ' ' + c.ud + ' · Step ' + c.k.slice(1) + ' · ' + c.quando)));
       }))));
 }
+
+function mat0(pk: PkStep, m: string): MateriaS { return pk.materie.find(x => x.m === m) || { m, nome: nomeMateria(m), libro: '', sottostep: [] }; }

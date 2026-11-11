@@ -192,7 +192,7 @@ function apriEvento(esistente?: Evento, occ?: Occ, preset?: { inizio: Date; tutt
       });
     },
   });
-  if (nuovo) setTimeout(() => titolo.focus(), 50);
+  if (nuovo) setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) titolo.focus(); }, 50);
 }
 
 /** Editor promemoria/task. */
@@ -233,7 +233,7 @@ function apriTask(esistente?: Task, preset?: { scadenza?: string; titolo?: strin
       chiedi('Eliminare il promemoria?', [{ testo: 'Elimina', valore: 'si', pericolo: true }], t.titolo).then(s => { if (s) { Stato.elimina(t.id); f.chiudi(); } });
     },
   });
-  if (nuovo) setTimeout(() => titolo.focus(), 50);
+  if (nuovo) setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) titolo.focus(); }, 50);
 }
 
 /** Editor nota (con anteprima markdown). */
@@ -273,7 +273,7 @@ function apriNota(esistente?: Nota, preset?: { giorno?: string }): void {
       chiedi('Eliminare la nota?', [{ testo: 'Elimina', valore: 'si', pericolo: true }], n.titolo).then(s => { if (s) { Stato.elimina(n.id); f.chiudi(); } });
     },
   });
-  if (nuovo) setTimeout(() => testo.focus(), 50);
+  if (nuovo) setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) testo.focus(); }, 50);
 }
 
 /** Menu del pulsante "+": cosa vuoi creare? */

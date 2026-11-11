@@ -289,3 +289,25 @@ body { font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", R
 .anteprima-tema { display: flex; gap: 6px; flex-wrap: wrap; }
 .campione { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--sup); box-shadow: 0 0 0 1px var(--linea); }
 .campione.attivo { box-shadow: 0 0 0 2px var(--accento); }
+
+/* ---------- Studio versatile ---------- */
+.segmenti.scorre { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; } .segmenti.scorre::-webkit-scrollbar { display: none; }
+.segmenti.scorre button { flex: none; padding: 7px 12px; }
+#timer-barra { position: fixed; left: 10px; right: 10px; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 10px); z-index: 6; display: flex; align-items: center; gap: 6px;
+  background: var(--testo); color: var(--bg); border-radius: 16px; padding: 6px 6px 6px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.3); border-left: 6px solid var(--c); max-width: 560px; margin: 0 auto; }
+.timer-testo { flex: 1; min-width: 0; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.timer-btn { width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 18%, transparent); color: var(--bg); font-weight: 800; text-align: center; }
+body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 76px); }
+@media (min-width: 900px) { #timer-barra { bottom: 16px; left: 226px; } }
+.grafico { display: flex; align-items: flex-end; gap: 4px; height: 120px; margin: 10px 0 4px; }
+.grafico .colonna { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; gap: 2px; }
+.grafico .pila { flex: 1; width: 100%; display: flex; flex-direction: column-reverse; background: var(--sup2); border-radius: 4px; overflow: hidden; }
+.grafico span { font-size: 10px; color: var(--tenue); font-variant-numeric: tabular-nums; }
+.esame-giorni { width: 52px; flex: none; text-align: center; font-size: 24px; font-weight: 800; color: var(--accento); line-height: 1; display: flex; flex-direction: column; }
+.esame-giorni small { font-size: 10px; color: var(--tenue); font-weight: 700; text-transform: uppercase; }
+.voce-lista.passato { opacity: .55; }
+
+.gr-ev { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.gr-ev.trascino { z-index: 5; opacity: .85; box-shadow: 0 6px 18px rgba(0,0,0,.35); touch-action: none; }
+.gr-maniglia { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; cursor: ns-resize; }
+.gr-maniglia::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 18px; height: 3px; margin-left: -9px; border-radius: 2px; background: var(--c); opacity: .7; }
