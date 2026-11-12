@@ -195,7 +195,31 @@ const Carte = (() => {
     Stato.salva({ id: idMem(v), type: 'memoria', updatedAt: 0, er: 'carta:' + v.c.id + (v.rev ? ':r' : ''), d: st.d, s: st.s, due: ymd(d), ultimo: oggiK,
       n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g, undefined, sec]] as any).slice(-50) } as Memoria, true);
   }
-  return { mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
+  /**
+   * v0.20.3: le domande sbagliate dei quiz diventano flashcard in automatico, nel mazzo «⚠️ Errori dei quiz»
+   * con un sotto-mazzo per sotto-step (collegato: entra nei ripassi e in «Studia ora»). Stessa domanda =
+   * stessa carta. Restituisce gli id delle carte NUOVE (per l'Annulla).
+   */
+  function daErrori(lista: { schedaId: string; q: string; giusta: string; spieg?: string }[]): string[] {
+    if ((imp() as any).carteDaErrori === false) return [];
+    const nuove: string[] = [];
+    let radice = Stato.prendi<Mazzo>('mz-errori');
+    for (const d of lista) {
+      if (!d.q || !d.giusta) continue;
+      if (!radice || radice.deleted) { radice = { id: 'mz-errori', type: 'mazzo', updatedAt: 0, nome: '⚠️ Errori dei quiz' } as Mazzo; Stato.salva(radice, true); }
+      const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId);
+      const idM = 'mz-err-' + (t ? t.k : 'sim');
+      if (!Stato.prendi<Mazzo>(idM) || Stato.prendi<Mazzo>(idM)!.deleted)
+        Stato.salva({ id: idM, type: 'mazzo', updatedAt: 0, nome: t ? Studio.etichetta(t.k) + ' · errori' : 'Simulazioni · errori', padre: 'mz-errori', ...(t ? { sub: t.k, micro: t.micro } : {}) } as Mazzo, true);
+      const id = 'cr-' + hash(idM + '|' + norm(d.q));
+      if (Stato.prendi<Carta>(id) && !Stato.prendi<Carta>(id)!.deleted) continue;
+      Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f: d.q, r: d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), tipo: 'base', tag: 'errore' } as Carta, true);
+      nuove.push(id);
+    }
+    if (nuove.length) Stato.notifica();
+    return nuove;
+  }
+  return { daErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
 })();
 
 // ---------- Rendering di una faccia (Markdown minimale, completamenti, immagini da Drive) ----------

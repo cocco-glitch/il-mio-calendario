@@ -24,6 +24,7 @@ const Domande = (() => {
   const tutte = () => Stato.tutti<Domanda>('domanda');
 
   /** Registra l'esito di un quiz; restituisce la funzione per annullare. */
+  const Domande_aperte = () => tutte().filter(x => x.esito === 'sbagliata');
   function registra(schedaId: string, titolo: string, d: RisultatoQuiz): () => void {
     const oggiK = ymd(new Date()), sb = d.sbagliate || [];
     const mie = tutte().filter(x => x.schedaId === schedaId);
@@ -42,8 +43,9 @@ const Domande = (() => {
       if (sbagliateId.has(r.id) || (d.errori && r.esito !== 'sbagliata')) continue;
       Stato.salva(Object.assign(r, { giuste: r.giuste + 1, ultima: oggiK, esito: 'giusta' }), true);
     }
+    const carteNuove = Carte.daErrori(Domande_aperte());   // v0.20.3: errori → flashcard (anche quelli vecchi ancora aperti)
     Stato.notifica();
-    return () => { for (const r of prima) Stato.salva(r, true); for (const id of nuove) Stato.elimina(id); };
+    return () => { for (const r of prima) Stato.salva(r, true); for (const id of nuove) Stato.elimina(id); for (const id of carteNuove) Stato.elimina(id); };
   }
 
   /** Aperte = ultimo esito sbagliato; ricorrenti = sbagliate almeno 2 volte e ancora aperte. */
@@ -83,5 +85,6 @@ function sezioneDomande(): HTMLElement {
       h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { (UI as any).domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR),
       h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { (UI as any).domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA),
       h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { (UI as any).domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)),
+    nA ? h('button.btn.neutro', { onclick: () => { const n = Carte.daErrori(Domande.aperte()).length; if (n) avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null,
     elenco.length ? elenco.slice(0, 60).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'));
 }

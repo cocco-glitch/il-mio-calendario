@@ -58,6 +58,12 @@ with sync_playwright() as p:
     pg.screenshot(path='test/domande.png', full_page=True)
     pg.click('text=✓ La sapevo'); pg.wait_for_timeout(200)
     ok(pg.evaluate("Domande.ricorrenti().length") == 0 and 'Ricorrenti 0' in pg.inner_text('body'), 'la sapevo → esce dalle ricorrenti')
+    # v0.20.3: errori → flashcard
+    nc = pg.evaluate("Carte.carteDi('mz-errori').length")
+    ok(nc >= 1 and pg.evaluate("Carte.mazzi().filter(m => m.padre === 'mz-errori').every(m => !!m.sub || m.id === 'mz-err-sim')"), 'errori diventati flashcard in sotto-mazzi collegati (%d)' % nc)
+    ok(pg.evaluate("Carte.carte().filter(c => c.mazzo.startsWith('mz-err')).some(c => c.r.includes('0,0821'))"), 'retro = risposta giusta (+ spiegazione)')
+    n2 = pg.evaluate("Carte.daErrori(Domande.tutte()).length")
+    ok(n2 == 0 or pg.evaluate("Carte.carteDi('mz-errori').length") == nc + n2, 'nessun doppione')
     # Riquadro in Oggi
     pg.evaluate("Domande.segna(Domande.tutte()[0].id, false); Domande.segna(Domande.tutte()[0].id, false); vai('oggi')"); pg.wait_for_timeout(200)
     ok('domanda ricorrente' in pg.inner_text('body'), 'Oggi: riquadro errori con le ricorrenti')
