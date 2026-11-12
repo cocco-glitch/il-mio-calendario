@@ -160,7 +160,12 @@ const Spiega = (() => {
 
   // ---- Altro → Spiegazioni AI ----
   function sezione(): HTMLElement {
-    const inp = h('input', { type: 'password', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off' }) as HTMLInputElement;
+    const inp = h('input', { type: 'text', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: false, style: { fontFamily: 'monospace' } }) as HTMLInputElement;
+    const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
+    const incolla = async () => {
+      try { const t = await navigator.clipboard.readText(); if (!t) { avviso('Gli appunti sono vuoti.'); return; } inp.value = t; salvaChiave(); }
+      catch (_) { inp.focus(); avviso('Tieni premuto nel campo e scegli «Incolla».', 6000); }
+    };
     const sel = h('select', null, [PRINCIPALE, RISERVA].map(m => h('option', { value: m, selected: m === modello() }, m))) as HTMLSelectElement;
     sel.onchange = () => { scrivi(KM, sel.value === PRINCIPALE ? '' : sel.value); avviso('Modello: ' + sel.value); };
     const n = Stato.tutti<Spiegazione>('spiegazione').length;
@@ -174,7 +179,8 @@ const Spiega = (() => {
       h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'),
       h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)),
       h('div.bottoni', null,
-        h('button.btn', { onclick: () => { scrivi(KC, inp.value.trim()); avviso(inp.value.trim() ? 'Chiave salvata su questo dispositivo.' : 'Chiave rimossa.'); } }, 'Salva chiave'),
+        h('button.btn', { onclick: incolla }, '📋 Incolla chiave'),
+        h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'),
         h('button.btn.neutro', { onclick: prova }, 'Prova')),
       h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
   }
