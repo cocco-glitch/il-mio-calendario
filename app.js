@@ -4594,7 +4594,23 @@ const Spiega = (() => {
     function inietta(html) { return /<\/body>/i.test(html) ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, SCRIPT + '</body>') : html + SCRIPT; }
     // ---- Altro → Spiegazioni AI ----
     function sezione() {
-        const inp = h('input', { type: 'password', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off' });
+        const inp = h('input', { type: 'text', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: false, style: { fontFamily: 'monospace' } });
+        const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
+        const incolla = async () => {
+            try {
+                const t = await navigator.clipboard.readText();
+                if (!t) {
+                    avviso('Gli appunti sono vuoti.');
+                    return;
+                }
+                inp.value = t;
+                salvaChiave();
+            }
+            catch (_) {
+                inp.focus();
+                avviso('Tieni premuto nel campo e scegli «Incolla».', 6000);
+            }
+        };
         const sel = h('select', null, [PRINCIPALE, RISERVA].map(m => h('option', { value: m, selected: m === modello() }, m)));
         sel.onchange = () => { scrivi(KM, sel.value === PRINCIPALE ? '' : sel.value); avviso('Modello: ' + sel.value); };
         const n = Stato.tutti('spiegazione').length;
@@ -4612,7 +4628,7 @@ const Spiega = (() => {
                 avviso(String(e.message || e), 8000);
             }
         };
-        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: () => { scrivi(KC, inp.value.trim()); avviso(inp.value.trim() ? 'Chiave salvata su questo dispositivo.' : 'Chiave rimossa.'); } }, 'Salva chiave'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
+        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
     }
     return { inietta, sezione, genera, idDi };
 })();
@@ -6462,7 +6478,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.21.0';
+const VERSIONE = '0.21.1';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
