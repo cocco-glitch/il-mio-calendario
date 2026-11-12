@@ -16,7 +16,7 @@ const UI = {
   qNote: '',
   tagNote: '',
   q: '',
-  studioVista: 'schede' as 'schede' | 'piano' | 'errori' | 'statistiche' | 'esami' | 'syllabus' | 'tabelle',
+  studioVista: 'schede' as 'schede' | 'carte' | 'piano' | 'errori' | 'statistiche' | 'esami' | 'syllabus' | 'tabelle',
   studioPiano: '',
   copMateria: '',
   copStato: '',
@@ -89,7 +89,7 @@ function taskDelGiorno(g: Date): Task[] {
 }
 
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET: [string, string][] = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Studia ora'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET: [string, string][] = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Studia ora'], ['carte', 'Flashcard di oggi'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget(): string[] {
   const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
@@ -141,6 +141,7 @@ function vistaOggi(): HTMLElement {
         case 'nota': return scheda('Nota del giorno', area);
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
         case 'studiaora': return Studio.pkStep().length ? widgetStudiaOra() : null;
+        case 'carte': return widgetCarte();
         case 'ripassi': return widgetRipassi();
         case 'chiusura': return widgetChiusura();
         case 'esami': return widgetEsami();

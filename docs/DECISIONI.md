@@ -21,3 +21,11 @@ Una riga per scelta importante: data · decisione · motivo.
 - 2026-11-11 · Errori ricorrenti a livello di domanda, letti dalla sezione «Da rivedere» dei quiz (i file non cambiano); ricorrente = sbagliata ≥2 volte e ancora aperta · ripasso mirato prima delle simulazioni.
 - 2026-11-11 · Ottimizzazioni con cache invalidate da `Stato.ver` invece di aggiornamenti parziali del DOM · massimo guadagno con minimo rischio, `disegna()` resta semplice.
 - 2026-11-11 · Lapidi del registro notifiche rimosse dopo 7 giorni (anche quelle in arrivo dalla sync) · il registro è di servizio; i dati dell'utente mantengono le lapidi.
+
+
+## v0.18 — Flashcard (12/11)
+- Formati: tutti quelli testuali (Anki testo, Quizlet, CSV, Markdown stile Mochi, JSON) + file e cartelle Drive. Niente .apkg (è un database SQLite compresso: servirebbe una libreria pesante; da Anki si esporta come testo).
+- Ripasso per CARTA (a differenza delle schede, qui ogni carta dura pochi secondi: 20 nuove/giorno come Anki tengono il carico sostenibile).
+- «Di nuovo» rimette la carta 4 posizioni più avanti nella sessione (max 2 volte), come i passi di apprendimento di Anki.
+- Scelta multipla: distrattori presi prima dallo stesso mazzo (più plausibili); se ce ne sono meno di 2, quella carta si gira. Colore + forma per ogni opzione (accessibile anche a chi non distingue i colori).
+- Scrivi: confronto tollerante (maiuscole, accenti, punteggiatura finale, virgola/punto) e pulsante «Era giusta» per non punire un sinonimo.

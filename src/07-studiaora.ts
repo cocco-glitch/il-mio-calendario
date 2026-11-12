@@ -9,7 +9,7 @@
 // Le pause sono inserite ogni ~25 minuti. Il timer della sessione parte con la durata scelta.
 // La sessione in corso si salva sul dispositivo (localStorage) per riprenderla.
 
-interface VoceSessione { tipo: 'ripasso' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
+interface VoceSessione { tipo: 'ripasso' | 'carte' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
 interface SessioneOra { inizio: number; minuti: number; voci: VoceSessione[]; }
 
 const StudiaOra = (() => {
@@ -28,6 +28,9 @@ const StudiaOra = (() => {
       const sc = Ripassi.schedaDaProporre(x.k); if (!sc) continue;
       if (metti({ tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ricordo ' + Math.round(x.r * 100) + '%', min: MIN, k: x.k, id: sc.id })) tettoRip -= MIN;
     }
+    // 1b) flashcard di oggi (v0.18): circa 12 secondi a carta, massimo 15 minuti
+    const nc = Carte.conta(); const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
+    if (nc.ripasso + nc.nuove && Carte.mazzi().length) metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
     // 2) step del giorno
     for (const vg of Studio.vociDelGiorno(giorno)) {
       if (vg.v.speciale || vg.p.modo === 'raffinamento') continue;
@@ -61,6 +64,7 @@ const StudiaOra = (() => {
 /** Esegue una voce: apre il quiz giusto (ripasso, scheda, errore) o la prova a freddo. */
 function eseguiVoce(v: VoceSessione): void {
   if (v.tipo === 'freddo' && v.k) { avviaProvaAFreddo(v.k); return; }
+  if (v.tipo === 'carte') { avviaCarte(undefined, 'Flashcard'); return; }
   if (v.id) { const t = trovaScheda(v.id); if (t) { apriScheda(t.pk, t.m, t.micro, t.s, v.tipo === 'ripasso' || v.tipo === 'errore'); return; } }
   avviso(v.sotto, 8000);
 }

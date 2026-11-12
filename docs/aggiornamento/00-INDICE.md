@@ -47,7 +47,7 @@ Trasformare il calendario da "agenda che mostra cosa studiare" a **allenatore di
 | F0 | Fondamenta (dati, design token, motore animazioni) | **fatta in versione minima** (solo dati e impostazioni) · v0.7.0 · 11/11 |
 | F1 | Notifiche vere | **Livello A (ntfy) fatto** · v0.7.0 · 11/11 — Livello B dopo l'esame |
 | F2 | Motore di ripasso (FSRS) | **fatta** · v0.8.0 · 11/11 — unità = sotto-step (decisione utente) |
-| F3 | Flashcard e quiz nativi + cattura punteggio | **cattura punteggio fatta** · v0.9.0 · 11/11 — flashcard/quiz nativi dopo il 10/12 |
+| F3 | Flashcard e quiz nativi + cattura punteggio | **cattura punteggio fatta** · v0.9.0 · 11/11 — **flashcard fatte** · v0.18.0 · 12/11 (import file/cartelle Drive, 4 modalità) — quiz nativi dopo il 10/12 |
 | F4 | Sessione di studio guidata ("Studia ora") | **parte fatta** · v0.11 modalità simulazione — «Studia ora» dopo il 10/12 |
 | F5 | Pianificatore adattivo | **parte fatta** · v0.10 ripianifica i ritardi, v0.13 chiusura serale — generatore di piani dopo il 10/12 |
 | F6 | Metacognizione e statistiche "di memoria" | **parte fatta** · v0.12 punti deboli, v0.13 sonno/concentrazione |

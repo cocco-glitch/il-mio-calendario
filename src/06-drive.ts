@@ -162,11 +162,23 @@ const Drive = (() => {
   }
   /** Cerca file nel Drive (sola lettura): per nome, opzionalmente per tipo. Più recenti prima. */
   async function cerca(testo: string, mime?: string): Promise<{ id: string; name: string; mimeType: string; webViewLink: string; modifiedTime: string }[]> {
-    let q = "trashed = false and mimeType != 'application/vnd.google-apps.folder'";
-    if (mime) q += " and mimeType = '" + mime + "'";
+    // v0.18: con mime = cartella cerca solo cartelle (import di mazzi), altrimenti solo file
+    let q = "trashed = false";
+    q += mime ? " and mimeType = '" + mime + "'" : " and mimeType != 'application/vnd.google-apps.folder'";
     if (testo.trim()) q += " and name contains '" + testo.trim().replace(/\\/g, '').replace(/'/g, "\\'") + "'";
     const r = await api('files', { query: { q, fields: 'files(id,name,mimeType,webViewLink,modifiedTime)', orderBy: 'modifiedTime desc', pageSize: '40' } });
     return r.files || [];
+  }
+  /** v0.18: contenuto di una cartella con tipo e data (sottocartelle incluse), per importare i mazzi. */
+  async function elencaCompleti(parent: string): Promise<{ id: string; name: string; mimeType: string; modifiedTime: string }[]> {
+    const out: { id: string; name: string; mimeType: string; modifiedTime: string }[] = []; let pageToken = '';
+    do {
+      const query: Record<string, string> = { q: "'" + parent + "' in parents and trashed = false", fields: 'nextPageToken,files(id,name,mimeType,modifiedTime)', pageSize: '1000' };
+      if (pageToken) query.pageToken = pageToken;
+      const r = await api('files', { query });
+      out.push(...(r.files || [])); pageToken = r.nextPageToken || '';
+    } while (pageToken);
+    return out;
   }
   /** v0.11: cerca cartelle per nome (sola lettura). */
   async function cercaCartelle(testo: string): Promise<{ id: string; name: string }[]> {
@@ -323,7 +335,7 @@ const Drive = (() => {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
-    elencaTutti, esportaCsv, cerca, cercaCartelle,
+    elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
     get collegato() { return !!stato.email; },
     /** true se c'è un token valido adesso (senza aprire finestre). */
     get pronto() { return !!token && Date.now() < scadenzaToken; },

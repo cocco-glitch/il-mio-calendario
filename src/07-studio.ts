@@ -412,8 +412,9 @@ function vistaStudio(): HTMLElement {
   const pks = Studio.pkStep(), piano = Studio.pkPiano();
   if (UI.studioSub) { const t = Studio.trovaSotto(UI.studioSub); if (t) return vistaSottostep(t.pk, t.mat, t.sub); UI.studioSub = null; }
   const pk = pks.find(p => p.id === UI.studioStep) || pks[pks.length - 1];
-  const voci: [typeof UI.studioVista, string][] = [['schede', 'Schede'], ['piano', 'Piano'], ['errori', 'Errori'], ['statistiche', 'Statistiche'], ['esami', 'Esami'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
+  const voci: [typeof UI.studioVista, string][] = [['schede', 'Schede'], ['carte', 'Carte'], ['piano', 'Piano'], ['errori', 'Errori'], ['statistiche', 'Statistiche'], ['esami', 'Esami'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
   const seg = h('div.segmenti.scorre', { role: 'tablist' }, voci.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.studioVista = v; UI.pianoScorso = false; disegna(); } }, t)));
+  if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
   if (UI.studioVista === 'errori') return h('div.pagina', null, seg, vistaErrori());
   if (UI.studioVista === 'statistiche') return h('div.pagina', null, seg, vistaStatistiche());
@@ -468,7 +469,7 @@ function vistaSottostep(pk: PkStep, mat: MateriaS, sub: SottoS): HTMLElement {
       h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null,
       barra(n.Pf, n.P, col),
       h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)),
-      h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size), rigaFreddo(sub.k)),
+      h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size), rigaFreddo(sub.k), rigaCarte(sub.k)),
     h('div.bottoni', null,
       h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'),
       pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null),

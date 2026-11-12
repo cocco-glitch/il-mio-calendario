@@ -75,3 +75,6 @@ Principi: `disegna()` ricostruisce la schermata a ogni modifica (semplice e suff
 
 ## Evoluzione
 Il piano per rendere l'app adatta a qualsiasi studio è in `docs/PROGRESSIONE.md`: leggerlo prima di aggiungere funzioni.
+
+
+**Flashcard (v0.18, `07-carte.ts`):** record `mazzo` e `carta`; l'id della carta è `cr-<hash(mazzo + fronte normalizzato)>`, così reimportare lo stesso file aggiorna invece di duplicare e i ripassi (`memoria` con id `mem-cr-<id>` e `-r` per l'inversa, `er` = `carta:…`) restano. Il motore è lo stesso dei sotto-step (`Ripassi.passo/intervallo/ritenzione`). Collegamento allo step: `Carte.collega(nome)` cerca «N.N» o «N.N.N» nel nome (e la materia nel percorso), solo se il risultato è unico; i sotto-mazzi lo ereditano. Impostazioni facoltative: `carteNuove` (20), `carteRipassi` (150), `modoCarte`. Le immagini Drive si scaricano al bisogno (`caricaImmagini`) e restano in memoria come objectURL. Test: `test/carte.py`.
