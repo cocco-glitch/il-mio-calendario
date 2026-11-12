@@ -2335,7 +2335,38 @@ const Carte = (() => {
         Stato.salva({ id: idMem(v), type: 'memoria', updatedAt: 0, er: 'carta:' + v.c.id + (v.rev ? ':r' : ''), d: st.d, s: st.s, due: ymd(d), ultimo: oggiK,
             n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g, undefined, sec]]).slice(-50) }, true);
     }
-    return { mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
+    /**
+     * v0.20.3: le domande sbagliate dei quiz diventano flashcard in automatico, nel mazzo «⚠️ Errori dei quiz»
+     * con un sotto-mazzo per sotto-step (collegato: entra nei ripassi e in «Studia ora»). Stessa domanda =
+     * stessa carta. Restituisce gli id delle carte NUOVE (per l'Annulla).
+     */
+    function daErrori(lista) {
+        if (imp().carteDaErrori === false)
+            return [];
+        const nuove = [];
+        let radice = Stato.prendi('mz-errori');
+        for (const d of lista) {
+            if (!d.q || !d.giusta)
+                continue;
+            if (!radice || radice.deleted) {
+                radice = { id: 'mz-errori', type: 'mazzo', updatedAt: 0, nome: '⚠️ Errori dei quiz' };
+                Stato.salva(radice, true);
+            }
+            const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId);
+            const idM = 'mz-err-' + (t ? t.k : 'sim');
+            if (!Stato.prendi(idM) || Stato.prendi(idM).deleted)
+                Stato.salva({ id: idM, type: 'mazzo', updatedAt: 0, nome: t ? Studio.etichetta(t.k) + ' · errori' : 'Simulazioni · errori', padre: 'mz-errori', ...(t ? { sub: t.k, micro: t.micro } : {}) }, true);
+            const id = 'cr-' + hash(idM + '|' + norm(d.q));
+            if (Stato.prendi(id) && !Stato.prendi(id).deleted)
+                continue;
+            Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f: d.q, r: d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), tipo: 'base', tag: 'errore' }, true);
+            nuove.push(id);
+        }
+        if (nuove.length)
+            Stato.notifica();
+        return nuove;
+    }
+    return { daErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
 })();
 // ---------- Rendering di una faccia (Markdown minimale, completamenti, immagini da Drive) ----------
 const immaginiDrive = new Map();
@@ -2846,6 +2877,7 @@ const Domande = (() => {
     const norm = (q) => q.replace(/\s+/g, ' ').trim().toLowerCase();
     const tutte = () => Stato.tutti('domanda');
     /** Registra l'esito di un quiz; restituisce la funzione per annullare. */
+    const Domande_aperte = () => tutte().filter(x => x.esito === 'sbagliata');
     function registra(schedaId, titolo, d) {
         const oggiK = ymd(new Date()), sb = d.sbagliate || [];
         const mie = tutte().filter(x => x.schedaId === schedaId);
@@ -2872,9 +2904,11 @@ const Domande = (() => {
                     continue;
                 Stato.salva(Object.assign(r, { giuste: r.giuste + 1, ultima: oggiK, esito: 'giusta' }), true);
             }
+        const carteNuove = Carte.daErrori(Domande_aperte()); // v0.20.3: errori → flashcard (anche quelli vecchi ancora aperti)
         Stato.notifica();
         return () => { for (const r of prima)
             Stato.salva(r, true); for (const id of nuove)
+            Stato.elimina(id); for (const id of carteNuove)
             Stato.elimina(id); };
     }
     /** Aperte = ultimo esito sbagliato; ricorrenti = sbagliate almeno 2 volte e ancora aperte. */
@@ -2899,7 +2933,8 @@ function sezioneDomande() {
         const risp = h('div.dom-risposta', { hidden: true }, h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'), x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null, x.esito === 'sbagliata' ? h('div.bottoni', null, h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'), h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);
         return h('div.dom-voce', null, h('div.tenue.piccolo', null, gruppoDomanda(x) + ' · ' + x.titolo + ' · sbagliata ' + x.volte + (x.volte === 1 ? ' volta' : ' volte') + (x.giuste ? ' · giusta ' + x.giuste : '')), h('div.dom-q', null, x.q), h('button.btn-testo', { onclick: (e) => { risp.hidden = !risp.hidden; e.target.textContent = risp.hidden ? 'Prima prova a rispondere, poi mostra la risposta' : 'Nascondi'; } }, 'Prima prova a rispondere, poi mostra la risposta'), risp);
     };
-    return h('section.card', null, h('h2.card-titolo', null, 'Domande sbagliate'), h('div.tenue.piccolo', null, 'Raccolte in automatico dai quiz fatti nell\'app (sezione «Da rivedere»). Ricorrenti = sbagliate almeno 2 volte: ripassale prima delle simulazioni.'), h('div.segmenti', null, h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR), h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA), h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)), elenco.length ? elenco.slice(0, 60).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'));
+    return h('section.card', null, h('h2.card-titolo', null, 'Domande sbagliate'), h('div.tenue.piccolo', null, 'Raccolte in automatico dai quiz fatti nell\'app (sezione «Da rivedere»). Ricorrenti = sbagliate almeno 2 volte: ripassale prima delle simulazioni.'), h('div.segmenti', null, h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR), h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA), h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)), nA ? h('button.btn.neutro', { onclick: () => { const n = Carte.daErrori(Domande.aperte()).length; if (n)
+            avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null, elenco.length ? elenco.slice(0, 60).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'));
 }
 
 // ============================================================
@@ -6184,7 +6219,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.20.2';
+const VERSIONE = '0.20.3';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
