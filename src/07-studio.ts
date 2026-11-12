@@ -49,6 +49,12 @@ const nomeMateria = (c: string) => infoMateria(c).nome;
 const coloreMateria = (c: string) => infoMateria(c).colore;
 /** Colore di una chiave di step ("C2.3") o grigio per le voci speciali. */
 const coloreChiave = (k: string) => materiaDi(k) ? coloreMateria(materiaDi(k)) : '#7c8597';
+/** v0.20: ogni materia ha anche una FORMA (non solo un colore): si riconosce anche senza distinguere i colori. */
+const FORME_BASE: Record<string, string> = { C: '◆', B: '●', F: '▲' };
+const FORME = ['■', '★', '⬟', '⬢', '✚', '◗'];
+function formaMateria(code: string): string { if (FORME_BASE[code]) return FORME_BASE[code]; let x = 0; for (const ch of code) x = (x * 31 + ch.charCodeAt(0)) >>> 0; return FORME[x % FORME.length]; }
+const formaChiave = (k: string) => materiaDi(k) ? formaMateria(materiaDi(k)) : '';
+function segnoMateria(k: string): HTMLElement | null { const f = formaChiave(k); return f ? h('span.forma-mat', { style: { color: coloreChiave(k) }, 'aria-hidden': 'true' }, f) : null; }
 
 const Studio = (() => {
   /**
@@ -385,7 +391,7 @@ function rigaStudio(x: VoceGiorno): HTMLElement {
   const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k); // v0.11: apre la modalità simulazione
   return h('button.voce-lista', { onclick: () => { if (sim) { apriSimulazioni(); return; } if (t) { UI.studioSub = t.sub.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
     h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }),
-    h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
+    h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
       h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
@@ -443,7 +449,7 @@ function vistaStudio(): HTMLElement {
       barra(T.Pf, T.P)),
     pk.materie.map(m => {
       const N = Studio.numeri(m.sottostep.flatMap(Studio.schedeDi));
-      return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, m.nome + (m.libro ? ' · ' + m.libro : '')),
+      return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, formaMateria(m.m) + ' ' + m.nome + (m.libro ? ' · ' + m.libro : '')),
         m.sottostep.map(s => { const n = Studio.numeri(Studio.schedeDi(s)); return h('button.voce-lista.sotto', { onclick: () => { UI.studioSub = s.k; disegna(); } },
           h('span.voce-corpo', null,
             h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, s.n + ' · ' + s.titolo, chipRicordo(s.k)),

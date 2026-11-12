@@ -402,3 +402,72 @@ canvas.festa { position: fixed; inset: 0; pointer-events: none; z-index: 9999; }
 .gen-voci { display: flex; flex-wrap: wrap; gap: 4px; }
 .gen-voce { font-size: 12.5px; font-weight: 650; padding: 3px 8px; border-radius: 8px; background: color-mix(in srgb, var(--c, var(--accento)) 18%, var(--sup)); color: color-mix(in srgb, var(--c, var(--accento)) 70%, var(--testo)); border-left: 3px solid var(--c, var(--accento)); }
 .gen-voce.speciale { --c: #7c8597; }
+
+/* ============================================================
+   v0.20 — «Vetro leggero»
+   Come nelle linee guida Apple (Liquid Glass): il vetro solo sui CONTROLLI che galleggiano sopra il
+   contenuto (barra delle sezioni, fogli, dialoghi, pulsanti neutri); il contenuto resta su superfici
+   piene, leggibili. Senza backdrop-filter (o con vetro disattivato) tutto torna pieno.
+   ============================================================ */
+:root {
+  --vetro: color-mix(in srgb, var(--sup) 80%, transparent);
+  --vetro-forte: color-mix(in srgb, var(--sup) 88%, transparent);
+  --vetro-bordo: color-mix(in srgb, #fff 55%, transparent);
+  --vetro-ombra: 0 8px 32px rgba(20, 24, 40, .14), inset 0 1px 0 rgba(255, 255, 255, .5);
+  --vetro-blur: blur(22px) saturate(1.7);
+  --molla: cubic-bezier(.2, .9, .3, 1.12);
+  --dolce: cubic-bezier(.3, .7, .3, 1);
+}
+:root[data-tema="scuro"] {
+  --vetro: color-mix(in srgb, var(--sup) 74%, transparent);
+  --vetro-forte: color-mix(in srgb, var(--sup) 80%, transparent);
+  --vetro-bordo: color-mix(in srgb, #fff 12%, transparent);
+  --vetro-ombra: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+.forma-mat { font-size: .8em; margin-right: 5px; display: inline-block; transform: translateY(-1px); }
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  /* barra delle sezioni che galleggia (telefono) */
+  @media (max-width: 899px) {
+    :root[data-vetro="si"] #app { grid-template: "testa" auto "main" 1fr / 100%; }
+    :root[data-vetro="si"] .tabbar {
+      position: fixed; left: 10px; right: 10px; bottom: calc(env(safe-area-inset-bottom) + 8px); z-index: 10;
+      border: 1px solid var(--vetro-bordo); border-radius: 26px; padding: 0 4px;
+      background: var(--vetro); -webkit-backdrop-filter: var(--vetro-blur); backdrop-filter: var(--vetro-blur); box-shadow: var(--vetro-ombra);
+    }
+    :root[data-vetro="si"] .tabbar button { height: calc(var(--tab-h) - 2px); border-radius: 22px; position: relative; transition: color .2s; }
+    :root[data-vetro="si"] .tabbar button.attivo::before { content: ''; position: absolute; inset: 5px 3px; border-radius: 18px; background: color-mix(in srgb, var(--accento) 15%, transparent); z-index: -1; animation: pillola .3s var(--molla); }
+    :root[data-vetro="si"] main { padding-bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 10px); }
+    :root[data-vetro="si"] .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 22px); }
+  }
+  /* fogli, dialoghi, intestazioni dei visori, avvisi */
+  :root[data-vetro="si"] .foglio-sfondo, :root[data-vetro="si"] .dialogo-sfondo { background: rgba(10, 12, 20, .28); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: appare .2s ease-out; }
+  :root[data-vetro="si"] .foglio-testa { background: var(--vetro-forte); -webkit-backdrop-filter: var(--vetro-blur); backdrop-filter: var(--vetro-blur); border-radius: 18px 18px 0 0; }
+  :root[data-vetro="si"] .dialogo { background: var(--vetro-forte); -webkit-backdrop-filter: var(--vetro-blur); backdrop-filter: var(--vetro-blur); border: 1px solid var(--vetro-bordo); box-shadow: var(--vetro-ombra); animation: entra-dialogo .26s var(--molla); }
+  :root[data-vetro="si"] .visore-testa { background: var(--vetro-forte); -webkit-backdrop-filter: var(--vetro-blur); backdrop-filter: var(--vetro-blur); position: sticky; top: 0; z-index: 2; }
+  :root[data-vetro="si"] .avviso { background: color-mix(in srgb, var(--testo) 82%, transparent); -webkit-backdrop-filter: var(--vetro-blur); backdrop-filter: var(--vetro-blur); }
+  /* pulsanti neutri e chip: vetro tenue con riflesso */
+  :root[data-vetro="si"] .btn.neutro, :root[data-vetro="si"] .chip { background: color-mix(in srgb, var(--sup2) 70%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 40%, transparent), 0 0 0 1px color-mix(in srgb, var(--linea) 60%, transparent); }
+  :root[data-vetro="si"] .segmenti { background: color-mix(in srgb, var(--sup2) 75%, transparent); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .06); }
+  :root[data-vetro="si"] .segmenti button.attivo { box-shadow: 0 2px 8px rgba(0, 0, 0, .12), inset 0 1px 0 rgba(255, 255, 255, .6); }
+  :root[data-vetro="si"] .btn:not(.neutro) { box-shadow: 0 4px 14px color-mix(in srgb, var(--accento) 35%, transparent), inset 0 1px 0 rgba(255, 255, 255, .25); }
+  :root[data-vetro="si"] .gen-piede { background: none; }
+  :root[data-vetro="si"] .gen-piede::before { content: ''; position: absolute; inset: 0 -14px; z-index: -1; background: var(--vetro); -webkit-backdrop-filter: var(--vetro-blur); backdrop-filter: var(--vetro-blur); border-top: 1px solid var(--vetro-bordo); }
+}
+
+/* movimento: molle brevi, solo transform/opacity (fluide anche su telefoni lenti) */
+.foglio { animation: su .34s var(--molla); }
+@keyframes su { from { transform: translateY(56px); opacity: 0; } }
+@keyframes appare { from { opacity: 0; } }
+@keyframes entra-dialogo { from { transform: scale(.94); opacity: 0; } }
+@keyframes pillola { from { transform: scale(.7); opacity: 0; } }
+@keyframes entra-pagina { from { opacity: 0; transform: translateY(6px); } }
+main.entra > .pagina { animation: entra-pagina .24s var(--dolce); }
+main.entra .card { animation: entra-pagina .3s var(--dolce) backwards; }
+main.entra .card:nth-child(2) { animation-delay: .03s; } main.entra .card:nth-child(3) { animation-delay: .06s; } main.entra .card:nth-child(4) { animation-delay: .09s; } main.entra .card:nth-child(n+5) { animation-delay: .12s; }
+.btn, .chip, .voce-lista, .opzione, .voto, .gen-giorno, .segmenti button { transition: transform .14s var(--dolce), background-color .2s, box-shadow .2s; }
+.btn:active, .chip:active, .opzione:active, .voto:active, .gen-giorno:active { transform: scale(.96); }
+.voce-lista:active { transform: scale(.985); }
+.spunta { transition: background-color .2s, transform .25s var(--molla); } .spunta.on { animation: spunta .35s var(--molla); }
+@keyframes spunta { 40% { transform: scale(1.25); } }
+@media (prefers-reduced-motion: reduce) { main.entra > .pagina, main.entra .card { animation: none !important; } }

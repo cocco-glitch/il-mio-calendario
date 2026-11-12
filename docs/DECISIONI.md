@@ -37,3 +37,9 @@ Una riga per scelta importante: data · decisione · motivo.
 - Il secondo giro va solo agli argomenti con debolezza MISURATA ≥40%: gli argomenti mai provati hanno una stima neutra e non riempiono il calendario di ripassi inutili.
 - Il piano generato non sostituisce quello principale; «Rigenera» conserva i giorni passati e toglie gli step già completati.
 - Da rigenerare verso il 10/12: i punti deboli di oggi non sono quelli di dopo il primo appello.
+
+## v0.20 — Vetro leggero (12/11)
+- Vetro solo sui controlli (barra, fogli, dialoghi, pulsanti neutri), mai sul testo da leggere: la leggibilità viene prima (come le linee guida Apple per Liquid Glass).
+- Opacità alta (80–88%): con troppa trasparenza le etichette della barra si confondevano con il testo sotto.
+- Colore + forma per materia: accessibile anche per chi non distingue i colori e più rapido da riconoscere.
+- Animazioni solo su transform/opacity, brevi (0.2–0.35 s), e solo al cambio scheda: i ridisegni frequenti (ogni salvataggio) non lampeggiano.

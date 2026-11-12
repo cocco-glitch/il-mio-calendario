@@ -496,6 +496,7 @@ function sezioneAspetto(salva: SalvaImp): HTMLElement {
       h('input', { type: 'color', value: i.accento, 'aria-label': 'Altro colore', onchange: (e: Event) => salva({ accento: (e.target as HTMLInputElement).value, preset: '' }) }))),
     riga('Sfondo', h('input', { type: 'color', value: i.sfondo || (document.documentElement.dataset.tema === 'scuro' ? '#0e1014' : '#f4f5f8'), onchange: (e: Event) => salva({ sfondo: (e.target as HTMLInputElement).value, preset: '' }) }),
       i.sfondo ? h('button.btn-testo', { onclick: () => salva({ sfondo: '', preset: '' }) }, 'Del tema') : null),
+    riga('Effetto vetro', sel([['si', 'Vetro leggero'], ['no', 'Superfici piene']], (i as any).vetro === false || (i as any).vetro === 'no' ? 'no' : 'si', 'vetro' as any), h('span.tenue.piccolo', null, 'Barra e fogli traslucidi')),
     riga('Carattere', sel([['sistema', 'Sistema'], ['arrotondato', 'Arrotondato'], ['serif', 'Serif'], ['mono', 'Monospazio']], i.font || 'sistema', 'font')),
     riga('Dimensione testo', sel([['0.9', 'Piccolo'], ['1', 'Normale'], ['1.1', 'Grande'], ['1.25', 'Molto grande']], String(i.scala || 1), 'scala', true)),
     riga('Densità', sel([['comoda', 'Comoda'], ['compatta', 'Compatta']], i.densita || 'comoda', 'densita')),

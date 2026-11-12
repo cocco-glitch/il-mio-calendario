@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.19.0';
+const VERSIONE = '0.20.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -17,6 +17,7 @@ function applicaTema(): void {
   st.setProperty('--raggio', (i.raggio != null ? i.raggio : 14) + 'px');
   r.dataset.densita = i.densita || 'comoda';
   r.dataset.nav = i.nav || 'auto';
+  r.dataset.vetro = (i as any).vetro === false || (i as any).vetro === 'no' ? 'no' : 'si';   // v0.20: vetro leggero (disattivabile)
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', i.sfondo || (scuro ? '#0e1014' : '#f4f5f8'));
 }
@@ -46,7 +47,7 @@ function disegna(): void {
   const giornoNuovo = UI.scheda === 'cal' ? UI.data : undefined;
   const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : apriNuovo(giornoNuovo);
 
-  const main = h('main', { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
+  const main = h('main' + (stessaScheda ? '' : '.entra'), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
   svuota(app);
   aggiungi(app, [
     h('header.testata', null,

@@ -179,7 +179,7 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
           h('label.widget-riga', null, h('span.nome', null, 'Prima i più deboli', h('div.tenue.piccolo', null, 'Dentro ogni materia; le materie si alternano ogni giorno.')), interr(o.deboliPrima, b => o.deboliPrima = b)),
           h('div.tenue.piccolo', null, o.argomenti.length + ' scelti. La barra è quanto è debole (punteggi, schede da rifare, ricordo stimato); n.d. = ancora nessun punteggio. Il secondo giro va solo ai deboli misurati.'));
         const mats = Array.from(new Set(cat.map(x => x.m)));
-        for (const m of mats) corpo.appendChild(h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m)),
+        for (const m of mats) corpo.appendChild(h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, formaMateria(m) + ' ' + nomeMateria(m)),
           cat.filter(x => x.m === m).map(x => h('label.gen-arg', null,
             h('input', { type: 'checkbox', checked: scelti.has(x.k), onchange: (e: Event) => { const on = (e.target as HTMLInputElement).checked; o.argomenti = on ? o.argomenti.concat(x.k) : o.argomenti.filter(y => y !== x.k); } }),
             h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + x.t),
@@ -218,7 +218,7 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
         r.avvisi.length ? h('div.gen-avvisi', null, r.avvisi.map(a => h('div', null, '⚠️ ' + a))) : h('span'),
         h('section.card.gen-anteprima', null, p.giorni.map(g => h('div.gen-giorno-riga', null,
           h('span.gen-data', null, giornoBreve(g.data)),
-          h('span.gen-voci', null, g.voci.map(x => h('span.gen-voce' + (x.speciale ? '.speciale' : ''), { style: x.speciale ? {} : { '--c': coloreChiave(x.k) } as any }, x.speciale ? x.t : Studio.etichetta(x.k))))))));
+          h('span.gen-voci', null, g.voci.map(x => h('span.gen-voce' + (x.speciale ? '.speciale' : ''), { style: x.speciale ? {} : { '--c': coloreChiave(x.k) } as any }, x.speciale ? x.t : formaChiave(x.k) + ' ' + Studio.etichetta(x.k))))))));
       (corpo as any)._r = r;
     }
     piede.append(
