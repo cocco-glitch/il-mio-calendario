@@ -42,6 +42,7 @@ Verifica versione online: in fondo ad Altro compare `v<VERSIONE>` (costante in `
 | 07-progressi | `puntiDeboli()` somma `Progresso.deboli` per materia e `Simulazione.deboli`; `sezioneSottostepDeboli()` (media prioritarie + ricordo FSRS) |
 | 07-chiusura | riquadro serale (dalle 19), foglio di chiusura, record `giorno` (`g-YYYY-MM-DD`), `sezioneSonno()` in Statistiche (dalle 3 giornate) |
 | 07-freddo | prova a freddo: `apriQuiz(…, cb)` con callback (il risultato non passa da `Studio.segna`), record `pretest` (`pre-<k>`), confronto nell'avviso di `Cattura.salva` |
+| 07-spiegazioni | v0.21: «✨ Spiegazione AI» nei quiz aperti dall'app: `Spiega.inietta()` aggiunge alla copia del quiz uno script (funzione `spiaAI`, autonoma) che, sotto `#why`, mostra breve/media/dettagliata e manda `spiega-chiedi` (domanda, opzioni, corretta, scelta, citazioni di `#expl`, passi) al genitore; il genitore chiama Groq (`openai/gpt-oss-120b`, riserva `llama-3.3-70b-versatile`), chiave SOLO in localStorage `imc-groq-chiave` (mai nei record), risultato nel record `spiegazione` id `sp-<hash domanda+corretta>-<livello>` (si sincronizza su Drive: ok dell'utente del 12/11/2026). Altro → Spiegazioni AI. Test: `test/spiegazioni.py` |
 | 07-studiaora | `StudiaOra.componi(minuti)` (ordine: ripassi ≤40%, freddo/prioritarie del giorno, errori, pause, richiamo), stato in localStorage `imc-studia-ora`, `Timer.avvia({durata})` |
 | 07-domande | `Domande.registra(scheda, titolo, risultato)` da `Cattura.salva` e dalle simulazioni (con annulla); giuste contate solo se il quiz mostra «Da rivedere» o fa 100%; `sezioneDomande()` in Errori |
 | 07-extra | corsi creati dall'utente, registro errori, timer, statistiche, esami |
@@ -56,7 +57,7 @@ Principi: `disegna()` ricostruisce la schermata a ogni modifica (semplice e suff
 **Cache (v0.17):** le letture costose (`Stato.tutti`, pacchetti, indici di sotto-step e schede, pagine, icone, formati di data) sono memorizzate e si invalidano da sole con `Stato.ver`, che cambia a ogni `salva`/`unisci`. Non modificare `rec` senza passare da `Stato.salva`/`unisci`, altrimenti le cache restano vecchie. Le lapidi del registro notifiche si rimuovono dopo 7 giorni (`Stato.pulisci`).
 
 ## Dati e sincronizzazione
-- Tutto è un **record** `{ id, type, updatedAt, deleted? }`. Tipi: `evento`, `task`, `nota`, `categoria`, `impostazioni`, `preset`, `pacchetto`, `progresso`, `spostamento`, `tabella`, `materia`, `sessione`, `esame`, `notifica` (registro ntfy), `memoria` (ripassi), `simulazione`, `giorno` (chiusura serale), `pretest`, `domanda`.
+- Tutto è un **record** `{ id, type, updatedAt, deleted? }`. Tipi: `evento`, `task`, `nota`, `categoria`, `impostazioni`, `preset`, `pacchetto`, `progresso`, `spostamento`, `tabella`, `materia`, `sessione`, `esame`, `notifica` (registro ntfy), `memoria` (ripassi), `simulazione`, `giorno` (chiusura serale), `pretest`, `domanda`, `spiegazione`.
 - Eliminare = `deleted: true` (lapide). Unione = per record, vince `updatedAt` più alto.
 - Backup giornaliero `backup/dati-YYYY-MM-DD.json`, ultimi 30 (i vecchi in `_cestino app`).
 - Google: Client ID, chiave API (non più usata: niente Picker) e account ammesso in cima a `06-drive.ts`. Scope: `drive.file`, `drive.readonly`, e `calendar.app.created` solo con lo specchio attivo. Progetto Google Cloud in modalità Testing, unico utente di test = l'utente.

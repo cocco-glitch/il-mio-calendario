@@ -471,6 +471,7 @@ function vistaAltro(): HTMLElement {
     scheda('Categorie', cats, nuovaCat),
     sezioneStudio(salvaImp),
     sezioneNotifiche(salvaImp),
+    Spiega.sezione(),
     sezioneCalendari(salvaImp),
     scheda('I miei dati',
       h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'),

@@ -249,6 +249,7 @@ async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS, cb?: (
     const toppa = '<script>try{window.localStorage.getItem("x")}catch(e){(function(){var m={};var s={getItem:function(k){return k in m?m[k]:null},setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}}};try{Object.defineProperty(window,"localStorage",{value:s});Object.defineProperty(window,"sessionStorage",{value:s})}catch(_){}})()}<\/script>';
     html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, x => x + toppa) : html.replace(/<html[^>]*>/i, x => x + toppa);
     html = Cattura.inietta(html); // v0.9: legge il risultato finale (il file su Drive non cambia)
+    html = Spiega.inietta(html);  // v0.21: riquadro «✨ Spiegazione AI» sotto la correzione
     svuota(v.corpo);
     const fr = h('iframe.visore-frame', { sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals', srcdoc: html, title: s.titolo }) as HTMLIFrameElement;
     v.corpo.appendChild(fr);
