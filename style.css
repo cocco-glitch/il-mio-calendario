@@ -515,3 +515,7 @@ details.qz-altre { background: var(--sup2); border-radius: 11px; padding: 10px 1
 .qz-livelli { display: grid; gap: 8px; } .qz-lvriga { display: grid; grid-template-columns: 110px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; }
 .qz-barra { height: 8px; border-radius: 4px; background: var(--linea); overflow: hidden; } .qz-barra span { display: block; height: 100%; background: var(--accento); }
 .qz h3 { margin: 6px 0 0; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); }
+.qz-mod { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #d9921a; align-self: center; }
+.ed-opz { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--linea); }
+.ed-giusta input { border-color: #2fa866; box-shadow: inset 3px 0 0 #2fa866; }
+body:has(.visore) .foglio-sfondo { z-index: 27; }

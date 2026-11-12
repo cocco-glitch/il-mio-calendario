@@ -4021,17 +4021,31 @@ const Banca = (() => {
             document.body.appendChild(fr);
         });
     }
+    /** Q2: applica le modifiche dell'utente (record 'modq'): campi cambiati, domande nascoste, domande nuove. */
+    function applica(domande, sk) {
+        const mod = new Map();
+        for (const r of Stato.tutti('modq'))
+            if (r.sk === sk && !r.deleted)
+                mod.set(r.qid, r);
+        const out = domande.map(d => { const r = mod.get(d.id); return r ? (r.nascosta ? null : { ...d, ...r.campi, id: d.id, sk, mod: true }) : d; }).filter(Boolean);
+        for (const r of mod.values())
+            if (r.nuova && !r.nascosta && r.campi)
+                out.push({ ...r.campi, id: r.qid, sk, mod: true, nuova: true });
+        return out;
+    }
+    /** Domande nascoste di una scheda (per poterle ripristinare). */
+    function nascoste(sk) { return Stato.tutti('modq').filter(r => r.sk === sk && r.nascosta && !r.deleted); }
     /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
     async function scheda(pk, m, micro, s) {
         const B = await carica(parseInt(micro, 10));
         if (B && B.schede[s.id])
-            return { domande: B.domande.filter(d => d.sk === s.id), immagini: B.immagini, fonte: 'banca' };
+            return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
         const K = 'imc-banca-' + s.id;
         try {
             const c = localStorage.getItem(K);
             if (c) {
                 const j = JSON.parse(c);
-                return { domande: j.domande, immagini: j.immagini || {}, fonte: 'copia' };
+                return { domande: applica(j.domande, s.id), immagini: j.immagini || {}, fonte: 'copia' };
             }
         }
         catch (_) { /* niente */ }
@@ -4043,9 +4057,9 @@ const Banca = (() => {
             localStorage.setItem(K, JSON.stringify(r));
         }
         catch (_) { /* spazio esaurito: la riestraggo la prossima volta */ }
-        return { ...r, fonte: 'estratta' };
+        return { domande: applica(r.domande, s.id), immagini: r.immagini, fonte: 'estratta' };
     }
-    return { carica, scheda, estraiDaHtml };
+    return { carica, scheda, estraiDaHtml, applica, nascoste };
 })();
 const QuizApp = (() => {
     const L = ['A', 'B', 'C', 'D', 'E'], LIVELLI = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
@@ -4159,7 +4173,7 @@ const QuizApp = (() => {
                 const rest = 2 - x.hid.length;
                 s2 += '<button type="button" class="chip" data-az="aiuto"' + (a || rest <= 0 ? ' disabled' : '') + '>💡 Suggerimento (' + rest + ')</button>';
             }
-            s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button></div>';
+            s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button><button type="button" class="chip" data-az="modifica">✏️ Modifica</button>' + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
             if (apertaX)
                 s2 += spiegFonti(d);
             if (mc) {
@@ -4257,7 +4271,8 @@ const QuizApp = (() => {
                 + (deb ? '<p><b>Punto debole:</b> ' + deb[0] + '</p>' : '<p><b>Nessun punto debole.</b></p>');
             if (sb.length)
                 s2 += '<h3>Da rivedere (' + sb.length + ')</h3>' + sb.map(x => '<details class="qz-altre"><summary>' + fmt(x.d.q) + '</summary><p><b>Risposta corretta:</b> ' + fmt(x.d.t === 'mcq' ? x.d.o[0] : x.d.show) + '</p>' + passi(x.d.e) + (x.d.r ? '<p class="tenue piccolo">Ripassa: ' + esc(x.d.r) + '</p>' : '') + '</details>').join('');
-            s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">Rifai tutto</button></div></section>';
+            s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">Rifai tutto</button></div>'
+                + '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div></section>';
             app.innerHTML = s2;
             v.corpo.scrollTop = 0;
             const r = { imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
@@ -4319,6 +4334,43 @@ const QuizApp = (() => {
                 nuovo(P.map((y, k) => y.ok ? -1 : dati.domande.indexOf(y.d)).filter(k => k >= 0), true);
             else if (az === 'tutto')
                 nuovo(dati.domande.map((_, k) => k), false);
+            else if (az === 'modifica')
+                Editor.apri(x.d, s.id, nd => {
+                    const k = dati.domande.indexOf(x.d);
+                    if (!nd) {
+                        if (k >= 0)
+                            dati.domande.splice(k, 1);
+                        P.splice(cur, 1);
+                        if (!P.length) {
+                            finito = true;
+                        }
+                        else if (cur >= P.length)
+                            cur = P.length - 1;
+                        disegnaQ();
+                        return;
+                    }
+                    if (k >= 0)
+                        dati.domande[k] = nd;
+                    const fattaPrima = fatta(x);
+                    x.d = nd;
+                    if (nd.t === 'mcq') {
+                        if (x.ord.length !== nd.o.length)
+                            x.ord = mescola(nd.o.map((_, j) => j));
+                        x.hid = [];
+                    }
+                    if (!fattaPrima) {
+                        x.picked = null;
+                        x.ok = null;
+                    }
+                    disegnaQ();
+                });
+            else if (az === 'nuova')
+                Editor.apri(null, s.id, nd => { if (nd) {
+                    dati.domande.push(nd);
+                    avviso('Domanda aggiunta: comparirà quando rifai il quiz.');
+                } });
+            else if (az === 'ripristina')
+                Editor.ripristina(s.id, () => avviso('Ripristinate: rifai il quiz per vederle.'));
         });
         app.addEventListener('submit', ev => { ev.preventDefault(); const i = app.querySelector('#qz-ans'); if (i)
             rispondi(i.value); });
@@ -4352,6 +4404,131 @@ const QuizApp = (() => {
     /** Statistiche per domanda (per Q4 e per la vista Errori). */
     function stat(sk) { return Stato.tutti('statq').filter(r => !sk || r.sk === sk); }
     return { apri, stat };
+})();
+/** Q2: editor di una domanda (modifica, nascondi, ripristina l'originale, nuova). */
+const Editor = (() => {
+    const LIV = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
+    const area = (v, righe = 2, ph = '') => h('textarea', { rows: righe, value: v, placeholder: ph });
+    const pulisci = (d) => { const c = { ...d }; delete c.id; delete c.sk; delete c.mod; delete c.nuova; return c; };
+    function apri(d0, sk, fatto) {
+        const nuova = !d0;
+        const d = d0 ? JSON.parse(JSON.stringify(d0)) : { id: 'q-u-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), sk, t: 'mcq', lv: 'Applicativo', q: '', o: ['', '', '', '', ''], ew: ['', '', '', ''], e: '' };
+        const recId = 'mq-' + d.id, r0 = Stato.prendi(recId);
+        const tipo = h('select', null, [['mcq', 'Risposta multipla'], ['fill', 'Completamento']].map(([v, n]) => h('option', { value: v, selected: d.t === v }, n)));
+        tipo.disabled = !nuova;
+        const liv = h('select', null, LIV.map(l => h('option', { value: l, selected: d.lv === l }, l)));
+        const testo = area(d.q, 3, 'Testo della domanda (per il completamento usa …… dove va la risposta)');
+        const o = (d.o || ['', '', '', '', '']).concat(['', '', '', '', '']).slice(0, 5);
+        const ew = (d.ew || []).concat(['', '', '', '']).slice(0, 4);
+        const opz = o.map((v, k) => h('input', { type: 'text', value: v, placeholder: k ? 'Distrattore ' + k : 'Risposta corretta' }));
+        const perche = ew.map((v, k) => area(v, 2, 'Perché il distrattore ' + (k + 1) + ' è sbagliato'));
+        const acc = h('input', { type: 'text', value: (d.a || []).join(' | '), placeholder: 'Risposte accettate, separate da |' });
+        const mostra = h('input', { type: 'text', value: d.show || '', placeholder: 'Risposta da mostrare' });
+        const ewFill = area(d.t === 'fill' ? (d.ew || [''])[0] : '', 2, 'Errore più probabile e perché');
+        const passi = area((Array.isArray(d.e) ? d.e : [d.e]).join('\n'), 4, 'Correzione: un passaggio per riga (es. «Formula: …»)');
+        const nota = h('div.tenue.piccolo');
+        const blocco = h('div');
+        const controlla = () => {
+            if (tipo.value !== 'mcq') {
+                nota.textContent = '';
+                return;
+            }
+            const g = opz[0].value.trim().length, max = Math.max(...opz.slice(1).map(x => x.value.trim().length));
+            const doppie = new Set(opz.map(x => x.value.trim().toLowerCase())).size < 5;
+            nota.textContent = doppie ? '⚠️ Due opzioni sono uguali.' : g > max ? '⚠️ La risposta corretta è più lunga di tutti i distrattori: si riconosce a colpo d\'occhio.' : '';
+        };
+        opz.forEach(x => x.addEventListener('input', controlla));
+        const disegnaTipo = () => {
+            svuota(blocco);
+            if (tipo.value === 'mcq')
+                blocco.appendChild(h('div.gruppo', null, h('div.gruppo-titolo', null, 'Opzioni (la prima è la corretta)'), opz.map((x, k) => h(k ? 'div.ed-opz' : 'div.ed-opz.ed-giusta', null, x, k ? perche[k - 1] : null)), nota));
+            else
+                blocco.appendChild(h('div.gruppo', null, h('div.gruppo-titolo', null, 'Risposta'), acc, mostra, ewFill));
+            controlla();
+        };
+        tipo.onchange = disegnaTipo;
+        disegnaTipo();
+        const leggi = () => {
+            const n = { ...d, t: tipo.value, lv: liv.value, q: testo.value.trim() };
+            const righe = passi.value.split('\n').map(x => x.trim()).filter(Boolean);
+            n.e = righe.length > 1 ? righe : (righe[0] || '');
+            if (!n.q) {
+                avviso('Scrivi il testo della domanda.');
+                return null;
+            }
+            if (n.t === 'mcq') {
+                n.o = opz.map(x => x.value.trim());
+                n.ew = perche.map(x => x.value.trim());
+                delete n.a;
+                delete n.show;
+                if (n.o.some(x => !x)) {
+                    avviso('Servono la risposta corretta e 4 distrattori.');
+                    return null;
+                }
+                if (new Set(n.o.map(x => x.toLowerCase())).size < 5) {
+                    avviso('Due opzioni sono uguali.');
+                    return null;
+                }
+            }
+            else {
+                n.a = acc.value.split('|').map(x => x.trim()).filter(Boolean);
+                n.show = mostra.value.trim() || n.a[0];
+                n.ew = ewFill.value.trim() ? [ewFill.value.trim()] : [];
+                delete n.o;
+                if (!n.a.length) {
+                    avviso('Scrivi almeno una risposta accettata.');
+                    return null;
+                }
+                if (!/…|\.\.\.\./.test(n.q)) {
+                    avviso('Nel completamento metti …… dove va la risposta.');
+                    return null;
+                }
+            }
+            return n;
+        };
+        const salvaRec = (r) => {
+            const base = r0 && !r0.deleted ? r0 : { id: recId, type: 'modq', updatedAt: 0, qid: d.id, sk };
+            if (!base.originale && d0 && !d0.nuova)
+                base.originale = pulisci(d0);
+            Stato.salva(Object.assign(base, r), true);
+        };
+        const f = foglio({
+            titolo: nuova ? 'Nuova domanda' : 'Modifica domanda',
+            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Tipo', tipo), riga('Livello', liv)), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Domanda'), testo), blocco, h('div.gruppo', null, h('div.gruppo-titolo', null, 'Correzione passo-passo'), passi), h('div.tenue.piccolo', null, 'Le modifiche si salvano con i tuoi dati su Drive; l\'originale resta e puoi ripristinarlo. Statistiche e spiegazioni AI della domanda restano collegate.'), nuova ? null : h('div.bottoni', null, d0 && d0.mod && !d0.nuova ? h('button.btn.neutro', { onclick: () => { const orig = r0 && r0.originale; if (r0)
+                    Stato.elimina(recId); f.chiudi(); fatto({ ...(orig || {}), id: d.id, sk }); avviso('Ripristinato l\'originale.'); } }, '↩︎ Ripristina originale') : null, h('button.btn.pericolo', { onclick: async () => {
+                    const x = await chiedi('Nascondere questa domanda?', [{ testo: 'Nascondi', valore: 'si', pericolo: true }, { testo: 'Annulla', valore: 'no' }], 'Non comparirà più nel quiz. Puoi ripristinarla dalla schermata del risultato.');
+                    if (x !== 'si')
+                        return;
+                    salvaRec({ nascosta: true });
+                    f.chiudi();
+                    fatto(null);
+                    avviso('Domanda nascosta.');
+                } }, d0 && d0.nuova ? 'Elimina domanda' : 'Nascondi domanda'))),
+            etichettaSalva: 'Salva',
+            salva: () => {
+                const n = leggi();
+                if (!n)
+                    return false;
+                if (nuova || (d0 && d0.nuova))
+                    salvaRec({ nuova: true, campi: pulisci(n), nascosta: false });
+                else
+                    salvaRec({ campi: pulisci(n), nascosta: false });
+                fatto({ ...n, mod: true, nuova: nuova || !!(d0 && d0.nuova) });
+                avviso(nuova ? 'Domanda creata.' : 'Modifica salvata.');
+            },
+        });
+    }
+    /** Rende di nuovo visibili le domande nascoste di una scheda. */
+    function ripristina(sk, fatto) {
+        for (const r of Banca.nascoste(sk)) {
+            if (r.campi || r.nuova)
+                Stato.salva(Object.assign(r, { nascosta: false }), true);
+            else
+                Stato.elimina(r.id);
+        }
+        fatto();
+    }
+    return { apri, ripristina };
 })();
 
 // ============================================================
@@ -6892,7 +7069,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.22.0';
+const VERSIONE = '0.23.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
