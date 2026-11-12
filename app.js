@@ -2653,7 +2653,12 @@ function vistaMazzo(m) {
 function rigaCarte(k) {
     const mz = Carte.mazzi().filter(m => m.sub === k);
     if (!mz.length)
-        return null;
+        return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => {
+                const t = Studio.trovaSotto(k);
+                const m = Carte.nuovoMazzo(Studio.etichetta(k) + (t ? ' · ' + t.sub.titolo : ''), undefined, { sub: k });
+                disegna();
+                editorCarta(m.id);
+            } }, '🃏 Crea flashcard per ' + Studio.etichetta(k)));
     const n = Carte.conta(mz.map(m => m.id));
     return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaCarte(mz.map(m => m.id), Studio.etichetta(k)) }, '🃏 Flashcard di ' + Studio.etichetta(k) + ' (' + (n.nuove + n.ripasso) + ' oggi / ' + n.totale + ')'));
 }
@@ -5028,10 +5033,19 @@ function rigaStudio(x) {
             UI.studioVista = 'piano';
             UI.studioPiano = x.p.id;
             vai('studio');
-        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
+        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
-function testoAvanzamento(k, p) {
+/** v0.20.2: flashcard collegate al sotto-step, da aggiungere al sottotitolo delle voci del piano. */
+function testoCarte(k) {
+    const mz = Carte.mazzi().filter(m => m.sub === k);
+    if (!mz.length)
+        return '';
+    const n = Carte.conta(mz.map(m => m.id));
+    return ' · 🃏 ' + (n.nuove + n.ripasso ? (n.nuove + n.ripasso) + ' carte oggi' : n.totale + ' carte');
+}
+function testoAvanzamento(k, p) { return testoAvanzamento0(k, p) + testoCarte(k); }
+function testoAvanzamento0(k, p) {
     const t = Studio.trovaSotto(k);
     if (!t)
         return p.modo === 'raffinamento' ? 'schede in preparazione' : 'schede da creare';
@@ -5166,7 +5180,7 @@ function vistaPiano(piano) {
                         Studio.segnaStepAMano(v.k, piano, !fatto); } }, fatto ? '✓' : ''), h('button.voce-corpo', { onclick: () => { if (t) {
                     UI.studioSub = v.k;
                     disegna();
-                } } }, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t), h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? v.d : testoAvanzamento(v.k, piano), tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')), v.speciale ? null : h('button.btn-testo', { onclick: () => apriSposta(v, go, piano) }, 'Sposta'));
+                } } }, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t), h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? (v.d || '') + (/^G2-/.test(v.k) ? testoCarte(v.k.slice(3)) : '') : testoAvanzamento(v.k, piano), tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')), v.speciale ? null : h('button.btn-testo', { onclick: () => apriSposta(v, go, piano) }, 'Sposta'));
         }), !voci.length ? h('div.tenue.piccolo', { style: { padding: '8px 0' } }, 'Step spostati altrove.') : null, gp && gp.nota ? h('div.tenue.piccolo', { style: { padding: '4px 0' } }, gp.nota) : null)));
     }
     setTimeout(() => { const el = document.getElementById('piano-oggi'); if (el && !UI.pianoScorso) {
@@ -6170,7 +6184,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.20.1';
+const VERSIONE = '0.20.2';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
