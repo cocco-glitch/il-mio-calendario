@@ -1717,7 +1717,7 @@ const GCal = (() => {
             // Blocchi del piano di studio (un evento per voce, id derivato da piano+step: stabile).
             const vivi = new Set();
             if (imp().gcalStudio)
-                for (const p of [...Studio.pkPiani(), ...Studio.pianiVirtuali()])
+                for (const p of [...Studio.pianiAttivi(), ...Studio.pianiVirtuali()])
                     for (const g of p.giorni)
                         for (const v of g.voci) {
                             const data = Studio.dataVoce(v, g, p.id), chiave = 'piano:' + p.id + ':' + v.k, gid = hashHex(chiave);
@@ -3582,6 +3582,13 @@ function apriGeneratore(base, sostituisci) {
                     }
                     Generatore.salva(r.piano);
                     v.chiudi();
+                    const ini = r.piano.giorni[0] ? r.piano.giorni[0].data : '', fin = r.piano.giorni.length ? r.piano.giorni[r.piano.giorni.length - 1].data : '';
+                    const sovr = Studio.pianiAttivi().filter(x => x.id !== r.piano.id && (x.modo || '') === (r.piano.modo || '') && x.giorni.some(g => g.data >= ini && g.data <= fin));
+                    if (sovr.length)
+                        setTimeout(() => chiedi('Nascondere ' + sovr.map(x => '«' + x.titolo + '»').join(', ') + '?', [{ testo: 'Sì, nascondi', valore: 'si' }], 'Copre gli stessi giorni del nuovo piano: in Oggi vedresti gli argomenti due volte. Non viene cancellato: lo rimostri da Studio → Piano.').then(s => { if (s) {
+                            sovr.forEach(x => Studio.nascondiPiano(x.id, true));
+                            disegna();
+                        } }), 400);
                     UI.studioVista = 'piano';
                     UI.studioPiano = r.piano.id;
                     vai('studio');
@@ -3594,11 +3601,12 @@ function apriGeneratore(base, sostituisci) {
 /** Pulsanti nella vista Piano: genera, e per i piani generati rigenera/elimina. */
 function bottoniGeneratore(p) {
     const gen = p && /^gen-/.test(p.id) ? p : null;
-    return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => apriGeneratore() }, '✨ Genera un piano'), gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null, gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') {
+    const nas = !!p && Studio.nascosto(p.id);
+    return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null, h('button.btn.neutro', { onclick: () => apriGeneratore() }, '✨ Genera un piano'), p && Studio.pkPiani().length > 1 ? h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '👁 Mostra di nuovo' : '🙈 Nascondi') : null, gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null, gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') {
             Generatore.elimina(gen.id);
             UI.studioPiano = '';
             disegna();
-        } } }, '🗑 Elimina') : null);
+        } } }, '🗑 Elimina') : null));
 }
 
 // 07-memoria.ts — Motore dei ripassi (F2): ripetizione spaziata con FSRS.
@@ -3664,7 +3672,7 @@ const Ripassi = (() => {
             return null;
         const ultima = date.sort()[date.length - 1];
         let piano = null;
-        for (const pp of Studio.pkPiani()) {
+        for (const pp of Studio.pianiAttivi()) {
             if (pp.modo === 'raffinamento')
                 continue;
             for (const g of pp.giorni)
@@ -4565,6 +4573,11 @@ const Studio = (() => {
     function pkStep() { return pkStepM().slice(); }
     const pkPianiM = memo(() => Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1));
     function pkPiani() { return pkPianiM().slice(); }
+    /** v0.20.1: piani visibili in Oggi, calendario, ritardi e ripassi (quelli nascosti restano solo nella vista Piano). */
+    const nascosto = (id) => (imp().pianiNascosti || []).includes(id);
+    function pianiAttivi() { return pkPianiM().filter(p => !nascosto(p.id)); }
+    function nascondiPiano(id, si) { const i = imp(), l = (i.pianiNascosti || []).filter((x) => x !== id); if (si)
+        l.push(id); i.pianiNascosti = l; Stato.salva(i, true); }
     /** Il piano principale (teoria). */
     function pkPiano() { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
     /** Inserisce/aggiorna un pacchetto. I progressi stanno altrove: non si perdono. */
@@ -4694,7 +4707,7 @@ const Studio = (() => {
     function segnaStepAMano(k, p, si) { segna(p.modo === 'raffinamento' ? 'step-raff-' + k : 'step-' + k, { fatta: si }); }
     function vociDelGiorno(g) {
         const k = ymd(g), out = [];
-        for (const p of [...pkPiani(), ...pianiVirtuali()])
+        for (const p of [...pianiAttivi(), ...pianiVirtuali()])
             for (const gg of p.giorni)
                 for (const v of gg.voci)
                     if (dataVoce(v, gg, p.id) === k)
@@ -4704,7 +4717,7 @@ const Studio = (() => {
     /** Step (non speciali) con data già passata e non completati, in tutti i piani. */
     function inRitardo() {
         const oggiK = ymd(oggi()), out = [];
-        for (const p of [...pkPiani(), ...pianiVirtuali()])
+        for (const p of [...pianiAttivi(), ...pianiVirtuali()])
             for (const g of p.giorni)
                 for (const v of g.voci)
                     if (!v.speciale && dataVoce(v, g, p.id) < oggiK && !stepFatto(v.k, p))
@@ -4749,7 +4762,7 @@ const Studio = (() => {
         }
         return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
     }
-    return { pkStep, pkPiano, pkPiani, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+    return { pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
         dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 // ---------- Visore a tutto schermo (quiz e PDF) ----------
@@ -6157,7 +6170,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.20.0';
+const VERSIONE = '0.20.1';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
