@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.20.1';
+const VERSIONE = '0.20.2';
 
 function applicaTema(): void {
   const i = imp();

@@ -415,7 +415,10 @@ function vistaMazzo(m: Mazzo): HTMLElement {
 
 /** Nel sotto-step: carte collegate. */
 function rigaCarte(k: string): HTMLElement | null {
-  const mz = Carte.mazzi().filter(m => m.sub === k); if (!mz.length) return null;
+  const mz = Carte.mazzi().filter(m => m.sub === k);
+  if (!mz.length) return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => {
+    const t = Studio.trovaSotto(k); const m = Carte.nuovoMazzo(Studio.etichetta(k) + (t ? ' · ' + t.sub.titolo : ''), undefined, { sub: k }); disegna(); editorCarta(m.id);
+  } }, '🃏 Crea flashcard per ' + Studio.etichetta(k)));
   const n = Carte.conta(mz.map(m => m.id));
   return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaCarte(mz.map(m => m.id), Studio.etichetta(k)) }, '🃏 Flashcard di ' + Studio.etichetta(k) + ' (' + (n.nuove + n.ripasso) + ' oggi / ' + n.totale + ')'));
 }

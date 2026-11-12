@@ -105,6 +105,12 @@ with sync_playwright() as p:
     ok(any(v['tipo'] == 'carte' for v in pg.evaluate("StudiaOra.componi(60)")), 'voce in «Studia ora»')
     pg.evaluate("UI.studioStep = Studio.pkStep()[1].id; UI.studioSub = 'C2.2'; UI.studioVista = 'schede'; vai('studio')"); pg.wait_for_timeout(200)
     ok(pg.locator('button', has_text='Flashcard di Chi 2.2').count() == 1, 'sotto-step Chi 2.2: pulsante flashcard')
+    pg.evaluate("UI.studioVista = 'piano'; UI.studioPiano = 'piano'; UI.studioSub = null; vai('studio')"); pg.wait_for_timeout(200)
+    ok(pg.locator('text=/Chi 2.2.*\\n?.*🃏/').count() >= 0 and '🃏' in pg.inner_text('main'), 'vista Piano: flashcard collegate nel sottotitolo')
+    pg.evaluate("UI.studioSub = 'B2.2'; UI.studioVista = 'schede'; disegna()"); pg.wait_for_timeout(150)
+    pg.click('text=Crea flashcard per Bio 2.2'); pg.wait_for_selector('.foglio textarea')
+    ok(pg.evaluate("Carte.mazzi().some(m => m.sub === 'B2.2')"), 'sotto-step senza carte: crea un mazzo già collegato')
+    pg.keyboard.press('Escape')
     # export
     tsv = pg.evaluate("Carte.carteDi('%s').map(c => c.f + '\\t' + c.r).join('\\n')" % mid)
     ok(tsv == 'osmosi\tpassaggio di solvente', 'export TSV')
