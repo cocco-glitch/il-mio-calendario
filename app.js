@@ -3535,7 +3535,7 @@ function apriGeneratore(base, sostituisci) {
                 corpo.append(h('div.bottoni', null, h('button.btn.neutro', { onclick: () => { o.argomenti = cat.map(x => x.k); disegnaPasso(); } }, 'Tutti'), h('button.btn.neutro', { onclick: () => { o.argomenti = cat.filter(x => x.dati ? x.w >= .4 : true).map(x => x.k); disegnaPasso(); } }, 'Deboli + mai provati'), h('button.btn.neutro', { onclick: () => { o.argomenti = []; disegnaPasso(); } }, 'Nessuno')), h('label.widget-riga', null, h('span.nome', null, 'Prima i più deboli', h('div.tenue.piccolo', null, 'Dentro ogni materia; le materie si alternano ogni giorno.')), interr(o.deboliPrima, b => o.deboliPrima = b)), h('div.tenue.piccolo', null, o.argomenti.length + ' scelti. La barra è quanto è debole (punteggi, schede da rifare, ricordo stimato); n.d. = ancora nessun punteggio. Il secondo giro va solo ai deboli misurati.'));
                 const mats = Array.from(new Set(cat.map(x => x.m)));
                 for (const m of mats)
-                    corpo.appendChild(h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m)), cat.filter(x => x.m === m).map(x => h('label.gen-arg', null, h('input', { type: 'checkbox', checked: scelti.has(x.k), onchange: (e) => { const on = e.target.checked; o.argomenti = on ? o.argomenti.concat(x.k) : o.argomenti.filter(y => y !== x.k); } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + x.t), h('span.gen-debole', null, h('i', { style: { width: Math.round(x.w * 100) + '%', background: coloreRicordo(1 - x.w) } }))), x.dati ? h('b.piccolo', { style: { color: coloreRicordo(1 - x.w) } }, Math.round(x.w * 100) + '%') : h('span.tenue.piccolo', { title: 'Nessun punteggio ancora: stima neutra' }, 'n.d.')))));
+                    corpo.appendChild(h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, formaMateria(m) + ' ' + nomeMateria(m)), cat.filter(x => x.m === m).map(x => h('label.gen-arg', null, h('input', { type: 'checkbox', checked: scelti.has(x.k), onchange: (e) => { const on = e.target.checked; o.argomenti = on ? o.argomenti.concat(x.k) : o.argomenti.filter(y => y !== x.k); } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + x.t), h('span.gen-debole', null, h('i', { style: { width: Math.round(x.w * 100) + '%', background: coloreRicordo(1 - x.w) } }))), x.dati ? h('b.piccolo', { style: { color: coloreRicordo(1 - x.w) } }, Math.round(x.w * 100) + '%') : h('span.tenue.piccolo', { title: 'Nessun punteggio ancora: stima neutra' }, 'n.d.')))));
             }
         }
         if (passo === 2) {
@@ -3559,7 +3559,7 @@ function apriGeneratore(base, sostituisci) {
             }
             const r = Generatore.genera(o), p = r.piano;
             const nArg = p.giorni.reduce((a, g) => a + g.voci.filter(x => !x.speciale).length, 0);
-            corpo.append(h('section.card', null, h('h2.card-titolo', null, p.titolo), h('div.numeri', null, numero(String(p.giorni.length), 'giorni'), numero(String(nArg), 'argomenti'), numero(String(p.giorni.filter(g => g.voci.some(x => /^SIM/.test(x.k))).length), 'simulazioni')), h('div.tenue.piccolo', null, giornoBreve(o.inizio) + ' → esame ' + giornoBreve(o.esame) + ' · ' + p.nota)), r.avvisi.length ? h('div.gen-avvisi', null, r.avvisi.map(a => h('div', null, '⚠️ ' + a))) : h('span'), h('section.card.gen-anteprima', null, p.giorni.map(g => h('div.gen-giorno-riga', null, h('span.gen-data', null, giornoBreve(g.data)), h('span.gen-voci', null, g.voci.map(x => h('span.gen-voce' + (x.speciale ? '.speciale' : ''), { style: x.speciale ? {} : { '--c': coloreChiave(x.k) } }, x.speciale ? x.t : Studio.etichetta(x.k))))))));
+            corpo.append(h('section.card', null, h('h2.card-titolo', null, p.titolo), h('div.numeri', null, numero(String(p.giorni.length), 'giorni'), numero(String(nArg), 'argomenti'), numero(String(p.giorni.filter(g => g.voci.some(x => /^SIM/.test(x.k))).length), 'simulazioni')), h('div.tenue.piccolo', null, giornoBreve(o.inizio) + ' → esame ' + giornoBreve(o.esame) + ' · ' + p.nota)), r.avvisi.length ? h('div.gen-avvisi', null, r.avvisi.map(a => h('div', null, '⚠️ ' + a))) : h('span'), h('section.card.gen-anteprima', null, p.giorni.map(g => h('div.gen-giorno-riga', null, h('span.gen-data', null, giornoBreve(g.data)), h('span.gen-voci', null, g.voci.map(x => h('span.gen-voce' + (x.speciale ? '.speciale' : ''), { style: x.speciale ? {} : { '--c': coloreChiave(x.k) } }, x.speciale ? x.t : formaChiave(x.k) + ' ' + Studio.etichetta(x.k))))))));
             corpo._r = r;
         }
         piede.append(passo ? h('button.btn.neutro', { onclick: () => { passo--; disegnaPasso(); } }, '‹ Indietro') : h('span'), passo < PASSI.length - 1
@@ -4526,6 +4526,14 @@ const nomeMateria = (c) => infoMateria(c).nome;
 const coloreMateria = (c) => infoMateria(c).colore;
 /** Colore di una chiave di step ("C2.3") o grigio per le voci speciali. */
 const coloreChiave = (k) => materiaDi(k) ? coloreMateria(materiaDi(k)) : '#7c8597';
+/** v0.20: ogni materia ha anche una FORMA (non solo un colore): si riconosce anche senza distinguere i colori. */
+const FORME_BASE = { C: '◆', B: '●', F: '▲' };
+const FORME = ['■', '★', '⬟', '⬢', '✚', '◗'];
+function formaMateria(code) { if (FORME_BASE[code])
+    return FORME_BASE[code]; let x = 0; for (const ch of code)
+    x = (x * 31 + ch.charCodeAt(0)) >>> 0; return FORME[x % FORME.length]; }
+const formaChiave = (k) => materiaDi(k) ? formaMateria(materiaDi(k)) : '';
+function segnoMateria(k) { const f = formaChiave(k); return f ? h('span.forma-mat', { style: { color: coloreChiave(k) }, 'aria-hidden': 'true' }, f) : null; }
 const Studio = (() => {
     /**
      * "Piani" ricavati da altri dati: i corsi creati dall'utente (sotto-step con data) e gli esami.
@@ -5007,7 +5015,7 @@ function rigaStudio(x) {
             UI.studioVista = 'piano';
             UI.studioPiano = x.p.id;
             vai('studio');
-        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
+        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? x.v.d : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
 function testoAvanzamento(k, p) {
@@ -5064,7 +5072,7 @@ function vistaStudio() {
     const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
     return h('div.pagina', null, seg, indicatoreStudio(), h('div.chips', null, pks.map(p => h('button.chip' + (p.id === pk.id ? '.attivo' : ''), { onclick: () => { UI.studioStep = p.id; disegna(); } }, (p.proprio ? '★ ' : '') + p.titolo)), h('button.chip', { onclick: () => editorCorso() }, '+ Nuovo corso')), pk.proprio ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => editorCorso(pk) }, 'Modifica corso'), h('button.btn.neutro', { onclick: () => editorSottostep(pk) }, '+ Aggiungi argomento')) : null, pk.descrizione ? h('div.tenue.piccolo', null, pk.descrizione) : null, h('section.card', null, h('h2.card-titolo', null, pk.titolo + ' · totale'), h('div.numeri', null, numero(T.Pf + '/' + T.P, 'prioritarie'), numero(T.Rf + '/' + T.R, 'raffinamento'), numero(T.pagLette.size + '/' + T.pagT.size, 'pagine lette')), barra(T.Pf, T.P)), pk.materie.map(m => {
         const N = Studio.numeri(m.sottostep.flatMap(Studio.schedeDi));
-        return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, m.nome + (m.libro ? ' · ' + m.libro : '')), m.sottostep.map(s => {
+        return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, formaMateria(m.m) + ' ' + m.nome + (m.libro ? ' · ' + m.libro : '')), m.sottostep.map(s => {
             const n = Studio.numeri(Studio.schedeDi(s));
             return h('button.voce-lista.sotto', { onclick: () => { UI.studioSub = s.k; disegna(); } }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, s.n + ' · ' + s.titolo, chipRicordo(s.k)), h('span.voce-sotto', null, 'Prior. ' + n.Pf + '/' + n.P + ' · Raff. ' + n.Rf + '/' + n.R + ' · pag. ' + n.pagP.size + ' / ' + n.pagR.size + ' / ' + n.pagT.size), h('span.voce-sotto', null, s.posizione), barra(n.Pf, n.P, coloreMateria(m.m))), icona('dx', 18));
         }), h('div.totale-riga', null, 'Totale ' + m.nome + ': ' + N.P + ' prior. · ' + N.R + ' raff. · pag. ' + N.pagP.size + ' / ' + N.pagR.size + ' / ' + N.pagT.size));
@@ -5912,7 +5920,7 @@ const ACCENTI = ['#6c8cff', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8
 const CAMPI_ASPETTO = ['tema', 'accento', 'sfondo', 'font', 'scala', 'densita', 'raggio', 'widget', 'widgetNascosti', 'tabNascoste', 'nav', 'vistaIniziale'];
 function sezioneAspetto(salva) {
     const i = imp(), sel = (o, v, k, num = false) => selettore(o, v, function () { salva({ [k]: num ? +this.value : this.value, preset: '' }); });
-    return scheda('Aspetto', riga('Tema', sel([['auto', 'Automatico'], ['chiaro', 'Chiaro'], ['scuro', 'Scuro']], i.tema, 'tema')), riga('Colore accento', h('span.anteprima-tema', null, ACCENTI.map(c => h('button.campione' + (c === i.accento ? '.attivo' : ''), { style: { background: c }, 'aria-label': 'Accento ' + c, onclick: () => salva({ accento: c, preset: '' }) })), h('input', { type: 'color', value: i.accento, 'aria-label': 'Altro colore', onchange: (e) => salva({ accento: e.target.value, preset: '' }) }))), riga('Sfondo', h('input', { type: 'color', value: i.sfondo || (document.documentElement.dataset.tema === 'scuro' ? '#0e1014' : '#f4f5f8'), onchange: (e) => salva({ sfondo: e.target.value, preset: '' }) }), i.sfondo ? h('button.btn-testo', { onclick: () => salva({ sfondo: '', preset: '' }) }, 'Del tema') : null), riga('Carattere', sel([['sistema', 'Sistema'], ['arrotondato', 'Arrotondato'], ['serif', 'Serif'], ['mono', 'Monospazio']], i.font || 'sistema', 'font')), riga('Dimensione testo', sel([['0.9', 'Piccolo'], ['1', 'Normale'], ['1.1', 'Grande'], ['1.25', 'Molto grande']], String(i.scala || 1), 'scala', true)), riga('Densità', sel([['comoda', 'Comoda'], ['compatta', 'Compatta']], i.densita || 'comoda', 'densita')), riga('Angoli', sel([['4', 'Squadrati'], ['10', 'Leggeri'], ['14', 'Arrotondati'], ['22', 'Molto arrotondati']], String(i.raggio != null ? i.raggio : 14), 'raggio', true)));
+    return scheda('Aspetto', riga('Tema', sel([['auto', 'Automatico'], ['chiaro', 'Chiaro'], ['scuro', 'Scuro']], i.tema, 'tema')), riga('Colore accento', h('span.anteprima-tema', null, ACCENTI.map(c => h('button.campione' + (c === i.accento ? '.attivo' : ''), { style: { background: c }, 'aria-label': 'Accento ' + c, onclick: () => salva({ accento: c, preset: '' }) })), h('input', { type: 'color', value: i.accento, 'aria-label': 'Altro colore', onchange: (e) => salva({ accento: e.target.value, preset: '' }) }))), riga('Sfondo', h('input', { type: 'color', value: i.sfondo || (document.documentElement.dataset.tema === 'scuro' ? '#0e1014' : '#f4f5f8'), onchange: (e) => salva({ sfondo: e.target.value, preset: '' }) }), i.sfondo ? h('button.btn-testo', { onclick: () => salva({ sfondo: '', preset: '' }) }, 'Del tema') : null), riga('Effetto vetro', sel([['si', 'Vetro leggero'], ['no', 'Superfici piene']], i.vetro === false || i.vetro === 'no' ? 'no' : 'si', 'vetro'), h('span.tenue.piccolo', null, 'Barra e fogli traslucidi')), riga('Carattere', sel([['sistema', 'Sistema'], ['arrotondato', 'Arrotondato'], ['serif', 'Serif'], ['mono', 'Monospazio']], i.font || 'sistema', 'font')), riga('Dimensione testo', sel([['0.9', 'Piccolo'], ['1', 'Normale'], ['1.1', 'Grande'], ['1.25', 'Molto grande']], String(i.scala || 1), 'scala', true)), riga('Densità', sel([['comoda', 'Comoda'], ['compatta', 'Compatta']], i.densita || 'comoda', 'densita')), riga('Angoli', sel([['4', 'Squadrati'], ['10', 'Leggeri'], ['14', 'Arrotondati'], ['22', 'Molto arrotondati']], String(i.raggio != null ? i.raggio : 14), 'raggio', true)));
 }
 function sezioneLayout(salva) {
     const i = imp(), ord = (() => { const o = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w)); for (const [w] of WIDGET)
@@ -6149,7 +6157,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.19.0';
+const VERSIONE = '0.20.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -6169,6 +6177,7 @@ function applicaTema() {
     st.setProperty('--raggio', (i.raggio != null ? i.raggio : 14) + 'px');
     r.dataset.densita = i.densita || 'comoda';
     r.dataset.nav = i.nav || 'auto';
+    r.dataset.vetro = i.vetro === false || i.vetro === 'no' ? 'no' : 'si'; // v0.20: vetro leggero (disattivabile)
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta)
         meta.setAttribute('content', i.sfondo || (scuro ? '#0e1014' : '#f4f5f8'));
@@ -6192,7 +6201,7 @@ function disegna() {
             UI.studioSub = null; vai(s); }, 'aria-current': UI.scheda === s ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'task' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t))));
     const giornoNuovo = UI.scheda === 'cal' ? UI.data : undefined;
     const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : apriNuovo(giornoNuovo);
-    const main = h('main', { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
+    const main = h('main' + (stessaScheda ? '' : '.entra'), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
     svuota(app);
     aggiungi(app, [
         h('header.testata', null, h('h1', null, titoli[UI.scheda]), h('div.testata-azioni', null, Drive.stato.sync === 'spento' ? null : h('button.sync-ind', { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa')
