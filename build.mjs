@@ -24,6 +24,7 @@ writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replace('__VERS
 writeFileSync('dist/.nojekyll', '');
 execSync('node studio/genera.mjs', { stdio: 'inherit' });
 cpSync('studio/pacchetti', 'dist/studio', { recursive: true });
+cpSync('studio/banca', 'dist/studio/banca', { recursive: true }); // v0.22: banca domande (Quiz Studio)
 
 // Anteprima in un solo file: niente manifest/service worker.
 const html = readFileSync('public/index.html', 'utf8')
