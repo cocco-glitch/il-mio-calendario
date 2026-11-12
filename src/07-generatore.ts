@@ -233,6 +233,10 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
             if (vecchio) { r.piano.giorni = vecchio.giorni.filter(g => g.data < oggiK2).concat(r.piano.giorni.filter(g => g.data >= oggiK2)); r.piano.giorni.forEach((g, i) => g.n = i + 1); }
           }
           Generatore.salva(r.piano); v.chiudi();
+          const ini = r.piano.giorni[0] ? r.piano.giorni[0].data : '', fin = r.piano.giorni.length ? r.piano.giorni[r.piano.giorni.length - 1].data : '';
+          const sovr = Studio.pianiAttivi().filter(x => x.id !== r.piano.id && (x.modo || '') === (r.piano.modo || '') && x.giorni.some(g => g.data >= ini && g.data <= fin));
+          if (sovr.length) setTimeout(() => chiedi('Nascondere ' + sovr.map(x => '«' + x.titolo + '»').join(', ') + '?', [{ testo: 'Sì, nascondi', valore: 'si' }],
+            'Copre gli stessi giorni del nuovo piano: in Oggi vedresti gli argomenti due volte. Non viene cancellato: lo rimostri da Studio → Piano.').then(s => { if (s) { sovr.forEach(x => Studio.nascondiPiano(x.id, true)); disegna(); } }), 400);
           UI.studioVista = 'piano'; UI.studioPiano = r.piano.id; vai('studio');
           avviso((sostituisci ? 'Piano rigenerato: ' : 'Piano creato: ') + r.piano.giorni.length + ' giorni. Lo trovi in Studio → Piano, in Oggi e nel calendario.', 6000);
         } }, sostituisci ? '✓ Sostituisci il piano' : '✓ Crea il piano'));
@@ -244,8 +248,10 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
 /** Pulsanti nella vista Piano: genera, e per i piani generati rigenera/elimina. */
 function bottoniGeneratore(p?: PkPiano): HTMLElement {
   const gen = p && /^gen-/.test(p.id) ? p as PianoGen : null;
-  return h('div.bottoni', null,
+  const nas = !!p && Studio.nascosto(p.id);
+  return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null,
     h('button.btn.neutro', { onclick: () => apriGeneratore() }, '✨ Genera un piano'),
+    p && Studio.pkPiani().length > 1 ? h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '👁 Mostra di nuovo' : '🙈 Nascondi') : null,
     gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null,
-    gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') { Generatore.elimina(gen.id); UI.studioPiano = ''; disegna(); } } }, '🗑 Elimina') : null);
+    gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') { Generatore.elimina(gen.id); UI.studioPiano = ''; disegna(); } } }, '🗑 Elimina') : null));
 }

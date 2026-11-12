@@ -63,7 +63,7 @@ const Ripassi = (() => {
     if (!date.length) return null;
     const ultima = date.sort()[date.length - 1];
     let piano: string | null = null;
-    for (const pp of Studio.pkPiani()) {
+    for (const pp of Studio.pianiAttivi()) {
       if (pp.modo === 'raffinamento') continue;
       for (const g of pp.giorni) for (const v of g.voci) if (v.k === k) piano = Studio.dataVoce(v, g, pp.id);
       if (!piano) for (const c of pp.copertura || []) {

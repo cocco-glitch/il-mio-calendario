@@ -111,7 +111,7 @@ const GCal = (() => {
       }
       // Blocchi del piano di studio (un evento per voce, id derivato da piano+step: stabile).
       const vivi = new Set<string>();
-      if (imp().gcalStudio) for (const p of [...Studio.pkPiani(), ...Studio.pianiVirtuali()]) for (const g of p.giorni) for (const v of g.voci) {
+      if (imp().gcalStudio) for (const p of [...Studio.pianiAttivi(), ...Studio.pianiVirtuali()]) for (const g of p.giorni) for (const v of g.voci) {
         const data = Studio.dataVoce(v, g, p.id), chiave = 'piano:' + p.id + ':' + v.k, gid = hashHex(chiave);
         vivi.add(chiave);
         const ora = imp().gcalStudioOra || '';

@@ -41,6 +41,12 @@ with sync_playwright() as p:
     r = pg.evaluate("Generatore.genera(Object.assign({}, %s))" % json.dumps({'titolo': 'x', 'esame': '2027-01-10', 'inizio': '2026-12-11', 'modo': 'raffinamento', 'argomenti': [], 'deboliPrima': True, 'giorniSett': [0,1,2,3,4,5,6], 'ore': 6, 'minArg': 100, 'riservaOgni': 7, 'simulazioni': 3, 'finale': 2, 'riposo': True, 'secondoGiro': True}))
     ok(r['piano']['giorni'][-1]['voci'][0]['k'] == 'RIPOSO' and r['piano']['giorni'][-1]['data'] == '2027-01-09', 'vigilia di riposo 09/01')
     pg.click('text=✓ Crea il piano'); pg.wait_for_timeout(300)
+    pg.wait_for_selector('.dialogo'); ok('Piano di raffinamento' in pg.inner_text('.dialogo'), 'propone di nascondere il raffinamento che si sovrappone')
+    pg.click('.dialogo button:has-text("Sì, nascondi")'); pg.wait_for_timeout(200)
+    ok(pg.evaluate("Studio.pianiAttivi().map(p => p.id).includes('piano-raffinamento')") is False and pg.evaluate("Studio.pkPiani().some(p => p.id === 'piano-raffinamento')"), 'nascosto, non cancellato')
+    pg.evaluate("UI.studioPiano = 'piano-raffinamento'; disegna()"); pg.wait_for_timeout(150)
+    ok(pg.locator('text=Piano nascosto').count() == 1 and pg.locator('button', has_text='Mostra di nuovo').count() == 1, 'vista Piano: avviso + «Mostra di nuovo»')
+    pg.evaluate("UI.studioPiano = Studio.pkPiani().find(p => /^gen-/.test(p.id)).id; disegna()"); pg.wait_for_timeout(150)
     pid = pg.evaluate("Studio.pkPiani().find(p => /^gen-/.test(p.id)).id")
     piano = pg.evaluate("Studio.pkPiani().find(p => p.id === '%s')" % pid)
     ks = [v['k'] for g in piano['giorni'] for v in g['voci']]

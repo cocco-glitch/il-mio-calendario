@@ -79,6 +79,10 @@ const Studio = (() => {
   function pkStep(): PkStep[] { return pkStepM().slice(); }
   const pkPianiM = memo(() => Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1) as PkPiano[]);
   function pkPiani(): PkPiano[] { return pkPianiM().slice(); }
+  /** v0.20.1: piani visibili in Oggi, calendario, ritardi e ripassi (quelli nascosti restano solo nella vista Piano). */
+  const nascosto = (id: string) => ((imp() as any).pianiNascosti || []).includes(id);
+  function pianiAttivi(): PkPiano[] { return pkPianiM().filter(p => !nascosto(p.id)); }
+  function nascondiPiano(id: string, si: boolean): void { const i = imp() as any, l: string[] = (i.pianiNascosti || []).filter((x: string) => x !== id); if (si) l.push(id); i.pianiNascosti = l; Stato.salva(i, true); }
   /** Il piano principale (teoria). */
   function pkPiano(): PkPiano | null { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
 
@@ -172,13 +176,13 @@ const Studio = (() => {
   function segnaStepAMano(k: string, p: PkPiano, si: boolean): void { segna(p.modo === 'raffinamento' ? 'step-raff-' + k : 'step-' + k, { fatta: si }); }
   function vociDelGiorno(g: Date): VoceGiorno[] {
     const k = ymd(g), out: VoceGiorno[] = [];
-    for (const p of [...pkPiani(), ...pianiVirtuali()]) for (const gg of p.giorni) for (const v of gg.voci) if (dataVoce(v, gg, p.id) === k) out.push({ v, g: gg, spostata: gg.data !== k, p });
+    for (const p of [...pianiAttivi(), ...pianiVirtuali()]) for (const gg of p.giorni) for (const v of gg.voci) if (dataVoce(v, gg, p.id) === k) out.push({ v, g: gg, spostata: gg.data !== k, p });
     return out;
   }
   /** Step (non speciali) con data già passata e non completati, in tutti i piani. */
   function inRitardo(): VocePiano[] {
     const oggiK = ymd(oggi()), out: VocePiano[] = [];
-    for (const p of [...pkPiani(), ...pianiVirtuali()]) for (const g of p.giorni) for (const v of g.voci) if (!v.speciale && dataVoce(v, g, p.id) < oggiK && !stepFatto(v.k, p)) out.push(v);
+    for (const p of [...pianiAttivi(), ...pianiVirtuali()]) for (const g of p.giorni) for (const v of g.voci) if (!v.speciale && dataVoce(v, g, p.id) < oggiK && !stepFatto(v.k, p)) out.push(v);
     return out;
   }
   function sposta(k: string, data: string | null, pid = 'piano'): void {
@@ -211,7 +215,7 @@ const Studio = (() => {
     return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
   }
 
-  return { pkStep, pkPiano, pkPiani, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+  return { pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
     dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 
