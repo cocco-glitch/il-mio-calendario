@@ -29,3 +29,11 @@ Una riga per scelta importante: data · decisione · motivo.
 - «Di nuovo» rimette la carta 4 posizioni più avanti nella sessione (max 2 volte), come i passi di apprendimento di Anki.
 - Scelta multipla: distrattori presi prima dallo stesso mazzo (più plausibili); se ce ne sono meno di 2, quella carta si gira. Colore + forma per ogni opzione (accessibile anche a chi non distingue i colori).
 - Scrivi: confronto tollerante (maiuscole, accenti, punteggiatura finale, virgola/punto) e pulsante «Era giusta» per non punire un sinonimo.
+
+## v0.19 — Generatore di piani (12/11)
+- Procedura guidata a passi con anteprima prima di salvare (come i planner d'esame): niente piano «a scatola chiusa».
+- Interleaving: ogni giorno materie diverse; dentro la materia prima i più deboli (raffinamento).
+- Primo giro sul ~65% dei giorni a carico uniforme (non tutto in testa): lascia spazio a secondo giro distanziato (≥7 giorni) e simulazioni nella fase finale.
+- Il secondo giro va solo agli argomenti con debolezza MISURATA ≥40%: gli argomenti mai provati hanno una stima neutra e non riempiono il calendario di ripassi inutili.
+- Il piano generato non sostituisce quello principale; «Rigenera» conserva i giorni passati e toglie gli step già completati.
+- Da rigenerare verso il 10/12: i punti deboli di oggi non sono quelli di dopo il primo appello.

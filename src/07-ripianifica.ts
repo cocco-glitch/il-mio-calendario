@@ -8,12 +8,12 @@
 // verifica, chiusura, sprint, riposo. Le "Riserva" accettano al massimo 2 step, gli altri 3.
 
 const Ripianifica = (() => {
-  const VIETATI = /^(SIM|VERIFICA|CHIUSURA|SPRINT|RIPOSO)/;
+  const VIETATI = /^(SIM|VERIFICA|CHIUSURA|SPRINT|RIPOSO|FINALE)/;   // v0.19: anche i giorni finali dei piani generati
   const piu = (k: string, n: number) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
 
   /** Step in ritardo del piano principale, nell'ordine del piano. */
-  function inRitardo(oggiK = ymd(new Date())): { k: string; t: string; da: string }[] {
-    const p = Studio.pkPiano(); if (!p || p.modo === 'raffinamento') return [];
+  function inRitardo(oggiK = ymd(new Date()), p: PkPiano | null = Studio.pkPiano()): { k: string; t: string; da: string }[] {
+    if (!p || (p.modo === 'raffinamento' && !/^gen-/.test(p.id))) return [];
     const out: { k: string; t: string; da: string }[] = [];
     for (const g of p.giorni) for (const v of g.voci) {
       const d = Studio.dataVoce(v, g, p.id);
@@ -23,8 +23,9 @@ const Ripianifica = (() => {
   }
 
   /** Giorni utili con il loro carico attuale (step non speciali che cadono quel giorno). */
-  function giorniUtili(oggiK: string): { data: string; carico: number; max: number }[] {
-    const p = Studio.pkPiano(); if (!p) return [];
+  function giorniUtili(oggiK: string, p: PkPiano | null = Studio.pkPiano()): { data: string; carico: number; max: number }[] {
+    if (!p) return [];
+    const cap = (p as any).capienza || 3;
     const fine = (p.giorni.find(g => g.voci.some(v => /^CHIUSURA/.test(v.k))) || p.giorni[p.giorni.length - 1]).data;
     const carico: Record<string, number> = {}, tipo: Record<string, string> = {};
     for (const g of p.giorni) for (const v of g.voci) {
@@ -35,15 +36,15 @@ const Ripianifica = (() => {
     const out: { data: string; carico: number; max: number }[] = [];
     for (let d = piu(oggiK, 1); d < fine; d = piu(d, 1)) {
       if (tipo[d] === 'no') continue;
-      out.push({ data: d, carico: carico[d] || 0, max: tipo[d] === 'riserva' ? 2 : 3 });
+      out.push({ data: d, carico: carico[d] || 0, max: tipo[d] === 'riserva' ? Math.min(2, cap) : cap });
     }
     return out;
   }
 
   /** Proposta: per ogni step in ritardo, il nuovo giorno (null se non c'è posto prima della chiusura). */
-  function proponi(modo: 'presto' | 'leggeri', oggiK = ymd(new Date())): { k: string; t: string; da: string; a: string | null }[] {
-    const giorni = giorniUtili(oggiK);
-    return inRitardo(oggiK).map(x => {
+  function proponi(modo: 'presto' | 'leggeri', oggiK = ymd(new Date()), p: PkPiano | null = Studio.pkPiano()): { k: string; t: string; da: string; a: string | null }[] {
+    const giorni = giorniUtili(oggiK, p);
+    return inRitardo(oggiK, p).map(x => {
       const liberi = giorni.filter(g => g.carico < g.max);
       let scelto = liberi[0];
       if (modo === 'leggeri' && liberi.length) scelto = liberi.reduce((a, b) => b.carico < a.carico ? b : a);
@@ -52,8 +53,8 @@ const Ripianifica = (() => {
     });
   }
 
-  function applica(prop: { k: string; a: string | null }[]): () => void {
-    const p = Studio.pkPiano()!, prima = prop.map(x => ({ k: x.k, sp: Stato.prendi<Rec>(p.id === 'piano' ? 'sp-' + x.k : 'sp-' + p.id + '-' + x.k) }));
+  function applica(prop: { k: string; a: string | null }[], p: PkPiano = Studio.pkPiano()!): () => void {
+    const prima = prop.map(x => ({ k: x.k, sp: Stato.prendi<Rec>(p.id === 'piano' ? 'sp-' + x.k : 'sp-' + p.id + '-' + x.k) }));
     for (const x of prop) if (x.a) Studio.sposta(x.k, x.a, p.id);
     return () => { for (const x of prima) Studio.sposta(x.k, x.sp && !x.sp.deleted ? (x.sp as any).data : null, p.id); };
   }
@@ -64,12 +65,13 @@ const Ripianifica = (() => {
 const giornoBreve = (k: string) => { const d = daDt(k); return ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'][d.getDay()] + ' ' + k.slice(8, 10) + '/' + k.slice(5, 7); };
 
 /** Foglio con anteprima e conferma. */
-function apriRipianifica(): void {
+function apriRipianifica(piano?: PkPiano): void {
+  const pp = piano && (piano as any).giorni ? piano : Studio.pkPiano();
   let modo: 'presto' | 'leggeri' = 'leggeri';
   const corpo = h('div.modulo');
   const disegnaProp = () => {
     svuota(corpo);
-    const prop = Ripianifica.proponi(modo);
+    const prop = Ripianifica.proponi(modo, ymd(new Date()), pp);
     [
       h('div.segmenti', { role: 'tablist' },
         h('button' + (modo === 'leggeri' ? '.attivo' : ''), { onclick: () => { modo = 'leggeri'; disegnaProp(); } }, 'Giorni leggeri'),
@@ -89,7 +91,7 @@ function apriRipianifica(): void {
   foglio({ titolo: 'Ripianifica i ritardi', corpo, etichettaSalva: 'Conferma', salva: () => {
     const prop = (corpo as any)._prop as ReturnType<typeof Ripianifica.proponi>;
     if (!prop.length) return;
-    const annulla = Ripianifica.applica(prop);
+    const annulla = Ripianifica.applica(prop, pp!);
     avviso('Spostati ' + prop.filter(x => x.a).length + ' step · tocca per annullare', 8000, () => { annulla(); avviso('Spostamenti annullati.'); });
   } });
 }

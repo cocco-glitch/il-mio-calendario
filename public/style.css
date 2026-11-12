@@ -375,3 +375,30 @@ body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bo
 .chip-mini { font-size: 11px; background: var(--sup2); border-radius: 6px; padding: 1px 6px; margin-left: 6px; font-weight: 600; color: var(--tenue); }
 canvas.festa { position: fixed; inset: 0; pointer-events: none; z-index: 9999; }
 @media (prefers-reduced-motion: reduce) { .carta-interno { transition: none; } .carta { transition: none; } }
+
+/* ---------- Generatore di piani (v0.19) ---------- */
+.gen-passi { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 8px; }
+.gen-passo { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; color: var(--tenue); padding: 4px 2px; min-width: 58px; }
+.gen-passo b { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--sup2); color: var(--tenue); font-size: 13px; }
+.gen-passo.attivo { color: var(--testo); font-weight: 700; } .gen-passo.attivo b { background: var(--accento); color: #fff; }
+.gen-passo.fatto b { background: color-mix(in srgb, var(--accento) 25%, var(--sup)); color: var(--accento); }
+.gen-corpo { display: flex; flex-direction: column; gap: 12px; padding-bottom: 90px; max-width: 640px; margin: 0 auto; width: 100%; }
+.gen-piede { position: sticky; bottom: 0; display: flex; justify-content: space-between; gap: 10px; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg) 30%); max-width: 640px; margin: 0 auto; width: 100%; }
+.gen-piede .btn { flex: 1; }
+.gen-campo { display: flex; flex-direction: column; gap: 6px; }
+.gen-eti { font-weight: 650; font-size: 14px; }
+.gen-sett { display: flex; gap: 6px; }
+.gen-giorno { flex: 1; aspect-ratio: 1; max-width: 46px; border-radius: 50%; background: var(--sup2); font-weight: 700; color: var(--tenue); }
+.gen-giorno.attivo { background: var(--accento); color: #fff; }
+.gen-resa { font-weight: 700; color: var(--accento); }
+.gen-arg { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--linea); }
+.gen-arg:last-child { border-bottom: 0; }
+.gen-debole { display: block; height: 5px; border-radius: 3px; background: var(--sup2); margin-top: 4px; overflow: hidden; }
+.gen-debole i { display: block; height: 100%; border-radius: 3px; }
+.gen-avvisi { background: color-mix(in srgb, #f59f00 15%, var(--sup)); border-radius: 12px; padding: 10px 12px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.gen-anteprima { gap: 0; }
+.gen-giorno-riga { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--linea); align-items: flex-start; }
+.gen-data { width: 74px; flex: none; font-size: 13px; color: var(--tenue); font-variant-numeric: tabular-nums; padding-top: 3px; }
+.gen-voci { display: flex; flex-wrap: wrap; gap: 4px; }
+.gen-voce { font-size: 12.5px; font-weight: 650; padding: 3px 8px; border-radius: 8px; background: color-mix(in srgb, var(--c, var(--accento)) 18%, var(--sup)); color: color-mix(in srgb, var(--c, var(--accento)) 70%, var(--testo)); border-left: 3px solid var(--c, var(--accento)); }
+.gen-voce.speciale { --c: #7c8597; }
