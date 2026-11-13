@@ -2080,6 +2080,220 @@ const Notifiche = (() => {
     return { calcola, allinea, programma, attiva, rigenera, prova, attive, server, PRED, nuovoTopic, fuoriSilenzio };
 })();
 
+// =====================================================================
+// 07-aigen.ts — Quiz Studio Q5: domande nuove generate dall'AI (Groq)
+// 1) l'AI scrive domande SOLO dalle citazioni del libro presenti nella scheda;
+// 2) un secondo passaggio le risolve "alla cieca" (opzioni mescolate, senza
+//    sapere la giusta): se sbaglia o le trova ambigue, la domanda è scartata;
+// 3) controlli automatici (formato, doppioni, lunghezza della corretta);
+// 4) le superstiti vanno nella coda «Da approvare»: entrano nella banca
+//    (record 'modq' nuova) solo quando l'utente le approva.
+// =====================================================================
+const AIGen = (() => {
+    const N = 5;
+    const parole = (s) => new Set(s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 3));
+    function simile(a, b) {
+        const A = parole(a), B = parole(b);
+        if (!A.size || !B.size)
+            return 0;
+        let c = 0;
+        A.forEach(w => { if (B.has(w))
+            c++; });
+        return c / (A.size + B.size - c);
+    }
+    function hash(s) { let x = 5381; for (let i = 0; i < s.length; i++)
+        x = ((x << 5) + x + s.charCodeAt(i)) | 0; return (x >>> 0).toString(36); }
+    const proposte = (sk) => Stato.tutti('propq').filter(r => !r.deleted && (!sk || r.sk === sk));
+    /** Controlli automatici: null se va bene, altrimenti il motivo dello scarto. */
+    function controlla(d, esistenti) {
+        if (!d || typeof d.q !== 'string' || d.q.trim().length < 15)
+            return 'testo mancante';
+        if (!Array.isArray(d.o) || d.o.length !== 5 || d.o.some((x) => typeof x !== 'string' || !x.trim()))
+            return 'servono 5 opzioni';
+        if (new Set(d.o.map((x) => x.trim().toLowerCase())).size < 5)
+            return 'opzioni uguali';
+        if (!Array.isArray(d.ew) || d.ew.length !== 4 || d.ew.some((x) => typeof x !== 'string' || !x.trim()))
+            return 'manca un «perché è sbagliata»';
+        if (!Array.isArray(d.e) || d.e.length < 2)
+            return 'correzione troppo corta';
+        if (esistenti.some(q => simile(q, d.q) >= 0.6))
+            return 'quasi uguale a una domanda già presente';
+        return null;
+    }
+    function promptGenera(titolo, mat, cit, gia, cat, n) {
+        const sys = 'Sei un docente che scrive quiz di ' + mat + ' per il semestre filtro di Medicina (stile dei test di ammissione italiani). '
+            + 'Scrivi in italiano corretto. Usa SOLO le informazioni del TESTO DI RIFERIMENTO: non inventare dati, numeri o fatti che non ci sono. '
+            + 'Rispondi solo con JSON valido.';
+        const u = 'Scheda: ' + titolo + '\n\nTESTO DI RIFERIMENTO (citazioni dal libro del corso):\n' + cit
+            + '\n\nDomande già presenti (NON ripeterle né riformularle):\n- ' + gia.slice(0, 40).join('\n- ')
+            + '\n\nTipi di errore tipici degli studenti (usali per costruire i distrattori):\n' + cat
+            + '\n\nScrivi ' + n + ' domande NUOVE a risposta multipla, diverse tra loro, che verifichino la comprensione (non la memoria di una frase). Regole:\n'
+            + '- 5 opzioni; la corretta è SEMPRE la prima (o[0]); una sola opzione corretta, senza ambiguità;\n'
+            + '- ogni distrattore nasce da un errore preciso e plausibile; la corretta NON deve essere più lunga dei distrattori;\n'
+            + '- niente «tutte le precedenti», «nessuna delle precedenti», niente doppie negazioni;\n'
+            + '- ew: 4 testi, uno per distrattore nello stesso ordine di o[1..4], che spiegano perché è sbagliato;\n'
+            + '- e: correzione passo-passo di 3-4 righe (cosa chiede; il concetto e dove si trova nel testo; il ragionamento; in sintesi la regola da ricordare);\n'
+            + '- cit: la frase del testo di riferimento su cui si basa, copiata parola per parola;\n'
+            + '- lv: uno tra Sbarramento, Applicativo, Trabocchetto.\n'
+            + 'Formato: {"domande":[{"lv":"…","q":"…","o":["corretta","d1","d2","d3","d4"],"ew":["…","…","…","…"],"e":["…","…","…"],"cit":"…"}]}';
+        return [{ role: 'system', content: sys }, { role: 'user', content: u }];
+    }
+    /** Esame alla cieca: restituisce per ogni domanda se il risolutore ha trovato la corretta senza ambiguità. */
+    async function esame(dom, mat, cit) {
+        const L = 'ABCDE';
+        const mesc = dom.map(d => { const ord = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5); return { ord, testo: d.q + '\n' + ord.map((k, i) => L[i] + ') ' + d.o[k]).join('\n') }; });
+        const msgs = [
+            { role: 'system', content: 'Sei un esperto di ' + mat + ' che controlla la qualità dei quiz. Rispondi solo con JSON valido.' },
+            { role: 'user', content: 'Testo di riferimento:\n' + cit + '\n\nRisolvi ogni domanda. Per ciascuna indica la lettera giusta e se è ambigua (più di una opzione accettabile, nessuna corretta, o un dato sbagliato rispetto al testo).\n\n'
+                    + mesc.map((m, i) => 'DOMANDA ' + (i + 1) + '\n' + m.testo).join('\n\n')
+                    + '\n\nFormato: {"risposte":[{"n":1,"lettera":"A","ambigua":false,"motivo":"breve"}]}' },
+        ];
+        const j = await Spiega.chat(msgs, 0);
+        const r = (j && j.risposte) || [];
+        return mesc.map((m, i) => {
+            const x = r.find(y => +y.n === i + 1) || r[i];
+            if (!x)
+                return { ok: false, motivo: 'non verificata' };
+            const k = L.indexOf(String(x.lettera || '').trim().toUpperCase().charAt(0));
+            if (x.ambigua)
+                return { ok: false, motivo: 'ambigua: ' + (x.motivo || '') };
+            if (k < 0 || m.ord[k] !== 0)
+                return { ok: false, motivo: 'il controllo ha dato un\'altra risposta' };
+            return { ok: true, motivo: '' };
+        });
+    }
+    /** Genera e mette in coda le domande per una scheda. Ritorna quante sono entrate in coda e gli scarti. */
+    async function genera(pk, m, micro, s, passo = () => { }) {
+        passo('Leggo la scheda…');
+        const B = await Banca.scheda(pk, m, micro, s);
+        const viste = new Set();
+        const pezzi = [];
+        for (const d of B.domande)
+            for (const c of d.cit || []) {
+                const t = (c.t || '').trim();
+                if (t && !viste.has(t)) {
+                    viste.add(t);
+                    pezzi.push('«' + t + '»' + (c.f ? ' (' + c.f + ')' : ''));
+                }
+            }
+        let cit = '';
+        for (const p of pezzi) {
+            if ((cit + p).length > 6000)
+                break;
+            cit += p + '\n';
+        }
+        if (!cit)
+            throw new Error('Questa scheda non ha citazioni del libro: non posso generare domande sicure.');
+        const esistenti = B.domande.map(d => d.q).concat(proposte(s.id).map(p => p.campi.q || ''));
+        const R = Regole.get();
+        const cat = Object.values(R.categorie).map(c => '- ' + c.etichetta).join('\n');
+        const mat = Spiega.materia(nomeMateria(m));
+        passo('L\'AI scrive ' + N + ' domande…');
+        const j = await Spiega.chat(promptGenera(s.titolo, mat, cit, esistenti, cat, N), 0.6);
+        const grezze = (j && Array.isArray(j.domande)) ? j.domande : [];
+        const scarti = [];
+        const buone = [];
+        for (const d of grezze) {
+            if (d && typeof d.e === 'string')
+                d.e = d.e.split('\n').filter(Boolean);
+            const no = controlla(d, esistenti.concat(buone.map(b => b.q)));
+            if (no)
+                scarti.push(no);
+            else
+                buone.push(d);
+        }
+        if (buone.length) {
+            passo('Controllo alla cieca…');
+            const es = await esame(buone, mat, cit);
+            let inCoda = 0;
+            buone.forEach((d, i) => {
+                if (!es[i].ok) {
+                    scarti.push(es[i].motivo);
+                    return;
+                }
+                const lunga = d.o[0].trim().length > Math.max(...d.o.slice(1).map((x) => x.trim().length));
+                const campi = { t: 'mcq', lv: ['Sbarramento', 'Applicativo', 'Trabocchetto'].includes(d.lv) ? d.lv : 'Applicativo', q: d.q.trim(), o: d.o.map((x) => x.trim()), ew: d.ew.map((x) => x.trim()), e: d.e.map((x) => String(x).trim()), cit: d.cit ? [{ t: String(d.cit).trim(), f: 'testo citato nella scheda' }] : [] };
+                Stato.salva({ id: 'pq-' + hash(s.id + d.q), type: 'propq', updatedAt: 0, sk: s.id, titolo: s.titolo, campi, quando: new Date().toISOString(), avviso: lunga ? 'La risposta corretta è la più lunga: accorciala o allunga un distrattore.' : undefined }, true);
+                inCoda++;
+            });
+            return { inCoda, scarti };
+        }
+        return { inCoda: 0, scarti };
+    }
+    /** Scheda con il peggior rapporto errori (dai quiz nell'app; poi punteggio basso). */
+    function piuDebole() {
+        const agg = new Map();
+        for (const r of QuizApp.stat()) {
+            if (r.deleted || r.sk.startsWith('gen-'))
+                continue;
+            const a = agg.get(r.sk) || { n: 0, ok: 0 };
+            a.n += r.n;
+            a.ok += r.ok;
+            agg.set(r.sk, a);
+        }
+        let best = null, peggio = -1;
+        for (const x of tutteLeSchede()) {
+            if (x.pk.proprio)
+                continue;
+            const a = agg.get(x.s.id), p = Studio.prog(x.s.id);
+            const err = a && a.n ? 1 - a.ok / a.n : p && p.punteggio != null ? 1 - p.punteggio / 100 : -1;
+            if (err > peggio) {
+                peggio = err;
+                best = x;
+            }
+        }
+        return peggio >= 0 ? best : null;
+    }
+    /** Avvia la generazione con avvisi e apre la coda. */
+    async function avvia(pk, m, micro, s) {
+        if (!navigator.onLine) {
+            avviso('Serve la connessione.');
+            return;
+        }
+        avviso('🤖 Genero domande nuove per «' + s.titolo + '»: ci vuole circa un minuto.', 6000);
+        try {
+            const r = await genera(pk, m, micro, s);
+            const sc = r.scarti.length ? ' (' + r.scarti.length + ' scartate dai controlli)' : '';
+            avviso(r.inCoda ? '✅ ' + r.inCoda + ' domande da approvare' + sc + '. Tocca per vederle.' : 'Nessuna domanda ha superato i controlli' + sc + '. Riprova.', 8000, r.inCoda ? () => coda(s.id) : undefined);
+            disegna();
+        }
+        catch (e) {
+            avviso(e.message || 'Errore', 7000);
+        }
+    }
+    /** Coda «Da approvare». */
+    function coda(sk) {
+        const corpo = h('div.modulo');
+        const f = foglio({ titolo: 'Domande AI da approvare', corpo });
+        const disegnaCoda = () => {
+            svuota(corpo);
+            const xs = proposte(sk).sort((a, b) => a.quando.localeCompare(b.quando));
+            if (!xs.length) {
+                corpo.appendChild(h('div.tenue', null, 'Nessuna domanda in attesa.'));
+                return;
+            }
+            corpo.appendChild(h('div.tenue.piccolo', null, xs.length + ' in attesa. La prima opzione è quella corretta. Approva solo quelle che ti sembrano giuste: entrano nella banca della scheda.'));
+            for (const p of xs) {
+                const d = p.campi;
+                const qid = 'q-ai-' + p.id.slice(3);
+                const approva = (campi) => { Stato.salva({ id: 'mq-' + qid, type: 'modq', updatedAt: 0, qid, sk: p.sk, nuova: true, campi }, true); Stato.elimina(p.id); };
+                corpo.appendChild(h('div.gruppo.aig-voce', null, h('div.tenue.piccolo', null, p.titolo + ' · ' + (d.lv || '')), h('div.aig-q', null, d.q || ''), h('ol.aig-opz', null, (d.o || []).map((o, k) => h(k ? 'li' : 'li.aig-giusta', null, h('div', null, (k ? '' : '✓ ') + o), k && d.ew ? h('div.tenue.piccolo', null, d.ew[k - 1]) : null))), h('div.tenue.piccolo', null, (Array.isArray(d.e) ? d.e : [d.e]).join(' · ')), d.cit && d.cit[0] ? h('div.tenue.piccolo', null, 'Fonte: «' + d.cit[0].t + '»') : null, p.avviso ? h('div.qz-avviso', null, '⚠️ ' + p.avviso) : null, h('div.bottoni', null, h('button.btn', { onclick: () => { approva(d); avviso('Aggiunta alla scheda.'); disegnaCoda(); } }, '✅ Approva'), h('button.btn.neutro', { onclick: () => Editor.apri({ ...d, id: qid, sk: p.sk, nuova: true }, p.sk, n => { if (n) {
+                        Stato.elimina(p.id);
+                        disegnaCoda();
+                    } }) }, '✏️ Modifica'), h('button.btn.neutro', { onclick: () => { Stato.elimina(p.id); disegnaCoda(); } }, '🗑 Scarta'))));
+            }
+        };
+        disegnaCoda();
+        void f;
+    }
+    /** Riquadro in Studio → Errori. */
+    function sezione() {
+        const n = proposte().length, x = piuDebole();
+        return h('section.card', null, h('h2.card-titolo', null, '🤖 Domande nuove con l\'AI'), h('div.tenue.piccolo', null, 'L\'AI scrive domande dalle citazioni del libro, le controlla risolvendole alla cieca e le mette qui: entrano nei quiz solo se le approvi.'), h('div.bottoni', null, n ? h('button.btn', { onclick: () => coda() }, 'Da approvare (' + n + ')') : null, x ? h('button.btn.neutro', { onclick: () => avvia(x.pk, x.mat.m, x.mi.n, x.s) }, 'Genera per il punto più debole') : null), x ? h('div.tenue.piccolo', null, 'Punto più debole ora: ' + x.mi.n + ' · ' + x.s.titolo) : null);
+    }
+    return { genera, avvia, coda, sezione, controlla, esame, piuDebole, proposte };
+})();
+
 // 07-carte.ts — Flashcard (v0.18, F3).
 //
 // Ispirazione (ricerca 12/11): Anki (FSRS, 4 tasti con l'intervallo scritto, import da testo con
@@ -2990,7 +3204,7 @@ function vistaErrori() {
             i.sogliaErrori = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 70));
             Stato.salva(i);
         } });
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, sezioneDomande(), Regole.sezioneTipici(), h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, sezioneDomande(), Regole.sezioneTipici(), AIGen.sezione(), h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
         const p = Studio.prog(x.s.id);
         return h('button.voce-lista', { onclick: () => apriScheda(x.pk, x.mat.m, x.mi.n, x.s) }, h('span.barra', { style: { background: coloreMateria(m) } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.mi.n + ' · ' + x.s.titolo), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (p.punteggio != null ? p.punteggio + '%' : 'segnata a mano') + (p.data ? ' · ' + fmt(daYmd(p.data), { day: 'numeric', month: 'short' }) : '') + (p.nota ? ' · ' + p.nota.slice(0, 60) : ''))));
     }))));
@@ -5653,6 +5867,41 @@ const Spiega = (() => {
             throw new Error('Limite gratuito di oggi raggiunto. Riprova più tardi.');
         throw new Error(navigator.onLine === false ? 'Sei offline: le spiegazioni già generate restano disponibili.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
     }
+    /** Q5: chiamata generica (messaggi liberi, risposta JSON) con lo stesso modello di riserva. */
+    async function chat(msgs, temperatura = 0.4) {
+        if (!chiave())
+            throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
+        const modelli = [modello()];
+        if (modelli[0] !== RISERVA)
+            modelli.push(RISERVA);
+        let ultimo = null;
+        for (const mod of modelli) {
+            try {
+                const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: msgs }),
+                });
+                const j = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    const e = new Error((j && j.error && j.error.message) || 'errore ' + r.status);
+                    e.stato = r.status;
+                    throw e;
+                }
+                const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
+                return JSON.parse(t.replace(/^```(json)?|```$/g, ''));
+            }
+            catch (e) {
+                ultimo = e;
+                if (e.stato === 401)
+                    break;
+            }
+        }
+        if (ultimo && ultimo.stato === 401)
+            throw new Error('Chiave Groq non valida: controllala in Altro → Spiegazioni AI.');
+        if (ultimo && ultimo.stato === 429)
+            throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
+        throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
+    }
     // ---- Lato genitore: risponde alle richieste dei quiz aperti nell'app ----
     async function ricevi(e) {
         const m = e.data;
@@ -5816,7 +6065,7 @@ const Spiega = (() => {
         };
         return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
     }
-    return { inietta, sezione, genera, idDi };
+    return { inietta, sezione, genera, idDi, chat, materia };
 })();
 
 // 07-studiaora.ts — "Studia ora" (v0.15, F4 ridotta, tattiche T15–T19).
@@ -6467,7 +6716,7 @@ function apriScheda(pk, m, micro, s, ripasso = false) {
     const apribili = pk.risorse.libri[m] ? blocchi.filter(b => /^\d/.test(b)) : [];
     const f = foglio({
         titolo: (ripasso ? '🧠 Ripasso · ' : '') + micro + ' · scheda ' + s.k + '/' + s.n,
-        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), pk.proprio ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s); } }, '🧩 Quiz nell\'app'), Generatori.per(m, micro).length ? h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s, () => Generatori.serie(m, micro)); } }, '🎲 Esercizi nuovi') : null, h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
+        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), pk.proprio ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s); } }, '🧩 Quiz nell\'app'), Generatori.per(m, micro).length ? h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s, () => Generatori.serie(m, micro)); } }, '🎲 Esercizi nuovi') : null, pk.proprio ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); AIGen.avvia(pk, m, micro, s); } }, '🤖 Domande AI'), h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
             const pag = parseInt(b, 10);
             return h('button.chip', { onclick: async () => {
                     if (serveGoogle())
@@ -7676,7 +7925,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.26.2';
+const VERSIONE = '0.27.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
