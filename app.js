@@ -4227,7 +4227,7 @@ function widgetEsami() {
     const rit = Studio.pkPiani().length ? Studio.inRitardo().length : 0;
     return h('div.tessere', { 'aria-label': 'Prossimi esami' }, prossimi.map((e, i) => {
         const d = giorniA(e.data);
-        return h('button.tessera' + (i === 0 ? '.primo' : ''), { onclick: apri, title: e.nome + ' · ' + dataLunga(daYmd(e.data)) }, h('span.tessera-num', null, h('span.conta', null, String(d)), h('small', null, d === 1 ? ' giorno' : ' giorni')), h('span.tessera-eti', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')), h('span.tessera-sotto', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' })));
+        return lungo(h('button.tessera' + (i === 0 ? '.primo' : ''), { onclick: apri, title: e.nome + ' · ' + dataLunga(daYmd(e.data)) }, h('span.tessera-num', null, h('span.conta', null, String(d)), h('small', null, d === 1 ? ' giorno' : ' giorni')), h('span.tessera-eti', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')), h('span.tessera-sotto', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' }))), () => MenuLungo.esame(), e.nome);
     }), rit ? h('button.tessera.ritardo', { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, h('span.tessera-num', null, h('span.conta', null, String(rit))), h('span.tessera-eti', null, rit === 1 ? 'step indietro' : 'step indietro'), h('span.tessera-sotto', null, 'Vedi il piano')) : null);
 }
 function editorEsame(es) {
@@ -5269,20 +5269,84 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
     let penna = false; // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
     const cv = h('canvas.mano-tela'), g = cv.getContext('2d');
     const vivo = h('canvas.mano-vivo'), gv = vivo.getContext('2d');
-    const pag = h('div.mano-foglio', null, cv, vivo);
-    let scala = 1, dpr = Math.min(2, window.devicePixelRatio || 1);
+    // v0.35: il foglio si ingrandisce con due dita (come Note di iOS): la tela interna si allarga e si scorre
+    const box = h('div.mano-box', null, cv, vivo);
+    const pag = h('div.mano-foglio', null, box);
+    let scala = 1, zoom = 1, dpr = Math.min(2, window.devicePixelRatio || 1);
     function dimensiona() {
-        const w = pag.clientWidth || 360;
+        const w = (pag.clientWidth || 360) * zoom;
         scala = w / LARG;
+        const hh = m.h * scala, d = Math.min(dpr, Math.sqrt(15e6 / Math.max(1, w * hh))); // iOS: tele oltre ~16 Mpx diventano bianche
+        box.style.width = w + 'px';
+        box.style.transform = '';
         for (const c of [cv, vivo]) {
-            c.width = Math.round(w * dpr);
-            c.height = Math.round(m.h * scala * dpr);
-            c.style.height = (m.h * scala) + 'px';
+            c.width = Math.round(w * d);
+            c.height = Math.round(hh * d);
+            c.style.width = w + 'px';
+            c.style.height = hh + 'px';
         }
-        g.setTransform(dpr, 0, 0, dpr, 0, 0);
-        gv.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.setTransform(d, 0, 0, d, 0, 0);
+        gv.setTransform(d, 0, 0, d, 0, 0);
         disegnaMano(g, m, scala);
+        if (zoomEti)
+            zoomEti.hidden = zoom === 1, zoomEti.textContent = Math.round(zoom * 100) + '%';
     }
+    let zoomEti = null;
+    const scorritore = () => { for (let e = pag.parentElement; e; e = e.parentElement) {
+        const o = getComputedStyle(e).overflowY;
+        if ((o === 'auto' || o === 'scroll') && e.scrollHeight > e.clientHeight)
+            return e;
+    } return document.scrollingElement; };
+    function impostaZoom(z, cx, cy) {
+        z = Math.max(1, Math.min(4, z));
+        const r = box.getBoundingClientRect(), pr = pag.getBoundingClientRect();
+        const mx = cx != null ? cx : pr.left + pr.width / 2, my = cy != null ? cy : pr.top + Math.min(pr.height, innerHeight) / 2;
+        const fx = (mx - r.left) / scala, fy = (my - r.top) / scala; // punto del foglio sotto le dita
+        zoom = z;
+        dimensiona();
+        pag.scrollLeft = fx * scala - (mx - pr.left);
+        const r2 = box.getBoundingClientRect();
+        scorritore().scrollTop += (r2.top + fy * scala) - my;
+    }
+    // pizzico: anteprima con transform (fluida), poi ridisegno nitido al rilascio
+    let pz = null;
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    pag.addEventListener('touchstart', e => {
+        if (e.touches.length !== 2)
+            return;
+        if (cur) {
+            cur = null;
+            idPuntatore = -1;
+            if (storia.length)
+                m.t = storia.pop();
+            gv.clearRect(0, 0, vivo.width, vivo.height);
+            disegnaMano(g, m, scala);
+        }
+        const r = box.getBoundingClientRect(), cx = (e.touches[0].clientX + e.touches[1].clientX) / 2, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        pz = { d0: dist(e.touches), z0: zoom, cx, cy, ox: cx - r.left, oy: cy - r.top };
+        box.style.transformOrigin = pz.ox + 'px ' + pz.oy + 'px';
+    }, { passive: true, capture: true });
+    pag.addEventListener('touchmove', e => {
+        if (!pz || e.touches.length !== 2)
+            return;
+        e.preventDefault();
+        const z = Math.max(1, Math.min(4, pz.z0 * dist(e.touches) / pz.d0));
+        box.style.transform = 'scale(' + (z / pz.z0) + ')';
+    }, { passive: false, capture: true });
+    const finePizzico = (e) => {
+        if (!pz || e.touches.length >= 2)
+            return;
+        const m0 = box.style.transform.match(/scale\(([\d.]+)\)/), k = m0 ? parseFloat(m0[1]) : 1, p0 = pz;
+        pz = null;
+        box.style.transform = '';
+        if (Math.abs(k - 1) > .02)
+            impostaZoom(p0.z0 * k, p0.cx, p0.cy);
+    };
+    pag.addEventListener('touchend', finePizzico, { capture: true });
+    pag.addEventListener('touchcancel', finePizzico, { capture: true });
+    // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad)
+    pag.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey)
+        return; e.preventDefault(); impostaZoom(zoom * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); }, { passive: false });
     const salvaStoria = () => { storia.push(m.t.slice()); if (storia.length > 60)
         storia.shift(); futuro.length = 0; };
     // --- v0.33: lazo (seleziona, sposta, elimina, trasforma in carta) ---
@@ -5388,7 +5452,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
             penna = true;
             aggiornaBarra();
         }
-        if (!scrive(e) || cur)
+        if (!scrive(e) || cur || pz)
             return;
         e.preventDefault();
         try {
@@ -5520,14 +5584,14 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
             m.t = futuro.pop();
             disegnaMano(g, m, scala);
             cambia();
-        } }, 'Ripeti'), b({ quadretti: '▦', righe: '☰', bianco: '▢', cornell: '◧', esercizio: '▤' }[m.sf], false, () => { const o = ['quadretti', 'righe', 'bianco', 'cornell', 'esercizio']; m.sf = o[(o.indexOf(m.sf) + 1) % o.length]; disegnaMano(g, m, scala); cambia(); }, 'Sfondo: quadretti / righe / bianco / Cornell / esercizio'), penna ? h('span.tenue.piccolo', null, '✏️ Pencil: il dito scorre') : b(dito ? '☝️ dito: scrive' : '☝️ dito: scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito'));
+        } }, 'Ripeti'), b({ quadretti: '▦', righe: '☰', bianco: '▢', cornell: '◧', esercizio: '▤' }[m.sf], false, () => { const o = ['quadretti', 'righe', 'bianco', 'cornell', 'esercizio']; m.sf = o[(o.indexOf(m.sf) + 1) % o.length]; disegnaMano(g, m, scala); cambia(); }, 'Sfondo: quadretti / righe / bianco / Cornell / esercizio'), (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')), penna ? h('span.tenue.piccolo', null, '✏️ Pencil: il dito scorre') : b(dito ? '☝️ dito: scrive' : '☝️ dito: scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito'));
     }
     pag.classList.toggle('dito', dito);
     aggiornaBarra();
     azioni.hidden = true;
-    contenitore.append(barra, azioni, pag);
+    contenitore.append(azioni, pag, barra); // v0.35: barra fluttuante in basso, sempre visibile mentre scorri i fogli
     requestAnimationFrame(dimensiona);
-    const ro = new ResizeObserver(() => { const w = pag.clientWidth; if (w && Math.abs(w / LARG - scala) > .001)
+    const ro = new ResizeObserver(() => { const w = pag.clientWidth * zoom; if (w && Math.abs(w / LARG - scala) > .001)
         dimensiona(); });
     ro.observe(pag);
     return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf }), ridisegna: dimensiona };
@@ -7577,7 +7641,12 @@ function widgetStudiaOra() {
         const prossima = s.voci.find(v => !v.fatto), fatte = s.voci.filter(v => v.fatto).length;
         return h('section.card', null, h('button.btn.studia-ora', { onclick: apriSessione }, '▶ Sessione in corso · ' + fatte + '/' + s.voci.length), prossima ? h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Prossima: ' + prossima.titolo) : null);
     }
-    return h('section.card', null, h('button.btn.studia-ora', { onclick: apriStudiaOra }, '▶ Studia ora'), h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Scegli quanto tempo hai: l\'app compone la sessione migliore.'));
+    return h('section.card', null, lungo(h('button.btn.studia-ora', { onclick: apriStudiaOra }, '▶ Studia ora'), () => [
+        { t: 'Ripassa le flashcard', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } },
+        { t: 'Rivedi gli errori', ic: 'avvertenza', f: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
+        { t: 'Studio libero con timer', ic: 'cronometro', f: () => Timer.avvia({ titolo: 'Studio libero' }) },
+        { t: 'Simulazione d\'esame', ic: 'quiz', f: () => apriSimulazioni() }
+    ], 'Studia ora'), h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Scegli quanto tempo hai: l\'app compone la sessione migliore.'));
 }
 
 // ============================================================
@@ -8119,7 +8188,7 @@ function barra(fatte, tot, colore) {
 function rigaStudio(x) {
     const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k.replace(/^G2-/, ''));
     const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k); // v0.11: apre la modalità simulazione
-    return h('button.voce-lista', { onclick: () => { if (sim) {
+    return lungo(h('button.voce-lista', { onclick: () => { if (sim) {
             apriSimulazioni();
             return;
         } if (t) {
@@ -8132,7 +8201,7 @@ function rigaStudio(x) {
             UI.studioVista = 'piano';
             UI.studioPiano = x.p.id;
             vai('studio');
-        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
+        } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : ''))), () => sim ? MenuLungo.esame() : MenuLungo.step(x.v.k), x.v.speciale ? x.v.t : Studio.etichetta(x.v.k));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
 /** v0.20.2: flashcard collegate al sotto-step, da aggiungere al sottotitolo delle voci del piano. */
@@ -8604,6 +8673,128 @@ function vistaTabella(t) {
             i.setSelectionRange(i.value.length, i.value.length);
         } }, 300); } }), h('div.tab-scroll', null, h('table.tab', null, h('thead', null, h('tr', null, t.colonne.map(c => h('th', null, h('button', { onclick: () => ordina(c), title: 'Ordina' }, c.nome + freccia(c)), h('button.th-mod', { 'aria-label': 'Modifica colonna ' + c.nome, onclick: () => editorColonna(t, c) }, '⚙'))), h('th.th-piu', null, h('button', { onclick: () => editorColonna(t), 'aria-label': 'Aggiungi colonna' }, '+')))), h('tbody', null, righe.map(r => h('tr', null, t.colonne.map(c => h('td.td-' + c.tipo, null, cella(t, r, c))), h('td', null, h('button.btn-ico', { 'aria-label': 'Elimina riga', onclick: () => { t.righe = t.righe.filter(x => x.id !== r.id); Stato.salva(t); } }, icona('x', 16)))))))), h('div.tenue.piccolo', null, righe.length + ' di ' + t.righe.length + ' righe' + (UI.tabOrd ? ' · ordinate' : '') + '. Le righe con una data compaiono anche nel calendario.'), h('button.btn.neutro', { onclick: () => { t.righe.push({ id: uid(), c: {} }); Stato.salva(t); } }, '+ Aggiungi riga'));
 }
+
+// ============================================================
+// 08-lungo.ts — v0.35: "tieni premuto" (come il tocco prolungato di iOS).
+// Un pulsante tenuto premuto ~0,45 s si "solleva" e apre un menu di
+// scorciatoie collegate a quello che rappresenta. Il tocco normale resta
+// invariato. Le voci sono costruite al momento, così sono sempre attuali.
+// ============================================================
+let lungoAppena = -1e9; // per ignorare il "click" che segue un tocco prolungato
+document.addEventListener('click', e => { if (performance.now() - lungoAppena < 500) {
+    e.preventDefault();
+    e.stopPropagation();
+} }, true);
+function lungo(el, voci, titolo) {
+    let timer = 0, x0 = 0, y0 = 0;
+    const annulla = () => { clearTimeout(timer); timer = 0; el.classList.remove('premendo'); };
+    el.addEventListener('pointerdown', e => {
+        if (e.button > 0)
+            return;
+        x0 = e.clientX;
+        y0 = e.clientY;
+        el.classList.add('premendo');
+        timer = window.setTimeout(() => {
+            timer = 0;
+            el.classList.remove('premendo');
+            lungoAppena = performance.now();
+            apriMenuLungo(el, voci().filter(Boolean), titolo);
+        }, 450);
+    });
+    el.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > 10)
+        annulla(); });
+    el.addEventListener('pointerup', annulla);
+    el.addEventListener('pointercancel', annulla);
+    el.addEventListener('pointerleave', annulla);
+    el.addEventListener('contextmenu', e => { e.preventDefault(); if (!timer && performance.now() - lungoAppena > 600) {
+        lungoAppena = performance.now();
+        apriMenuLungo(el, voci().filter(Boolean), titolo);
+    } });
+    el.classList.add('ha-lungo');
+    return el;
+}
+function apriMenuLungo(da, voci, titolo) {
+    if (!voci.length)
+        return;
+    document.querySelectorAll('.lungo-sfondo').forEach(x => x.remove());
+    Tocco.clic(1.2);
+    const r = da.getBoundingClientRect();
+    const chiudi = () => { sfondo.classList.add('esce'); setTimeout(() => sfondo.remove(), 160); };
+    const menu = h('div.lungo-menu', { role: 'menu' }, titolo ? h('div.lungo-tit', null, titolo) : null, voci.map((v, i) => h('button.lungo-voce' + (v.pericolo ? '.pericolo' : ''), { role: 'menuitem', style: { animationDelay: (i * 22) + 'ms' }, onclick: () => { chiudi(); setTimeout(v.f, 60); } }, h('span.voce-corpo', null, h('span.lungo-t', null, v.t), v.sotto ? h('span.lungo-s', null, v.sotto) : null), v.ic ? icona(v.ic, 18) : null)));
+    const sfondo = h('div.lungo-sfondo', { onclick: (e) => { if (e.target === sfondo)
+            chiudi(); } }, menu);
+    document.body.appendChild(sfondo);
+    // posizione: vicino al pulsante, dentro lo schermo
+    const mw = Math.min(280, innerWidth - 24), mh = menu.offsetHeight;
+    const sotto = r.bottom + 8 + mh < innerHeight - 12;
+    menu.style.width = mw + 'px';
+    menu.style.left = Math.max(12, Math.min(innerWidth - mw - 12, r.left + r.width / 2 - mw / 2)) + 'px';
+    menu.style.top = (sotto ? r.bottom + 8 : Math.max(12, r.top - mh - 8)) + 'px';
+    menu.style.transformOrigin = (r.left + r.width / 2 - parseFloat(menu.style.left)) + 'px ' + (sotto ? '0' : '100%');
+    const esc = (e) => { if (e.key === 'Escape') {
+        chiudi();
+        document.removeEventListener('keydown', esc);
+    } };
+    document.addEventListener('keydown', esc);
+    menu.querySelector('button')?.focus({ preventScroll: true });
+}
+// ---------- I menu collegati ----------
+const MenuLungo = {
+    sezione(s) {
+        const vaiStudio = (v) => () => { UI.studioVista = v; UI.studioSub = null; vai('studio'); };
+        switch (s) {
+            case 'oggi': return [
+                { t: 'Studia ora', ic: 'play', f: () => apriStudiaOra() },
+                { t: 'Nuovo evento o promemoria', ic: 'piu', f: () => apriNuovo() },
+                { t: 'Chiudi la giornata', ic: 'luna', f: () => apriChiusura() },
+            ];
+            case 'cal': return ['giorno', 'settimana', 'mese', 'agenda'].map(v => ({ t: maiuscola(v), ic: 'cal', f: () => { UI.data = oggi(); vai('cal', v); } }))
+                .concat([{ t: 'Nuovo evento', ic: 'piu', f: () => apriNuovo() }]);
+            case 'studio': return [
+                { t: 'Schede dello step', ic: 'quiz', f: vaiStudio('schede') }, { t: 'Flashcard', ic: 'carte', f: vaiStudio('carte') },
+                { t: 'Piano', ic: 'cal', f: vaiStudio('piano') }, { t: 'Errori da rivedere', ic: 'avvertenza', f: vaiStudio('errori') },
+                { t: 'Statistiche', ic: 'grafico', f: vaiStudio('statistiche') }, { t: 'Esami', ic: 'bersaglio', f: vaiStudio('esami') },
+            ];
+            case 'appunti': {
+                const ult = Appunti.tutti().slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 3);
+                return [{ t: 'Nuovo appunto', ic: 'piu', f: () => { vai('appunti'); apriAppunto(); } }]
+                    .concat(ult.map((a) => ({ t: a.titolo || '(senza titolo)', sotto: 'Ultimo modificato', ic: 'documento', f: () => { vai('appunti'); apriAppunto(a); } })));
+            }
+            case 'altro': return [
+                { t: 'Promemoria', ic: 'task', f: () => vai('task') }, { t: 'Note', ic: 'note', f: () => vai('note') },
+                { t: 'Aspetto', ic: 'ingranaggio', f: () => { UI.altroSez = 'aspetto'; vai('altro'); } },
+                { t: 'Studio e AI', ic: 'ai', f: () => { UI.altroSez = 'studio'; vai('altro'); } },
+                Drive.collegato ? { t: 'Sincronizza ora', ic: 'nuvola', f: () => Drive.sincronizza(false) } : { t: 'Collega Google Drive', ic: 'nuvola', f: () => Drive.login() },
+            ];
+        }
+        return [];
+    },
+    /** una voce del piano (es. Chi 2.2): tutto ciò che è collegato a quello step */
+    step(k) {
+        const t = Studio.trovaSotto(k.replace(/^G2-/, ''));
+        if (!t)
+            return [];
+        const et = Studio.etichetta(t.sub.k);
+        const mz = Carte.mazzi().filter(m => m.sub === t.sub.k);
+        const ap = Appunti.tutti().filter(a => a.sub === t.sub.k);
+        return [
+            { t: 'Apri ' + et, ic: 'quiz', f: () => { UI.studioSub = t.sub.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } },
+            { t: 'Avvia timer', sotto: '25 min su ' + et, ic: 'cronometro', f: () => Timer.avvia({ m: materiaDi(t.sub.k), k: t.sub.k, titolo: et }) },
+            mz.length ? { t: 'Flashcard dello step', sotto: Carte.conta(mz.map(m => m.id)) + ' carte', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } } : null,
+            ap.length ? { t: 'Appunto: ' + (ap[0].titolo || et), ic: 'documento', f: () => apriAppunto(ap[0]) } : { t: 'Nuovo appunto su ' + et, ic: 'piu', f: () => apriAppunto(undefined, { sub: t.sub.k }) },
+            { t: 'Errori di questo step', ic: 'avvertenza', f: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
+        ].filter(Boolean);
+    },
+    esame() {
+        const vs = (v) => () => { UI.studioVista = v; UI.studioSub = null; vai('studio'); };
+        return [
+            { t: 'Simulazione d\'esame', ic: 'cronometro', f: () => apriSimulazioni() },
+            { t: 'Errori da rivedere', ic: 'avvertenza', f: vs('errori') },
+            { t: 'Statistiche', ic: 'grafico', f: vs('statistiche') },
+            { t: 'Ripianifica i ritardi', ic: 'ripeti', f: () => apriRipianifica() },
+        ];
+    },
+};
 
 // ============================================================
 // 06-viste.ts — Le schermate: Oggi, Calendario (giorno/settimana/mese/
@@ -9320,7 +9511,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.34.0';
+const VERSIONE = '0.35.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -9366,9 +9557,9 @@ function disegna() {
     const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
     const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => {
         const att = UI.scheda === s || (s === 'altro' && inAltro);
-        return h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio')
+        return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio')
                 UI.studioSub = null; if (s === 'altro')
-                UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t));
+                UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
     }));
     // direzione dell'animazione: verso destra o sinistra secondo la posizione in barra
     const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro', 'task', 'note', 'cerca'];
@@ -9402,6 +9593,78 @@ function disegna() {
         Tocco.conta(main);
     if (inAltro || (UI.scheda === 'altro' && UI.altroSez))
         attivaIndietroSwipe(main);
+    else
+        attivaScorriSezioni(main, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(x => x[0]));
+}
+/** v0.35: scorrendo col dito a destra/sinistra si passa alla sezione accanto (la pagina segue il dito). */
+const ZONE_SENZA_SCORRI = 'input, textarea, select, canvas, [contenteditable], .mano-foglio, .mano-barra, .segmenti, .chips, .gr-scroll, .mese, .cal, .tabella, .scorre, .tessere, .carta, .foglio, input[type=range]';
+function attivaScorriSezioni(main, ordine) {
+    const i = ordine.indexOf(UI.scheda);
+    if (i < 0 || UI.scheda === 'cal')
+        return; // il calendario usa lo scorrimento per cambiare periodo
+    let x0 = 0, y0 = 0, dx = 0, attivo = false, deciso = false, scartato = false, t0 = 0;
+    const pag = () => main.firstElementChild;
+    const scorribile = (el) => {
+        for (; el && el !== main; el = el.parentElement)
+            if (el.scrollWidth > el.clientWidth + 4 && getComputedStyle(el).overflowX !== 'visible')
+                return true;
+        return false;
+    };
+    main.addEventListener('touchstart', e => {
+        const t = e.target;
+        scartato = e.touches.length > 1 || !!t.closest(ZONE_SENZA_SCORRI) || scorribile(t) || e.touches[0].clientX < 24;
+        x0 = e.touches[0].clientX;
+        y0 = e.touches[0].clientY;
+        dx = 0;
+        attivo = false;
+        deciso = false;
+        t0 = performance.now();
+    }, { passive: true });
+    main.addEventListener('touchmove', e => {
+        if (scartato)
+            return;
+        const mx = e.touches[0].clientX - x0, my = e.touches[0].clientY - y0;
+        if (!deciso) {
+            if (Math.abs(mx) < 10 && Math.abs(my) < 10)
+                return;
+            deciso = true;
+            attivo = Math.abs(mx) > Math.abs(my) * 1.4;
+            if (!attivo)
+                return;
+        }
+        if (!attivo)
+            return;
+        dx = mx;
+        const bordo = (dx > 0 && i === 0) || (dx < 0 && i === ordine.length - 1);
+        const p = pag();
+        if (p) {
+            p.style.transition = 'none';
+            p.style.transform = 'translateX(' + (bordo ? dx / 4 : dx * 0.6) + 'px)';
+            p.style.opacity = String(1 - Math.min(Math.abs(dx) / 900, .35));
+        }
+    }, { passive: true });
+    main.addEventListener('touchend', () => {
+        if (!attivo)
+            return;
+        const p = pag(), vel = Math.abs(dx) / Math.max(1, performance.now() - t0);
+        const j = i + (dx < 0 ? 1 : -1);
+        if ((Math.abs(dx) > 90 || (vel > .5 && Math.abs(dx) > 40)) && j >= 0 && j < ordine.length) {
+            if (p) {
+                p.style.transition = 'transform .14s ease-in, opacity .14s';
+                p.style.transform = 'translateX(' + (dx < 0 ? -80 : 80) + 'px)';
+                p.style.opacity = '0';
+            }
+            Tocco.clic(0.7);
+            setTimeout(() => { if (ordine[j] === 'studio')
+                UI.studioSub = null; if (ordine[j] === 'altro')
+                UI.altroSez = null; vai(ordine[j]); }, 120);
+        }
+        else if (p) {
+            p.style.transition = 'transform .3s var(--molla, ease), opacity .3s';
+            p.style.transform = '';
+            p.style.opacity = '';
+        }
+    }, { passive: true });
 }
 /** v0.34: nelle sotto-pagine si torna indietro scorrendo dal bordo sinistro (come su iPhone). */
 function attivaIndietroSwipe(el) {
@@ -9423,19 +9686,19 @@ function avvisoNovita() {
     if (navigator.webdriver)
         return; // nei test automatici niente finestre
     try {
-        if (localStorage.getItem('imc-novita-034'))
+        if (localStorage.getItem('imc-novita-035'))
             return;
         if (!Stato.tutti('task').length && !Stato.tutti('nota').length) {
-            localStorage.setItem('imc-novita-034', '1');
+            localStorage.setItem('imc-novita-035', '1');
             return;
         }
     }
     catch (_) {
         return;
     }
-    chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], 'Promemoria e Note ora sono in Altro (in alto, ben visibili) e restano anche nei riquadri di Oggi. Con la lente puoi cercare anche le impostazioni.')
+    chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], '• Scorri col dito a destra o sinistra per passare da una sezione all\'altra.\n• Tieni premuto un pulsante della barra, un esame o una voce del piano: compaiono le scorciatoie collegate.\n• Promemoria e Note ora sono in Altro (in alto) e restano nei riquadri di Oggi.\n• Nelle pagine a mano: due dita per ingrandire.')
         .then(() => { try {
-        localStorage.setItem('imc-novita-034', '1');
+        localStorage.setItem('imc-novita-035', '1');
     }
     catch (_) { /* niente */ } });
 }
