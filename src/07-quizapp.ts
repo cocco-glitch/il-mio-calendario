@@ -97,7 +97,7 @@ const QuizApp = (() => {
   }
   const mescola = <T>(a: T[]) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-  interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string }; }
+  interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; avv?: string; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string }; }
 
   function registraStat(v: Voce): void {
     const id = 'sq-' + v.d.id, p = Stato.prendi<StatQ>(id);
@@ -133,7 +133,7 @@ const QuizApp = (() => {
       + (d.cl ? '<div class="qz-mia"><b>Spiegazione di Claude</b> ' + esc(d.cl) + '</div>' : '') + (!d.cit && !d.cl ? '<p>' + fmt(Array.isArray(d.e) ? d.e.join(' ') : d.e) + '</p>' : '') + '</div>';
     function correzione(x: Voce): string {
       const d = x.d, ew = d.ew || [], mc = d.t === 'mcq';
-      let s2 = '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
+      let s2 = (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
         + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passi(d.e);
       if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o![x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
       else if (!x.ok && !mc && ew[0]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
@@ -176,7 +176,9 @@ const QuizApp = (() => {
       const x = P[cur]; if (fatta(x)) return;
       if (typeof val === 'number') { x.picked = val; x.ok = x.ord[val] === 0; }
       else { if (!normR(val)) { avviso('Scrivi una risposta.'); return; } x.picked = val.trim(); x.ok = giusta(val, x.d.a || []); }
-      registraStat(x); disegnaQ();
+      registraStat(x);
+      if (!x.ok) { const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null; x.avv = Regole.avvisoRisposta(x.d, dk); }
+      disegnaQ();
       const w = app.querySelector('#qz-why'); if (w) w.scrollIntoView({ block: 'nearest' });
     }
     async function chiediAI(l: string, forza: boolean): Promise<void> {
@@ -248,7 +250,7 @@ const QuizApp = (() => {
       else if (e.key === 'ArrowLeft') (app.querySelector('[data-az=prec]') as HTMLElement).click();
     };
     document.addEventListener('keydown', tasti);
-    nuovo(dati.domande.map((_, k) => k), false);
+    nuovo(gen ? dati.domande.map((_, k) => k) : Regole.ordina(dati.domande), false);
   }
 
   /** Statistiche per domanda (per Q4 e per la vista Errori). */

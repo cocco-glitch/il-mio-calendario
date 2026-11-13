@@ -78,7 +78,7 @@ const Generatori = (() => {
       q: v => fN(v.m) + ' g di ' + v.f + ' (M = ' + fN(v.M) + ' g/mol) in ' + fN(v.V) + ' L di soluzione. Molarità?',
       d: [['massa', v => v.m / v.V, 'Hai usato la massa al posto delle moli (manca ÷ M).'],
         ['molt', v => v.m / v.M * v.V, 'Hai moltiplicato per il volume invece di dividere.'],
-        ['mm', v => v.m * v.M / v.V, 'Hai moltiplicato la massa per la massa molare: n = m / M.'],
+        ['mmolt', v => v.m * v.M / v.V, 'Hai moltiplicato la massa per la massa molare: n = m / M.'],
         ['ml', v => v.m / v.M / (v.V * 1000), 'Hai trasformato i litri in mL al denominatore.']],
       passi: (v, r) => ['Moli: n = ' + fN(v.m) + ' / ' + fN(v.M) + ' = ' + fN(v.m / v.M) + ' mol', 'M = n / V = ' + fN(v.m / v.M) + ' / ' + fN(v.V), 'Risultato: ' + fN(r) + ' M'] },
     { id: 'c-diluizione', m: 'C', micro: ['2.3.4'], lv: 'Problema', titolo: 'Diluizione',
@@ -366,8 +366,8 @@ const Generatori = (() => {
   /** Serie di esercizi per un microstep: ogni modello almeno una volta, fino a n domande. */
   function serie(m: string, micro: string, n = 8): DomB[] {
     const ms = per(m, micro); if (!ms.length) return [];
-    const out: DomB[] = [];
-    for (let i = 0; out.length < n && i < n * 4; i++) { const d = genera(ms[i % ms.length]); if (d) out.push(d); }
+    const out: DomB[] = [], scelti = Regole.scegliModelli(ms, n * 2);   // Q4: quota ai modelli dove sbagli
+    for (let i = 0; out.length < n && i < scelti.length; i++) { const d = genera(scelti[i]); if (d) out.push(d); }
     return out.sort(() => Math.random() - 0.5);
   }
   function titoloMicro(pk: PkStep, m: string, micro: string): string {

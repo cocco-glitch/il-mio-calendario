@@ -33,6 +33,7 @@ function vistaErrori(): HTMLElement {
   } });
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
     sezioneDomande(),
+    Regole.sezioneTipici(),
     h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'),
       riga('Soglia', soglia, h('span.dopo', null, '%'))),
     lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'),

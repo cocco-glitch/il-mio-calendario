@@ -472,6 +472,7 @@ function vistaAltro(): HTMLElement {
     sezioneStudio(salvaImp),
     sezioneNotifiche(salvaImp),
     Spiega.sezione(),
+    Regole.sezioneAltro(),
     sezioneCalendari(salvaImp),
     scheda('I miei dati',
       h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'),
