@@ -88,3 +88,11 @@ Il piano per rendere l'app adatta a qualsiasi studio è in `docs/PROGRESSIONE.md
 **Vetro (v0.20):** tutto in fondo a `public/style.css` sotto `:root[data-vetro="si"]` e dentro `@supports (backdrop-filter)`: senza supporto o con `imp().vetro = 'no'` restano le superfici piene. Variabili `--vetro`, `--vetro-forte`, `--vetro-bordo`, `--vetro-ombra`, `--vetro-blur`, curve `--molla` e `--dolce`. Sul telefono la `.tabbar` è `position: fixed` e `main` ha il padding inferiore: le viste con altezza al 100% (calendario) finiscono sopra la barra. `main.entra` (animazione di ingresso) solo quando cambia scheda. Forme: `formaMateria(code)`, `segnoMateria(k)`. Test: `test/vetro.py`.
 
 **Piani nascosti (v0.20.1):** `imp().pianiNascosti` (id). Usa `Studio.pianiAttivi()` per tutto ciò che è «operativo» (giorno, ritardi, calendario Google, ripassi); `Studio.pkPiani()` solo dove servono tutti (vista Piano).
+
+## Seconda persona (v0.26)
+- `src/06-drive.ts`: `PROPRIETARIO` + `SECONDO_ACCOUNT` (vuoto finché non si scrive il suo Gmail). Deve anche essere
+  tra gli utenti di prova del progetto Google Cloud (console → Google Auth Platform → Pubblico/Audience).
+- Il programma pubblicato col sito (`studio/pacchetti`) si carica solo per il proprietario (`Drive.eProprietario()`);
+  i record importati dal sito hanno `daSito: true` e al primo accesso di un altro account `Studio.togliSito()` li elimina.
+- Kit per il suo Claude: `docs/kit-studio/DIRETTIVE-QUIZ.md` + `studio/strumenti/quiz/` (motore, build, verifica, esempio).
+  Test: `test/secondo.py`.

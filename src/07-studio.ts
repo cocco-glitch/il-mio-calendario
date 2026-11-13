@@ -87,23 +87,30 @@ const Studio = (() => {
   function pkPiano(): PkPiano | null { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
 
   /** Inserisce/aggiorna un pacchetto. I progressi stanno altrove: non si perdono. */
-  function importa(c: any): boolean {
+  function importa(c: any, daSito = false): boolean {
     if (!c || c.formato !== 'pacchetto-studio' || !c.id || !c.tipo) return false;
     const id = 'pk-' + c.id, mio = Stato.rec.get(id);
     if (mio && !mio.deleted && JSON.stringify(mio.contenuto) === JSON.stringify(c)) return false;
     // mai sostituire un pacchetto con una versione più vecchia (es. sito vs Drive)
     if (mio && !mio.deleted && mio.contenuto && String(mio.contenuto.aggiornato || '') > String(c.aggiornato || '')) return false;
-    Stato.salva({ id, type: 'pacchetto', updatedAt: 0, contenuto: c });
+    Stato.salva({ id, type: 'pacchetto', updatedAt: 0, contenuto: c, daSito: daSito || undefined } as any);
     // esami indicati dal pacchetto: creati una volta sola (poi li gestisce l'utente)
-    for (const e of c.esami || []) if (e && e.id && !Stato.rec.has(e.id)) Stato.salva({ id: e.id, type: 'esame', updatedAt: 0, nome: e.nome, data: e.data, ora: e.ora });
+    for (const e of c.esami || []) if (e && e.id && !Stato.rec.has(e.id)) Stato.salva({ id: e.id, type: 'esame', updatedAt: 0, nome: e.nome, data: e.data, ora: e.ora, daSito: daSito || undefined } as any);
     return true;
   }
   /** Pacchetti distribuiti col sito (base di partenza). */
   async function caricaDalSito(): Promise<void> {
+    if (!Drive.eProprietario()) return;   // v0.26: il programma del sito è solo del proprietario
     try {
       const r = await fetch('studio/indice.json', { cache: 'no-cache' }); if (!r.ok) return;
-      for (const f of await r.json() as string[]) { const p = await fetch('studio/' + f, { cache: 'no-cache' }); if (p.ok) importa(await p.json()); }
+      for (const f of await r.json() as string[]) { const p = await fetch('studio/' + f, { cache: 'no-cache' }); if (p.ok) importa(await p.json(), true); }
     } catch (_) { /* offline o anteprima */ }
+  }
+  /** v0.26: il secondo account non deve ereditare il programma del sito caricato prima dell'accesso. */
+  function togliSito(): number {
+    let n = 0;
+    for (const r of Stato.rec.values()) if ((r as any).daSito && !r.deleted) { Stato.elimina(r.id); n++; }
+    return n;
   }
   /** Pacchetti nella cartella Drive dell'app (quelli creati da Claude in futuro). */
   async function caricaDaDrive(): Promise<number> {
@@ -215,7 +222,7 @@ const Studio = (() => {
     return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
   }
 
-  return { pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+  return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
     dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 

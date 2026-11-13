@@ -22,7 +22,13 @@ const G_APP_ID = '1032464441107';
 // pacchetti creati da Claude). L'app non può modificare né eliminare nulla fuori dalla sua cartella.
 const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly openid email';
 // Privacy "solo mia": l'app accetta solo questo account (oltre al blocco lato Google: progetto in Testing con un solo utente di test).
-const ACCOUNT_AMMESSO = 'cocco.haloa@gmail.com';
+// v0.26: due account ammessi. Il proprietario vede anche il programma pubblicato col sito (Medicina);
+// il secondo account parte vuoto e riceve i suoi pacchetti dalla sua cartella Drive. Per ammettere
+// la seconda persona: scrivere il suo Gmail in SECONDO_ACCOUNT (minuscolo) e ripubblicare; deve
+// anche essere tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
+const PROPRIETARIO = 'cocco.haloa@gmail.com';
+const SECONDO_ACCOUNT = '';
+const ACCOUNT_AMMESSI = [PROPRIETARIO, SECONDO_ACCOUNT].filter(Boolean);
 const CARTELLA_APP = 'Calendario personale';
 /** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
 function scopeAttuale(): string { try { return G_SCOPE + (imp().gcal ? ' https://www.googleapis.com/auth/calendar.app.created' : ''); } catch (_) { return G_SCOPE; } }
@@ -217,12 +223,13 @@ const Drive = (() => {
       if (!await tokenValido(forzaLogin)) throw new Error('NOLOGIN');
       if (!stato.email) {
         const email = await chiSono();
-        if (email.toLowerCase() !== ACCOUNT_AMMESSO) {
+        if (!ACCOUNT_AMMESSI.includes(email.toLowerCase())) {
           try { google.accounts.oauth2.revoke(token, () => { /* ok */ }); } catch (_) { /* niente */ }
           token = '';
           throw new Error('Questa app è privata: l\'account ' + email + ' non è autorizzato.');
         }
         stato.email = email; LS.set('email', stato.email);
+        if (email.toLowerCase() !== PROPRIETARIO && typeof Studio !== 'undefined') Studio.togliSito();
       }
       await preparaCartelle();
 
@@ -337,6 +344,8 @@ const Drive = (() => {
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
     elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
     get collegato() { return !!stato.email; },
+    /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
+    eProprietario(): boolean { return !stato.email || stato.email.toLowerCase() === PROPRIETARIO; },
     /** true se c'è un token valido adesso (senza aprire finestre). */
     get pronto() { return !!token && Date.now() < scadenzaToken; },
   };
