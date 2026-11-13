@@ -95,6 +95,8 @@ const Carte = (() => {
       if (s.k === ma.m + m[1]) cand.push({ sub: s.k });
       for (const mi of s.microstep) if (mi.n === m[1]) cand.push({ sub: s.k, micro: mi.n });
     }
+    // v0.31.2: se lo step non ha ancora schede ma è nel piano (es. «Chi 5.2»), collega alla voce del piano
+    if (!cand.length && mat) { const k = mat + m[1].split('.').slice(0, 2).join('.'); if (Studio.pkPiani().some(p => p.giorni.some(g => g.voci.some(v => v.k === k)))) cand.push({ sub: k, ...(m[1].split('.').length > 2 ? { micro: m[1] } : {}) }); }
     return cand.length === 1 ? cand[0] : {};
   }
 
