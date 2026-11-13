@@ -7,7 +7,7 @@ try:
     with sync_playwright() as p:
         b = p.chromium.launch(); pg = b.new_page()
         pg.on('pageerror', lambda e: errori.append(str(e)))
-        pg.goto('http://127.0.0.1:8770/index.html'); pg.wait_for_timeout(1500)
+        pg.goto('http://127.0.0.2:8770/index.html'); pg.wait_for_timeout(1500)
         assert pg.evaluate("Stato.tutti('pacchetto').filter(r => !r.deleted).length") == 0, 'senza account l\'app deve essere vuota'
         assert not pg.evaluate("Drive.eProprietario()")
         pg.evaluate("Drive.stato.email = 'cocco.haloa@gmail.com'")
