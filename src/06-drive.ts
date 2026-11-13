@@ -229,7 +229,7 @@ const Drive = (() => {
           throw new Error('Questa app è privata: l\'account ' + email + ' non è autorizzato.');
         }
         stato.email = email; LS.set('email', stato.email);
-        if (email.toLowerCase() !== PROPRIETARIO && typeof Studio !== 'undefined') Studio.togliSito();
+        if (typeof Studio !== 'undefined') { if (email.toLowerCase() !== PROPRIETARIO) Studio.togliSito(); else Studio.caricaDalSito(); }
       }
       await preparaCartelle();
 
@@ -345,7 +345,7 @@ const Drive = (() => {
     elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
     get collegato() { return !!stato.email; },
     /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
-    eProprietario(): boolean { return !stato.email || stato.email.toLowerCase() === PROPRIETARIO; },
+    eProprietario(): boolean { return !!stato.email && stato.email.toLowerCase() === PROPRIETARIO; },
     /** true se c'è un token valido adesso (senza aprire finestre). */
     get pronto() { return !!token && Date.now() < scadenzaToken; },
   };

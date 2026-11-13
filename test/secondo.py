@@ -8,9 +8,13 @@ try:
         b = p.chromium.launch(); pg = b.new_page()
         pg.on('pageerror', lambda e: errori.append(str(e)))
         pg.goto('http://localhost:8770/index.html'); pg.wait_for_timeout(1500)
-        n = pg.evaluate("Stato.tutti('pacchetto').filter(r => r.daSito).length")
-        assert n >= 3, n                                   # primo avvio senza account: caricato
+        assert pg.evaluate("Stato.tutti('pacchetto').filter(r => !r.deleted).length") == 0, 'senza account l\'app deve essere vuota'
+        assert not pg.evaluate("Drive.eProprietario()")
+        pg.evaluate("Drive.stato.email = 'cocco.haloa@gmail.com'")
         assert pg.evaluate("Drive.eProprietario()")
+        pg.evaluate("Studio.caricaDalSito()"); pg.wait_for_timeout(800)
+        n = pg.evaluate("Stato.tutti('pacchetto').filter(r => r.daSito).length")
+        assert n >= 3, n
         pg.evaluate("Drive.stato.email = 'altra.persona@gmail.com'")
         assert not pg.evaluate("Drive.eProprietario()")
         tolti = pg.evaluate("Studio.togliSito()")
