@@ -11,7 +11,7 @@
 // 'mz-appunti'), collegato allo stesso sotto-step; una riga cancellata toglie la sua carta.
 // Drive: copia «titolo.md» in «Calendario personale/Appunti», SOLO dopo conferma nell'app.
 
-interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; fonte?: { id: string; agg?: string }; creato?: string; sub?: string; micro?: string; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number; }
+interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; mano?: Mano; manoPng?: string; fonte?: { id: string; agg?: string }; creato?: string; sub?: string; micro?: string; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number; }
 
 const Appunti = (() => {
   const tutti = () => Stato.tutti<Appunto>('appunto').sort((a, b) => b.updatedAt - a.updatedAt);
@@ -81,10 +81,14 @@ const Appunti = (() => {
     const cart = await Drive.sottocartella('Appunti');
     const nome = (a.titolo || 'Appunto').replace(/[\\/:*?"<>|]/g, '-') + '.md';
     const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n' + (a.riassunto ? '\n---\n**Riassunto:** ' + a.riassunto + '\n' : '');
-    const id = await Drive.carica(nome, cart, corpo, 'text/markdown', a.drive && a.drive.id);
-    a.drive = { id, agg: Date.now(), h: Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '')) }; Stato.salva(a);
+    if (a.mano && a.mano.t.length) {   // v0.31: anche la pagina a mano, come PNG
+      const png = await (await fetch(immagineMano(a.mano, 1400))).blob();
+      a.manoPng = await Drive.carica(nome.replace(/\.md$/, '.png'), cart, png, 'image/png', a.manoPng);
+    }
+    const id = await Drive.carica(nome, cart, corpo + (a.manoPng ? '\n![Pagina a mano](' + nome.replace(/\.md$/, '.png') + ')\n' : ''), 'text/markdown', a.drive && a.drive.id);
+    a.drive = { id, agg: Date.now(), h: Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '') + (a.mano ? a.mano.t.length + ':' + a.mano.t.join('').length : '')) }; Stato.salva(a);
   }
-  const daSalvareSuDrive = (a: Appunto) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || ''));
+  const daSalvareSuDrive = (a: Appunto) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '') + (a.mano ? a.mano.t.length + ':' + a.mano.t.join('').length : ''));
   // ---------- Fase 2: sezioni Cornell e ripasso dell'appunto ----------
   /** Divide l'appunto in sezioni (dai titoli); spunti = titolo + domande «::» + righe che finiscono con «?». */
   function sezioni(a: Appunto): { id: string; titolo: string; spunti: string[]; testo: string }[] {
@@ -122,7 +126,7 @@ const Appunti = (() => {
 async function chiediDrive(a: Appunto, forza = false): Promise<void> {
   if (!Drive.collegato || !Appunti.daSalvareSuDrive(a)) { if (forza && !Drive.collegato) avviso('Collega Google Drive da Altro.'); return; }
   const s = await chiedi('Salvare «' + a.titolo + '» su Drive?', [{ testo: a.drive ? '☁︎ Aggiorna la copia' : '☁︎ Salva su Drive', valore: 'si' }],
-    'Copia .md in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
+    'Copia .md' + (a.mano && a.mano.t.length ? ' + pagina a mano in PNG' : '') + ' in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
   if (s !== 'si') return;
   if (serveGoogle()) return;
   try { await Appunti.suDrive(a); avviso('☁︎ Salvato su Drive.'); } catch (e: any) { avviso('Drive: ' + (e.message || e), 6000); }
@@ -137,13 +141,17 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo) as HTMLTextAreaElement;
   const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '') as HTMLTextAreaElement;
   const stato = h('div.appunto-stato.tenue.piccolo');
+  // v0.31: modalità a mano (Pencil) o testo; la pagina a mano sta sopra, il testo (anche trascritto) sotto
+  let modo: 'testo' | 'mano' = ap.mano && ap.mano.t.length ? 'mano' : ((imp() as any).modoAppunti === 'mano' ? 'mano' : 'testo');
+  const zonaMano = h('div.mano-zona');
+  let pagina: ReturnType<typeof paginaMano> | null = null;
   const anteprima = h('div.appunto-anteprima', { hidden: true });
   const aggiornaStato = () => {
     const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
     svuota(stato); stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
   };
   let timer = 0;
-  const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (!ap.testo.trim() && !ap.titolo.trim()) return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi<Appunto>(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
+  const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (pagina) { const d = pagina.dati(); ap.mano = d.t.length ? d : undefined; } if (!ap.testo.trim() && !ap.titolo.trim() && !ap.mano) return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi<Appunto>(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
   const modifica = () => { cambiato = true; aggiornaStato(); clearTimeout(timer); timer = setTimeout(salvaOra, 1500) as any; };
   titolo.addEventListener('input', modifica); testo.addEventListener('input', modifica); riass.addEventListener('input', modifica);
   function fine(): void {
@@ -174,9 +182,23 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     if (s === 'carte') { salvaOra(); avviaCarte(['mz-ap-' + ap.id.replace(/^ap-/, '')], ap.titolo); }
     if (s === 'del') { const x = Stato.prendi<Appunto>(ap.id); if (x) Appunti.elimina(x); cambiato = false; v.chiudi(); avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).'); }
   } }, '⋯'));
-  v.corpo.append(h('div.appunto', null, titolo, stato, barra, testo, anteprima, riass));
+  const scambio = h('div.segmenti.appunto-modo');
+  const leggi = h('button.btn.mano-leggi', { onclick: () => { salvaOra(); if (!pagina) return; leggiScrittura(pagina.dati(), (t, come) => {
+    testo.value = come === 'sostituisci' ? t + '\n' : testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + t + '\n'; modifica(); salvaOra();
+    const n = Appunti.estraiCarte(testo.value).length; avviso('✓ Testo aggiunto' + (n ? ' · 🃏 ' + n + ' carte' : ''));
+  }); } }, '✨ Leggi la mia scrittura');
+  function mostraModo(): void {
+    svuota(scambio);
+    scambio.append(...([['testo', '⌨️ Testo'], ['mano', '✍️ A mano']] as const).map(([k, t]) => h('button' + (modo === k ? '.attivo' : ''), { onclick: () => {
+      modo = k; const i = imp() as any; i.modoAppunti = k; Stato.salva(i, true); mostraModo(); } }, t)));
+    zonaMano.hidden = modo !== 'mano'; leggi.hidden = modo !== 'mano';
+    if (modo === 'mano' && !pagina) pagina = paginaMano(zonaMano, ap.mano, modifica);
+    testo.placeholder = modo === 'mano' ? 'Qui sotto il testo: scrivilo, oppure tocca «✨ Leggi la mia scrittura» per trascrivere la pagina.' : testo.placeholder;
+  }
+  mostraModo();
+  v.corpo.append(h('div.appunto', null, titolo, stato, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
   aggiornaStato();
-  setTimeout(() => { const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
+  setTimeout(() => { if (modo === 'mano' && !alRiassunto && a) return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
 }
 
 // ---------- Vista «Appunti» ----------
@@ -188,7 +210,7 @@ function vistaAppunti(): HTMLElement {
   const voce = (a: Appunto) => {
     const n = Appunti.estraiCarte(a.testo).length, anteprima = a.testo.replace(/[#*_{}>`-]|::/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110);
     return h('button.voce-lista', { onclick: () => apriAppunto(a) }, h('span.voce-corpo', null,
-      h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo || 'Appunto'),
+      h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, (a.mano && a.mano.t.length ? '✍️ ' : '') + (a.titolo || 'Appunto')),
       h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' }) + (anteprima ? ' — ' + anteprima : ''))));
   };
   const campo = h('input.campo', { type: 'search', placeholder: 'Cerca negli appunti…', value: (UI as any).apCerca || '', oninput: (e: Event) => { (UI as any).apCerca = (e.target as HTMLInputElement).value; clearTimeout((vistaAppunti as any).t); (vistaAppunti as any).t = setTimeout(() => { disegna(); const c = document.querySelector<HTMLInputElement>('main input[type=search]'); if (c) { c.focus(); c.setSelectionRange(c.value.length, c.value.length); } }, 250); } });
@@ -218,7 +240,7 @@ function rigaAppunti(k: string): HTMLElement {
 function apriCornell(a: Appunto, copri = false): void {
   const v = visore((copri ? '🧠 Copri e ricorda · ' : '📑 ') + (a.titolo || 'Appunto'), () => disegna());
   const sez = copri ? Appunti.daRipassare(a) : Appunti.sezioni(a);
-  if (!sez.length) { v.corpo.append(h('div.vuoto', null, copri ? 'Niente da ripassare oggi in questo appunto. 👍' : 'Appunto vuoto.')); return; }
+  if (!sez.length) { if (!manoVuota(a.mano)) v.corpo.append(h('img.cornell-mano', { src: immagineMano(a.mano!, 1200), alt: 'Pagina a mano' }), h('div.tenue.piccolo', null, 'Trascrivi la pagina con «✨ Leggi la mia scrittura» per avere spunti, carte e ripasso.')); v.corpo.append(h('div.vuoto', null, copri ? 'Niente da ripassare oggi in questo appunto. 👍' : 'Appunto vuoto.')); return; }
   let fatte = 0;
   const righe = sez.map(s => {
     const testo = h('div.cornell-testo' + (copri ? '.coperto' : ''));
@@ -236,7 +258,7 @@ function apriCornell(a: Appunto, copri = false): void {
     return h('section.cornell-riga', null, spunti, h('div', null, testo, azioni));
   });
   const err = Appunti.errori(a);
-  v.corpo.append(h('div.cornell', null, righe,
+  v.corpo.append(h('div.cornell', null, !manoVuota(a.mano) ? h('img.cornell-mano', { src: immagineMano(a.mano!, 1200), alt: 'Pagina a mano' }) : null, righe,
     err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub!) + ' (' + err.length + ')'),
       err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null)),
       h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null,

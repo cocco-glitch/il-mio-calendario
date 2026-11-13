@@ -54,3 +54,8 @@ Una riga per scelta importante: data · decisione · motivo.
 - iOS dà memorie separate a Safari e all'app sull'icona Home: la chiave Groq salvata in Safari non c'era nell'app. Soluzione: copia della chiave in un file privato sul Drive dell'utente, solo con la sua conferma.
 - AI come allenatore, non come scrittore: propone domande (che lo studente sceglie) e commenta il riassunto (cosa manca/sbagliato) senza riscriverlo — l'elaborazione generativa resta dello studente.
 - Riassunto facoltativo: una sola richiesta gentile per appunto lungo (scelta dell'utente).
+
+## v0.31 — Scrittura a mano (13/11)
+- Modello GoodNotes/Notability: pagina a quadretti/righe con penna a pressione; la conversione in testo è ciò che collega l'inchiostro a carte, quiz e AI.
+- Riconoscimento solo quando l'utente preme ✨ (scelta sua): risparmia il limite gratuito e il testo si controlla sempre prima che diventi carte (Llama 4 Scout può sbagliare su grafie difficili).
+- iPhone: si scrive col dito; iPad con Pencil: il dito scorre (rifiuto del palmo).

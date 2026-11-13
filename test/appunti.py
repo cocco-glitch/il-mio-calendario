@@ -101,5 +101,33 @@ with sync_playwright() as p:
     ok(n == 1 and a['titolo'] == 'La cellula' and a['sub'] == 'B1.1', 'import cartella: titolo dal # e collegamento allo step')
     ok(pg.evaluate("Appunti.importaDrive([{ id: 'm1', name: 'Bio 1.1 cellula.md' }])") == 0 and len([x for x in pg.evaluate("Appunti.tutti()") if x.get('fonte')]) == 1, 'reimport: nessun doppione')
 
+    # --- v0.31: scrittura a mano ---
+    pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, .dialogo-sfondo').forEach(e => e.remove()); vai('appunti')"); pg.wait_for_timeout(150)
+    pg.click('text=＋ Nuovo appunto'); pg.wait_for_selector('.appunto-modo')
+    pg.click('.appunto-modo button:has-text("A mano")'); pg.wait_for_selector('.mano-vivo'); pg.wait_for_timeout(150)
+    pg.fill('.appunto-titolo', 'Fis 1.1 cinematica')
+    disegna = '''(tipo) => { const c = document.querySelector('.mano-vivo'), r = c.getBoundingClientRect();
+      const ev = (n, x, y) => c.dispatchEvent(new PointerEvent(n, { pointerId: 7, pointerType: tipo, pressure: .6, clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true }));
+      ev('pointerdown', 20, 30); for (let i = 1; i < 12; i++) ev('pointermove', 20 + i * 12, 30 + (i % 3) * 6); ev('pointerup', 160, 40); }'''
+    pg.evaluate(disegna, 'pen')
+    ok(pg.locator('text=Pencil: il dito scorre').count() == 1, 'Pencil riconosciuta: il dito scorre')
+    pg.evaluate(disegna, 'touch')
+    pg.screenshot(path='test/appunti-mano.png')
+    pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(300)
+    a = pg.evaluate("Appunti.tutti().find(a => a.titolo === 'Fis 1.1 cinematica')")
+    ok(a and a.get('mano') and len(a['mano']['t']) == 1, 'tratto della Pencil salvato, il dito non scrive dopo la Pencil')
+    ok(a['sub'] == 'F1.1', 'appunto a mano collegato allo step')
+    # trascrizione (Groq visivo simulato)
+    pg.evaluate('''() => { localStorage.setItem('imc-groq-chiave', 'gsk_x'); window.fetch = async (u, o) => { const b = JSON.parse(o.body); window._vis = b;
+      return new Response(JSON.stringify({ choices: [{ message: { content: '# Moto rettilineo\\n- velocità media :: Δs/Δt\\n- {{accelerazione}} = Δv/Δt' } }] }), { status: 200 }); }; }''')
+    pg.evaluate("document.querySelectorAll('.dialogo-sfondo').forEach(e => e.remove())")
+    pg.locator('.voce-lista', has_text='Fis 1.1 cinematica').first.click(); pg.wait_for_selector('.mano-leggi')
+    ok(pg.locator('.appunto-modo button.attivo', has_text='A mano').count() == 1, 'si riapre in modalità a mano')
+    pg.click('.mano-leggi'); pg.wait_for_selector('.foglio textarea')
+    ok(pg.evaluate("_vis.model").startswith('meta-llama/llama-4-scout') and pg.evaluate("_vis.messages[0].content[1].image_url.url").startswith('data:image/png'), 'immagine della pagina inviata al modello visivo')
+    pg.click('.foglio button:has-text("Aggiungi al testo")'); pg.wait_for_timeout(300)
+    ok('velocità media :: Δs/Δt' in pg.input_value('.appunto-testo'), 'trascrizione aggiunta al testo')
+    ok(pg.evaluate("Carte.carte().filter(c => c.f === 'velocità media' || c.f.includes('{{accelerazione}}')).length") == 2, 'e diventa 2 flashcard')
+
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)

@@ -560,3 +560,19 @@ body:has(.visore) .foglio-sfondo { z-index: 27; }
 .cornell-azioni { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .cornell-riassunto { background: color-mix(in srgb, var(--accento) 8%, var(--sup)); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 420px) { .cornell-riga { grid-template-columns: 1fr; } .cornell-spunti { border-right: 0; border-bottom: 2px solid color-mix(in srgb, var(--accento) 35%, transparent); padding: 0 0 8px; } }
+/* Scrittura a mano (v0.31) */
+.appunto-modo { max-width: 280px; }
+.mano-zona { display: flex; flex-direction: column; gap: 6px; }
+.mano-barra { display: flex; gap: 6px; align-items: center; overflow-x: auto; position: sticky; top: 0; z-index: 2; padding: 6px; border-radius: 14px; background: var(--vetro-forte, var(--sup)); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1px solid var(--linea); }
+.mano-barra button { flex: none; min-width: 40px; height: 40px; border-radius: 10px; background: var(--sup2); display: grid; place-items: center; font-size: 17px; padding: 0 8px; color: var(--testo); }
+.mano-barra button.attivo { background: color-mix(in srgb, var(--accento) 25%, var(--sup2)); outline: 2px solid var(--accento); }
+.mano-barra .mano-colore { min-width: 30px; width: 30px; height: 30px; border-radius: 50%; padding: 0; }
+.mano-barra .mano-colore.attivo { outline: 3px solid var(--accento); outline-offset: 2px; }
+.mano-sep { width: 1px; height: 26px; background: var(--linea); flex: none; }
+.mano-foglio { position: relative; width: 100%; background: #fffdf8; border-radius: 12px; border: 1px solid var(--linea); overflow: hidden; touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.mano-foglio.dito, .mano-foglio.dito canvas { touch-action: none; }
+:root[data-tema="scuro"] .mano-foglio { background: #f6f3ea; }
+.mano-foglio canvas { display: block; width: 100%; }
+.mano-vivo { position: absolute; inset: 0; touch-action: pan-y; }
+.mano-leggi { align-self: flex-start; }
+.cornell-mano { width: 100%; border-radius: 12px; border: 1px solid var(--linea); background: #fff; }

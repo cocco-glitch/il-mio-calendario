@@ -117,6 +117,21 @@ const Spiega = (() => {
     throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
   }
 
+  /** v0.31: legge un'immagine (scrittura a mano) con il modello visivo di Groq; restituisce testo. */
+  async function vede(istruzioni: string, immagine: string): Promise<string> {
+    if (!await pronta()) throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'meta-llama/llama-4-scout-17b-16e-instruct', temperature: 0.1, max_completion_tokens: 4096,
+        messages: [{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }] }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) throw new Error('Chiave Groq non valida.');
+    if (r.status === 429) throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
+    if (!r.ok) throw new Error((j && j.error && j.error.message) || 'errore ' + r.status);
+    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
+  }
+
   // ---- Lato genitore: risponde alle richieste dei quiz aperti nell'app ----
   async function ricevi(e: MessageEvent): Promise<void> {
     const m = e.data;
@@ -231,5 +246,5 @@ const Spiega = (() => {
       h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
   }
 
-  return { inietta, sezione, genera, idDi, chat, materia, pronta, recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
+  return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
