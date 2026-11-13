@@ -674,6 +674,248 @@ function selettoreCategoria(valore) {
 }
 
 // ============================================================
+// 04-simboli.ts — v0.34: niente emoji nell'interfaccia.
+// Gli emoji usati nei testi dei pulsanti/titoli vengono sostituiti al volo
+// da icone vettoriali (stesso tratto delle icone della barra), così l'app
+// ha un aspetto coerente e professionale. I testi scritti dall'utente
+// (campi, note, appunti) non vengono toccati.
+// ============================================================
+Object.assign(ICONE, {
+    ai: '<path d="M12 3.5l1.7 4.6 4.6 1.7-4.6 1.7L12 16.1l-1.7-4.6L5.7 9.8l4.6-1.7z"/><path d="M18.5 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
+    cervello: '<path d="M9.5 4.5A2.5 2.5 0 0 0 7 7a3 3 0 0 0-2 5.2A3 3 0 0 0 7.5 17 2.5 2.5 0 0 0 12 18.5v-12a2.5 2.5 0 0 0-2.5-2z"/><path d="M14.5 4.5A2.5 2.5 0 0 1 17 7a3 3 0 0 1 2 5.2 3 3 0 0 1-2.5 4.8 2.5 2.5 0 0 1-4.5 1.5"/>',
+    avvertenza: '<path d="M12 4l9 16H3z"/><path d="M12 10v4.5M12 17.2v.1"/>',
+    quiz: '<rect x="5" y="4.5" width="14" height="16" rx="2"/><path d="M9 3h6v3H9zM8.5 13l2.3 2.3 4.7-4.8"/>',
+    nuvola: '<path d="M7 18.5a4 4 0 0 1-.6-8A6 6 0 0 1 18 9.6a4.5 4.5 0 0 1-.6 8.9z"/>',
+    fatto: '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.2l2.6 2.6 4.9-5.3"/>',
+    ghiaccio: '<path d="M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9M9.5 4.5L12 6l2.5-1.5M9.5 19.5L12 18l2.5 1.5"/>',
+    matita: '<path d="M4.5 19.5l1-4.5L16 4.5l3.5 3.5L9 18.5z"/><path d="M14 6.5l3.5 3.5"/>',
+    cestino: '<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5M14 11v5"/>',
+    traguardo: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5.5a2.5 2.5 0 0 0 2.6 3.5M16 6h2.5a2.5 2.5 0 0 1-2.6 3.5M12 13v4M8.5 20h7"/>',
+    voce: '<path d="M4.5 5.5h15v10h-9l-4.5 3.5v-3.5h-1.5z"/><path d="M8.5 9.5h7M8.5 12.5h4"/>',
+    dado: '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="M9 9h.01M15 9h.01M12 12h.01M9 15h.01M15 15h.01" stroke-width="2.6"/>',
+    sveglia: '<circle cx="12" cy="13" r="7"/><path d="M12 9.5V13l2.3 1.6M5 4.5L3 6.5M19 4.5l2 2"/>',
+    libri: '<path d="M4.5 4.5h4v15h-4zM10.5 4.5h4v15h-4zM16 5.3l3-.8 3 14.2-3 .8z"/>',
+    libro: '<path d="M3.5 5.5H9a3 3 0 0 1 3 3V20a2.5 2.5 0 0 0-2.5-2.5h-6zM20.5 5.5H15a3 3 0 0 0-3 3V20a2.5 2.5 0 0 1 2.5-2.5h6z"/>',
+    pollice: '<path d="M7.5 10.5v9h-3v-9zM7.5 10.5L11 4a2 2 0 0 1 3 2l-.8 4h5.3a2 2 0 0 1 2 2.4l-1.4 6a2 2 0 0 1-2 1.6H7.5"/>',
+    luna: '<path d="M19.5 14.5A7.5 7.5 0 1 1 9.5 4.5a6 6 0 0 0 10 10z"/>',
+    cronometro: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5M10 2.5h4M18 6.5l1.5-1.5"/>',
+    stella: '<path d="M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8z"/>',
+    robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4.5V8M9.5 12.5v1.5M14.5 12.5v1.5M2.5 13v2M21.5 13v2"/>',
+    tazza: '<path d="M4.5 9h11v5.5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5zM15.5 10.5h1.8a2.3 2.3 0 0 1 0 4.6h-1.8M8 3.5v2.5M12 3.5v2.5"/>',
+    graffetta: '<path d="M19.5 11.5l-7.8 7.8a5 5 0 0 1-7-7l8.5-8.5a3.4 3.4 0 0 1 4.8 4.8l-8.4 8.4a1.8 1.8 0 0 1-2.5-2.5l7.6-7.6"/>',
+    collega: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/>',
+    occhio: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+    nascondi: '<path d="M3.5 3.5l17 17M10.6 6.1A9 9 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.9 3.4M6.6 6.6C4 8.3 2.5 12 2.5 12s3.5 6 9.5 6a8.6 8.6 0 0 0 4-1M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+    modello: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 9.5h16M10 9.5V20"/>',
+    documento: '<path d="M6.5 3.5h8l4 4v13h-12z"/><path d="M14.5 3.5v4h4"/>',
+    cartella: '<path d="M3.5 6.5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/>',
+    tassello: '<path d="M10 4.5a2 2 0 0 1 4 0v1.5h4v4h-1.5a2 2 0 0 0 0 4H18v4h-4v-1.5a2 2 0 0 0-4 0V18H6v-4h1.5a2 2 0 0 0 0-4H6V6h4z"/>',
+    provetta: '<path d="M9 3.5h6M10 3.5v6l-5 8.6a1.8 1.8 0 0 0 1.6 2.4h10.8a1.8 1.8 0 0 0 1.6-2.4L14 9.5v-6M7.2 15h9.6"/>',
+    dito: '<path d="M9.5 11.5V5a1.8 1.8 0 0 1 3.6 0v6l3.6.9a2 2 0 0 1 1.5 2.3l-.8 4.4a2.5 2.5 0 0 1-2.4 2h-3.6a2.5 2.5 0 0 1-2.1-1.2l-2.6-4a1.4 1.4 0 0 1 2.3-1.6l.5.7"/>',
+    tastiera: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M7 14h10" stroke-width="2"/>',
+    lampadina: '<path d="M9.5 18h5M10.5 21h3M12 3.5A5.8 5.8 0 0 0 8.2 13.7c.6.6.8 1.4.8 2.3h6c0-.9.2-1.7.8-2.3A5.8 5.8 0 0 0 12 3.5z"/>',
+    salvagente: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/><path d="M6 6l3.5 3.5M14.5 14.5L18 18M18 6l-3.5 3.5M9.5 14.5L6 18"/>',
+    bersaglio: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+    grafico: '<path d="M5 19.5v-8M10 19.5v-14M15 19.5v-6M20 19.5v-10M3 19.5h18"/>',
+    ingranaggio: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
+    spunta: '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="M8.5 12.2l2.4 2.4 4.6-5"/>',
+    penna: '<path d="M12.5 19.5l7-7 2 2-7 7zM18 13.5l-1.5-7L3 3l3.5 13.5 7 1.5zM3 3l7.3 7.3"/><circle cx="11.5" cy="11.5" r="1.5"/>',
+    evidenziatore: '<path d="M9 15.5l-4.5 4.5h5.5l1.5-1.5M9 15.5l7-11 4.5 3-7 11z"/>',
+    gomma: '<path d="M7.5 20.5h12M4.5 14.5l9-9a1.5 1.5 0 0 1 2 0l3 3a1.5 1.5 0 0 1 0 2l-9 9.5H8z"/><path d="M9 10l5 5"/>',
+    lazo: '<ellipse cx="12" cy="9.5" rx="8.5" ry="5.5" stroke-dasharray="3 2.5"/><path d="M9.5 15c-1 1.8-.4 3.5 1.5 5"/>',
+    immagine: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M20.5 16l-5-5-9.5 8.5"/>',
+    telefono: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>',
+    carte: '<rect x="3.5" y="6" width="11" height="14" rx="2"/><path d="M9 4.5l9.5 2.3a1.6 1.6 0 0 1 1.2 2l-2.5 10.3"/>',
+    play: '<path d="M7.5 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L8.7 4.5a.8.8 0 0 0-1.2.7z" fill="currentColor"/>',
+    pausa: '<path d="M8.5 5v14M15.5 5v14" stroke-width="2.6"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
+    carica: '<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M4.5 14.5v5h15v-5"/>',
+});
+/** emoji → icona (null = l'emoji viene solo tolto, es. le faccine dei voti). */
+const SIMBOLI = {
+    '✨': 'ai', '🧠': 'cervello', '⚠': 'avvertenza', '📝': 'quiz', '☁': 'nuvola', '✅': 'fatto', '🧊': 'ghiaccio',
+    '✏': 'matita', '✍': 'matita', '🗑': 'cestino', '🎉': 'traguardo', '🗣': 'voce', '➕': 'piu', '🎲': 'dado', '⏰': 'sveglia',
+    '📚': 'libri', '📖': 'libro', '👍': 'pollice', '🌙': 'luna', '⏱': 'cronometro', '🎓': 'studio', '🤖': 'robot', '☕': 'tazza',
+    '🔁': 'ripeti', '🔄': 'ripeti', '📎': 'graffetta', '🔗': 'collega', '👁': 'occhio', '🙈': 'nascondi', '📑': 'modello', '📄': 'documento',
+    '📁': 'cartella', '📂': 'cartella', '🧩': 'tassello', '📋': 'appunti', '🧪': 'provetta', '☝': 'dito', '⌨': 'tastiera', '💡': 'lampadina',
+    '🛟': 'salvagente', '🔎': 'cerca', '🔍': 'cerca', '🎯': 'bersaglio', '📊': 'grafico', '⚙': 'ingranaggio', '☑': 'spunta', '✒': 'penna',
+    '🖍': 'evidenziatore', '🧽': 'gomma', '➰': 'lazo', '🖼': 'immagine', '📱': 'telefono', '📤': 'carica', '🔔': 'campana', '★': 'stella', '⭐': 'stella', '🃏': 'carte', '▶': 'play', '⏸': 'pausa', '⏹': 'stop',
+    '😵': null, '😕': null, '😐': null, '🙂': null, '🔥': null, '😌': null,
+};
+const RE_SIMBOLI = new RegExp('(' + Object.keys(SIMBOLI).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\uFE0F?\\s?', 'gu');
+/** Dove NON sostituire: testo dell'utente. */
+const ZONE_UTENTE = 'textarea, input, [contenteditable], .md, .testo-utente, .nota-estratto, .cornell-testo, pre, code';
+function sostituisciSimboli(radice) {
+    const el = radice.nodeType === 1 ? radice : radice.parentElement;
+    if (!el || el.closest(ZONE_UTENTE))
+        return;
+    const testi = [];
+    if (radice.nodeType === 3)
+        testi.push(radice);
+    else {
+        const w = document.createTreeWalker(radice, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode(); n; n = w.nextNode())
+            testi.push(n);
+    }
+    for (const t of testi) {
+        const v = t.nodeValue || '';
+        RE_SIMBOLI.lastIndex = 0;
+        if (!RE_SIMBOLI.test(v))
+            continue;
+        const p = t.parentElement;
+        if (!p || p.closest(ZONE_UTENTE) || p.closest('svg, option, title'))
+            continue;
+        if (p.tagName === 'OPTION') {
+            t.nodeValue = v.replace(RE_SIMBOLI, '');
+            continue;
+        }
+        const fr = document.createDocumentFragment();
+        let ultimo = 0;
+        RE_SIMBOLI.lastIndex = 0;
+        for (let m = RE_SIMBOLI.exec(v); m; m = RE_SIMBOLI.exec(v)) {
+            if (m.index > ultimo)
+                fr.appendChild(document.createTextNode(v.slice(ultimo, m.index)));
+            const nome = SIMBOLI[m[1]];
+            if (nome) {
+                const ic = icona(nome, 18);
+                ic.classList.add('sim');
+                fr.appendChild(ic);
+                if (m[0].length > m[1].length && m.index + m[0].length < v.length)
+                    fr.appendChild(document.createTextNode(' '));
+            }
+            ultimo = m.index + m[0].length;
+        }
+        if (ultimo < v.length)
+            fr.appendChild(document.createTextNode(v.slice(ultimo)));
+        // pulsante che era solo un emoji: gli do un nome accessibile dal title
+        const btn = p.closest('button');
+        if (btn && !btn.getAttribute('aria-label') && btn.getAttribute('title') && !(btn.textContent || '').replace(RE_SIMBOLI, '').trim())
+            btn.setAttribute('aria-label', btn.getAttribute('title'));
+        p.replaceChild(fr, t);
+    }
+}
+function attivaSimboli() {
+    sostituisciSimboli(document.body);
+    new MutationObserver(lista => {
+        for (const m of lista) {
+            if (m.type === 'characterData')
+                sostituisciSimboli(m.target);
+            else
+                m.addedNodes.forEach(n => { if (n.nodeType === 1 || n.nodeType === 3)
+                    sostituisciSimboli(n); });
+        }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+
+// ============================================================
+// 04-tocco.ts — v0.34: riscontro al tocco.
+// - Suono di tap: un "clic" morbido e cortissimo generato al volo con
+//   Web Audio (niente file). Su tocchi di pulsanti e mentre si scrive.
+//   Si spegne da Altro › Aspetto. Su iPhone parte dopo il primo tocco.
+// - Numeri che "contano" fino al valore (classe .conta).
+// ============================================================
+const Tocco = (() => {
+    let ctx = null;
+    let rumore = null;
+    let ultimo = 0;
+    function attivo() { const s = imp().suono; return s !== 'no' && s !== false; }
+    function volume() { const v = imp().volumeTap; return typeof v === 'number' ? v : 0.35; }
+    function prepara() {
+        if (ctx)
+            return ctx;
+        const C = window.AudioContext || window.webkitAudioContext;
+        if (!C)
+            return null;
+        try {
+            ctx = new C();
+            // 12 ms di rumore che decade in fretta: suona come un clic smorzato
+            const n = Math.floor(ctx.sampleRate * 0.012);
+            rumore = ctx.createBuffer(1, n, ctx.sampleRate);
+            const d = rumore.getChannelData(0);
+            for (let i = 0; i < n; i++)
+                d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 4);
+        }
+        catch (_) {
+            ctx = null;
+        }
+        return ctx;
+    }
+    /** forte: 1 = pulsante, 0.6 = tasto della tastiera */
+    function clic(forte = 1) {
+        if (!attivo())
+            return;
+        const adesso = performance.now();
+        if (adesso - ultimo < 30)
+            return; // niente raffiche
+        ultimo = adesso;
+        const c = prepara();
+        if (!c || !rumore)
+            return;
+        if (c.state === 'suspended')
+            c.resume().catch(() => { });
+        try {
+            const s = c.createBufferSource();
+            s.buffer = rumore;
+            const f = c.createBiquadFilter();
+            f.type = 'bandpass';
+            f.frequency.value = forte < 1 ? 2600 : 1800;
+            f.Q.value = 0.9;
+            const g = c.createGain();
+            g.gain.value = volume() * forte * 0.9;
+            s.connect(f);
+            f.connect(g);
+            g.connect(c.destination);
+            s.start();
+        }
+        catch (_) { /* niente */ }
+    }
+    const TOCCABILI = 'button, a[href], .chip, select, summary, label.interruttore, input[type=checkbox], input[type=radio], [role=button], [role=tab]';
+    function attiva() {
+        document.addEventListener('pointerdown', e => {
+            const t = e.target;
+            if (!t || !t.closest)
+                return;
+            const b = t.closest(TOCCABILI);
+            if (b && !b.disabled)
+                clic(1);
+        }, { capture: true, passive: true });
+        document.addEventListener('keydown', e => {
+            if (e.repeat || e.metaKey || e.ctrlKey || e.altKey)
+                return;
+            const t = e.target;
+            if (!t || !(t.matches('input, textarea, [contenteditable]')))
+                return;
+            if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter')
+                clic(0.6);
+        }, { capture: true, passive: true });
+    }
+    // ---------- Numeri che contano ----------
+    const visti = new WeakSet();
+    function conta(radice) {
+        if (matchMedia('(prefers-reduced-motion: reduce)').matches)
+            return;
+        radice.querySelectorAll('.conta').forEach(el => {
+            if (visti.has(el))
+                return;
+            visti.add(el);
+            const fine = parseInt(el.textContent || '', 10);
+            if (!(fine > 1))
+                return;
+            const t0 = performance.now(), dur = Math.min(900, 350 + fine * 8);
+            const passo = (t) => {
+                const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+                el.textContent = String(Math.round(fine * e));
+                if (k < 1)
+                    requestAnimationFrame(passo);
+            };
+            el.textContent = '0';
+            requestAnimationFrame(passo);
+        });
+    }
+    return { clic, attiva, conta };
+})();
+
+// ============================================================
 // 05-editor.ts — Fogli di creazione/modifica: evento, promemoria, nota.
 // ============================================================
 const PROMEMORIA_OPZ = [
@@ -3977,13 +4219,16 @@ function vistaEsami() {
         : vuoto('Nessun esame. Aggiungi le date degli appelli: compaiono nel calendario e in Oggi con il conto alla rovescia.'), h('button.btn', { onclick: () => editorEsame() }, '+ Aggiungi esame / appello'));
 }
 function widgetEsami() {
-    const prossimi = Stato.tutti('esame').filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 3);
+    const prossimi = Stato.tutti('esame').filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 2);
     if (!prossimi.length)
         return null;
-    return scheda('Prossimi esami', prossimi.map(e => {
+    // v0.34: dati raccolti in tessere (giorni agli esami + step in ritardo)
+    const apri = () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); };
+    const rit = Studio.pkPiani().length ? Studio.inRitardo().length : 0;
+    return h('div.tessere', { 'aria-label': 'Prossimi esami' }, prossimi.map((e, i) => {
         const d = giorniA(e.data);
-        return h('button.voce-lista', { onclick: () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); } }, h('span.esame-giorni', null, String(d), h('small', null, d === 1 ? 'giorno' : 'giorni')), h('span.voce-corpo', null, h('span.voce-titolo', null, e.nome), h('span.voce-sotto', null, dataLunga(daYmd(e.data)) + ' · ' + testoCountdown(d))));
-    }));
+        return h('button.tessera' + (i === 0 ? '.primo' : ''), { onclick: apri, title: e.nome + ' · ' + dataLunga(daYmd(e.data)) }, h('span.tessera-num', null, h('span.conta', null, String(d)), h('small', null, d === 1 ? ' giorno' : ' giorni')), h('span.tessera-eti', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')), h('span.tessera-sotto', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' })));
+    }), rit ? h('button.tessera.ritardo', { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, h('span.tessera-num', null, h('span.conta', null, String(rit))), h('span.tessera-eti', null, rit === 1 ? 'step indietro' : 'step indietro'), h('span.tessera-sotto', null, 'Vedi il piano')) : null);
 }
 function editorEsame(es) {
     const e = es ? JSON.parse(JSON.stringify(es)) : { id: 'esame-' + uid(), type: 'esame', updatedAt: 0, nome: '', data: ymd(piuGiorni(oggi(), 30)) };
@@ -7914,9 +8159,9 @@ function indicatoreStudio() {
     if (!Studio.pkPiani().length)
         return null;
     const r = Studio.inRitardo();
-    const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
-    // v0.10: ripianificazione in un tocco (solo piano principale)
-    return Ripianifica.inRitardo().length ? h('div', null, ind, h('button.btn.neutro', { style: { marginTop: '8px', width: '100%' }, onclick: () => apriRipianifica() }, '↻ Ripianifica i ritardi')) : ind;
+    const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, h('span.pallino-stato'), r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
+    // v0.10: ripianificazione in un tocco (solo piano principale) — v0.34: compatta, sulla stessa riga
+    return Ripianifica.inRitardo().length ? h('div.indicatore-riga', null, ind, h('button.btn-testo.ripianifica', { onclick: () => apriRipianifica() }, icona('ripeti', 16), 'Ripianifica')) : ind;
 }
 // ---------- Vista STUDIO ----------
 function vistaStudio() {
@@ -8385,6 +8630,7 @@ const UI = {
     studioSub: null,
     soloPrior: false,
     pianoScorso: false,
+    altroSez: null, // v0.34: sotto-pagina di Altro
 };
 const ORA_PX = 52; // altezza di un'ora nella griglia oraria
 function vai(scheda, vista, data) {
@@ -8469,7 +8715,7 @@ function vistaOggi() {
         } });
     const domani = piuGiorni(g, 1);
     const occDomani = occorrenzeDelGiorno(domani);
-    return h('div.pagina', null, h('div.oggi-testa', null, h('div.oggi-giorno', null, String(g.getDate())), h('div', null, h('div.oggi-sett', null, maiuscola(fmt(g, { weekday: 'long' }))), h('div.tenue', null, maiuscola(fmt(g, { month: 'long', year: 'numeric' }))))), campoRapido(), ordineWidget().map(w => {
+    return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), ordineWidget().map(w => {
         switch (w) {
             case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
             case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
@@ -8724,7 +8970,7 @@ function vistaCerca() {
         svuota(ris);
         const q = norm(UI.q.trim());
         if (q.length < 2) {
-            ris.appendChild(vuoto('Scrivi almeno 2 lettere: cerco in eventi, promemoria e note.'));
+            ris.appendChild(vuoto('Scrivi almeno 2 lettere: cerco in eventi, promemoria, note e impostazioni.'));
             return;
         }
         const ev = Stato.tutti('evento').filter(e => norm(e.titolo + ' ' + (e.luogo || '') + ' ' + (e.note || '')).includes(q)).sort((a, b) => a.inizio < b.inizio ? 1 : -1);
@@ -8736,7 +8982,10 @@ function vistaCerca() {
             ris.appendChild(scheda('Promemoria · ' + tk.length, tk.slice(0, 50).map(rigaTask)));
         if (nt.length)
             ris.appendChild(scheda('Note · ' + nt.length, nt.slice(0, 50).map(n => h('button.voce-lista', { onclick: () => apriNota(n) }, h('span.voce-corpo', null, h('span.voce-titolo', null, n.titolo || '(senza titolo)'), h('span.voce-sotto', null, n.testo.slice(0, 80)))))));
-        if (!ev.length && !tk.length && !nt.length)
+        const imps = GRUPPI_ALTRO.filter(g => norm(g[1] + ' ' + g[2] + ' ' + PAROLE_ALTRO[g[0]]).split(/\s+/).some(p => p.startsWith(q) || q.split(/\s+/).some(w => w.length > 2 && p.startsWith(w))));
+        if (imps.length)
+            ris.appendChild(scheda('Impostazioni', imps.map(g => h('button.voce-lista', { onclick: () => { UI.altroSez = g[0]; vai('altro'); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, g[1]), h('span.voce-sotto', null, 'Altro › ' + g[1] + ' · ' + g[2]))))));
+        if (!ev.length && !tk.length && !nt.length && !imps.length)
             ris.appendChild(vuoto('Nessun risultato.'));
     }
     aggiorna();
@@ -8796,9 +9045,41 @@ function vistaAltro() {
                     Drive.logout(); }) }, 'Scollega'))]
         : [h('div.tenue.piccolo', null, 'Collega il tuo Google Drive: i dati si salvano in una cartella "Calendario personale" e compaiono identici su iPhone e PC. Solo il tuo account potrà vederli.'),
             h('div.bottoni', null, h('button.btn', { onclick: () => Drive.login() }, 'Accedi con Google'))]);
-    return h('div.pagina', null, sezDrive, sezioneAspetto(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp), scheda('Categorie', cats, nuovaCat), sezioneStudio(salvaImp), sezioneNotifiche(salvaImp), Spiega.sezione(), Regole.sezioneAltro(), sezioneCalendari(salvaImp), scheda('I miei dati', h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'), anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null, h('div.bottoni', null, h('button.btn', { onclick: esporta }, 'Esporta backup'), h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport)), h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE));
+    const sezDati = scheda('I miei dati', h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'), anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null, h('div.bottoni', null, h('button.btn', { onclick: esporta }, 'Esporta backup'), h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport));
+    const versione = h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE);
+    // v0.34: Altro = scorciatoie in vista + 4 gruppi di impostazioni (sotto-pagine)
+    switch (UI.altroSez) {
+        case 'aspetto': return h('div.pagina.sotto', null, sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp));
+        case 'studio': return h('div.pagina.sotto', null, sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());
+        case 'calendario': return h('div.pagina.sotto', null, scheda('Categorie', cats, nuovaCat), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp));
+        case 'dati': return h('div.pagina.sotto', null, sezDrive, sezDati, versione);
+    }
+    const nTask = Stato.tutti('task').filter(t => !t.fatto).length;
+    const nNote = Stato.tutti('nota').length;
+    const tessera = (sch, ic, tit, sotto, cls) => h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
+    return h('div.pagina', null, h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')), h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } }, h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')), icona('dx', 18)), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)), icona('dx', 18)))), versione);
 }
-const ACCENTI = ['#6c8cff', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
+/** v0.34: i gruppi di Altro: [chiave, titolo, sottotitolo, icona, colore]. Anche la ricerca li usa. */
+const GRUPPI_ALTRO = [
+    ['aspetto', 'Aspetto', 'Tema, colori, carattere, suoni e animazioni, layout', 'ingranaggio', '#0B5FD9'],
+    ['studio', 'Studio e AI', 'Piano, ripassi, chiave AI, regole', 'studio', '#0E9F6E'],
+    ['calendario', 'Calendario e notifiche', 'Categorie, avvisi, Google Calendar e .ics', 'cal', '#D97706'],
+    ['dati', 'Dati e backup', 'Google Drive, esporta, importa', 'nuvola', '#64748B'],
+];
+/** Parole che portano a ciascun gruppo dalla ricerca. */
+const PAROLE_ALTRO = {
+    aspetto: 'tema scuro chiaro colore accento sfondo vetro carattere font testo dimensione densità angoli layout riquadri widget barra sezioni preset suono suoni tap clic animazioni movimento',
+    studio: 'studio piano ripassi ripasso fsrs ai intelligenza artificiale groq chiave regole quiz',
+    calendario: 'categorie categoria notifiche notifica avvisi promemoria google calendar ics calendari esterni',
+    dati: 'drive google sincronizza sincronizzazione backup esporta importa dati account scollega',
+};
+function sezioneSuoni(salva) {
+    const i = imp();
+    return scheda('Suoni e animazioni', riga('Suono di tap', selettore([['si', 'Attivo'], ['no', 'Spento']], i.suono === 'no' || i.suono === false ? 'no' : 'si', function () { salva({ suono: this.value }); if (this.value === 'si')
+        Tocco.clic(); })), riga('Volume', h('input', { type: 'range', min: '0.05', max: '1', step: '0.05', value: String(typeof i.volumeTap === 'number' ? i.volumeTap : 0.35), 'aria-label': 'Volume del tap',
+        onchange: (e) => { salva({ volumeTap: +e.target.value }); Tocco.clic(); } })), riga('Animazioni', selettore([['si', 'Attive'], ['no', 'Ridotte']], i.animazioni === 'no' ? 'no' : 'si', function () { salva({ animazioni: this.value }); })), h('div.tenue.piccolo', null, 'Su iPhone il suono parte dopo il primo tocco. Con «Riduci movimento» attivo nelle impostazioni dell\'iPhone le animazioni si spengono da sole.'));
+}
+const ACCENTI = ['#2f6bea', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
 const CAMPI_ASPETTO = ['tema', 'accento', 'sfondo', 'font', 'scala', 'densita', 'raggio', 'widget', 'widgetNascosti', 'tabNascoste', 'nav', 'vistaIniziale'];
 function sezioneAspetto(salva) {
     const i = imp(), sel = (o, v, k, num = false) => selettore(o, v, function () { salva({ [k]: num ? +this.value : this.value, preset: '' }); });
@@ -9039,13 +9320,15 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.33.0';
+const VERSIONE = '0.34.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
     const r = document.documentElement, st = r.style;
-    st.setProperty('--accento', i.accento);
+    // v0.34: il vecchio blu predefinito passa al nuovo blu del rebranding
+    st.setProperty('--accento', !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento);
+    r.dataset.animazioni = i.animazioni === 'no' ? 'no' : 'si';
     if (i.sfondo)
         st.setProperty('--bg', i.sfondo);
     else
@@ -9062,7 +9345,7 @@ function applicaTema() {
     r.dataset.vetro = i.vetro === false || i.vetro === 'no' ? 'no' : 'si'; // v0.20: vetro leggero (disattivabile)
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta)
-        meta.setAttribute('content', i.sfondo || (scuro ? '#0e1014' : '#f4f5f8'));
+        meta.setAttribute('content', i.sfondo || (scuro ? '#0b0d12' : '#f5f7fa'));
 }
 /** Ricostruisce l'intera schermata (le viste sono leggere: va benissimo così). */
 function disegna() {
@@ -9073,25 +9356,38 @@ function disegna() {
     const vecchioMain = app.querySelector('main');
     const scrollMain = vecchioMain ? vecchioMain.scrollTop : 0;
     const stessaScheda = vecchioMain && vecchioMain.dataset.scheda === UI.scheda + (UI.scheda === 'cal' ? UI.vista : '');
-    const titoli = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', appunti: 'Appunti', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
+    const titoli = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', appunti: 'Appunti', task: 'Promemoria', note: 'Note', altro: UI.altroSez ? (GRUPPI_ALTRO.find(g => g[0] === UI.altroSez) || ['', 'Altro'])[1] : 'Altro', cerca: 'Cerca' };
     const vista = UI.scheda === 'oggi' ? vistaOggi() : UI.scheda === 'cal' ? vistaCalendario() : UI.scheda === 'studio' ? vistaStudio() : UI.scheda === 'task' ? vistaTask()
         : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'appunti' ? vistaAppunti() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
     const daFare = Stato.tutti('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(oggi()))).length;
-    const schede = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['appunti', 'Appunti', 'appunti'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
+    // v0.34: 5 sezioni in barra; Promemoria e Note vivono in Altro (con scorciatoie in Oggi)
+    const schede = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['appunti', 'Appunti', 'appunti'], ['altro', 'Altro', 'altro']];
     const nascoste = imp().tabNascoste || [];
-    const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => h('button' + (UI.scheda === s ? '.attivo' : ''), { onclick: () => { if (s === 'studio')
-            UI.studioSub = null; vai(s); }, 'aria-current': UI.scheda === s ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'task' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t))));
+    const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
+    const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => {
+        const att = UI.scheda === s || (s === 'altro' && inAltro);
+        return h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio')
+                UI.studioSub = null; if (s === 'altro')
+                UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t));
+    }));
+    // direzione dell'animazione: verso destra o sinistra secondo la posizione in barra
+    const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro', 'task', 'note', 'cerca'];
+    const prima = vecchioMain ? ordine.indexOf((vecchioMain.dataset.scheda || '').replace(/(giorno|settimana|mese|agenda)$/, '')) : -1;
+    const dir = prima < 0 ? '' : ordine.indexOf(UI.scheda) >= prima ? '.da-dx' : '.da-sx';
+    const indietro = inAltro || (UI.scheda === 'altro' && UI.altroSez)
+        ? h('button.indietro', { onclick: () => { if (UI.scheda === 'altro')
+                UI.altroSez = null; vai('altro'); } }, icona('sx', 20), 'Altro') : null;
     const giornoNuovo = UI.scheda === 'cal' ? UI.data : undefined;
     const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : UI.scheda === 'appunti' ? apriAppunto() : apriNuovo(giornoNuovo);
-    const main = h('main' + (stessaScheda ? '' : '.entra'), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
+    const main = h('main' + (stessaScheda ? '' : '.entra' + dir), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
     svuota(app);
     aggiungi(app, [
-        h('header.testata', null, h('h1', null, titoli[UI.scheda]), h('div.testata-azioni', null, Drive.stato.sync === 'spento' ? null : h('button.sync-ind', { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa')
+        h('header.testata', null, h('div.testata-tit', null, indietro, h('h1', null, titoli[UI.scheda])), h('div.testata-azioni', null, Drive.stato.sync === 'spento' ? null : h('button.sync-ind', { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa')
                 Drive.login();
             else
-                vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)), h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')), h('button.btn-ico.solo-pc', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
+                vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)), h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')), h('button.btn-ico' + (UI.scheda === 'oggi' ? '.piu-testa' : '.solo-pc'), { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
         nav, main,
-        UI.scheda === 'altro' || UI.scheda === 'cerca' || UI.scheda === 'studio' ? null : h('button.fab', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu', 26)),
+        UI.scheda === 'altro' || UI.scheda === 'cerca' || UI.scheda === 'studio' || UI.scheda === 'oggi' ? null : h('button.fab', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu', 26)),
     ]);
     const griglia = app.querySelector('.gr-scroll');
     if (griglia) {
@@ -9102,6 +9398,46 @@ function disegna() {
     }
     if (stessaScheda)
         main.scrollTop = scrollMain;
+    else
+        Tocco.conta(main);
+    if (inAltro || (UI.scheda === 'altro' && UI.altroSez))
+        attivaIndietroSwipe(main);
+}
+/** v0.34: nelle sotto-pagine si torna indietro scorrendo dal bordo sinistro (come su iPhone). */
+function attivaIndietroSwipe(el) {
+    let x0 = -1, y0 = 0;
+    el.addEventListener('touchstart', e => { const t = e.touches[0]; x0 = t.clientX < 28 ? t.clientX : -1; y0 = t.clientY; }, { passive: true });
+    el.addEventListener('touchend', e => {
+        if (x0 < 0)
+            return;
+        const t = e.changedTouches[0];
+        if (t.clientX - x0 > 80 && Math.abs(t.clientY - y0) < 60) {
+            if (UI.scheda === 'altro')
+                UI.altroSez = null;
+            vai('altro');
+        }
+    }, { passive: true });
+}
+/** v0.34: una volta sola, dico dove sono finiti Promemoria e Note. */
+function avvisoNovita() {
+    if (navigator.webdriver)
+        return; // nei test automatici niente finestre
+    try {
+        if (localStorage.getItem('imc-novita-034'))
+            return;
+        if (!Stato.tutti('task').length && !Stato.tutti('nota').length) {
+            localStorage.setItem('imc-novita-034', '1');
+            return;
+        }
+    }
+    catch (_) {
+        return;
+    }
+    chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], 'Promemoria e Note ora sono in Altro (in alto, ben visibili) e restano anche nei riquadri di Oggi. Con la lente puoi cercare anche le impostazioni.')
+        .then(() => { try {
+        localStorage.setItem('imc-novita-034', '1');
+    }
+    catch (_) { /* niente */ } });
 }
 // ---------- Avvisi in-app (Livello 1 dei promemoria) ----------
 // Controlla ogni 30 s cosa è "scattato" dall'ultimo controllo; all'apertura
@@ -9155,7 +9491,10 @@ async function avvia() {
     Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
         disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva)
         Spiega.recuperaDaDrive(); });
+    attivaSimboli();
+    Tocco.attiva();
     disegna();
+    avvisoNovita();
     Drive.precarica();
     Timer.parti();
     Studio.caricaDalSito();
