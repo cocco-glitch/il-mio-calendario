@@ -71,6 +71,28 @@ const Spiega = (() => {
     throw new Error(navigator.onLine === false ? 'Sei offline: le spiegazioni già generate restano disponibili.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
   }
 
+  /** Q5: chiamata generica (messaggi liberi, risposta JSON) con lo stesso modello di riserva. */
+  async function chat(msgs: { role: string; content: string }[], temperatura = 0.4): Promise<any> {
+    if (!chiave()) throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
+    const modelli = [modello()]; if (modelli[0] !== RISERVA) modelli.push(RISERVA);
+    let ultimo: any = null;
+    for (const mod of modelli) {
+      try {
+        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: msgs }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { const e: any = new Error((j && j.error && j.error.message) || 'errore ' + r.status); e.stato = r.status; throw e; }
+        const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
+        return JSON.parse(t.replace(/^```(json)?|```$/g, ''));
+      } catch (e: any) { ultimo = e; if (e.stato === 401) break; }
+    }
+    if (ultimo && ultimo.stato === 401) throw new Error('Chiave Groq non valida: controllala in Altro → Spiegazioni AI.');
+    if (ultimo && ultimo.stato === 429) throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
+    throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
+  }
+
   // ---- Lato genitore: risponde alle richieste dei quiz aperti nell'app ----
   async function ricevi(e: MessageEvent): Promise<void> {
     const m = e.data;
@@ -185,5 +207,5 @@ const Spiega = (() => {
       h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
   }
 
-  return { inietta, sezione, genera, idDi };
+  return { inietta, sezione, genera, idDi, chat, materia };
 })();

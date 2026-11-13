@@ -530,3 +530,9 @@ body:has(.visore) .foglio-sfondo { z-index: 27; }
 .qz-zoom-x { position: absolute; bottom: calc(18px + env(safe-area-inset-bottom)); font-size: 13px; color: var(--tenue); }
 .qz-avviso { background: color-mix(in srgb, #d9921a 16%, var(--sup)); border: 1px solid #d9921a; border-radius: 11px; padding: 10px 12px; font-size: 15px; line-height: 1.45; }
 .regole-json { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+
+/* v0.27 Q5: coda domande AI */
+.aig-voce{display:flex;flex-direction:column;gap:6px;padding:12px 14px}
+.aig-q{font-weight:600;line-height:1.35}
+.aig-opz{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+.aig-giusta{color:#2fa866;font-weight:600}
