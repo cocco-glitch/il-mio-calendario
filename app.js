@@ -2428,11 +2428,15 @@ const Appunti = (() => {
         const cart = await Drive.sottocartella('Appunti');
         const nome = (a.titolo || 'Appunto').replace(/[\\/:*?"<>|]/g, '-') + '.md';
         const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n' + (a.riassunto ? '\n---\n**Riassunto:** ' + a.riassunto + '\n' : '');
-        const id = await Drive.carica(nome, cart, corpo, 'text/markdown', a.drive && a.drive.id);
-        a.drive = { id, agg: Date.now(), h: Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '')) };
+        if (a.mano && a.mano.t.length) { // v0.31: anche la pagina a mano, come PNG
+            const png = await (await fetch(immagineMano(a.mano, 1400))).blob();
+            a.manoPng = await Drive.carica(nome.replace(/\.md$/, '.png'), cart, png, 'image/png', a.manoPng);
+        }
+        const id = await Drive.carica(nome, cart, corpo + (a.manoPng ? '\n![Pagina a mano](' + nome.replace(/\.md$/, '.png') + ')\n' : ''), 'text/markdown', a.drive && a.drive.id);
+        a.drive = { id, agg: Date.now(), h: Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '') + (a.mano ? a.mano.t.length + ':' + a.mano.t.join('').length : '')) };
         Stato.salva(a);
     }
-    const daSalvareSuDrive = (a) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || ''));
+    const daSalvareSuDrive = (a) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '') + (a.mano ? a.mano.t.length + ':' + a.mano.t.join('').length : ''));
     // ---------- Fase 2: sezioni Cornell e ripasso dell'appunto ----------
     /** Divide l'appunto in sezioni (dai titoli); spunti = titolo + domande «::» + righe che finiscono con «?». */
     function sezioni(a) {
@@ -2492,7 +2496,7 @@ async function chiediDrive(a, forza = false) {
             avviso('Collega Google Drive da Altro.');
         return;
     }
-    const s = await chiedi('Salvare «' + a.titolo + '» su Drive?', [{ testo: a.drive ? '☁︎ Aggiorna la copia' : '☁︎ Salva su Drive', valore: 'si' }], 'Copia .md in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
+    const s = await chiedi('Salvare «' + a.titolo + '» su Drive?', [{ testo: a.drive ? '☁︎ Aggiorna la copia' : '☁︎ Salva su Drive', valore: 'si' }], 'Copia .md' + (a.mano && a.mano.t.length ? ' + pagina a mano in PNG' : '') + ' in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
     if (s !== 'si')
         return;
     if (serveGoogle())
@@ -2517,6 +2521,10 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo);
     const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '');
     const stato = h('div.appunto-stato.tenue.piccolo');
+    // v0.31: modalità a mano (Pencil) o testo; la pagina a mano sta sopra, il testo (anche trascritto) sotto
+    let modo = ap.mano && ap.mano.t.length ? 'mano' : (imp().modoAppunti === 'mano' ? 'mano' : 'testo');
+    const zonaMano = h('div.mano-zona');
+    let pagina = null;
     const anteprima = h('div.appunto-anteprima', { hidden: true });
     const aggiornaStato = () => {
         const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
@@ -2524,7 +2532,10 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
         stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
     };
     let timer = 0;
-    const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (!ap.testo.trim() && !ap.titolo.trim())
+    const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (pagina) {
+        const d = pagina.dati();
+        ap.mano = d.t.length ? d : undefined;
+    } if (!ap.testo.trim() && !ap.titolo.trim() && !ap.mano)
         return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
     const modifica = () => { cambiato = true; aggiornaStato(); clearTimeout(timer); timer = setTimeout(salvaOra, 1500); };
     titolo.addEventListener('input', modifica);
@@ -2596,9 +2607,39 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
                 avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).');
             }
         } }, '⋯'));
-    v.corpo.append(h('div.appunto', null, titolo, stato, barra, testo, anteprima, riass));
+    const scambio = h('div.segmenti.appunto-modo');
+    const leggi = h('button.btn.mano-leggi', { onclick: () => {
+            salvaOra();
+            if (!pagina)
+                return;
+            leggiScrittura(pagina.dati(), (t, come) => {
+                testo.value = come === 'sostituisci' ? t + '\n' : testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + t + '\n';
+                modifica();
+                salvaOra();
+                const n = Appunti.estraiCarte(testo.value).length;
+                avviso('✓ Testo aggiunto' + (n ? ' · 🃏 ' + n + ' carte' : ''));
+            });
+        } }, '✨ Leggi la mia scrittura');
+    function mostraModo() {
+        svuota(scambio);
+        scambio.append(...[['testo', '⌨️ Testo'], ['mano', '✍️ A mano']].map(([k, t]) => h('button' + (modo === k ? '.attivo' : ''), { onclick: () => {
+                modo = k;
+                const i = imp();
+                i.modoAppunti = k;
+                Stato.salva(i, true);
+                mostraModo();
+            } }, t)));
+        zonaMano.hidden = modo !== 'mano';
+        leggi.hidden = modo !== 'mano';
+        if (modo === 'mano' && !pagina)
+            pagina = paginaMano(zonaMano, ap.mano, modifica);
+        testo.placeholder = modo === 'mano' ? 'Qui sotto il testo: scrivilo, oppure tocca «✨ Leggi la mia scrittura» per trascrivere la pagina.' : testo.placeholder;
+    }
+    mostraModo();
+    v.corpo.append(h('div.appunto', null, titolo, stato, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
     aggiornaStato();
-    setTimeout(() => { const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto)
+    setTimeout(() => { if (modo === 'mano' && !alRiassunto && a)
+        return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto)
         el.scrollIntoView({ block: 'center' }); }, 80);
 }
 // ---------- Vista «Appunti» ----------
@@ -2614,7 +2655,7 @@ function vistaAppunti() {
     }
     const voce = (a) => {
         const n = Appunti.estraiCarte(a.testo).length, anteprima = a.testo.replace(/[#*_{}>`-]|::/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110);
-        return h('button.voce-lista', { onclick: () => apriAppunto(a) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo || 'Appunto'), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' }) + (anteprima ? ' — ' + anteprima : ''))));
+        return h('button.voce-lista', { onclick: () => apriAppunto(a) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, (a.mano && a.mano.t.length ? '✍️ ' : '') + (a.titolo || 'Appunto')), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' }) + (anteprima ? ' — ' + anteprima : ''))));
     };
     const campo = h('input.campo', { type: 'search', placeholder: 'Cerca negli appunti…', value: UI.apCerca || '', oninput: (e) => { UI.apCerca = e.target.value; clearTimeout(vistaAppunti.t); vistaAppunti.t = setTimeout(() => { disegna(); const c = document.querySelector('main input[type=search]'); if (c) {
             c.focus();
@@ -2636,6 +2677,8 @@ function apriCornell(a, copri = false) {
     const v = visore((copri ? '🧠 Copri e ricorda · ' : '📑 ') + (a.titolo || 'Appunto'), () => disegna());
     const sez = copri ? Appunti.daRipassare(a) : Appunti.sezioni(a);
     if (!sez.length) {
+        if (!manoVuota(a.mano))
+            v.corpo.append(h('img.cornell-mano', { src: immagineMano(a.mano, 1200), alt: 'Pagina a mano' }), h('div.tenue.piccolo', null, 'Trascrivi la pagina con «✨ Leggi la mia scrittura» per avere spunti, carte e ripasso.'));
         v.corpo.append(h('div.vuoto', null, copri ? 'Niente da ripassare oggi in questo appunto. 👍' : 'Appunto vuoto.'));
         return;
     }
@@ -2659,7 +2702,7 @@ function apriCornell(a, copri = false) {
         return h('section.cornell-riga', null, spunti, h('div', null, testo, azioni));
     });
     const err = Appunti.errori(a);
-    v.corpo.append(h('div.cornell', null, righe, err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub) + ' (' + err.length + ')'), err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null)), h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null, h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
+    v.corpo.append(h('div.cornell', null, !manoVuota(a.mano) ? h('img.cornell-mano', { src: immagineMano(a.mano, 1200), alt: 'Pagina a mano' }) : null, righe, err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub) + ' (' + err.length + ')'), err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null)), h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null, h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
         : h('button.btn-testo', { onclick: () => { v.chiudi(); apriAppunto(a, {}, true); } }, '✍️ Scrivilo in 2-3 frasi con parole tue: fissa più di una rilettura'))));
 }
 // ---------- AI (Groq) sugli appunti ----------
@@ -4718,6 +4761,231 @@ const Generatori = (() => {
     return { MODELLI, genera, per, serie, fN, titoloMicro };
 })();
 
+// 07-mano.ts — Scrittura a mano negli appunti (v0.31).
+//
+// Scouting 13/11: GoodNotes / Notability (pagine a quadretti o righe, penna sensibile alla pressione,
+// evidenziatore, gomma, scrittura → testo → quiz e flashcard con l'AI); web: Pointer Events danno
+// pressione e inclinazione della Pencil su Safari iPad; Scribble di iPadOS può «mangiare» tratti sulle
+// tele → blocchiamo i touch dello stilo sulla pagina; riconoscimento: modello visivo di Groq (Llama 4 Scout),
+// gratuito con la stessa chiave, SOLO quando premi ✨, e il testo si controlla prima di usarlo.
+//
+// Dati: Appunto.mano = { t: tratti, h: altezza, sf: sfondo }. Coordinate su una larghezza logica di 1000.
+// Tratto compatto: "colore|spessore|tipo|x,y,p x,y,p …" (tipo: p = penna, e = evidenziatore).
+const LARG = 1000;
+function decodTratto(s) {
+    const [c, w, k, pts] = s.split('|');
+    return { c, w: +w, k, p: (pts || '').split(' ').filter(Boolean).map(x => x.split(',').map(Number)) };
+}
+function codTratto(c, w, k, p) { return c + '|' + w + '|' + k + '|' + p.map(q => q.join(',')).join(' '); }
+/** Disegna sfondo + tratti su un contesto (scala = pixel per unità logica). */
+function disegnaMano(g, m, scala, sfondoPieno = false) {
+    const W = LARG * scala, H = m.h * scala;
+    g.clearRect(0, 0, W, H);
+    if (sfondoPieno) {
+        g.fillStyle = '#fff';
+        g.fillRect(0, 0, W, H);
+    }
+    if (m.sf !== 'bianco' && !sfondoPieno) {
+        g.strokeStyle = 'rgba(120,130,160,.22)';
+        g.lineWidth = 1;
+        const passo = (m.sf === 'quadretti' ? 25 : 40) * scala;
+        g.beginPath();
+        for (let y = passo; y < H; y += passo) {
+            g.moveTo(0, y);
+            g.lineTo(W, y);
+        }
+        if (m.sf === 'quadretti')
+            for (let x = passo; x < W; x += passo) {
+                g.moveTo(x, 0);
+                g.lineTo(x, H);
+            }
+        g.stroke();
+    }
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    for (const s of m.t)
+        tracciaTratto(g, decodTratto(s), scala);
+}
+function tracciaTratto(g, t, scala) {
+    if (!t.p.length)
+        return;
+    g.globalAlpha = t.k === 'e' ? .32 : 1;
+    g.strokeStyle = t.c;
+    if (t.p.length === 1) {
+        g.fillStyle = t.c;
+        g.beginPath();
+        g.arc(t.p[0][0] * scala, t.p[0][1] * scala, t.w * scala / 2, 0, 7);
+        g.fill();
+        g.globalAlpha = 1;
+        return;
+    }
+    for (let i = 1; i < t.p.length; i++) {
+        const a = t.p[i - 1], b = t.p[i];
+        g.lineWidth = Math.max(.6, t.w * scala * (t.k === 'e' ? 1 : .45 + (b[2] || 50) / 100));
+        g.beginPath();
+        g.moveTo(a[0] * scala, a[1] * scala);
+        g.lineTo(b[0] * scala, b[1] * scala);
+        g.stroke();
+    }
+    g.globalAlpha = 1;
+}
+/** Immagine PNG (fondo bianco) della pagina, per l'AI o per Drive. */
+function immagineMano(m, larghezza = 1000) {
+    const cv = document.createElement('canvas'), s = larghezza / LARG;
+    cv.width = larghezza;
+    cv.height = Math.ceil(m.h * s);
+    disegnaMano(cv.getContext('2d'), m, s, true);
+    return cv.toDataURL('image/png');
+}
+const manoVuota = (m) => !m || !m.t.length;
+/** Editor a mano dentro un elemento. Restituisce l'interfaccia per leggere i dati. */
+function paginaMano(contenitore, iniziale, cambia) {
+    const m = iniziale ? { t: iniziale.t.slice(), h: iniziale.h, sf: iniziale.sf } : { t: [], h: 1400, sf: 'quadretti' };
+    const storia = [], futuro = [];
+    let strumento = 'penna', colore = '#1f2a44', dito = !matchMedia('(pointer: fine), (hover: hover)').matches && !('ontouchstart' in window && navigator.maxTouchPoints > 1 && /iPad|Macintosh/.test(navigator.userAgent));
+    let penna = false; // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
+    const cv = h('canvas.mano-tela'), g = cv.getContext('2d');
+    const vivo = h('canvas.mano-vivo'), gv = vivo.getContext('2d');
+    const foglio = h('div.mano-foglio', null, cv, vivo);
+    let scala = 1, dpr = Math.min(2, window.devicePixelRatio || 1);
+    function dimensiona() {
+        const w = foglio.clientWidth || 360;
+        scala = w / LARG;
+        for (const c of [cv, vivo]) {
+            c.width = Math.round(w * dpr);
+            c.height = Math.round(m.h * scala * dpr);
+            c.style.height = (m.h * scala) + 'px';
+        }
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        gv.setTransform(dpr, 0, 0, dpr, 0, 0);
+        disegnaMano(g, m, scala);
+    }
+    const salvaStoria = () => { storia.push(m.t.slice()); if (storia.length > 60)
+        storia.shift(); futuro.length = 0; };
+    // --- input ---
+    let cur = null, idPuntatore = -1;
+    const punto = (e) => { const r = vivo.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / scala), Math.round((e.clientY - r.top) / scala), Math.round((e.pointerType === 'pen' ? (e.pressure || .5) : .5) * 100)]; };
+    const scrive = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && dito && !penna);
+    vivo.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'pen' && !penna) {
+            penna = true;
+            aggiornaBarra();
+        }
+        if (!scrive(e) || cur)
+            return;
+        e.preventDefault();
+        try {
+            vivo.setPointerCapture(e.pointerId);
+        }
+        catch (_) { /* puntatore sintetico */ }
+        idPuntatore = e.pointerId;
+        salvaStoria();
+        cur = [punto(e)];
+        if (strumento === 'gomma')
+            cancellaVicino(cur[0]);
+    });
+    vivo.addEventListener('pointermove', e => {
+        if (!cur || e.pointerId !== idPuntatore)
+            return;
+        e.preventDefault();
+        const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+        for (const ev of evs.length ? evs : [e]) {
+            const p = punto(ev), u = cur[cur.length - 1];
+            if (Math.abs(p[0] - u[0]) + Math.abs(p[1] - u[1]) < 2)
+                continue;
+            if (strumento === 'gomma') {
+                cancellaVicino(p);
+                cur.push(p);
+                continue;
+            }
+            cur.push(p);
+            gv.lineCap = 'round';
+            tracciaTratto(gv, { c: colore, w: strumento === 'evid' ? 22 : 3, k: strumento === 'evid' ? 'e' : 'p', p: [u, p] }, scala);
+        }
+        if (cur[cur.length - 1][1] > m.h - 150) {
+            m.h += 500;
+            dimensiona();
+        } // la pagina si allunga
+    });
+    const fine = (e) => {
+        if (!cur || e.pointerId !== idPuntatore)
+            return;
+        if (strumento !== 'gomma')
+            m.t.push(codTratto(colore, strumento === 'evid' ? 22 : 3, strumento === 'evid' ? 'e' : 'p', cur));
+        cur = null;
+        idPuntatore = -1;
+        gv.clearRect(0, 0, vivo.width, vivo.height);
+        disegnaMano(g, m, scala);
+        cambia();
+    };
+    vivo.addEventListener('pointerup', fine);
+    vivo.addEventListener('pointercancel', fine);
+    // Scribble di iPadOS: sulla tela i tocchi dello stilo non devono diventare testo né scorrere la pagina
+    vivo.addEventListener('touchstart', e => { const t = e.touches[0]; if ((t && t.touchType === 'stylus') || (dito && !penna))
+        e.preventDefault(); }, { passive: false });
+    vivo.addEventListener('touchmove', e => { const t = e.touches[0]; if ((t && t.touchType === 'stylus') || (dito && !penna))
+        e.preventDefault(); }, { passive: false });
+    function cancellaVicino(p) {
+        const r = 14, prima = m.t.length;
+        m.t = m.t.filter(s => !decodTratto(s).p.some(q => Math.abs(q[0] - p[0]) < r && Math.abs(q[1] - p[1]) < r));
+        if (m.t.length !== prima)
+            disegnaMano(g, m, scala);
+    }
+    // --- barra strumenti ---
+    const barra = h('div.mano-barra');
+    const COLORI = ['#1f2a44', '#1c7ed6', '#e03131', '#2f9e44', '#f59f00'];
+    function aggiornaBarra() {
+        svuota(barra);
+        const b = (t, att, f, titolo) => h('button' + (att ? '.attivo' : ''), { title: titolo, 'aria-label': titolo, onclick: () => { f(); aggiornaBarra(); } }, t);
+        barra.append(b('✒️', strumento === 'penna', () => strumento = 'penna', 'Penna'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), h('span.mano-sep'), ...COLORI.map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma')
+                strumento = 'penna'; aggiornaBarra(); } })), h('span.mano-sep'), b('↶', false, () => { if (storia.length) {
+            futuro.push(m.t.slice());
+            m.t = storia.pop();
+            disegnaMano(g, m, scala);
+            cambia();
+        } }, 'Annulla'), b('↷', false, () => { if (futuro.length) {
+            storia.push(m.t.slice());
+            m.t = futuro.pop();
+            disegnaMano(g, m, scala);
+            cambia();
+        } }, 'Ripeti'), b(m.sf === 'quadretti' ? '▦' : m.sf === 'righe' ? '☰' : '▢', false, () => { m.sf = m.sf === 'quadretti' ? 'righe' : m.sf === 'righe' ? 'bianco' : 'quadretti'; disegnaMano(g, m, scala); cambia(); }, 'Sfondo: quadretti / righe / bianco'), penna ? h('span.tenue.piccolo', null, '✏️ Pencil: il dito scorre') : b(dito ? '☝️ dito: scrive' : '☝️ dito: scorre', dito, () => { dito = !dito; foglio.classList.toggle('dito', dito); }, 'Scrivere anche con il dito'));
+    }
+    foglio.classList.toggle('dito', dito);
+    aggiornaBarra();
+    contenitore.append(barra, foglio);
+    requestAnimationFrame(dimensiona);
+    const ro = new ResizeObserver(() => { const w = foglio.clientWidth; if (w && Math.abs(w / LARG - scala) > .001)
+        dimensiona(); });
+    ro.observe(foglio);
+    return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf }), ridisegna: dimensiona };
+}
+/** ✨ Trascrive la pagina a mano: mostra il testo da controllare, poi lo aggiunge o sostituisce. */
+async function leggiScrittura(m, dopo) {
+    if (manoVuota(m)) {
+        avviso('Scrivi qualcosa sulla pagina prima.');
+        return;
+    }
+    avviso('✨ Leggo la tua scrittura…', 20000);
+    let t = '';
+    try {
+        t = await Spiega.vede('Trascrivi FEDELMENTE il testo scritto a mano in questa pagina di appunti di studio (italiano; chimica, biologia o fisica). '
+            + 'Regole: mantieni l\'ordine e gli a capo; titoli sottolineati o grandi → «# titolo»; elenchi → «- punto» (rientro per i sotto-punti); '
+            + 'se c\'è una freccia o «::» tra domanda e risposta scrivi «domanda :: risposta»; parole racchiuse tra graffe {{…}} restano così; '
+            + 'formule con simboli corretti (es. ΔH, H₂O, →); se una parola è illeggibile scrivi [?]. Non aggiungere nulla, non commentare: restituisci solo il testo in Markdown.', immagineMano(m, 1200));
+    }
+    catch (e) {
+        avviso(String(e.message || e), 8000);
+        return;
+    }
+    t = t.replace(/^```(markdown|md)?\s*|```\s*$/g, '').trim();
+    if (!t) {
+        avviso('Non sono riuscito a leggere la pagina.');
+        return;
+    }
+    const campo = h('textarea.appunto-testo', { style: { minHeight: '40vh' } }, t);
+    const fs = foglio({ titolo: '✨ Controlla la trascrizione', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Correggi dove serve ([?] = illeggibile). Le righe «domanda :: risposta» e i {{completamenti}} diventeranno flashcard.'), campo, h('div.bottoni', null, h('button.btn', { onclick: () => { fs.chiudi(); dopo(campo.value.trim(), 'aggiungi'); } }, 'Aggiungi al testo'), h('button.btn.neutro', { onclick: () => { fs.chiudi(); dopo(campo.value.trim(), 'sostituisci'); } }, 'Sostituisci il testo'))) });
+}
+
 // 07-memoria.ts — Motore dei ripassi (F2): ripetizione spaziata con FSRS.
 //
 // Ogni scheda fatta ha un record 'memoria' (id 'mem-<idScheda>') con difficoltà D (1–10), stabilità S
@@ -6382,6 +6650,24 @@ const Spiega = (() => {
             throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
         throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
     }
+    /** v0.31: legge un'immagine (scrittura a mano) con il modello visivo di Groq; restituisce testo. */
+    async function vede(istruzioni, immagine) {
+        if (!await pronta())
+            throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
+        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'meta-llama/llama-4-scout-17b-16e-instruct', temperature: 0.1, max_completion_tokens: 4096,
+                messages: [{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }] }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 401)
+            throw new Error('Chiave Groq non valida.');
+        if (r.status === 429)
+            throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
+        if (!r.ok)
+            throw new Error((j && j.error && j.error.message) || 'errore ' + r.status);
+        return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
+    }
     // ---- Lato genitore: risponde alle richieste dei quiz aperti nell'app ----
     async function ricevi(e) {
         const m = e.data;
@@ -6546,7 +6832,7 @@ const Spiega = (() => {
         };
         return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
     }
-    return { inietta, sezione, genera, idDi, chat, materia, pronta, recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
+    return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
 
 // 07-studiaora.ts — "Studia ora" (v0.15, F4 ridotta, tattiche T15–T19).
@@ -8417,7 +8703,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.30.0';
+const VERSIONE = '0.31.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
