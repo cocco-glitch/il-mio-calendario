@@ -2901,6 +2901,12 @@ const Carte = (() => {
                         if (mi.n === m[1])
                             cand.push({ sub: s.k, micro: mi.n });
                 }
+        // v0.31.2: se lo step non ha ancora schede ma è nel piano (es. «Chi 5.2»), collega alla voce del piano
+        if (!cand.length && mat) {
+            const k = mat + m[1].split('.').slice(0, 2).join('.');
+            if (Studio.pkPiani().some(p => p.giorni.some(g => g.voci.some(v => v.k === k))))
+                cand.push({ sub: k, ...(m[1].split('.').length > 2 ? { micro: m[1] } : {}) });
+        }
         return cand.length === 1 ? cand[0] : {};
     }
     /** Crea/aggiorna le carte di un mazzo. Stessa domanda = stessa carta (i ripassi restano). */
@@ -8711,7 +8717,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.31.1';
+const VERSIONE = '0.31.2';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
