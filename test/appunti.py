@@ -124,7 +124,7 @@ with sync_playwright() as p:
     pg.locator('.voce-lista', has_text='Fis 1.1 cinematica').first.click(); pg.wait_for_selector('.mano-leggi')
     ok(pg.locator('.appunto-modo button.attivo', has_text='A mano').count() == 1, 'si riapre in modalità a mano')
     pg.click('.mano-leggi'); pg.wait_for_selector('.foglio textarea')
-    ok(pg.evaluate("_vis.model").startswith('meta-llama/llama-4-scout') and pg.evaluate("_vis.messages[0].content[1].image_url.url").startswith('data:image/png'), 'immagine della pagina inviata al modello visivo')
+    ok(pg.evaluate("_vis.model").startswith('qwen/qwen3.8') and pg.evaluate("_vis.messages[0].content[1].image_url.url").startswith('data:image/png'), 'immagine della pagina inviata al modello visivo')
     pg.click('.foglio button:has-text("Aggiungi al testo")'); pg.wait_for_timeout(300)
     ok('velocità media :: Δs/Δt' in pg.input_value('.appunto-testo'), 'trascrizione aggiunta al testo')
     ok(pg.evaluate("Carte.carte().filter(c => c.f === 'velocità media' || c.f.includes('{{accelerazione}}')).length") == 2, 'e diventa 2 flashcard')
