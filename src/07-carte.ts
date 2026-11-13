@@ -19,7 +19,7 @@
 // Immagini: "![testo](nome.png)" se nome.png è nella cartella Drive importata → "![testo](drive:ID)".
 
 interface Mazzo extends Rec { type: 'mazzo'; nome: string; padre?: string; sub?: string; micro?: string; fonte?: { id: string; tipo: 'file' | 'cartella'; agg?: string }; }
-interface Carta extends Rec { type: 'carta'; mazzo: string; f: string; r: string; tipo: 'base' | 'cloze'; inversa?: boolean; tag?: string; }
+interface Carta extends Rec { type: 'carta'; mazzo: string; f: string; r: string; tipo: 'base' | 'cloze'; inversa?: boolean; tag?: string; ctx?: string; }
 type ModoCarte = 'gira' | 'scelta' | 'scrivi';
 
 const Carte = (() => {
@@ -280,7 +280,7 @@ function avviaCarte(ids?: string[], titolo = 'Flashcard'): void {
     fronte.innerHTML = domandaDi(c, x.rev);
     retro.innerHTML = c.tipo === 'cloze' ? htmlCarta(c.f, 'mostra') + (c.r ? '<hr>' + htmlCarta(c.r) : '') : htmlCarta(x.rev ? c.f : c.r);
     const carta = h('div.carta', { role: 'button', tabindex: '0', 'aria-label': 'Gira la carta' }, h('div.carta-interno', null, fronte, retro));
-    const etich = h('div.tenue.piccolo.carta-mazzo', null, (mz ? mz.nome : '') + (x.rev ? ' · inversa' : '') + (Carte.mem(x) ? '' : ' · nuova'));
+    const etich = h('div.tenue.piccolo.carta-mazzo', null, (mz ? mz.nome : '') + (c.ctx ? ' › ' + c.ctx : '') + (x.rev ? ' · inversa' : '') + (Carte.mem(x) ? '' : ' · nuova'));
     area.append(etich, carta);
     caricaImmagini(carta);
     const gira = () => { if (girata) return; girata = true; carta.classList.add('girata'); };

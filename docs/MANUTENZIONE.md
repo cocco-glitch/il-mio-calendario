@@ -97,3 +97,5 @@ Il piano per rendere l'app adatta a qualsiasi studio è in `docs/PROGRESSIONE.md
   i record importati dal sito hanno `daSito: true` e al primo accesso di un altro account `Studio.togliSito()` li elimina.
 - Kit per il suo Claude: `docs/kit-studio/DIRETTIVE-QUIZ.md` + `studio/strumenti/quiz/` (motore, build, verifica, esempio).
   Test: `test/secondo.py`.
+
+**Appunti (v0.28, `07-appunti.ts`):** record `appunto`; carte nel mazzo `mz-ap-<id>` sotto `mz-appunti`, campo `ctx` della carta = percorso dei titoli. `Appunti.sincronizzaCarte` aggiunge/toglie le carte in base al testo. Drive: `Drive.sottocartella('Appunti')`, `drive.h` = hash del contenuto caricato (per sapere se la copia è da aggiornare); la richiesta di conferma (`chiediDrive`) parte alla chiusura dell'editor. Test: `test/appunti.py`.

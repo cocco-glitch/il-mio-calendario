@@ -9,6 +9,7 @@ const ICONE: Record<string, string> = {
   studio: '<path d="M3 8.5l9-4.5 9 4.5-9 4.5z"/><path d="M7 11v5c1.5 1.6 3.2 2.3 5 2.3s3.5-.7 5-2.3v-5M21 8.5V14"/>',
   task: '<path d="M4 6.5l2 2 3.5-4M4 16.5l2 2 3.5-4M13 7h7M13 17h7"/>',
   note: '<path d="M6 3.5h9l4 4V20a.5.5 0 0 1-.5.5h-12A.5.5 0 0 1 6 20z"/><path d="M9 12h7M9 16h5"/>',
+  appunti: '<path d="M5 4.5h11.5l2.5 2.5v12.5H5z"/><path d="M8.5 9h7M8.5 12.5h7M8.5 16h4"/><path d="M14 3v3"/>',
   altro: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
   cerca: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
   piu: '<path d="M12 5v14M5 12h14"/>',

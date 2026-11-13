@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.27.0';
+const VERSIONE = '0.28.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -32,12 +32,12 @@ function disegna(): void {
   const scrollMain = vecchioMain ? vecchioMain.scrollTop : 0;
   const stessaScheda = vecchioMain && vecchioMain.dataset.scheda === UI.scheda + (UI.scheda === 'cal' ? UI.vista : '');
 
-  const titoli: Record<Scheda, string> = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
+  const titoli: Record<Scheda, string> = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', appunti: 'Appunti', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
   const vista = UI.scheda === 'oggi' ? vistaOggi() : UI.scheda === 'cal' ? vistaCalendario() : UI.scheda === 'studio' ? vistaStudio() : UI.scheda === 'task' ? vistaTask()
-    : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
+    : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'appunti' ? vistaAppunti() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
 
   const daFare = Stato.tutti<Task>('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(oggi()))).length;
-  const schede: [Scheda, string, string][] = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
+  const schede: [Scheda, string, string][] = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['appunti', 'Appunti', 'appunti'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
   const nascoste = imp().tabNascoste || [];
   const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) =>
     h('button' + (UI.scheda === s ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; vai(s); }, 'aria-current': UI.scheda === s ? 'page' : null },
@@ -45,7 +45,7 @@ function disegna(): void {
       h('span.tab-eti', null, t))));
 
   const giornoNuovo = UI.scheda === 'cal' ? UI.data : undefined;
-  const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : apriNuovo(giornoNuovo);
+  const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : UI.scheda === 'appunti' ? apriAppunto() : apriNuovo(giornoNuovo);
 
   const main = h('main' + (stessaScheda ? '' : '.entra'), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
   svuota(app);

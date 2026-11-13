@@ -129,6 +129,12 @@ const Drive = (() => {
     cartelle = nuove; LS.set('cartelle', cartelle);
   }
   function idCartella(n: NomeSotto | 'app'): string { return cartelle[n]; }
+  /** v0.21: sottocartella dell'app creata al bisogno (es. «Appunti»), ricordata in locale. */
+  async function sottocartella(nome: string): Promise<string> {
+    await preparaCartelle();
+    if (!cartelle[nome]) { cartelle[nome] = await cartella(nome, cartelle.app); LS.set('cartelle', cartelle); }
+    return cartelle[nome];
+  }
 
   /** Carica (crea o aggiorna) un file; contenuto testo o Blob. Ritorna l'id. */
   async function carica(nome: string, parent: string, contenuto: Blob | string, mime: string, idEsistente?: string): Promise<string> {
@@ -341,7 +347,7 @@ const Drive = (() => {
   return {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica,
-    caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
+    caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
     elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
     get collegato() { return !!stato.email; },
     /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */

@@ -43,3 +43,9 @@ Una riga per scelta importante: data · decisione · motivo.
 - Opacità alta (80–88%): con troppa trasparenza le etichette della barra si confondevano con il testo sotto.
 - Colore + forma per materia: accessibile anche per chi non distingue i colori e più rapido da riconoscere.
 - Animazioni solo su transform/opacity, brevi (0.2–0.35 s), e solo al cambio scheda: i ridisegni frequenti (ogni salvataggio) non lampeggiano.
+
+## v0.28 — Appunti, fase 1 (13/11)
+- Modello ibrido scelto dall'utente: testo libero + elenchi annidati (RemNote) + vista Cornell (fase 2) sullo stesso appunto.
+- Carte automatiche dalla sintassi `::` / `{{…}}` (RemNote, Obsidian): niente doppio lavoro appunto → carta.
+- Copia su Drive solo con conferma nell'app a ogni salvataggio modificato (regola dell'utente: niente su Drive senza conferma).
+- L'AI non scrive gli appunti (toglierebbe l'elaborazione generativa): le domande dai PDF/slide e dagli appunti le prepara Claude come pacchetti (fase 4).

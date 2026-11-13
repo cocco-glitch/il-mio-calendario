@@ -5,7 +5,7 @@
 // (in 07-main.ts) ricostruisce la schermata a ogni cambio di dati.
 // ============================================================
 
-type Scheda = 'oggi' | 'cal' | 'studio' | 'task' | 'note' | 'altro' | 'cerca';
+type Scheda = 'oggi' | 'cal' | 'studio' | 'appunti' | 'task' | 'note' | 'altro' | 'cerca';
 type VistaCal = 'giorno' | 'settimana' | 'mese' | 'agenda';
 
 const UI = {
@@ -519,7 +519,7 @@ function sezioneLayout(salva: SalvaImp): HTMLElement {
       h('button.btn-ico', { 'aria-label': 'Giù', disabled: idx === ord.length - 1, onclick: () => sposta(idx, 1) }, '↓'),
       h('label.interruttore', { title: 'Mostra' }, h('input', { type: 'checkbox', checked: !nasc.has(w), onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? nasc.delete(w) : nasc.add(w); salva({ widgetNascosti: Array.from(nasc), preset: '' }); } }), h('span')))),
     h('div.gruppo-titolo', null, 'Sezioni nella barra'),
-    [['cal', 'Calendario'], ['studio', 'Studio'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t),
+    [['cal', 'Calendario'], ['studio', 'Studio'], ['appunti', 'Appunti'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t),
       h('label.interruttore', null, h('input', { type: 'checkbox', checked: !tabN.has(s), onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? tabN.delete(s) : tabN.add(s); salva({ tabNascoste: Array.from(tabN), preset: '' }); } }), h('span')))));
 }
 
