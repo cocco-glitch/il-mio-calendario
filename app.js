@@ -1031,7 +1031,7 @@ const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleap
 // la seconda persona: scrivere il suo Gmail in SECONDO_ACCOUNT (minuscolo) e ripubblicare; deve
 // anche essere tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
 const PROPRIETARIO = 'cocco.haloa@gmail.com';
-const SECONDO_ACCOUNT = '';
+const SECONDO_ACCOUNT = 'nicoleschirru@gmail.com';
 const ACCOUNT_AMMESSI = [PROPRIETARIO, SECONDO_ACCOUNT].filter(Boolean);
 const CARTELLA_APP = 'Calendario personale';
 /** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
@@ -7672,7 +7672,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.26.0';
+const VERSIONE = '0.26.1';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
