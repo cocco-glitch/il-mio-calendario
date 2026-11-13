@@ -2551,7 +2551,8 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     // v0.31: modalità a mano (Pencil) o testo; la pagina a mano sta sopra, il testo (anche trascritto) sotto
     let modo = ap.mano && ap.mano.t.length ? 'mano' : (imp().modoAppunti === 'mano' ? 'mano' : 'testo');
     const zonaMano = h('div.mano-zona');
-    let pagina = null;
+    let pagina = null, sfondoModello;
+    const aggiungiCarta = (riga) => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n' : '') + riga + '\n'; modifica(); salvaOra(); avviso('🃏 Flashcard aggiunta al testo dell\'appunto.'); };
     const anteprima = h('div.appunto-anteprima', { hidden: true });
     const aggiornaStato = () => {
         const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
@@ -2674,11 +2675,24 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
         zonaMano.hidden = modo !== 'mano';
         leggi.hidden = modo !== 'mano';
         if (modo === 'mano' && !pagina)
-            pagina = paginaMano(zonaMano, ap.mano, modifica);
+            pagina = paginaMano(zonaMano, ap.mano, modifica, sfondoModello, aggiungiCarta);
         testo.placeholder = modo === 'mano' ? 'Qui sotto il testo: scrivilo, oppure tocca «✨ Leggi la mia scrittura» per trascrivere la pagina.' : testo.placeholder;
     }
     mostraModo();
-    v.corpo.append(h('div.appunto', null, titolo, stato, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
+    // v0.33: modelli di pagina (solo per un appunto nuovo e vuoto)
+    const modelli = a || ap.testo ? null : h('div.chips.appunto-modelli', null, h('span.tenue.piccolo', null, 'Modello:'), MODELLI_APPUNTO.map(md => h('button.chip' + (md.id === 'vuoto' ? '.attivo' : ''), { title: md.sotto, onclick: (e) => {
+            modelli.querySelectorAll('.chip').forEach(c => c.classList.toggle('attivo', c === e.currentTarget));
+            if (!testo.value.trim() || MODELLI_APPUNTO.some(x => x.testo === testo.value))
+                testo.value = md.testo;
+            if (pagina && !pagina.dati().t.length) {
+                svuota(zonaMano);
+                pagina = paginaMano(zonaMano, undefined, modifica, md.sf, aggiungiCarta);
+            }
+            else if (!pagina)
+                sfondoModello = md.sf;
+            avviso(md.nome + ': ' + md.sotto, 2500);
+        } }, md.nome)));
+    v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
     aggiornaStato();
     setTimeout(() => { if (modo === 'mano' && !alRiassunto && a)
         return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto)
@@ -2884,6 +2898,15 @@ function rigaAppuntoErrore(d) {
     return h('div.dom-appunto', null, best ? h('details', null, h('summary', null, '📝 Nel tuo appunto: ' + best.a.titolo + ' › ' + best.s.titolo), (() => { const el = h('div.tenue.piccolo'); el.innerHTML = htmlCarta(best.s.testo.replace(/\s::\s/g, ' → '), 'mostra'); return el; })())
         : h('div.tenue.piccolo', null, '📝 Il tuo appunto «' + a0.titolo + '» non sembra parlarne.'), h('button.btn-testo', { onclick: (e) => { Appunti.aggiungiRiga(a0, '- ' + d.q.replace(/\s::\s/g, ' ') + ' :: ' + d.giusta); e.target.textContent = '✓ aggiunta a «' + a0.titolo + '»'; } }, '➕ Aggiungi all\'appunto come flashcard'));
 }
+// ---------- v0.33: modelli di pagina ----------
+const MODELLI_APPUNTO = [
+    { id: 'vuoto', nome: 'Vuoto', sotto: 'Pagina libera', testo: '', sf: 'quadretti' },
+    { id: 'lezione', nome: 'Lezione', sotto: 'Concetti → domande → collegamenti', testo: '# Concetti chiave\n- \n\n# Domande\n- domanda :: risposta\n\n# Collegamenti\n- vedi [[ ]]\n', sf: 'righe' },
+    { id: 'cornell', nome: 'Cornell', sotto: 'Spunti · appunti · riassunto', testo: '# Argomento\n- \n- domanda-spunto? :: risposta\n\n# Argomento 2\n- \n', sf: 'cornell' },
+    { id: 'esercizio', nome: 'Esercizio', sotto: 'Dati · formule · svolgimento · errore', testo: '# Testo e dati\n- \n\n# Formule che servono\n- {{formula}}\n\n# Svolgimento\n1. \n\n# Risultato ed errore fatto\n- Risultato: \n- Errore che ho fatto :: cosa ricordare la prossima volta\n', sf: 'esercizio' },
+    { id: 'reazione', nome: 'Reazione', sotto: 'Reagenti · condizioni · meccanismo · prodotti', testo: '# Reazione\n- Reagenti: \n- Condizioni / catalizzatore: \n- Prodotti: \n\n# Meccanismo\n1. \n\n# Da ricordare\n- Prodotto di questa reazione :: \n- Il catalizzatore è {{…}}\n', sf: 'quadretti' },
+    { id: 'confronto', nome: 'Confronto', sotto: 'A vs B: somiglianze e differenze', testo: '# A\n- \n\n# B\n- \n\n# Differenze chiave\n- Differenza tra A e B :: \n', sf: 'righe' },
+];
 
 // 07-carte.ts — Flashcard (v0.18, F3).
 //
@@ -4919,6 +4942,43 @@ function disegnaMano(g, m, scala, sfondoPieno = false) {
             }
         g.stroke();
     }
+    if (m.sf === 'cornell' || m.sf === 'esercizio') { // v0.33: modelli di pagina
+        g.strokeStyle = 'rgba(120,130,160,.18)';
+        g.lineWidth = 1;
+        g.beginPath();
+        for (let y = 40 * scala; y < H; y += 40 * scala) {
+            g.moveTo(0, y);
+            g.lineTo(W, y);
+        }
+        g.stroke();
+        g.strokeStyle = 'rgba(70,100,220,.45)';
+        g.lineWidth = 2;
+        g.fillStyle = 'rgba(70,100,220,.75)';
+        g.font = Math.round(22 * scala) + 'px system-ui, sans-serif';
+        if (m.sf === 'cornell') {
+            const fondo = H - 260 * scala;
+            g.beginPath();
+            g.moveTo(300 * scala, 0);
+            g.lineTo(300 * scala, fondo);
+            g.moveTo(0, fondo);
+            g.lineTo(W, fondo);
+            g.stroke();
+            g.fillText('Spunti / domande', 14 * scala, 30 * scala);
+            g.fillText('Appunti', 316 * scala, 30 * scala);
+            g.fillText('Riassunto (con parole tue)', 14 * scala, fondo + 30 * scala);
+        }
+        else {
+            const zone = [[0, 'Testo / dati'], [0.22, 'Formule che servono'], [0.38, 'Svolgimento'], [0.82, 'Risultato · errore fatto · cosa ricordare']];
+            g.beginPath();
+            for (const [f] of zone.slice(1)) {
+                g.moveTo(0, H * f);
+                g.lineTo(W, H * f);
+            }
+            g.stroke();
+            for (const [f, t] of zone)
+                g.fillText(t, 14 * scala, H * f + 30 * scala);
+        }
+    }
     g.lineCap = 'round';
     g.lineJoin = 'round';
     for (const s of m.t)
@@ -4957,17 +5017,17 @@ function immagineMano(m, larghezza = 1000) {
 }
 const manoVuota = (m) => !m || !m.t.length;
 /** Editor a mano dentro un elemento. Restituisce l'interfaccia per leggere i dati. */
-function paginaMano(contenitore, iniziale, cambia) {
-    const m = iniziale ? { t: iniziale.t.slice(), h: iniziale.h, sf: iniziale.sf } : { t: [], h: 1400, sf: 'quadretti' };
+function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
+    const m = iniziale ? { t: iniziale.t.slice(), h: iniziale.h, sf: iniziale.sf } : { t: [], h: 1400, sf: sfondo || 'quadretti' };
     const storia = [], futuro = [];
     let strumento = 'penna', colore = '#1f2a44', dito = !matchMedia('(pointer: fine), (hover: hover)').matches && !('ontouchstart' in window && navigator.maxTouchPoints > 1 && /iPad|Macintosh/.test(navigator.userAgent));
     let penna = false; // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
     const cv = h('canvas.mano-tela'), g = cv.getContext('2d');
     const vivo = h('canvas.mano-vivo'), gv = vivo.getContext('2d');
-    const foglio = h('div.mano-foglio', null, cv, vivo);
+    const pag = h('div.mano-foglio', null, cv, vivo);
     let scala = 1, dpr = Math.min(2, window.devicePixelRatio || 1);
     function dimensiona() {
-        const w = foglio.clientWidth || 360;
+        const w = pag.clientWidth || 360;
         scala = w / LARG;
         for (const c of [cv, vivo]) {
             c.width = Math.round(w * dpr);
@@ -4980,6 +5040,100 @@ function paginaMano(contenitore, iniziale, cambia) {
     }
     const salvaStoria = () => { storia.push(m.t.slice()); if (storia.length > 60)
         storia.shift(); futuro.length = 0; };
+    // --- v0.33: lazo (seleziona, sposta, elimina, trasforma in carta) ---
+    let sel = new Set(), poligono = null, trascina = null, spost = [0, 0];
+    const dentro = (p, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const a = poly[i], b = poly[j];
+        if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0])
+            c = !c;
+    } return c; };
+    function riquadro() {
+        if (!sel.size)
+            return null;
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        sel.forEach(i => decodTratto(m.t[i]).p.forEach(q => { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }));
+        return [x0 - 10, y0 - 10, x1 + 10, y1 + 10];
+    }
+    function disegnaSel() {
+        gv.clearRect(0, 0, vivo.width, vivo.height);
+        if (poligono && poligono.length > 1) {
+            gv.setLineDash([6, 6]);
+            gv.strokeStyle = '#4c6ef5';
+            gv.lineWidth = 1.5;
+            gv.beginPath();
+            poligono.forEach((q, i) => i ? gv.lineTo(q[0] * scala, q[1] * scala) : gv.moveTo(q[0] * scala, q[1] * scala));
+            gv.stroke();
+            gv.setLineDash([]);
+        }
+        const r = riquadro();
+        if (!r)
+            return;
+        if (spost[0] || spost[1]) {
+            sel.forEach(i => { const t = decodTratto(m.t[i]); tracciaTratto(gv, { ...t, p: t.p.map(q => [q[0] + spost[0], q[1] + spost[1], q[2]]) }, scala); });
+        }
+        gv.setLineDash([5, 4]);
+        gv.strokeStyle = '#4c6ef5';
+        gv.lineWidth = 1.5;
+        gv.strokeRect((r[0] + spost[0]) * scala, (r[1] + spost[1]) * scala, (r[2] - r[0]) * scala, (r[3] - r[1]) * scala);
+        gv.setLineDash([]);
+    }
+    function sposta(dx, dy) {
+        if (!dx && !dy)
+            return;
+        salvaStoria();
+        sel.forEach(i => { const t = decodTratto(m.t[i]); m.t[i] = codTratto(t.c, t.w, t.k, t.p.map(q => [q[0] + dx, q[1] + dy, q[2]])); });
+        disegnaMano(g, m, scala);
+        cambia();
+    }
+    function annullaSel() { sel = new Set(); poligono = null; spost = [0, 0]; disegnaSel(); aggiornaAzioni(); }
+    const azioni = h('div.mano-azioni');
+    function aggiornaAzioni() {
+        svuota(azioni);
+        azioni.hidden = !sel.size;
+        if (!sel.size)
+            return;
+        azioni.append(h('span.tenue.piccolo', null, sel.size + (sel.size === 1 ? ' tratto' : ' tratti') + ' · trascina per spostare'), h('button.btn-testo', { onclick: () => { salvaStoria(); m.t = m.t.filter((_s, i) => !sel.has(i)); disegnaMano(g, m, scala); cambia(); annullaSel(); } }, '🗑 Elimina'), ...(allaCarta ? [h('button.btn-testo', { onclick: () => cartaDaSelezione() }, '🃏 Diventa flashcard')] : []), h('button.btn-testo', { onclick: annullaSel }, 'Fine'));
+    }
+    async function cartaDaSelezione() {
+        const r = riquadro(), parte = { t: Array.from(sel).map(i => { const t = decodTratto(m.t[i]); return codTratto(t.c, t.w, t.k, t.p.map(q => [q[0] - r[0] + 20, q[1] - r[1] + 20, q[2]])); }), h: r[3] - r[1] + 40, sf: 'bianco' };
+        avviso('✨ Leggo la selezione…', 15000);
+        let t = '';
+        try {
+            t = await Spiega.vede('Trascrivi fedelmente il testo scritto a mano (italiano, chimica/biologia/fisica). Restituisci solo il testo, su una riga; formule con simboli corretti.', immagineMano(parte, 800));
+        }
+        catch (e) {
+            avviso(String(e.message || e), 8000);
+            return;
+        }
+        t = t.replace(/^```\w*\s*|```$/g, '').replace(/\s+/g, ' ').trim();
+        const f = h('input.campo', { value: t.includes('::') ? t.split('::')[0].trim() : t }), rr = h('input.campo', { value: t.includes('::') ? t.split('::').slice(1).join('::').trim() : '', placeholder: 'Risposta (o lascia vuoto e usa {{…}} nella domanda)' });
+        foglio({ titolo: '🃏 Flashcard dalla selezione', etichettaSalva: 'Crea', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Controlla la trascrizione: diventa una riga «domanda :: risposta» nel testo dell\'appunto.'), f, rr),
+            salva: () => { if (!f.value.trim())
+                return false; allaCarta('- ' + f.value.trim() + (rr.value.trim() ? ' :: ' + rr.value.trim() : '')); annullaSel(); } });
+    }
+    // --- v0.33: scarabocchio per cancellare (come GoodNotes): zig-zag rapido sopra dei tratti ---
+    function eScarabocchio(p) {
+        if (p.length < 12)
+            return false;
+        let inv = 0, dir = 0, lung = 0;
+        for (let i = 1; i < p.length; i++) {
+            const dx = p[i][0] - p[i - 1][0];
+            lung += Math.hypot(dx, p[i][1] - p[i - 1][1]);
+            const d = Math.sign(dx);
+            if (d && dir && d !== dir)
+                inv++;
+            if (d)
+                dir = d;
+        }
+        const xs = p.map(q => q[0]), ys = p.map(q => q[1]), w = Math.max(...xs) - Math.min(...xs), hh = Math.max(...ys) - Math.min(...ys);
+        return inv >= 6 && lung > 3 * Math.max(w, 40) && hh < 140;
+    }
+    function cancellaSotto(p) {
+        const xs = p.map(q => q[0]), ys = p.map(q => q[1]), r = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        const prima = m.t.length;
+        m.t = m.t.filter(s => decodTratto(s).p.filter(q => q[0] >= r[0] && q[0] <= r[2] && q[1] >= r[1] && q[1] <= r[3]).length < 2);
+        return m.t.length !== prima;
+    }
     // --- input ---
     let cur = null, idPuntatore = -1;
     const punto = (e) => { const r = vivo.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / scala), Math.round((e.clientY - r.top) / scala), Math.round((e.pointerType === 'pen' ? (e.pressure || .5) : .5) * 100)]; };
@@ -4997,6 +5151,26 @@ function paginaMano(contenitore, iniziale, cambia) {
         }
         catch (_) { /* puntatore sintetico */ }
         idPuntatore = e.pointerId;
+        if (strumento === 'lazo') {
+            idPuntatore = e.pointerId;
+            try {
+                vivo.setPointerCapture(e.pointerId);
+            }
+            catch (_) { /* sintetico */ }
+            e.preventDefault();
+            const p = punto(e), r = riquadro();
+            if (r && p[0] >= r[0] && p[0] <= r[2] && p[1] >= r[1] && p[1] <= r[3]) {
+                trascina = p;
+                spost = [0, 0];
+                cur = [p];
+                return;
+            }
+            sel = new Set();
+            aggiornaAzioni();
+            poligono = [p];
+            cur = [p];
+            return;
+        }
         salvaStoria();
         cur = [punto(e)];
         if (strumento === 'gomma')
@@ -5009,6 +5183,14 @@ function paginaMano(contenitore, iniziale, cambia) {
         const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
         for (const ev of evs.length ? evs : [e]) {
             const p = punto(ev), u = cur[cur.length - 1];
+            if (strumento === 'lazo') {
+                if (trascina)
+                    spost = [p[0] - trascina[0], p[1] - trascina[1]];
+                else if (poligono)
+                    poligono.push(p);
+                disegnaSel();
+                continue;
+            }
             if (Math.abs(p[0] - u[0]) + Math.abs(p[1] - u[1]) < 2)
                 continue;
             if (strumento === 'gomma') {
@@ -5028,6 +5210,33 @@ function paginaMano(contenitore, iniziale, cambia) {
     const fine = (e) => {
         if (!cur || e.pointerId !== idPuntatore)
             return;
+        if (strumento === 'lazo') {
+            if (trascina) {
+                sposta(spost[0], spost[1]);
+                spost = [0, 0];
+                trascina = null;
+            }
+            else if (poligono && poligono.length > 3) {
+                const poly = poligono;
+                m.t.forEach((s, i) => { const pts = decodTratto(s).p; if (pts.filter(q => dentro(q, poly)).length > pts.length / 2)
+                    sel.add(i); });
+            }
+            poligono = null;
+            cur = null;
+            idPuntatore = -1;
+            disegnaSel();
+            aggiornaAzioni();
+            return;
+        }
+        if (strumento === 'penna' && eScarabocchio(cur) && cancellaSotto(cur)) {
+            cur = null;
+            idPuntatore = -1;
+            gv.clearRect(0, 0, vivo.width, vivo.height);
+            disegnaMano(g, m, scala);
+            cambia();
+            avviso('Cancellato con lo scarabocchio', 1500);
+            return;
+        }
         if (strumento !== 'gomma')
             m.t.push(codTratto(colore, strumento === 'evid' ? 22 : 3, strumento === 'evid' ? 'e' : 'p', cur));
         cur = null;
@@ -5055,7 +5264,7 @@ function paginaMano(contenitore, iniziale, cambia) {
     function aggiornaBarra() {
         svuota(barra);
         const b = (t, att, f, titolo) => h('button' + (att ? '.attivo' : ''), { title: titolo, 'aria-label': titolo, onclick: () => { f(); aggiornaBarra(); } }, t);
-        barra.append(b('✒️', strumento === 'penna', () => strumento = 'penna', 'Penna'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), h('span.mano-sep'), ...COLORI.map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma')
+        barra.append(b('✒️', strumento === 'penna', () => { strumento = 'penna'; annullaSel(); }, 'Penna (scarabocchia sopra un tratto per cancellarlo)'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), b('➰', strumento === 'lazo', () => { strumento = 'lazo'; }, 'Lazo: cerchia per selezionare, poi sposta, elimina o crea una flashcard'), h('span.mano-sep'), ...COLORI.map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma')
                 strumento = 'penna'; aggiornaBarra(); } })), h('span.mano-sep'), b('↶', false, () => { if (storia.length) {
             futuro.push(m.t.slice());
             m.t = storia.pop();
@@ -5066,15 +5275,16 @@ function paginaMano(contenitore, iniziale, cambia) {
             m.t = futuro.pop();
             disegnaMano(g, m, scala);
             cambia();
-        } }, 'Ripeti'), b(m.sf === 'quadretti' ? '▦' : m.sf === 'righe' ? '☰' : '▢', false, () => { m.sf = m.sf === 'quadretti' ? 'righe' : m.sf === 'righe' ? 'bianco' : 'quadretti'; disegnaMano(g, m, scala); cambia(); }, 'Sfondo: quadretti / righe / bianco'), penna ? h('span.tenue.piccolo', null, '✏️ Pencil: il dito scorre') : b(dito ? '☝️ dito: scrive' : '☝️ dito: scorre', dito, () => { dito = !dito; foglio.classList.toggle('dito', dito); }, 'Scrivere anche con il dito'));
+        } }, 'Ripeti'), b({ quadretti: '▦', righe: '☰', bianco: '▢', cornell: '◧', esercizio: '▤' }[m.sf], false, () => { const o = ['quadretti', 'righe', 'bianco', 'cornell', 'esercizio']; m.sf = o[(o.indexOf(m.sf) + 1) % o.length]; disegnaMano(g, m, scala); cambia(); }, 'Sfondo: quadretti / righe / bianco / Cornell / esercizio'), penna ? h('span.tenue.piccolo', null, '✏️ Pencil: il dito scorre') : b(dito ? '☝️ dito: scrive' : '☝️ dito: scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito'));
     }
-    foglio.classList.toggle('dito', dito);
+    pag.classList.toggle('dito', dito);
     aggiornaBarra();
-    contenitore.append(barra, foglio);
+    azioni.hidden = true;
+    contenitore.append(barra, azioni, pag);
     requestAnimationFrame(dimensiona);
-    const ro = new ResizeObserver(() => { const w = foglio.clientWidth; if (w && Math.abs(w / LARG - scala) > .001)
+    const ro = new ResizeObserver(() => { const w = pag.clientWidth; if (w && Math.abs(w / LARG - scala) > .001)
         dimensiona(); });
-    ro.observe(foglio);
+    ro.observe(pag);
     return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf }), ridisegna: dimensiona };
 }
 /** ✨ Trascrive la pagina a mano: mostra il testo da controllare, poi lo aggiunge o sostituisce. */
@@ -8829,7 +9039,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.32.0';
+const VERSIONE = '0.33.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
