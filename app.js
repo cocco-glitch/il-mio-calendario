@@ -548,6 +548,7 @@ const ICONE = {
     studio: '<path d="M3 8.5l9-4.5 9 4.5-9 4.5z"/><path d="M7 11v5c1.5 1.6 3.2 2.3 5 2.3s3.5-.7 5-2.3v-5M21 8.5V14"/>',
     task: '<path d="M4 6.5l2 2 3.5-4M4 16.5l2 2 3.5-4M13 7h7M13 17h7"/>',
     note: '<path d="M6 3.5h9l4 4V20a.5.5 0 0 1-.5.5h-12A.5.5 0 0 1 6 20z"/><path d="M9 12h7M9 16h5"/>',
+    appunti: '<path d="M5 4.5h11.5l2.5 2.5v12.5H5z"/><path d="M8.5 9h7M8.5 12.5h7M8.5 16h4"/><path d="M14 3v3"/>',
     altro: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
     cerca: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
     piu: '<path d="M12 5v14M5 12h14"/>',
@@ -1164,6 +1165,15 @@ const Drive = (() => {
         LS.set('cartelle', cartelle);
     }
     function idCartella(n) { return cartelle[n]; }
+    /** v0.21: sottocartella dell'app creata al bisogno (es. «Appunti»), ricordata in locale. */
+    async function sottocartella(nome) {
+        await preparaCartelle();
+        if (!cartelle[nome]) {
+            cartelle[nome] = await cartella(nome, cartelle.app);
+            LS.set('cartelle', cartelle);
+        }
+        return cartelle[nome];
+    }
     /** Carica (crea o aggiorna) un file; contenuto testo o Blob. Ritorna l'id. */
     async function carica(nome, parent, contenuto, mime, idEsistente) {
         const meta = idEsistente ? { name: nome } : { name: nome, parents: [parent] };
@@ -1457,7 +1467,7 @@ const Drive = (() => {
     return {
         stato, ascolta(f) { ascoltatori.push(f); },
         sincronizza, programma, login, logout, precarica,
-        caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
+        caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
         elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
         get collegato() { return !!stato.email; },
         /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
@@ -2294,6 +2304,217 @@ const AIGen = (() => {
     return { genera, avvia, coda, sezione, controlla, esame, piuDebole, proposte };
 })();
 
+// 07-appunti.ts — Appunti (v0.28, fase 1).
+//
+// Ispirazione (scouting 13/11): RemNote (appunti e flashcard sono la stessa cosa: «domanda :: risposta»
+// scritta nel testo), Obsidian + plugin FSRS (contesto della carta = titolo › sezione; completamenti
+// {{…}}), metodo Cornell (spunti / testo / riassunto: arriva nella fase 2), app con AI (generano domande
+// dagli appunti: qui le prepara Claude leggendo la copia .md su Drive, senza costi).
+// Neuroscienza: appunti con parole proprie (elaborazione generativa) + recupero (le righe-domanda
+// diventano carte con ripasso FSRS) + collegamento allo step (interleaving con quiz e piano).
+//
+// Dati: record 'appunto' (id 'ap-…'). Le carte nascono al salvataggio nel mazzo 'mz-ap-<id>' (figlio di
+// 'mz-appunti'), collegato allo stesso sotto-step; una riga cancellata toglie la sua carta.
+// Drive: copia «titolo.md» in «Calendario personale/Appunti», SOLO dopo conferma nell'app.
+const Appunti = (() => {
+    const tutti = () => Stato.tutti('appunto').sort((a, b) => b.updatedAt - a.updatedAt);
+    /** Carte contenute nel testo: «domanda :: risposta» e righe con {{completamenti}}; contesto = titoli sopra. */
+    function estraiCarte(testo) {
+        const out = [], titoli = [];
+        for (const riga of testo.split('\n')) {
+            const t = /^(#{1,4})\s+(.+)$/.exec(riga.trim());
+            if (t) {
+                titoli.length = t[1].length - 1;
+                titoli[t[1].length - 1] = t[2].trim();
+                continue;
+            }
+            const x = riga.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim();
+            if (!x)
+                continue;
+            const ctx = titoli.filter(Boolean).join(' › ');
+            const q = /^(.+?)\s::\s(.+)$/.exec(x);
+            if (q)
+                out.push({ f: q[1].trim(), r: q[2].trim(), ctx });
+            else if (/\{\{[^}]+\}\}/.test(x))
+                out.push({ f: x, r: '', ctx });
+        }
+        return out;
+    }
+    /** Allinea il mazzo dell'appunto alle righe-carta attuali. Restituisce [nuove, tolte]. */
+    function sincronizzaCarte(a) {
+        const lista = estraiCarte(a.testo), idM = 'mz-ap-' + a.id.replace(/^ap-/, '');
+        const esistenti = Carte.carte().filter(c => c.mazzo === idM);
+        if (!lista.length && !esistenti.length)
+            return [0, 0];
+        if (!Stato.prendi('mz-appunti'))
+            Stato.salva({ id: 'mz-appunti', type: 'mazzo', updatedAt: 0, nome: '📝 Dagli appunti' }, true);
+        const m = Stato.prendi(idM);
+        const nome = '📝 ' + (a.titolo || 'Appunto');
+        if (!m || m.nome !== nome || m.sub !== a.sub)
+            Stato.salva({ ...(m || {}), id: idM, type: 'mazzo', updatedAt: 0, nome, padre: 'mz-appunti', sub: a.sub, micro: a.micro }, true);
+        const prima = new Set(esistenti.map(c => c.id));
+        const nuove = Carte.riempi(idM, lista);
+        const ids = new Set(lista.map(x => 'cr-' + Carte.hash(idM + '|' + norm(x.f))));
+        for (const x of lista) {
+            const c = Stato.prendi('cr-' + Carte.hash(idM + '|' + norm(x.f)));
+            if (c && c.ctx !== (x.ctx || undefined)) {
+                c.ctx = x.ctx || undefined;
+                Stato.salva(c, true);
+            }
+        }
+        let tolte = 0;
+        for (const id of prima)
+            if (!ids.has(id)) {
+                Stato.elimina(id);
+                tolte++;
+            }
+        Stato.notifica();
+        return [nuove, tolte];
+    }
+    function salva(a) {
+        a.titolo = a.titolo.trim() || (a.testo.trim().split('\n')[0] || 'Appunto').replace(/^#+\s*/, '').slice(0, 60);
+        const col = Carte.collega(a.titolo);
+        if (col.sub) {
+            a.sub = col.sub;
+            a.micro = col.micro;
+        }
+        Stato.salva(a);
+        return sincronizzaCarte(a);
+    }
+    function nuovo(extra = {}) { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', ...extra }; }
+    function elimina(a) {
+        for (const c of Carte.carte().filter(c => c.mazzo === 'mz-ap-' + a.id.replace(/^ap-/, '')))
+            Stato.elimina(c.id);
+        Stato.elimina('mz-ap-' + a.id.replace(/^ap-/, ''));
+        Stato.elimina(a.id);
+    }
+    /** Copia Markdown su Drive (crea o aggiorna lo stesso file). */
+    async function suDrive(a) {
+        const cart = await Drive.sottocartella('Appunti');
+        const nome = (a.titolo || 'Appunto').replace(/[\\/:*?"<>|]/g, '-') + '.md';
+        const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n';
+        const id = await Drive.carica(nome, cart, corpo, 'text/markdown', a.drive && a.drive.id);
+        a.drive = { id, agg: Date.now(), h: Carte.hash(a.titolo + '\n' + a.testo) };
+        Stato.salva(a);
+    }
+    const daSalvareSuDrive = (a) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo);
+    return { tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
+})();
+/** Chiede conferma e salva la copia su Drive (regola: niente su Drive senza conferma). */
+async function chiediDrive(a, forza = false) {
+    if (!Drive.collegato || !Appunti.daSalvareSuDrive(a)) {
+        if (forza && !Drive.collegato)
+            avviso('Collega Google Drive da Altro.');
+        return;
+    }
+    const s = await chiedi('Salvare «' + a.titolo + '» su Drive?', [{ testo: a.drive ? '☁︎ Aggiorna la copia' : '☁︎ Salva su Drive', valore: 'si' }], 'Copia .md in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
+    if (s !== 'si')
+        return;
+    if (serveGoogle())
+        return;
+    try {
+        await Appunti.suDrive(a);
+        avviso('☁︎ Salvato su Drive.');
+    }
+    catch (e) {
+        avviso('Drive: ' + (e.message || e), 6000);
+    }
+}
+// ---------- Editor ----------
+function apriAppunto(a, extra = {}) {
+    const ap = a ? { ...a } : Appunti.nuovo(extra);
+    let cambiato = false;
+    const v = visore(a ? '📝 Appunto' : '📝 Nuovo appunto', () => { if (cambiato)
+        fine();
+    else if (a)
+        chiediDrive(Stato.prendi(ap.id) || ap); disegna(); });
+    const titolo = h('input.appunto-titolo', { type: 'text', placeholder: 'Titolo (es. «Chi 2.2.4 Calore latente» lo collega allo step)', value: ap.titolo });
+    const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo);
+    const stato = h('div.appunto-stato.tenue.piccolo');
+    const anteprima = h('div.appunto-anteprima', { hidden: true });
+    const aggiornaStato = () => {
+        const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
+        svuota(stato);
+        stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato');
+    };
+    let timer = 0;
+    const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; if (!ap.testo.trim() && !ap.titolo.trim())
+        return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
+    const modifica = () => { cambiato = true; aggiornaStato(); clearTimeout(timer); timer = setTimeout(salvaOra, 1500); };
+    titolo.addEventListener('input', modifica);
+    testo.addEventListener('input', modifica);
+    function fine() { clearTimeout(timer); const r = salvaOra(); if (r && (r[0] || r[1]))
+        avviso('🃏 ' + (r[0] ? r[0] + ' carte nuove/aggiornate' : '') + (r[0] && r[1] ? ', ' : '') + (r[1] ? r[1] + ' tolte' : '')); const x = Stato.prendi(ap.id); if (x)
+        setTimeout(() => chiediDrive(x), 300); }
+    const inserisci = (prima, dopo = '', segnaposto = '') => {
+        const s = testo.selectionStart, e = testo.selectionEnd, sel = testo.value.slice(s, e) || segnaposto;
+        testo.setRangeText(prima + sel + dopo, s, e, 'end');
+        if (!testo.value.slice(s, e))
+            testo.setSelectionRange(s + prima.length, s + prima.length + sel.length);
+        testo.focus();
+        modifica();
+    };
+    const aCapo = (pref) => { const s = testo.selectionStart, ini = testo.value.lastIndexOf('\n', s - 1) + 1; testo.setRangeText(pref, ini, ini, 'end'); testo.focus(); modifica(); };
+    const barra = h('div.appunto-barra', null, h('button', { title: 'Titolo', onclick: () => aCapo('# ') }, 'H'), h('button', { title: 'Punto', onclick: () => aCapo('- ') }, '•'), h('button', { title: 'Rientra', onclick: () => aCapo('  ') }, '⇥'), h('button', { title: 'Domanda :: risposta', onclick: () => inserisci('', ' :: ', '') }, '::'), h('button', { title: 'Completamento', onclick: () => inserisci('{{', '}}', 'parola') }, '{ }'), h('button', { title: 'Grassetto', onclick: () => inserisci('**', '**', 'testo') }, h('b', null, 'B')), h('button', { title: 'Anteprima', onclick: (e) => { const on = !!anteprima.hidden; anteprima.hidden = !on; testo.hidden = on; e.currentTarget.classList.toggle('attivo', on); if (on) {
+            anteprima.innerHTML = htmlCarta(testo.value.replace(/\s::\s/g, ' → '), 'mostra');
+            caricaImmagini(anteprima);
+        } } }, '👁'));
+    v.barra.append(h('button.btn-testo', { onclick: async () => {
+            const s = await chiedi(ap.titolo || 'Appunto', [{ testo: '☁︎ Salva su Drive', valore: 'drive' }, { testo: '🃏 Ripassa le sue carte', valore: 'carte' }, { testo: '🗑 Elimina appunto', valore: 'del', pericolo: true }]);
+            if (s === 'drive') {
+                salvaOra();
+                const x = Stato.prendi(ap.id);
+                if (x) {
+                    x.drive && !Appunti.daSalvareSuDrive(x) ? avviso('Copia su Drive già aggiornata.') : chiediDrive(x, true);
+                }
+            }
+            if (s === 'carte') {
+                salvaOra();
+                avviaCarte(['mz-ap-' + ap.id.replace(/^ap-/, '')], ap.titolo);
+            }
+            if (s === 'del') {
+                const x = Stato.prendi(ap.id);
+                if (x)
+                    Appunti.elimina(x);
+                cambiato = false;
+                v.chiudi();
+                avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).');
+            }
+        } }, '⋯'));
+    v.corpo.append(h('div.appunto', null, titolo, stato, barra, testo, anteprima));
+    aggiornaStato();
+    setTimeout(() => (a ? testo : titolo).focus(), 80);
+}
+// ---------- Vista «Appunti» ----------
+function vistaAppunti() {
+    const q = norm(UI.apCerca || '');
+    const tutti = Appunti.tutti().filter(a => !q || norm(a.titolo + ' ' + a.testo).includes(q));
+    const gruppi = new Map();
+    for (const a of tutti) {
+        const g = a.sub ? formaMateria(materiaDi(a.sub)) + ' ' + nomeMateria(materiaDi(a.sub)) : 'Senza step';
+        if (!gruppi.has(g))
+            gruppi.set(g, []);
+        gruppi.get(g).push(a);
+    }
+    const voce = (a) => {
+        const n = Appunti.estraiCarte(a.testo).length, anteprima = a.testo.replace(/[#*_{}>`-]|::/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110);
+        return h('button.voce-lista', { onclick: () => apriAppunto(a) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo || 'Appunto'), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' }) + (anteprima ? ' — ' + anteprima : ''))));
+    };
+    const campo = h('input.campo', { type: 'search', placeholder: 'Cerca negli appunti…', value: UI.apCerca || '', oninput: (e) => { UI.apCerca = e.target.value; clearTimeout(vistaAppunti.t); vistaAppunti.t = setTimeout(() => { disegna(); const c = document.querySelector('main input[type=search]'); if (c) {
+            c.focus();
+            c.setSelectionRange(c.value.length, c.value.length);
+        } }, 250); } });
+    const nCarte = Carte.conta(['mz-appunti']);
+    return h('div.pagina', null, h('section.card', null, campo, h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'), nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null), h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')), tutti.length ? Array.from(gruppi.entries()).map(([g, l]) => h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))
+        : h('section.card', null, h('div.vuoto', null, q ? 'Nessun appunto trovato.' : 'Ancora nessun appunto. Tocca «Nuovo appunto».')));
+}
+/** Nel sotto-step: appunti collegati + nuovo appunto già collegato. */
+function rigaAppunti(k) {
+    const l = Appunti.tutti().filter(a => a.sub === k);
+    const t = Studio.trovaSotto(k);
+    return h('div.bottoni', null, l.slice(0, 3).map(a => h('button.btn.neutro', { onclick: () => apriAppunto(a) }, '📝 ' + a.titolo.slice(0, 28))), h('button.btn.neutro', { onclick: () => apriAppunto(undefined, { titolo: Studio.etichetta(k) + (t ? ' ' + t.sub.titolo : ''), sub: k }) }, '＋ Appunto'));
+}
+
 // 07-carte.ts — Flashcard (v0.18, F3).
 //
 // Ispirazione (ricerca 12/11): Anki (FSRS, 4 tasti con l'intervallo scritto, import da testo con
@@ -2672,7 +2893,7 @@ function avviaCarte(ids, titolo = 'Flashcard') {
         fronte.innerHTML = domandaDi(c, x.rev);
         retro.innerHTML = c.tipo === 'cloze' ? htmlCarta(c.f, 'mostra') + (c.r ? '<hr>' + htmlCarta(c.r) : '') : htmlCarta(x.rev ? c.f : c.r);
         const carta = h('div.carta', { role: 'button', tabindex: '0', 'aria-label': 'Gira la carta' }, h('div.carta-interno', null, fronte, retro));
-        const etich = h('div.tenue.piccolo.carta-mazzo', null, (mz ? mz.nome : '') + (x.rev ? ' · inversa' : '') + (Carte.mem(x) ? '' : ' · nuova'));
+        const etich = h('div.tenue.piccolo.carta-mazzo', null, (mz ? mz.nome : '') + (c.ctx ? ' › ' + c.ctx : '') + (x.rev ? ' · inversa' : '') + (Carte.mem(x) ? '' : ' · nuova'));
         area.append(etich, carta);
         caricaImmagini(carta);
         const gira = () => { if (girata)
@@ -6863,7 +7084,7 @@ function bottoneDrive() {
 function vistaSottostep(pk, mat, sub) {
     const sch = Studio.schedeDi(sub), n = Studio.numeri(sch), col = coloreMateria(mat.m);
     const blocco = (eti, cls, k, f, pag) => h('div.blocco.' + cls, null, h('strong', null, eti), h('span', null, f + '/' + k + ' schede · ' + pag.size + ' pag.'), h('span.tenue.piccolo', null, pag.size ? (mat.libro ? mat.libro + ': ' : '') + 'pp. ' + Studio.intervalli(pag) : '—'));
-    return h('div.pagina', null, h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo), h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n, chipRicordo(sub.k)), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo), h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null, barra(n.Pf, n.P, col), h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)), h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size), rigaFreddo(sub.k), rigaCarte(sub.k)), h('div.bottoni', null, h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSchedaPropria(pk, mat, sub) }, '+ Aggiungi scheda') : null, !pk.risorse.libri[mat.m] ? null : (h('button.btn.neutro', { onclick: async (e) => {
+    return h('div.pagina', null, h('button.btn-testo.indietro', { onclick: () => { UI.studioSub = null; disegna(); } }, '‹ ' + pk.titolo), h('section.card', null, h('h2.sub-titolo', { style: { color: col } }, mat.nome + ' ' + sub.n, chipRicordo(sub.k)), h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, sub.titolo), h('div.tenue.piccolo', null, sub.posizione), sub.ripasso ? h('div.tenue.piccolo', null, 'Ripasso: ' + sub.ripasso) : null, barra(n.Pf, n.P, col), h('div.blocchi', null, blocco('PRIORITARIE', 'prior', n.P, n.Pf, n.pagP), blocco('RAFFINAMENTO', 'raff', n.R, n.Rf, n.pagR), blocco('TOTALE', 'tot', n.P + n.R, n.Pf + n.Rf, n.pagT)), h('div.tenue.piccolo', null, 'Pagine lette: ' + n.pagLette.size + ' di ' + n.pagT.size), rigaFreddo(sub.k), rigaCarte(sub.k), rigaAppunti(sub.k)), h('div.bottoni', null, h('button.btn', { onclick: () => Timer.avvia({ m: mat.m, k: sub.k, titolo: mat.nome + ' ' + sub.n + ' · ' + sub.titolo }) }, '▶ Avvia timer di studio'), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSottostep(pk, mat, sub) }, 'Modifica') : null), pk.proprio ? h('button.btn.neutro', { onclick: () => editorSchedaPropria(pk, mat, sub) }, '+ Aggiungi scheda') : null, !pk.risorse.libri[mat.m] ? null : (h('button.btn.neutro', { onclick: async (e) => {
             if (serveGoogle())
                 return;
             const b = e.currentTarget, ids = new Map();
@@ -7696,7 +7917,7 @@ function sezioneLayout(salva) {
             (w === 'ripassi' || w === 'chiusura' || w === 'studiaora') ? o.unshift(w) : o.push(w); return o; })();
     const nasc = new Set(i.widgetNascosti || []), tabN = new Set(i.tabNascoste || []);
     const sposta = (idx, d) => { const o = ord.slice(); const [x] = o.splice(idx, 1); o.splice(idx + d, 0, x); salva({ widget: o, preset: '' }); };
-    return scheda('Layout', riga('Vista iniziale', selettore([['oggi', 'Oggi'], ['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese'], ['agenda', 'Agenda']], i.vistaIniziale, function () { salva({ vistaIniziale: this.value, preset: '' }); })), riga('Barra delle sezioni su PC', selettore([['auto', 'Laterale'], ['basso', 'In basso']], i.nav || 'auto', function () { salva({ nav: this.value, preset: '' }); })), h('div.gruppo-titolo', null, 'Riquadri di Oggi (ordine e visibilità)'), ord.map((w, idx) => h('div.widget-riga', null, h('span.nome', null, (WIDGET.find(x => x[0] === w) || [w, w])[1]), h('button.btn-ico', { 'aria-label': 'Su', disabled: idx === 0, onclick: () => sposta(idx, -1) }, '↑'), h('button.btn-ico', { 'aria-label': 'Giù', disabled: idx === ord.length - 1, onclick: () => sposta(idx, 1) }, '↓'), h('label.interruttore', { title: 'Mostra' }, h('input', { type: 'checkbox', checked: !nasc.has(w), onchange: (e) => { e.target.checked ? nasc.delete(w) : nasc.add(w); salva({ widgetNascosti: Array.from(nasc), preset: '' }); } }), h('span')))), h('div.gruppo-titolo', null, 'Sezioni nella barra'), [['cal', 'Calendario'], ['studio', 'Studio'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t), h('label.interruttore', null, h('input', { type: 'checkbox', checked: !tabN.has(s), onchange: (e) => { e.target.checked ? tabN.delete(s) : tabN.add(s); salva({ tabNascoste: Array.from(tabN), preset: '' }); } }), h('span')))));
+    return scheda('Layout', riga('Vista iniziale', selettore([['oggi', 'Oggi'], ['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese'], ['agenda', 'Agenda']], i.vistaIniziale, function () { salva({ vistaIniziale: this.value, preset: '' }); })), riga('Barra delle sezioni su PC', selettore([['auto', 'Laterale'], ['basso', 'In basso']], i.nav || 'auto', function () { salva({ nav: this.value, preset: '' }); })), h('div.gruppo-titolo', null, 'Riquadri di Oggi (ordine e visibilità)'), ord.map((w, idx) => h('div.widget-riga', null, h('span.nome', null, (WIDGET.find(x => x[0] === w) || [w, w])[1]), h('button.btn-ico', { 'aria-label': 'Su', disabled: idx === 0, onclick: () => sposta(idx, -1) }, '↑'), h('button.btn-ico', { 'aria-label': 'Giù', disabled: idx === ord.length - 1, onclick: () => sposta(idx, 1) }, '↓'), h('label.interruttore', { title: 'Mostra' }, h('input', { type: 'checkbox', checked: !nasc.has(w), onchange: (e) => { e.target.checked ? nasc.delete(w) : nasc.add(w); salva({ widgetNascosti: Array.from(nasc), preset: '' }); } }), h('span')))), h('div.gruppo-titolo', null, 'Sezioni nella barra'), [['cal', 'Calendario'], ['studio', 'Studio'], ['appunti', 'Appunti'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t), h('label.interruttore', null, h('input', { type: 'checkbox', checked: !tabN.has(s), onchange: (e) => { e.target.checked ? tabN.delete(s) : tabN.add(s); salva({ tabNascoste: Array.from(tabN), preset: '' }); } }), h('span')))));
 }
 const PRESET_BASE = [
     { nome: 'Predefinito', valori: { tema: 'auto', accento: '#6c8cff', sfondo: '', font: 'sistema', scala: 1, densita: 'comoda', raggio: 14, widget: [], widgetNascosti: [], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
@@ -7925,7 +8146,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.27.0';
+const VERSIONE = '0.28.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -7959,16 +8180,16 @@ function disegna() {
     const vecchioMain = app.querySelector('main');
     const scrollMain = vecchioMain ? vecchioMain.scrollTop : 0;
     const stessaScheda = vecchioMain && vecchioMain.dataset.scheda === UI.scheda + (UI.scheda === 'cal' ? UI.vista : '');
-    const titoli = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
+    const titoli = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', appunti: 'Appunti', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
     const vista = UI.scheda === 'oggi' ? vistaOggi() : UI.scheda === 'cal' ? vistaCalendario() : UI.scheda === 'studio' ? vistaStudio() : UI.scheda === 'task' ? vistaTask()
-        : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
+        : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'appunti' ? vistaAppunti() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
     const daFare = Stato.tutti('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(oggi()))).length;
-    const schede = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
+    const schede = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['appunti', 'Appunti', 'appunti'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
     const nascoste = imp().tabNascoste || [];
     const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => h('button' + (UI.scheda === s ? '.attivo' : ''), { onclick: () => { if (s === 'studio')
             UI.studioSub = null; vai(s); }, 'aria-current': UI.scheda === s ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'task' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t))));
     const giornoNuovo = UI.scheda === 'cal' ? UI.data : undefined;
-    const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : apriNuovo(giornoNuovo);
+    const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : UI.scheda === 'appunti' ? apriAppunto() : apriNuovo(giornoNuovo);
     const main = h('main' + (stessaScheda ? '' : '.entra'), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
     svuota(app);
     aggiungi(app, [

@@ -536,3 +536,15 @@ body:has(.visore) .foglio-sfondo { z-index: 27; }
 .aig-q{font-weight:600;line-height:1.35}
 .aig-opz{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
 .aig-giusta{color:#2fa866;font-weight:600}
+
+
+/* ---------- Appunti (v0.21) ---------- */
+.appunto { display: flex; flex-direction: column; gap: 8px; max-width: 760px; margin: 0 auto; width: 100%; height: 100%; }
+.appunto-titolo { font-size: 20px; font-weight: 700; border: 0; background: transparent; padding: 6px 2px; color: var(--testo); }
+.appunto-titolo:focus { outline: none; border-bottom: 2px solid var(--accento); }
+.appunto-stato { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.appunto-barra { display: flex; gap: 6px; overflow-x: auto; position: sticky; top: 0; z-index: 1; padding: 4px 0; }
+.appunto-barra button { display: grid; place-items: center; min-width: 42px; height: 38px; border-radius: 10px; background: var(--sup2); font-weight: 700; color: var(--testo); flex: none; }
+.appunto-barra button.attivo { background: var(--accento); color: #fff; }
+.appunto-testo { flex: 1; min-height: 55vh; resize: none; border: 1px solid var(--linea); border-radius: 14px; padding: 14px; font: 16px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--sup); color: var(--testo); tab-size: 2; }
+.appunto-anteprima { background: var(--sup); border-radius: 14px; padding: 14px 16px; line-height: 1.55; min-height: 55vh; border: 1px solid var(--linea); }
