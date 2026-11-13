@@ -4573,7 +4573,7 @@ const QuizApp = (() => {
                 + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (mc ? 'Risposta multipla' : 'A completamento') + '</span></div>';
             for (const g of d.img || [])
                 if (dati.immagini[g.i])
-                    s2 += '<figure class="qz-fig">' + dati.immagini[g.i] + '<figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
+                    s2 += '<figure class="qz-fig"><button type="button" class="qz-zoom-b" data-zoom="' + esc(g.i) + '" aria-label="Ingrandisci immagine">' + dati.immagini[g.i] + '</button><figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
             s2 += '<p class="qz-domanda">' + (mc ? fmt(d.q) : fmtQ(d.q)) + '</p><div class="chips">';
             if (mc) {
                 const rest = 2 - x.hid.length;
@@ -4690,6 +4690,12 @@ const QuizApp = (() => {
             const b = ev.target.closest('button');
             if (!b || b.disabled)
                 return;
+            if (b.dataset.zoom) {
+                const z = h('div.qz-zoom', { onclick: () => z.remove() });
+                z.innerHTML = '<div class="qz-zoom-box">' + (dati.immagini[b.dataset.zoom] || '') + '</div><div class="qz-zoom-x">Tocca per chiudere</div>';
+                v.corpo.appendChild(z);
+                return;
+            }
             if (b.dataset.k != null) {
                 rispondi(parseInt(b.dataset.k, 10));
                 return;
@@ -7479,7 +7485,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.24.0';
+const VERSIONE = '0.24.1';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
