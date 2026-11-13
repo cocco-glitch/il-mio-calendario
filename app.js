@@ -1026,7 +1026,13 @@ const G_APP_ID = '1032464441107';
 // pacchetti creati da Claude). L'app non può modificare né eliminare nulla fuori dalla sua cartella.
 const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly openid email';
 // Privacy "solo mia": l'app accetta solo questo account (oltre al blocco lato Google: progetto in Testing con un solo utente di test).
-const ACCOUNT_AMMESSO = 'cocco.haloa@gmail.com';
+// v0.26: due account ammessi. Il proprietario vede anche il programma pubblicato col sito (Medicina);
+// il secondo account parte vuoto e riceve i suoi pacchetti dalla sua cartella Drive. Per ammettere
+// la seconda persona: scrivere il suo Gmail in SECONDO_ACCOUNT (minuscolo) e ripubblicare; deve
+// anche essere tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
+const PROPRIETARIO = 'cocco.haloa@gmail.com';
+const SECONDO_ACCOUNT = '';
+const ACCOUNT_AMMESSI = [PROPRIETARIO, SECONDO_ACCOUNT].filter(Boolean);
 const CARTELLA_APP = 'Calendario personale';
 /** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
 function scopeAttuale() { try {
@@ -1267,7 +1273,7 @@ const Drive = (() => {
                 throw new Error('NOLOGIN');
             if (!stato.email) {
                 const email = await chiSono();
-                if (email.toLowerCase() !== ACCOUNT_AMMESSO) {
+                if (!ACCOUNT_AMMESSI.includes(email.toLowerCase())) {
                     try {
                         google.accounts.oauth2.revoke(token, () => { });
                     }
@@ -1277,6 +1283,8 @@ const Drive = (() => {
                 }
                 stato.email = email;
                 LS.set('email', stato.email);
+                if (email.toLowerCase() !== PROPRIETARIO && typeof Studio !== 'undefined')
+                    Studio.togliSito();
             }
             await preparaCartelle();
             // 1. scarico il file remoto
@@ -1448,6 +1456,8 @@ const Drive = (() => {
         caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, preparaCartelle, tokenValido,
         elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
         get collegato() { return !!stato.email; },
+        /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
+        eProprietario() { return !stato.email || stato.email.toLowerCase() === PROPRIETARIO; },
         /** true se c'è un token valido adesso (senza aprire finestre). */
         get pronto() { return !!token && Date.now() < scadenzaToken; },
     };
@@ -6051,7 +6061,7 @@ const Studio = (() => {
     /** Il piano principale (teoria). */
     function pkPiano() { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
     /** Inserisce/aggiorna un pacchetto. I progressi stanno altrove: non si perdono. */
-    function importa(c) {
+    function importa(c, daSito = false) {
         if (!c || c.formato !== 'pacchetto-studio' || !c.id || !c.tipo)
             return false;
         const id = 'pk-' + c.id, mio = Stato.rec.get(id);
@@ -6060,15 +6070,17 @@ const Studio = (() => {
         // mai sostituire un pacchetto con una versione più vecchia (es. sito vs Drive)
         if (mio && !mio.deleted && mio.contenuto && String(mio.contenuto.aggiornato || '') > String(c.aggiornato || ''))
             return false;
-        Stato.salva({ id, type: 'pacchetto', updatedAt: 0, contenuto: c });
+        Stato.salva({ id, type: 'pacchetto', updatedAt: 0, contenuto: c, daSito: daSito || undefined });
         // esami indicati dal pacchetto: creati una volta sola (poi li gestisce l'utente)
         for (const e of c.esami || [])
             if (e && e.id && !Stato.rec.has(e.id))
-                Stato.salva({ id: e.id, type: 'esame', updatedAt: 0, nome: e.nome, data: e.data, ora: e.ora });
+                Stato.salva({ id: e.id, type: 'esame', updatedAt: 0, nome: e.nome, data: e.data, ora: e.ora, daSito: daSito || undefined });
         return true;
     }
     /** Pacchetti distribuiti col sito (base di partenza). */
     async function caricaDalSito() {
+        if (!Drive.eProprietario())
+            return; // v0.26: il programma del sito è solo del proprietario
         try {
             const r = await fetch('studio/indice.json', { cache: 'no-cache' });
             if (!r.ok)
@@ -6076,10 +6088,20 @@ const Studio = (() => {
             for (const f of await r.json()) {
                 const p = await fetch('studio/' + f, { cache: 'no-cache' });
                 if (p.ok)
-                    importa(await p.json());
+                    importa(await p.json(), true);
             }
         }
         catch (_) { /* offline o anteprima */ }
+    }
+    /** v0.26: il secondo account non deve ereditare il programma del sito caricato prima dell'accesso. */
+    function togliSito() {
+        let n = 0;
+        for (const r of Stato.rec.values())
+            if (r.daSito && !r.deleted) {
+                Stato.elimina(r.id);
+                n++;
+            }
+        return n;
     }
     /** Pacchetti nella cartella Drive dell'app (quelli creati da Claude in futuro). */
     async function caricaDaDrive() {
@@ -6232,7 +6254,7 @@ const Studio = (() => {
         }
         return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
     }
-    return { pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+    return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
         dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 // ---------- Visore a tutto schermo (quiz e PDF) ----------
@@ -7650,7 +7672,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.25.0';
+const VERSIONE = '0.26.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
