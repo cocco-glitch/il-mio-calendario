@@ -11,7 +11,7 @@
 // 'mz-appunti'), collegato allo stesso sotto-step; una riga cancellata toglie la sua carta.
 // Drive: copia «titolo.md» in «Calendario personale/Appunti», SOLO dopo conferma nell'app.
 
-interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; sub?: string; micro?: string; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number; }
+interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; fonte?: { id: string; agg?: string }; creato?: string; sub?: string; micro?: string; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number; }
 
 const Appunti = (() => {
   const tutti = () => Stato.tutti<Appunto>('appunto').sort((a, b) => b.updatedAt - a.updatedAt);
@@ -52,7 +52,26 @@ const Appunti = (() => {
     Stato.salva(a);
     return sincronizzaCarte(a);
   }
-  function nuovo(extra: Partial<Appunto> = {}): Appunto { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', ...extra }; }
+  function nuovo(extra: Partial<Appunto> = {}): Appunto { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', creato: ymd(new Date()), ...extra }; }
+  /** Domande sbagliate dei quiz dello stesso sotto-step, ancora aperte. */
+  function errori(a: Appunto): Domanda[] { if (!a.sub) return []; return Domande.aperte().filter(d => { const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId); return !!t && t.k === a.sub; }); }
+  /** Importa file .md/.txt da Drive (o una cartella, ricorsiva): un file = un appunto; reimportare aggiorna lo stesso. */
+  async function importaDrive(voci: { id: string; name: string; mimeType?: string }[], percorso = ''): Promise<number> {
+    let n = 0;
+    for (const v of voci) {
+      if (v.mimeType === 'application/vnd.google-apps.folder') { n += await importaDrive(await Drive.elencaCompleti(v.id), percorso + ' ' + v.name); continue; }
+      if (!/\.(md|markdown|txt)$/i.test(v.name)) continue;
+      let testo = (await Drive.scaricaTesto(v.id)).replace(/^\uFEFF/, '').replace(/\r/g, '');
+      let titolo = v.name.replace(/\.(md|markdown|txt)$/i, '');
+      const t1 = /^#\s+(.+)\n+/.exec(testo); if (t1) { titolo = t1[1].trim(); testo = testo.slice(t1[0].length); }
+      let a = tutti().find(x => x.fonte && x.fonte.id === v.id) || nuovo({ fonte: { id: v.id } });
+      if (a.testo === testo && a.titolo === titolo) continue;
+      a = { ...a, titolo, testo, fonte: { id: v.id, agg: ymd(new Date()) } };
+      const col = Carte.collega(titolo, percorso).sub ? Carte.collega(titolo, percorso) : Carte.collega(v.name.replace(/\.(md|markdown|txt)$/i, ''), percorso); if (col.sub) { a.sub = col.sub; a.micro = col.micro; }
+      Stato.salva(a); sincronizzaCarte(a); n++;
+    }
+    return n;
+  }
   function elimina(a: Appunto): void {
     for (const c of Carte.carte().filter(c => c.mazzo === 'mz-ap-' + a.id.replace(/^ap-/, ''))) Stato.elimina(c.id);
     Stato.elimina('mz-ap-' + a.id.replace(/^ap-/, '')); Stato.elimina(a.id);
@@ -90,9 +109,13 @@ const Appunti = (() => {
     Stato.salva({ id, type: 'memoria', updatedAt: 0, er: 'appunto:' + a.id + ':' + s, d: st.d, s: st.s, due: ymd(d), ultimo: oggiK, n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g]] as any).slice(-30) } as Memoria);
   }
   /** Sezioni da ripassare oggi (mai ripassate o scadute). */
-  function daRipassare(a: Appunto, oggiK = ymd(new Date())) { return sezioni(a).filter(s => { const m = Stato.prendi<Memoria>(idMemS(a, s.id)); return !m || m.due <= oggiK; }); }
+  /** Sezioni da ripassare oggi: scadute, oppure mai ripassate se l'appunto è di ieri o prima (un giorno di distanza aiuta il ricordo). */
+  function daRipassare(a: Appunto, oggiK = ymd(new Date())) {
+    const nato = a.creato || ymd(new Date(a.updatedAt || Date.now()));
+    return sezioni(a).filter(s => { const m = Stato.prendi<Memoria>(idMemS(a, s.id)); return m ? m.due <= oggiK : nato < oggiK; });
+  }
   const appuntiDaRipassare = () => tutti().filter(a => daRipassare(a).length);
-  return { sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
+  return { errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
 })();
 
 /** Chiede conferma e salva la copia su Drive (regola: niente su Drive senza conferma). */
@@ -117,7 +140,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   const anteprima = h('div.appunto-anteprima', { hidden: true });
   const aggiornaStato = () => {
     const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
-    svuota(stato); stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato');
+    svuota(stato); stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
   };
   let timer = 0;
   const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (!ap.testo.trim() && !ap.titolo.trim()) return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi<Appunto>(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
@@ -173,6 +196,7 @@ function vistaAppunti(): HTMLElement {
   return h('div.pagina', null,
     h('section.card', null, campo,
       h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'),
+        h('button.btn.neutro', { onclick: () => importaAppunti() }, '⤓ Importa'),
         Appunti.appuntiDaRipassare().length ? h('button.btn.neutro', { onclick: () => { const l = Appunti.appuntiDaRipassare(); apriCornell(l[0], true); } }, '🧠 Ripassa appunti (' + Appunti.appuntiDaRipassare().length + ')') : null,
         nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null),
       h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')),
@@ -211,7 +235,11 @@ function apriCornell(a: Appunto, copri = false): void {
     }
     return h('section.cornell-riga', null, spunti, h('div', null, testo, azioni));
   });
+  const err = Appunti.errori(a);
   v.corpo.append(h('div.cornell', null, righe,
+    err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub!) + ' (' + err.length + ')'),
+      err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null)),
+      h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null,
     h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
       : h('button.btn-testo', { onclick: () => { v.chiudi(); apriAppunto(a, {}, true); } }, '✍️ Scrivilo in 2-3 frasi con parole tue: fissa più di una rilettura'))));
 }
@@ -246,4 +274,22 @@ async function aiRiassunto(a: Appunto): Promise<void> {
       (d.manca || []).length ? h('div', null, h('b', null, 'Manca:'), (d.manca as string[]).map(x => h('div', null, '• ' + x))) : h('div', null, 'Non manca nulla di importante. 👍'),
       (d.errori || []).length ? h('div', null, h('b', null, 'Da correggere:'), (d.errori as string[]).map(x => h('div', null, '• ' + x))) : null) });
   } catch (e: any) { avviso(String(e.message || e), 8000); }
+}
+
+async function importaAppunti(): Promise<void> {
+  const s = await chiedi('Importa appunti da Drive', [{ testo: '📄 File .md / .txt', valore: 'file' }, { testo: '📁 Cartella (anche sottocartelle)', valore: 'cart' }],
+    'Ogni file diventa un appunto (titolo = prima riga «# …» o nome del file). Reimportare aggiorna lo stesso appunto. Un numero di step nel nome o nella cartella lo collega.');
+  if (!s || serveGoogle()) return;
+  const sc = await scegliFileDrive(s === 'cart' ? { titolo: 'Cartella di appunti', mime: 'application/vnd.google-apps.folder' } : { titolo: 'File di appunti', multi: true });
+  if (!sc.length) return;
+  avviso('Importo…', 5000);
+  try { const n = await Appunti.importaDrive(sc); avviso(n ? n + ' appunti importati o aggiornati.' : 'Già aggiornati.'); } catch (e: any) { avviso('Import non riuscito: ' + (e.message || e), 8000); }
+  disegna();
+}
+
+/** Riquadro in Oggi. */
+function widgetAppunti(): HTMLElement | null {
+  const l = Appunti.appuntiDaRipassare(); if (!l.length) return null;
+  return scheda('Appunti da ripassare', h('div.tenue.piccolo', null, l.length + (l.length === 1 ? ' appunto' : ' appunti') + ' · copri, ricorda, scopri'),
+    l.slice(0, 3).map(a => h('button.voce-lista', { onclick: () => apriCornell(a, true) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo), h('span.voce-sotto', null, Appunti.daRipassare(a).length + ' sezioni')))));
 }

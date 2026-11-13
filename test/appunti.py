@@ -55,7 +55,7 @@ with sync_playwright() as p:
     ap = pg.evaluate("Appunti.tutti()[0]")
     sez = pg.evaluate("Appunti.sezioni(Appunti.tutti()[0])")
     ok([x['titolo'] for x in sez] == ['Calore latente', 'Formule'] and 'Calore latente di fusione del ghiaccio' in sez[0]['spunti'], 'sezioni + spunti Cornell: %s' % [(x['titolo'], x['spunti']) for x in sez])
-    pg.evaluate("apriCornell(Appunti.tutti()[0], true)"); pg.wait_for_selector('.cornell-testo.coperto')
+    pg.evaluate("(() => { const a = Appunti.tutti()[0]; a.creato = '2026-11-12'; Stato.salva(a, true); apriCornell(a, true); })()"); pg.wait_for_selector('.cornell-testo.coperto')
     ok(pg.locator('.cornell-testo.coperto').count() == 2, 'copri e ricorda: testo coperto')
     pg.screenshot(path='test/appunti-cornell.png')
     pg.locator('.cornell-azioni button:has-text("Scopri")').first.click(); pg.locator('.voto-3').first.click()
@@ -79,6 +79,27 @@ with sync_playwright() as p:
     pg.fill('.appunto-riassunto', 'Il calore latente serve a cambiare stato senza cambiare temperatura.'); pg.wait_for_timeout(100)
     pg.click('.visore-testa .btn-testo:has-text("⋯")'); pg.click('.dialogo button:has-text("Riscontro AI")'); pg.wait_for_selector('.foglio:has-text("Manca")')
     ok('334 J/g' in pg.inner_text('.foglio'), 'riscontro sul riassunto: cosa manca')
+
+    # --- v0.30: Studia ora, Oggi, errori dei quiz, import ---
+    pg.keyboard.press('Escape'); pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(200)
+    nuovo = pg.evaluate("(() => { const a = Appunti.nuovo({ titolo: 'oggi', testo: '# A\\nx' }); Stato.salva(a); return Appunti.daRipassare(a).length; })()")
+    ok(nuovo == 0, 'appunto di oggi: si ripassa da domani')
+    pg.clock.set_fixed_time('2026-11-14T09:00:00+01:00')
+    ok(any(v['tipo'] == 'appunto' for v in pg.evaluate("StudiaOra.componi(90)")), 'domani: appunti in «Studia ora»')
+    pg.evaluate("vai('oggi')"); pg.wait_for_timeout(200)
+    ok(pg.locator('text=Appunti da ripassare').count() == 1, 'riquadro in Oggi')
+    pg.evaluate('''() => { const s = Studio.schedeDi(Studio.trovaSotto('C2.2').sub)[0];
+      Stato.salva({ id: 'dom-x', type: 'domanda', updatedAt: 0, schedaId: s.id, titolo: 't', q: 'Calore latente di vaporizzazione?', giusta: '2260 J/g', volte: 1, giuste: 0, ultima: '2026-11-13', esito: 'sbagliata' }); }''')
+    ok(len(pg.evaluate("Appunti.errori(Appunti.tutti().find(a => a.sub === 'C2.2'))")) == 1, 'errori del quiz dello stesso step')
+    pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, .dialogo-sfondo').forEach(e => e.remove()); apriCornell(Appunti.tutti().find(a => a.sub === 'C2.2'))"); pg.wait_for_timeout(150)
+    ok('Sbagliate nei quiz di Chi 2.2' in pg.inner_text('.cornell') and 'vaporizzazione' in pg.inner_text('.cornell'), 'errori in fondo alla vista Cornell')
+    pg.evaluate("document.querySelectorAll('.visore').forEach(e => e.remove())")
+    pg.evaluate('''() => { Drive.elencaCompleti = async id => [{ id: 'm1', name: 'Bio 1.1 cellula.md', mimeType: 'text/markdown' }, { id: 'x', name: 'foto.png', mimeType: 'image/png' }];
+      Drive.scaricaTesto = async id => '# La cellula\\n- nucleo :: contiene il DNA\\n'; }''')
+    n = pg.evaluate("Appunti.importaDrive([{ id: 'c', name: 'Biologia', mimeType: 'application/vnd.google-apps.folder' }])")
+    a = pg.evaluate("Appunti.tutti().find(a => a.fonte && a.fonte.id === 'm1')")
+    ok(n == 1 and a['titolo'] == 'La cellula' and a['sub'] == 'B1.1', 'import cartella: titolo dal # e collegamento allo step')
+    ok(pg.evaluate("Appunti.importaDrive([{ id: 'm1', name: 'Bio 1.1 cellula.md' }])") == 0 and len([x for x in pg.evaluate("Appunti.tutti()") if x.get('fonte')]) == 1, 'reimport: nessun doppione')
 
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)

@@ -9,7 +9,7 @@
 // Le pause sono inserite ogni ~25 minuti. Il timer della sessione parte con la durata scelta.
 // La sessione in corso si salva sul dispositivo (localStorage) per riprenderla.
 
-interface VoceSessione { tipo: 'ripasso' | 'carte' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
+interface VoceSessione { tipo: 'ripasso' | 'carte' | 'appunto' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
 interface SessioneOra { inizio: number; minuti: number; voci: VoceSessione[]; }
 
 const StudiaOra = (() => {
@@ -31,6 +31,8 @@ const StudiaOra = (() => {
     // 1b) flashcard di oggi (v0.18): circa 12 secondi a carta, massimo 15 minuti
     const nc = Carte.conta(); const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
     if (nc.ripasso + nc.nuove && Carte.mazzi().length) metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
+    // 1c) appunti da ripassare (copri e ricorda): ~4 min ciascuno, al massimo 3
+    for (const a of Appunti.appuntiDaRipassare().slice(0, 3)) metti({ tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto: 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni', min: 4, id: a.id });
     // 2) step del giorno
     for (const vg of Studio.vociDelGiorno(giorno)) {
       if (vg.v.speciale || vg.p.modo === 'raffinamento') continue;
@@ -65,6 +67,7 @@ const StudiaOra = (() => {
 function eseguiVoce(v: VoceSessione): void {
   if (v.tipo === 'freddo' && v.k) { avviaProvaAFreddo(v.k); return; }
   if (v.tipo === 'carte') { avviaCarte(undefined, 'Flashcard'); return; }
+  if (v.tipo === 'appunto' && v.id) { const a = Stato.prendi<Appunto>(v.id); if (a) { apriCornell(a, true); return; } }
   if (v.id) { const t = trovaScheda(v.id); if (t) { apriScheda(t.pk, t.m, t.micro, t.s, v.tipo === 'ripasso' || v.tipo === 'errore'); return; } }
   avviso(v.sotto, 8000);
 }
