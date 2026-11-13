@@ -528,3 +528,5 @@ body:has(.visore) .foglio-sfondo { z-index: 27; }
 .qz-zoom-box { width: 100%; max-width: 900px; background: var(--sup); border-radius: 14px; padding: 12px; }
 .qz-zoom-box svg { display: block; width: 100%; height: auto; max-height: 80vh; }
 .qz-zoom-x { position: absolute; bottom: calc(18px + env(safe-area-inset-bottom)); font-size: 13px; color: var(--tenue); }
+.qz-avviso { background: color-mix(in srgb, #d9921a 16%, var(--sup)); border: 1px solid #d9921a; border-radius: 11px; padding: 10px 12px; font-size: 15px; line-height: 1.45; }
+.regole-json { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
