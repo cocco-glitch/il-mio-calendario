@@ -1461,7 +1461,7 @@ const Drive = (() => {
         elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
         get collegato() { return !!stato.email; },
         /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
-        eProprietario() { return !!stato.email && stato.email.toLowerCase() === PROPRIETARIO; },
+        eProprietario() { return stato.email ? stato.email.toLowerCase() === PROPRIETARIO : (location.hostname === 'localhost' || location.protocol === 'file:'); }, // v0.26.2: senza account solo in prova locale
         /** true se c'è un token valido adesso (senza aprire finestre). */
         get pronto() { return !!token && Date.now() < scadenzaToken; },
     };
