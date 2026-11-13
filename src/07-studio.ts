@@ -349,6 +349,7 @@ function apriScheda(pk: PkStep, m: string, micro: string, s: SchedaS, ripasso = 
       h('div.bottoni', null,
         h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'),
         pk.proprio ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s); } }, '🧩 Quiz nell\'app'),
+        Generatori.per(m, micro).length ? h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s, () => Generatori.serie(m, micro)); } }, '🎲 Esercizi nuovi') : null,
         h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')),
       pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id)))!, s); } }, 'Modifica scheda') : null,
       h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)),

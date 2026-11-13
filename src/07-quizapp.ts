@@ -12,7 +12,7 @@
 // Il risultato finale passa da Cattura.salva come per le schede HTML (progresso, ripassi, errori).
 
 interface CitB { t: string; f: string; l?: string; }
-interface DomB { id: string; sk: string; t: 'mcq' | 'fill'; lv: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; }
+interface DomB { id: string; sk: string; t: 'mcq' | 'fill'; lv: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[]; }
 interface BancaFile { step: number; schede: Record<string, { titolo: string; materia: string; microstep: string; k: number; n: number; fonti?: string; focus?: string }>; immagini: Record<string, string>; domande: DomB[]; }
 interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Partial<DomB>; nascosta?: boolean; nuova?: boolean; originale?: Partial<DomB>; }
 interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; }
@@ -103,20 +103,21 @@ const QuizApp = (() => {
     const id = 'sq-' + v.d.id, p = Stato.prendi<StatQ>(id);
     const r: StatQ = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false };
     r.n++; if (v.ok) r.ok++; r.ultima = ymd(new Date()); r.esito = !!v.ok;
-    if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const o = v.d.o![v.ord[v.picked]]; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
+    if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
     Stato.salva(r, true);
   }
 
-  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<void> {
-    const v = visore('🧩 ' + micro + ' · scheda ' + s.k + '/' + s.n, () => apriScheda(pk, m, micro, s));
+  /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
+  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[]): Promise<void> {
+    const v = visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
     v.corpo.classList.add('qz');
     v.corpo.appendChild(h('div.vuoto.centro', null, 'Preparo le domande…'));
     let dati: { domande: DomB[]; immagini: Record<string, string>; fonte: string };
-    try { dati = await Banca.scheda(pk, m, micro, s); }
+    try { dati = gen ? { domande: gen(), immagini: {}, fonte: 'gen' } : await Banca.scheda(pk, m, micro, s); }
     catch (e: any) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e))); return; }
     if (!dati.domande.length) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, 'Nessuna domanda trovata.')); return; }
     const app = h('div.qz-app'); svuota(v.corpo);
-    v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + ' · scheda ' + s.k + ' di ' + s.n), h('h1.qz-h1', null, s.titolo)));
+    v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
     v.corpo.appendChild(app);
     let P: Voce[] = [], cur = 0, ripasso = false, apertaX = false, finito = false;
     const nuovo = (idx: number[], rip: boolean) => {
@@ -155,7 +156,7 @@ const QuizApp = (() => {
       for (const g of d.img || []) if (dati.immagini[g.i]) s2 += '<figure class="qz-fig">' + dati.immagini[g.i] + '<figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
       s2 += '<p class="qz-domanda">' + (mc ? fmt(d.q) : fmtQ(d.q)) + '</p><div class="chips">';
       if (mc) { const rest = 2 - x.hid.length; s2 += '<button type="button" class="chip" data-az="aiuto"' + (a || rest <= 0 ? ' disabled' : '') + '>💡 Suggerimento (' + rest + ')</button>'; }
-      s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button><button type="button" class="chip" data-az="modifica">✏️ Modifica</button>' + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
+      s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
       if (apertaX) s2 += spiegFonti(d);
       if (mc) {
         s2 += '<div class="qz-opz">' + x.ord.map((oi, k) => {
@@ -203,12 +204,12 @@ const QuizApp = (() => {
         + '<div class="qz-livelli">' + liv.map(z => '<div class="qz-lvriga"><span>' + z[0] + '</span><span class="qz-barra"><span style="width:' + Math.round(z[1] * 100 / z[2]) + '%"></span></span><span>' + z[1] + '/' + z[2] + '</span></div>').join('') + '</div>'
         + (deb ? '<p><b>Punto debole:</b> ' + deb[0] + '</p>' : '<p><b>Nessun punto debole.</b></p>');
       if (sb.length) s2 += '<h3>Da rivedere (' + sb.length + ')</h3>' + sb.map(x => '<details class="qz-altre"><summary>' + fmt(x.d.q) + '</summary><p><b>Risposta corretta:</b> ' + fmt(x.d.t === 'mcq' ? x.d.o![0] : x.d.show) + '</p>' + passi(x.d.e) + (x.d.r ? '<p class="tenue piccolo">Ripassa: ' + esc(x.d.r) + '</p>' : '') + '</details>').join('');
-      s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">Rifai tutto</button></div>'
-        + '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div></section>';
+      s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
+        + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
       app.innerHTML = s2; v.corpo.scrollTop = 0;
       const r: RisultatoQuiz = { imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
         sbagliate: sb.map(x => [x.d.q, x.d.t === 'mcq' ? x.d.o![0] : String(x.d.show || ''), (Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e)] as [string, string, string]) };
-      Cattura.salva(s.id, r);
+      if (!gen) Cattura.salva(s.id, r);
     }
     app.addEventListener('click', ev => {
       const b = (ev.target as Element).closest('button') as HTMLButtonElement | null; if (!b || b.disabled) return;
@@ -220,7 +221,7 @@ const QuizApp = (() => {
       else if (az === 'prec') { if (cur > 0) { cur--; apertaX = false; disegnaQ(); v.corpo.scrollTop = 0; } }
       else if (az === 'avanti') { if (cur < P.length - 1) { cur++; apertaX = false; disegnaQ(); v.corpo.scrollTop = 0; } else { const senza = P.filter(y => !fatta(y)).length; if (senza) chiedi('Vedere il risultato?', [{ testo: 'Vedi il risultato', valore: 'si' }, { testo: 'Torna al quiz', valore: 'no' }], senza + (senza === 1 ? ' domanda senza risposta: conta come errata.' : ' domande senza risposta: contano come errate.')).then(si => { if (si === 'si') { finito = true; disegnaQ(); } }); else { finito = true; disegnaQ(); } } }
       else if (az === 'errori') nuovo(P.map((y, k) => y.ok ? -1 : dati.domande.indexOf(y.d)).filter(k => k >= 0), true);
-      else if (az === 'tutto') nuovo(dati.domande.map((_, k) => k), false);
+      else if (az === 'tutto') { if (gen) dati.domande = gen(); nuovo(dati.domande.map((_, k) => k), false); }
       else if (az === 'modifica') Editor.apri(x.d, s.id, nd => {
         const k = dati.domande.indexOf(x.d);
         if (!nd) { if (k >= 0) dati.domande.splice(k, 1); P.splice(cur, 1); if (!P.length) { finito = true; } else if (cur >= P.length) cur = P.length - 1; disegnaQ(); return; }
