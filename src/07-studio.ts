@@ -404,10 +404,10 @@ function barra(fatte: number, tot: number, colore?: string): HTMLElement {
 function rigaStudio(x: VoceGiorno): HTMLElement {
   const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k.replace(/^G2-/, ''));
   const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k); // v0.11: apre la modalità simulazione
-  return h('button.voce-lista', { onclick: () => { if (sim) { apriSimulazioni(); return; } if (t) { UI.studioSub = t.sub.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
+  return lungo(h('button.voce-lista', { onclick: () => { if (sim) { apriSimulazioni(); return; } if (t) { UI.studioSub = t.sub.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
     h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }),
     h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
-      h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : '')));
+      h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : ''))), () => sim ? MenuLungo.esame() : MenuLungo.step(x.v.k), x.v.speciale ? x.v.t : Studio.etichetta(x.v.k));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
 /** v0.20.2: flashcard collegate al sotto-step, da aggiungere al sottotitolo delle voci del piano. */

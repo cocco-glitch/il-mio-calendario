@@ -76,14 +76,55 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
   let penna = false;   // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
   const cv = h('canvas.mano-tela') as HTMLCanvasElement, g = cv.getContext('2d')!;
   const vivo = h('canvas.mano-vivo') as HTMLCanvasElement, gv = vivo.getContext('2d')!;
-  const pag = h('div.mano-foglio', null, cv, vivo);
-  let scala = 1, dpr = Math.min(2, window.devicePixelRatio || 1);
+  // v0.35: il foglio si ingrandisce con due dita (come Note di iOS): la tela interna si allarga e si scorre
+  const box = h('div.mano-box', null, cv, vivo);
+  const pag = h('div.mano-foglio', null, box);
+  let scala = 1, zoom = 1, dpr = Math.min(2, window.devicePixelRatio || 1);
   function dimensiona(): void {
-    const w = pag.clientWidth || 360; scala = w / LARG;
-    for (const c of [cv, vivo]) { c.width = Math.round(w * dpr); c.height = Math.round(m.h * scala * dpr); c.style.height = (m.h * scala) + 'px'; }
-    g.setTransform(dpr, 0, 0, dpr, 0, 0); gv.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const w = (pag.clientWidth || 360) * zoom; scala = w / LARG;
+    const hh = m.h * scala, d = Math.min(dpr, Math.sqrt(15e6 / Math.max(1, w * hh)));   // iOS: tele oltre ~16 Mpx diventano bianche
+    box.style.width = w + 'px'; box.style.transform = '';
+    for (const c of [cv, vivo]) { c.width = Math.round(w * d); c.height = Math.round(hh * d); c.style.width = w + 'px'; c.style.height = hh + 'px'; }
+    g.setTransform(d, 0, 0, d, 0, 0); gv.setTransform(d, 0, 0, d, 0, 0);
     disegnaMano(g, m, scala);
+    if (zoomEti) zoomEti.hidden = zoom === 1, zoomEti.textContent = Math.round(zoom * 100) + '%';
   }
+  let zoomEti: HTMLElement | null = null;
+  const scorritore = (): HTMLElement => { for (let e = pag.parentElement; e; e = e.parentElement) { const o = getComputedStyle(e).overflowY; if ((o === 'auto' || o === 'scroll') && e.scrollHeight > e.clientHeight) return e; } return document.scrollingElement as HTMLElement; };
+  function impostaZoom(z: number, cx?: number, cy?: number): void {
+    z = Math.max(1, Math.min(4, z));
+    const r = box.getBoundingClientRect(), pr = pag.getBoundingClientRect();
+    const mx = cx != null ? cx : pr.left + pr.width / 2, my = cy != null ? cy : pr.top + Math.min(pr.height, innerHeight) / 2;
+    const fx = (mx - r.left) / scala, fy = (my - r.top) / scala;   // punto del foglio sotto le dita
+    zoom = z; dimensiona();
+    pag.scrollLeft = fx * scala - (mx - pr.left);
+    const r2 = box.getBoundingClientRect(); scorritore().scrollTop += (r2.top + fy * scala) - my;
+  }
+  // pizzico: anteprima con transform (fluida), poi ridisegno nitido al rilascio
+  let pz: { d0: number; z0: number; cx: number; cy: number; ox: number; oy: number } | null = null;
+  const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  pag.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2) return;
+    if (cur) { cur = null; idPuntatore = -1; if (storia.length) m.t = storia.pop()!; gv.clearRect(0, 0, vivo.width, vivo.height); disegnaMano(g, m, scala); }
+    const r = box.getBoundingClientRect(), cx = (e.touches[0].clientX + e.touches[1].clientX) / 2, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    pz = { d0: dist(e.touches), z0: zoom, cx, cy, ox: cx - r.left, oy: cy - r.top };
+    box.style.transformOrigin = pz.ox + 'px ' + pz.oy + 'px';
+  }, { passive: true, capture: true });
+  pag.addEventListener('touchmove', e => {
+    if (!pz || e.touches.length !== 2) return;
+    e.preventDefault();
+    const z = Math.max(1, Math.min(4, pz.z0 * dist(e.touches) / pz.d0));
+    box.style.transform = 'scale(' + (z / pz.z0) + ')';
+  }, { passive: false, capture: true });
+  const finePizzico = (e: TouchEvent) => {
+    if (!pz || e.touches.length >= 2) return;
+    const m0 = box.style.transform.match(/scale\(([\d.]+)\)/), k = m0 ? parseFloat(m0[1]) : 1, p0 = pz; pz = null;
+    box.style.transform = '';
+    if (Math.abs(k - 1) > .02) impostaZoom(p0.z0 * k, p0.cx, p0.cy);
+  };
+  pag.addEventListener('touchend', finePizzico, { capture: true }); pag.addEventListener('touchcancel', finePizzico, { capture: true });
+  // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad)
+  pag.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); impostaZoom(zoom * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); }, { passive: false });
   const salvaStoria = () => { storia.push(m.t.slice()); if (storia.length > 60) storia.shift(); futuro.length = 0; };
   // --- v0.33: lazo (seleziona, sposta, elimina, trasforma in carta) ---
   let sel: Set<number> = new Set(), poligono: number[][] | null = null, trascina: number[] | null = null, spost = [0, 0];
@@ -145,7 +186,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
   const scrive = (e: PointerEvent) => e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && dito && !penna);
   vivo.addEventListener('pointerdown', e => {
     if (e.pointerType === 'pen' && !penna) { penna = true; aggiornaBarra(); }
-    if (!scrive(e) || cur) return;
+    if (!scrive(e) || cur || pz) return;
     e.preventDefault(); try { vivo.setPointerCapture(e.pointerId); } catch (_) { /* puntatore sintetico */ } idPuntatore = e.pointerId;
     if (strumento === 'lazo') {
       idPuntatore = e.pointerId; try { vivo.setPointerCapture(e.pointerId); } catch (_) { /* sintetico */ } e.preventDefault();
@@ -206,14 +247,15 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
       b('↶', false, () => { if (storia.length) { futuro.push(m.t.slice()); m.t = storia.pop()!; disegnaMano(g, m, scala); cambia(); } }, 'Annulla'),
       b('↷', false, () => { if (futuro.length) { storia.push(m.t.slice()); m.t = futuro.pop()!; disegnaMano(g, m, scala); cambia(); } }, 'Ripeti'),
       b(({ quadretti: '▦', righe: '☰', bianco: '▢', cornell: '◧', esercizio: '▤' } as any)[m.sf], false, () => { const o: Mano['sf'][] = ['quadretti', 'righe', 'bianco', 'cornell', 'esercizio']; m.sf = o[(o.indexOf(m.sf) + 1) % o.length]; disegnaMano(g, m, scala); cambia(); }, 'Sfondo: quadretti / righe / bianco / Cornell / esercizio'),
+      (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')),
       penna ? h('span.tenue.piccolo', null, '✏️ Pencil: il dito scorre') : b(dito ? '☝️ dito: scrive' : '☝️ dito: scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito'));
   }
   pag.classList.toggle('dito', dito);
   aggiornaBarra();
   azioni.hidden = true;
-  contenitore.append(barra, azioni, pag);
+  contenitore.append(azioni, pag, barra);   // v0.35: barra fluttuante in basso, sempre visibile mentre scorri i fogli
   requestAnimationFrame(dimensiona);
-  const ro = new ResizeObserver(() => { const w = pag.clientWidth; if (w && Math.abs(w / LARG - scala) > .001) dimensiona(); }); ro.observe(pag);
+  const ro = new ResizeObserver(() => { const w = pag.clientWidth * zoom; if (w && Math.abs(w / LARG - scala) > .001) dimensiona(); }); ro.observe(pag);
   return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf }), ridisegna: dimensiona };
 }
 

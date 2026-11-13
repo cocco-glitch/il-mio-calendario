@@ -169,7 +169,7 @@ with sync_playwright() as p:
     pg.click('.mano-barra button[title^="Lazo"]')
     pg.evaluate('''() => { const c = document.querySelector('.mano-vivo'), r = c.getBoundingClientRect();
       const ev = (n, x, y) => c.dispatchEvent(new PointerEvent(n, { pointerId: 10, pointerType: 'pen', clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true }));
-      const y = document.querySelector('.mano-vivo').getBoundingClientRect(); ev('pointerdown', 25, 130); ev('pointermove', 200, 130); ev('pointermove', 200, 200); ev('pointermove', 25, 200); ev('pointerup', 25, 132); }''')
+      const y = document.querySelector('.mano-vivo').getBoundingClientRect(); ev('pointerdown', 25, 130); ev('pointermove', 200, 130); ev('pointermove', 200, 225); ev('pointermove', 25, 225); ev('pointerup', 25, 132); }''')
     ok('1 tratto' in pg.inner_text('.mano-azioni'), 'lazo: 1 tratto selezionato')
     pg.click('.mano-azioni button:has-text("Elimina")'); pg.wait_for_timeout(100)
     pg.click('.mano-barra button[title^="Penna"]')

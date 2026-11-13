@@ -190,10 +190,10 @@ function widgetEsami(): HTMLElement | null {
   const apri = () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); };
   const rit = Studio.pkPiani().length ? Studio.inRitardo().length : 0;
   return h('div.tessere', { 'aria-label': 'Prossimi esami' },
-    prossimi.map((e, i) => { const d = giorniA(e.data); return h('button.tessera' + (i === 0 ? '.primo' : ''), { onclick: apri, title: e.nome + ' · ' + dataLunga(daYmd(e.data)) },
+    prossimi.map((e, i) => { const d = giorniA(e.data); return lungo(h('button.tessera' + (i === 0 ? '.primo' : ''), { onclick: apri, title: e.nome + ' · ' + dataLunga(daYmd(e.data)) },
       h('span.tessera-num', null, h('span.conta', null, String(d)), h('small', null, d === 1 ? ' giorno' : ' giorni')),
       h('span.tessera-eti', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')),
-      h('span.tessera-sotto', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' }))); }),
+      h('span.tessera-sotto', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' }))), () => MenuLungo.esame(), e.nome); }),
     rit ? h('button.tessera.ritardo', { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } },
       h('span.tessera-num', null, h('span.conta', null, String(rit))), h('span.tessera-eti', null, rit === 1 ? 'step indietro' : 'step indietro'), h('span.tessera-sotto', null, 'Vedi il piano')) : null);
 }

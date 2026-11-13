@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.34.0';
+const VERSIONE = '0.35.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -45,9 +45,9 @@ function disegna(): void {
   const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
   const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => {
     const att = UI.scheda === s || (s === 'altro' && inAltro);
-    return h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; if (s === 'altro') UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null },
+    return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; if (s === 'altro') UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null },
       h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null),
-      h('span.tab-eti', null, t));
+      h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
   }));
   // direzione dell'animazione: verso destra o sinistra secondo la posizione in barra
   const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro', 'task', 'note', 'cerca'];
@@ -79,6 +79,44 @@ function disegna(): void {
   if (stessaScheda) main.scrollTop = scrollMain;
   else Tocco.conta(main);
   if (inAltro || (UI.scheda === 'altro' && UI.altroSez)) attivaIndietroSwipe(main);
+  else attivaScorriSezioni(main, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(x => x[0]));
+}
+
+/** v0.35: scorrendo col dito a destra/sinistra si passa alla sezione accanto (la pagina segue il dito). */
+const ZONE_SENZA_SCORRI = 'input, textarea, select, canvas, [contenteditable], .mano-foglio, .mano-barra, .segmenti, .chips, .gr-scroll, .mese, .cal, .tabella, .scorre, .tessere, .carta, .foglio, input[type=range]';
+function attivaScorriSezioni(main: HTMLElement, ordine: Scheda[]): void {
+  const i = ordine.indexOf(UI.scheda);
+  if (i < 0 || UI.scheda === 'cal') return; // il calendario usa lo scorrimento per cambiare periodo
+  let x0 = 0, y0 = 0, dx = 0, attivo = false, deciso = false, scartato = false, t0 = 0;
+  const pag = () => main.firstElementChild as HTMLElement | null;
+  const scorribile = (el: Element | null): boolean => {
+    for (; el && el !== main; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 4 && getComputedStyle(el).overflowX !== 'visible') return true;
+    return false;
+  };
+  main.addEventListener('touchstart', e => {
+    const t = e.target as Element;
+    scartato = e.touches.length > 1 || !!t.closest(ZONE_SENZA_SCORRI) || scorribile(t) || e.touches[0].clientX < 24;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; attivo = false; deciso = false; t0 = performance.now();
+  }, { passive: true });
+  main.addEventListener('touchmove', e => {
+    if (scartato) return;
+    const mx = e.touches[0].clientX - x0, my = e.touches[0].clientY - y0;
+    if (!deciso) { if (Math.abs(mx) < 10 && Math.abs(my) < 10) return; deciso = true; attivo = Math.abs(mx) > Math.abs(my) * 1.4; if (!attivo) return; }
+    if (!attivo) return;
+    dx = mx;
+    const bordo = (dx > 0 && i === 0) || (dx < 0 && i === ordine.length - 1);
+    const p = pag(); if (p) { p.style.transition = 'none'; p.style.transform = 'translateX(' + (bordo ? dx / 4 : dx * 0.6) + 'px)'; p.style.opacity = String(1 - Math.min(Math.abs(dx) / 900, .35)); }
+  }, { passive: true });
+  main.addEventListener('touchend', () => {
+    if (!attivo) return;
+    const p = pag(), vel = Math.abs(dx) / Math.max(1, performance.now() - t0);
+    const j = i + (dx < 0 ? 1 : -1);
+    if ((Math.abs(dx) > 90 || (vel > .5 && Math.abs(dx) > 40)) && j >= 0 && j < ordine.length) {
+      if (p) { p.style.transition = 'transform .14s ease-in, opacity .14s'; p.style.transform = 'translateX(' + (dx < 0 ? -80 : 80) + 'px)'; p.style.opacity = '0'; }
+      Tocco.clic(0.7);
+      setTimeout(() => { if (ordine[j] === 'studio') UI.studioSub = null; if (ordine[j] === 'altro') UI.altroSez = null; vai(ordine[j]); }, 120);
+    } else if (p) { p.style.transition = 'transform .3s var(--molla, ease), opacity .3s'; p.style.transform = ''; p.style.opacity = ''; }
+  }, { passive: true });
 }
 
 /** v0.34: nelle sotto-pagine si torna indietro scorrendo dal bordo sinistro (come su iPhone). */
@@ -96,11 +134,11 @@ function attivaIndietroSwipe(el: HTMLElement): void {
 function avvisoNovita(): void {
   if (navigator.webdriver) return; // nei test automatici niente finestre
   try {
-    if (localStorage.getItem('imc-novita-034')) return;
-    if (!Stato.tutti<Task>('task').length && !Stato.tutti<Nota>('nota').length) { localStorage.setItem('imc-novita-034', '1'); return; }
+    if (localStorage.getItem('imc-novita-035')) return;
+    if (!Stato.tutti<Task>('task').length && !Stato.tutti<Nota>('nota').length) { localStorage.setItem('imc-novita-035', '1'); return; }
   } catch (_) { return; }
-  chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], 'Promemoria e Note ora sono in Altro (in alto, ben visibili) e restano anche nei riquadri di Oggi. Con la lente puoi cercare anche le impostazioni.')
-    .then(() => { try { localStorage.setItem('imc-novita-034', '1'); } catch (_) { /* niente */ } });
+  chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], '• Scorri col dito a destra o sinistra per passare da una sezione all\'altra.\n• Tieni premuto un pulsante della barra, un esame o una voce del piano: compaiono le scorciatoie collegate.\n• Promemoria e Note ora sono in Altro (in alto) e restano nei riquadri di Oggi.\n• Nelle pagine a mano: due dita per ingrandire.')
+    .then(() => { try { localStorage.setItem('imc-novita-035', '1'); } catch (_) { /* niente */ } });
 }
 
 // ---------- Avvisi in-app (Livello 1 dei promemoria) ----------

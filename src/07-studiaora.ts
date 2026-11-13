@@ -118,6 +118,10 @@ function widgetStudiaOra(): HTMLElement {
     return h('section.card', null, h('button.btn.studia-ora', { onclick: apriSessione }, '▶ Sessione in corso · ' + fatte + '/' + s.voci.length),
       prossima ? h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Prossima: ' + prossima.titolo) : null);
   }
-  return h('section.card', null, h('button.btn.studia-ora', { onclick: apriStudiaOra }, '▶ Studia ora'),
+  return h('section.card', null, lungo(h('button.btn.studia-ora', { onclick: apriStudiaOra }, '▶ Studia ora'), () => [
+    { t: 'Ripassa le flashcard', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } },
+    { t: 'Rivedi gli errori', ic: 'avvertenza', f: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
+    { t: 'Studio libero con timer', ic: 'cronometro', f: () => Timer.avvia({ titolo: 'Studio libero' }) },
+    { t: 'Simulazione d\'esame', ic: 'quiz', f: () => apriSimulazioni() }], 'Studia ora'),
     h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Scegli quanto tempo hai: l\'app compone la sessione migliore.'));
 }

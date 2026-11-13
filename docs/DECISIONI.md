@@ -67,3 +67,8 @@ Una riga per scelta importante: data · decisione · motivo.
 - Niente emoji nell'interfaccia: `04-simboli.ts` le sostituisce al volo con icone SVG (il testo dell'utente non viene toccato).
 - `04-tocco.ts`: clic sonoro generato con Web Audio (disattivabile, volume regolabile), numeri che contano, animazioni di pressione e transizioni direzionali; tutto spento con «Riduci movimento» o Aspetto › Animazioni: Ridotte.
 - Palette: accento #2f6bea (il vecchio #6c8cff migra da solo), Bio verde · Chi ambra · Fis viola.
+
+## v0.35 — Gesti (13/11/2026)
+- Scorrimento orizzontale tra le sezioni della barra (la pagina segue il dito; escluse zone con scorrimento proprio, calendario, tela a mano).
+- Note a mano: zoom 100–400% con due dita (anteprima con transform, ridisegno nitido al rilascio; ctrl+rotella su PC), tela limitata a ~15 Mpx per iOS; barra strumenti fluttuante in basso (prima finiva sotto la testata del visore).
+- «Tieni premuto» (`08-lungo.ts`): menu di scorciatoie collegate su barra, voci del piano, tessere esami, Studia ora.
