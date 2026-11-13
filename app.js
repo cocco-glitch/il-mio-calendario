@@ -2392,13 +2392,59 @@ const Appunti = (() => {
     async function suDrive(a) {
         const cart = await Drive.sottocartella('Appunti');
         const nome = (a.titolo || 'Appunto').replace(/[\\/:*?"<>|]/g, '-') + '.md';
-        const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n';
+        const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n' + (a.riassunto ? '\n---\n**Riassunto:** ' + a.riassunto + '\n' : '');
         const id = await Drive.carica(nome, cart, corpo, 'text/markdown', a.drive && a.drive.id);
-        a.drive = { id, agg: Date.now(), h: Carte.hash(a.titolo + '\n' + a.testo) };
+        a.drive = { id, agg: Date.now(), h: Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '')) };
         Stato.salva(a);
     }
-    const daSalvareSuDrive = (a) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo);
-    return { tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
+    const daSalvareSuDrive = (a) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || ''));
+    // ---------- Fase 2: sezioni Cornell e ripasso dell'appunto ----------
+    /** Divide l'appunto in sezioni (dai titoli); spunti = titolo + domande «::» + righe che finiscono con «?». */
+    function sezioni(a) {
+        const out = [];
+        let cur = { titolo: a.titolo || 'Appunto', righe: [] };
+        const chiudi = () => {
+            const testo = cur.righe.join('\n').trim();
+            if (!testo)
+                return;
+            const spunti = [];
+            for (const r of cur.righe) {
+                const x = r.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim();
+                const q = /^(.+?)\s::\s/.exec(x);
+                if (q)
+                    spunti.push(q[1]);
+                else if (/\?\s*$/.test(x))
+                    spunti.push(x);
+                else if (/\{\{/.test(x))
+                    spunti.push(x.replace(/\{\{[^}]+\}\}/g, '[…]'));
+            }
+            out.push({ id: Carte.hash(norm(cur.titolo)), titolo: cur.titolo, spunti, testo });
+        };
+        for (const r of a.testo.split('\n')) {
+            const t = /^#{1,4}\s+(.+)$/.exec(r.trim());
+            if (t) {
+                chiudi();
+                cur = { titolo: t[1].trim(), righe: [] };
+            }
+            else
+                cur.righe.push(r);
+        }
+        chiudi();
+        return out;
+    }
+    const idMemS = (a, s) => 'mem-ap-' + a.id.replace(/^ap-/, '') + '-' + s;
+    function valutaSezione(a, s, g) {
+        const oggiK = ymd(new Date()), id = idMemS(a, s), m = Stato.prendi(id);
+        const t = m && m.ultimo ? Math.max(0, Math.round((daDt(oggiK).getTime() - daDt(m.ultimo).getTime()) / 864e5)) : 0;
+        const st = Ripassi.passo(m && m.ultimo ? { d: m.d, s: m.s } : null, g, t), iv = g === 1 ? 1 : Ripassi.intervallo(st.s, Ripassi.ritenzione(oggiK));
+        const d = daDt(oggiK);
+        d.setDate(d.getDate() + iv);
+        Stato.salva({ id, type: 'memoria', updatedAt: 0, er: 'appunto:' + a.id + ':' + s, d: st.d, s: st.s, due: ymd(d), ultimo: oggiK, n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g]]).slice(-30) });
+    }
+    /** Sezioni da ripassare oggi (mai ripassate o scadute). */
+    function daRipassare(a, oggiK = ymd(new Date())) { return sezioni(a).filter(s => { const m = Stato.prendi(idMemS(a, s.id)); return !m || m.due <= oggiK; }); }
+    const appuntiDaRipassare = () => tutti().filter(a => daRipassare(a).length);
+    return { sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
 })();
 /** Chiede conferma e salva la copia su Drive (regola: niente su Drive senza conferma). */
 async function chiediDrive(a, forza = false) {
@@ -2421,7 +2467,7 @@ async function chiediDrive(a, forza = false) {
     }
 }
 // ---------- Editor ----------
-function apriAppunto(a, extra = {}) {
+function apriAppunto(a, extra = {}, alRiassunto = false) {
     const ap = a ? { ...a } : Appunti.nuovo(extra);
     let cambiato = false;
     const v = visore(a ? '📝 Appunto' : '📝 Nuovo appunto', () => { if (cambiato)
@@ -2430,6 +2476,7 @@ function apriAppunto(a, extra = {}) {
         chiediDrive(Stato.prendi(ap.id) || ap); disegna(); });
     const titolo = h('input.appunto-titolo', { type: 'text', placeholder: 'Titolo (es. «Chi 2.2.4 Calore latente» lo collega allo step)', value: ap.titolo });
     const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo);
+    const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '');
     const stato = h('div.appunto-stato.tenue.piccolo');
     const anteprima = h('div.appunto-anteprima', { hidden: true });
     const aggiornaStato = () => {
@@ -2438,14 +2485,28 @@ function apriAppunto(a, extra = {}) {
         stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato');
     };
     let timer = 0;
-    const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; if (!ap.testo.trim() && !ap.titolo.trim())
+    const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (!ap.testo.trim() && !ap.titolo.trim())
         return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
     const modifica = () => { cambiato = true; aggiornaStato(); clearTimeout(timer); timer = setTimeout(salvaOra, 1500); };
     titolo.addEventListener('input', modifica);
     testo.addEventListener('input', modifica);
-    function fine() { clearTimeout(timer); const r = salvaOra(); if (r && (r[0] || r[1]))
-        avviso('🃏 ' + (r[0] ? r[0] + ' carte nuove/aggiornate' : '') + (r[0] && r[1] ? ', ' : '') + (r[1] ? r[1] + ' tolte' : '')); const x = Stato.prendi(ap.id); if (x)
-        setTimeout(() => chiediDrive(x), 300); }
+    riass.addEventListener('input', modifica);
+    function fine() {
+        clearTimeout(timer);
+        const r = salvaOra();
+        // richiesta gentile, non obbligo: solo per appunti lunghi senza riassunto, una volta per appunto
+        const x0 = Stato.prendi(ap.id);
+        if (x0 && !x0.riassunto && x0.testo.length > 400 && !x0.riassChiesto) {
+            x0.riassChiesto = 1;
+            Stato.salva(x0, true);
+            setTimeout(() => avviso('✍️ Ti va di scrivere il riassunto in 2-3 frasi? Tocca qui.', 7000, () => apriAppunto(Stato.prendi(ap.id), {}, true)), 1200);
+        }
+        if (r && (r[0] || r[1]))
+            avviso('🃏 ' + (r[0] ? r[0] + ' carte nuove/aggiornate' : '') + (r[0] && r[1] ? ', ' : '') + (r[1] ? r[1] + ' tolte' : ''));
+        const x = Stato.prendi(ap.id);
+        if (x)
+            setTimeout(() => chiediDrive(x), 300);
+    }
     const inserisci = (prima, dopo = '', segnaposto = '') => {
         const s = testo.selectionStart, e = testo.selectionEnd, sel = testo.value.slice(s, e) || segnaposto;
         testo.setRangeText(prima + sel + dopo, s, e, 'end');
@@ -2455,18 +2516,33 @@ function apriAppunto(a, extra = {}) {
         modifica();
     };
     const aCapo = (pref) => { const s = testo.selectionStart, ini = testo.value.lastIndexOf('\n', s - 1) + 1; testo.setRangeText(pref, ini, ini, 'end'); testo.focus(); modifica(); };
-    const barra = h('div.appunto-barra', null, h('button', { title: 'Titolo', onclick: () => aCapo('# ') }, 'H'), h('button', { title: 'Punto', onclick: () => aCapo('- ') }, '•'), h('button', { title: 'Rientra', onclick: () => aCapo('  ') }, '⇥'), h('button', { title: 'Domanda :: risposta', onclick: () => inserisci('', ' :: ', '') }, '::'), h('button', { title: 'Completamento', onclick: () => inserisci('{{', '}}', 'parola') }, '{ }'), h('button', { title: 'Grassetto', onclick: () => inserisci('**', '**', 'testo') }, h('b', null, 'B')), h('button', { title: 'Anteprima', onclick: (e) => { const on = !!anteprima.hidden; anteprima.hidden = !on; testo.hidden = on; e.currentTarget.classList.toggle('attivo', on); if (on) {
+    const barra = h('div.appunto-barra', null, h('button', { title: 'Titolo', onclick: () => aCapo('# ') }, 'H'), h('button', { title: 'Punto', onclick: () => aCapo('- ') }, '•'), h('button', { title: 'Rientra', onclick: () => aCapo('  ') }, '⇥'), h('button', { title: 'Domanda :: risposta', onclick: () => inserisci('', ' :: ', '') }, '::'), h('button', { title: 'Completamento', onclick: () => inserisci('{{', '}}', 'parola') }, '{ }'), h('button.ai', { title: 'Domande con l\'AI', onclick: () => { salvaOra(); aiDomande(Stato.prendi(ap.id) || ap, r => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + r.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + r.length + ' domande aggiunte.'); }); } }, '✨'), h('button', { title: 'Grassetto', onclick: () => inserisci('**', '**', 'testo') }, h('b', null, 'B')), h('button', { title: 'Anteprima', onclick: (e) => { const on = !!anteprima.hidden; anteprima.hidden = !on; testo.hidden = on; e.currentTarget.classList.toggle('attivo', on); if (on) {
             anteprima.innerHTML = htmlCarta(testo.value.replace(/\s::\s/g, ' → '), 'mostra');
             caricaImmagini(anteprima);
         } } }, '👁'));
     v.barra.append(h('button.btn-testo', { onclick: async () => {
-            const s = await chiedi(ap.titolo || 'Appunto', [{ testo: '☁︎ Salva su Drive', valore: 'drive' }, { testo: '🃏 Ripassa le sue carte', valore: 'carte' }, { testo: '🗑 Elimina appunto', valore: 'del', pericolo: true }]);
+            const s = await chiedi(ap.titolo || 'Appunto', [{ testo: '📑 Vista Cornell', valore: 'cornell' }, { testo: '🧠 Copri e ricorda', valore: 'copri' }, { testo: '✨ Riscontro AI sul riassunto', valore: 'airiass' }, { testo: '☁︎ Salva su Drive', valore: 'drive' }, { testo: '🃏 Ripassa le sue carte', valore: 'carte' }, { testo: '🗑 Elimina appunto', valore: 'del', pericolo: true }]);
             if (s === 'drive') {
                 salvaOra();
                 const x = Stato.prendi(ap.id);
                 if (x) {
                     x.drive && !Appunti.daSalvareSuDrive(x) ? avviso('Copia su Drive già aggiornata.') : chiediDrive(x, true);
                 }
+            }
+            if (s === 'cornell' || s === 'copri') {
+                salvaOra();
+                const x = Stato.prendi(ap.id);
+                if (x) {
+                    cambiato = false;
+                    v.chiudi();
+                    apriCornell(x, s === 'copri');
+                }
+            }
+            if (s === 'airiass') {
+                salvaOra();
+                const x = Stato.prendi(ap.id);
+                if (x)
+                    aiRiassunto(x);
             }
             if (s === 'carte') {
                 salvaOra();
@@ -2481,9 +2557,10 @@ function apriAppunto(a, extra = {}) {
                 avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).');
             }
         } }, '⋯'));
-    v.corpo.append(h('div.appunto', null, titolo, stato, barra, testo, anteprima));
+    v.corpo.append(h('div.appunto', null, titolo, stato, barra, testo, anteprima, riass));
     aggiornaStato();
-    setTimeout(() => (a ? testo : titolo).focus(), 80);
+    setTimeout(() => { const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto)
+        el.scrollIntoView({ block: 'center' }); }, 80);
 }
 // ---------- Vista «Appunti» ----------
 function vistaAppunti() {
@@ -2505,7 +2582,7 @@ function vistaAppunti() {
             c.setSelectionRange(c.value.length, c.value.length);
         } }, 250); } });
     const nCarte = Carte.conta(['mz-appunti']);
-    return h('div.pagina', null, h('section.card', null, campo, h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'), nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null), h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')), tutti.length ? Array.from(gruppi.entries()).map(([g, l]) => h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))
+    return h('div.pagina', null, h('section.card', null, campo, h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'), Appunti.appuntiDaRipassare().length ? h('button.btn.neutro', { onclick: () => { const l = Appunti.appuntiDaRipassare(); apriCornell(l[0], true); } }, '🧠 Ripassa appunti (' + Appunti.appuntiDaRipassare().length + ')') : null, nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null), h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')), tutti.length ? Array.from(gruppi.entries()).map(([g, l]) => h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))
         : h('section.card', null, h('div.vuoto', null, q ? 'Nessun appunto trovato.' : 'Ancora nessun appunto. Tocca «Nuovo appunto».')));
 }
 /** Nel sotto-step: appunti collegati + nuovo appunto già collegato. */
@@ -2513,6 +2590,80 @@ function rigaAppunti(k) {
     const l = Appunti.tutti().filter(a => a.sub === k);
     const t = Studio.trovaSotto(k);
     return h('div.bottoni', null, l.slice(0, 3).map(a => h('button.btn.neutro', { onclick: () => apriAppunto(a) }, '📝 ' + a.titolo.slice(0, 28))), h('button.btn.neutro', { onclick: () => apriAppunto(undefined, { titolo: Studio.etichetta(k) + (t ? ' ' + t.sub.titolo : ''), sub: k }) }, '＋ Appunto'));
+}
+// ---------- Fase 2: vista Cornell + «copri e ricorda» ----------
+/** Vista Cornell: spunti a sinistra, testo a destra, riassunto in fondo; con «copri» il testo è nascosto. */
+function apriCornell(a, copri = false) {
+    const v = visore((copri ? '🧠 Copri e ricorda · ' : '📑 ') + (a.titolo || 'Appunto'), () => disegna());
+    const sez = copri ? Appunti.daRipassare(a) : Appunti.sezioni(a);
+    if (!sez.length) {
+        v.corpo.append(h('div.vuoto', null, copri ? 'Niente da ripassare oggi in questo appunto. 👍' : 'Appunto vuoto.'));
+        return;
+    }
+    let fatte = 0;
+    const righe = sez.map(s => {
+        const testo = h('div.cornell-testo' + (copri ? '.coperto' : ''));
+        testo.innerHTML = htmlCarta(s.testo.replace(/\s::\s/g, ' → '), 'mostra');
+        caricaImmagini(testo);
+        const spunti = h('div.cornell-spunti', null, h('b', null, s.titolo), s.spunti.map(x => h('div.cornell-spunto', null, x)));
+        const azioni = h('div.cornell-azioni');
+        if (copri) {
+            const voti = () => h('div.carte-voti', null, ['Non ricordavo', 'A fatica', 'Bene', 'Facile'].map((t, i) => h('button.voto.voto-' + (i + 1), { onclick: () => {
+                    Appunti.valutaSezione(a, s.id, i + 1);
+                    svuota(azioni);
+                    azioni.append(h('span.tenue.piccolo', null, '✓ registrato'));
+                    if (++fatte === sez.length)
+                        avviso('🧠 Appunto ripassato. Le sezioni più deboli torneranno prima.');
+                } }, h('b', null, t))));
+            azioni.append(h('div.tenue.piccolo', null, 'Prova a ripetere a voce (o a scrivere) la sezione partendo dagli spunti, poi scopri.'), h('button.btn', { onclick: () => { testo.classList.remove('coperto'); svuota(azioni); azioni.append(voti()); } }, 'Scopri'));
+        }
+        return h('section.cornell-riga', null, spunti, h('div', null, testo, azioni));
+    });
+    v.corpo.append(h('div.cornell', null, righe, h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
+        : h('button.btn-testo', { onclick: () => { v.chiudi(); apriAppunto(a, {}, true); } }, '✍️ Scrivilo in 2-3 frasi con parole tue: fissa più di una rilettura'))));
+}
+// ---------- AI (Groq) sugli appunti ----------
+/** Propone domande-flashcard dal testo dell'appunto; scegli quali tenere: diventano righe «::». */
+async function aiDomande(a, dopo) {
+    if (!a.testo.trim()) {
+        avviso('Scrivi prima qualcosa.');
+        return;
+    }
+    avviso('✨ Preparo le domande…', 15000);
+    let d;
+    try {
+        d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor di ' + Spiega.materia(a.titolo + ' ' + (a.sub ? nomeMateria(materiaDi(a.sub)) : '')) + ' per il semestre filtro di Medicina. Crei flashcard di ripasso SOLO dal testo dello studente, in italiano. Regole: un\'idea per carta; domanda breve e precisa; risposta di poche parole o una formula; niente domande sì/no; non inventare fatti che non sono nel testo. Rispondi in JSON: {"domande":[{"q":"...","r":"..."}]}' },
+            { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nAppunto:\n' + a.testo.slice(0, 9000) + '\n\nCrea da 4 a 8 flashcard sui concetti più importanti che NON hanno già una riga «domanda :: risposta».' }], 0.3);
+    }
+    catch (e) {
+        avviso(String(e.message || e), 8000);
+        return;
+    }
+    const lista = (d && d.domande || []).filter((x) => x && x.q && x.r).slice(0, 10);
+    if (!lista.length) {
+        avviso('Nessuna domanda proposta.');
+        return;
+    }
+    const scelte = lista.map(() => true);
+    foglio({ titolo: '✨ Domande proposte', etichettaSalva: 'Aggiungi le scelte', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Tieni solo quelle utili: diventano righe «domanda :: risposta» in fondo all\'appunto, quindi flashcard. Puoi correggerle dopo.'), lista.map((x, i) => h('label.gen-arg', null, h('input', { type: 'checkbox', checked: true, onchange: (e) => { scelte[i] = e.target.checked; } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.q), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, x.r))))),
+        salva: () => { const r = lista.filter((_x, i) => scelte[i]).map(x => '- ' + x.q.replace(/\s::\s/g, ' ') + ' :: ' + x.r.replace(/\n/g, ' ')); if (r.length)
+            dopo(r); } });
+}
+/** Riscontro sul riassunto: cosa manca o è impreciso rispetto all'appunto (non lo riscrive). */
+async function aiRiassunto(a) {
+    if (!(a.riassunto || '').trim()) {
+        avviso('Scrivi prima il riassunto: l\'AI ti dice cosa manca, non lo scrive al posto tuo.');
+        return;
+    }
+    avviso('✨ Leggo il riassunto…', 15000);
+    try {
+        const d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor per il semestre filtro di Medicina. Confronti il riassunto dello studente con il suo appunto. NON riscrivere il riassunto. Rispondi in italiano, con il tu, in JSON: {"ok":"cosa va bene (1 frase)","manca":["concetto chiave mancante", ...],"errori":["affermazione imprecisa e correzione", ...]}' },
+            { role: 'user', content: 'Appunto:\n' + a.testo.slice(0, 8000) + '\n\nRiassunto dello studente:\n' + a.riassunto }], 0.2);
+        foglio({ titolo: '✨ Riscontro sul riassunto', corpo: h('div.modulo', null, d.ok ? h('div', null, '✅ ' + d.ok) : null, (d.manca || []).length ? h('div', null, h('b', null, 'Manca:'), d.manca.map(x => h('div', null, '• ' + x))) : h('div', null, 'Non manca nulla di importante. 👍'), (d.errori || []).length ? h('div', null, h('b', null, 'Da correggere:'), d.errori.map(x => h('div', null, '• ' + x))) : null) });
+    }
+    catch (e) {
+        avviso(String(e.message || e), 8000);
+    }
 }
 
 // 07-carte.ts — Flashcard (v0.18, F3).
@@ -6027,6 +6178,48 @@ const Spiega = (() => {
     }
     catch (_) { /* niente */ } };
     const chiave = () => leggi(KC);
+    // v0.29: la chiave può viaggiare tra i TUOI dispositivi (iPhone dall'icona Home, Safari, iPad, PC hanno
+    // memorie separate) tramite un file privato sul tuo Drive, «dati/chiave-ai.json» — solo dopo conferma.
+    const FILE_K = 'chiave-ai.json';
+    async function recuperaDaDrive() {
+        if (chiave() || !Drive.pronto)
+            return false;
+        try {
+            await Drive.preparaCartelle();
+            const f = await Drive.trovaFile(FILE_K, Drive.idCartella('dati'));
+            if (!f)
+                return false;
+            const d = JSON.parse(await Drive.scaricaTesto(f.id));
+            if (!d || !/^gsk_/.test(d.groq || ''))
+                return false;
+            scrivi(KC, d.groq);
+            if (d.modello)
+                scrivi(KM, d.modello);
+            avviso('✨ AI pronta: chiave Groq recuperata dal tuo Drive.');
+            return true;
+        }
+        catch (_) {
+            return false;
+        }
+    }
+    async function salvaSuDrive() {
+        if (!Drive.collegato || !chiave())
+            return;
+        const s = await chiedi('Salvare la chiave Groq anche sul tuo Drive?', [{ testo: '☁︎ Sì, per gli altri miei dispositivi', valore: 'si' }], 'File privato «Calendario personale/dati/chiave-ai.json»: l\'app sull\'icona Home, su iPad e PC la recupera da sola. Puoi cancellare il file quando vuoi.');
+        if (s !== 'si' || serveGoogle())
+            return;
+        try {
+            await Drive.preparaCartelle();
+            const dir = Drive.idCartella('dati'), f = await Drive.trovaFile(FILE_K, dir);
+            await Drive.carica(FILE_K, dir, JSON.stringify({ groq: chiave(), modello: modello() }), 'application/json', f ? f.id : undefined);
+            avviso('☁︎ Chiave salvata sul Drive.');
+        }
+        catch (e) {
+            avviso('Drive: ' + (e.message || e), 6000);
+        }
+    }
+    /** Garantisce la chiave: locale, oppure dal Drive. */
+    async function pronta() { return !!chiave() || await recuperaDaDrive(); }
     const modello = () => leggi(KM) || PRINCIPALE;
     function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++)
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
@@ -6068,6 +6261,7 @@ const Spiega = (() => {
         return t.replace(/\*\*/g, '').replace(/^#+\s*/gm, '');
     }
     async function genera(d, l) {
+        await pronta();
         const modelli = [modello()];
         if (modelli[0] !== RISERVA)
             modelli.push(RISERVA);
@@ -6090,6 +6284,7 @@ const Spiega = (() => {
     }
     /** Q5: chiamata generica (messaggi liberi, risposta JSON) con lo stesso modello di riserva. */
     async function chat(msgs, temperatura = 0.4) {
+        await pronta();
         if (!chiave())
             throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
         const modelli = [modello()];
@@ -6142,7 +6337,7 @@ const Spiega = (() => {
             rispondi({ testo: c.testo, modello: c.modello, salvata: true });
             return;
         }
-        if (!chiave()) {
+        if (!await pronta()) {
             rispondi({ errore: 'Manca la chiave Groq: incollala in Altro → Spiegazioni AI.' });
             return;
         }
@@ -6251,7 +6446,8 @@ const Spiega = (() => {
     // ---- Altro → Spiegazioni AI ----
     function sezione() {
         const inp = h('input', { type: 'text', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: false, style: { fontFamily: 'monospace' } });
-        const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
+        const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); if (/^gsk_/.test(v))
+            setTimeout(salvaSuDrive, 600); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
         const incolla = async () => {
             try {
                 const t = await navigator.clipboard.readText();
@@ -6286,7 +6482,7 @@ const Spiega = (() => {
         };
         return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
     }
-    return { inietta, sezione, genera, idDi, chat, materia };
+    return { inietta, sezione, genera, idDi, chat, materia, pronta, recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
 
 // 07-studiaora.ts — "Studia ora" (v0.15, F4 ridotta, tattiche T15–T19).
@@ -8146,7 +8342,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.28.0';
+const VERSIONE = '0.29.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -8260,7 +8456,8 @@ async function avvia() {
     Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
     Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
     Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
-        disegna(); });
+        disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva)
+        Spiega.recuperaDaDrive(); });
     disegna();
     Drive.precarica();
     Timer.parti();
