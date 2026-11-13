@@ -70,6 +70,7 @@ function sezioneDomande(): HTMLElement {
     const risp = h('div.dom-risposta', { hidden: true },
       h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'),
       x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null,
+      rigaAppuntoErrore(x),
       x.esito === 'sbagliata' ? h('div.bottoni', null,
         h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'),
         h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);

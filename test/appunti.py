@@ -129,5 +129,29 @@ with sync_playwright() as p:
     ok('velocità media :: Δs/Δt' in pg.input_value('.appunto-testo'), 'trascrizione aggiunta al testo')
     ok(pg.evaluate("Carte.carte().filter(c => c.f === 'velocità media' || c.f.includes('{{accelerazione}}')).length") == 2, 'e diventa 2 flashcard')
 
+    # --- v0.32: Feynman, errori ↔ appunto, collegamenti ---
+    pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, .dialogo-sfondo').forEach(e => e.remove())")
+    ap = "Appunti.tutti().find(a => a.sub === 'C2.2')"
+    pg.evaluate('''() => { window.fetch = async (u, o) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ voto: 2, ok: 'Hai colto il cambio di stato', manca: ['il valore 334 J/g'], errori: [], domanda: 'Quanto vale il calore latente di fusione del ghiaccio?' }) } }] }), { status: 200 }); }''')
+    pg.evaluate("apriCornell(%s)" % ap); pg.wait_for_timeout(150)
+    pg.locator('.cornell button:has-text("Spiegamelo")').first.click(); pg.wait_for_selector('.foglio textarea')
+    pg.fill('.foglio textarea', 'Il calore latente è l energia che serve per cambiare stato senza cambiare la temperatura del corpo.')
+    pg.click('.foglio button:has-text("Valuta")'); pg.wait_for_selector('.foglio:has-text("Ti è sfuggito")')
+    ok('334 J/g' in pg.inner_text('.foglio') and 'Parziale (2/4)' in pg.inner_text('body'), 'Spiegamelo: riscontro + voto')
+    sid = pg.evaluate("Appunti.sezioni(%s)[0].id" % ap)
+    ok(pg.evaluate("Stato.prendi(Appunti.idMemS(%s, '%s')).log.slice(-1)[0][1]" % (ap, sid)) == 2, 'voto Feynman registrato nel ripasso della sezione')
+    pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, .dialogo-sfondo').forEach(e => e.remove()); UI.studioSub = null; UI.studioVista = 'errori'; vai('studio')"); pg.wait_for_timeout(250)
+    pg.evaluate("(UI as any) === 0") if False else None
+    pg.evaluate("UI.domFiltro = 'aperte'; disegna()"); pg.wait_for_timeout(150)
+    ok(pg.locator('.dom-appunto').count() >= 1 and 'Nel tuo appunto' in pg.inner_text('.dom-appunto'), 'errore del quiz: sezione del tuo appunto che ne parla')
+    pg.wait_for_timeout(400); pg.locator('text=Prima prova a rispondere').first.dispatch_event('click')
+    pg.wait_for_timeout(400); pg.locator('.dom-appunto button:has-text("Aggiungi")').first.dispatch_event('click'); pg.wait_for_timeout(150)
+    ok('vaporizzazione? :: 2260 J/g' in pg.evaluate("%s.testo" % ap) and pg.evaluate("Carte.carte().some(c => c.f.includes('vaporizzazione'))"), 'errore aggiunto all\'appunto e diventato flashcard')
+    pg.evaluate("Stato.salva(Object.assign(Appunti.nuovo({ titolo: 'Ripasso termodinamica', testo: 'Vedi [[Calore latente]]' })))")
+    ok([x['titolo'] for x in pg.evaluate("Appunti.citatoDa(%s)" % ap)] == ['Ripasso termodinamica'], 'collegamento [[…]]: «citato in»')
+    pg.evaluate("apriCornell(Appunti.trova('Ripasso termodinamica'))"); pg.wait_for_timeout(150)
+    pg.click('a.ap-link'); pg.wait_for_timeout(200)
+    ok('Chi 2.2.4 Calore latente' in pg.inner_text('.visore-titolo'), 'il link apre l\'appunto citato')
+
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)
