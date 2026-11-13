@@ -160,7 +160,8 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   // v0.31: modalità a mano (Pencil) o testo; la pagina a mano sta sopra, il testo (anche trascritto) sotto
   let modo: 'testo' | 'mano' = ap.mano && ap.mano.t.length ? 'mano' : ((imp() as any).modoAppunti === 'mano' ? 'mano' : 'testo');
   const zonaMano = h('div.mano-zona');
-  let pagina: ReturnType<typeof paginaMano> | null = null;
+  let pagina: ReturnType<typeof paginaMano> | null = null, sfondoModello: Mano['sf'] | undefined;
+  const aggiungiCarta = (riga: string) => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n' : '') + riga + '\n'; modifica(); salvaOra(); avviso('🃏 Flashcard aggiunta al testo dell\'appunto.'); };
   const anteprima = h('div.appunto-anteprima', { hidden: true });
   const aggiornaStato = () => {
     const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
@@ -210,11 +211,18 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     scambio.append(...([['testo', '⌨️ Testo'], ['mano', '✍️ A mano']] as const).map(([k, t]) => h('button' + (modo === k ? '.attivo' : ''), { onclick: () => {
       modo = k; const i = imp() as any; i.modoAppunti = k; Stato.salva(i, true); mostraModo(); } }, t)));
     zonaMano.hidden = modo !== 'mano'; leggi.hidden = modo !== 'mano';
-    if (modo === 'mano' && !pagina) pagina = paginaMano(zonaMano, ap.mano, modifica);
+    if (modo === 'mano' && !pagina) pagina = paginaMano(zonaMano, ap.mano, modifica, sfondoModello, aggiungiCarta);
     testo.placeholder = modo === 'mano' ? 'Qui sotto il testo: scrivilo, oppure tocca «✨ Leggi la mia scrittura» per trascrivere la pagina.' : testo.placeholder;
   }
   mostraModo();
-  v.corpo.append(h('div.appunto', null, titolo, stato, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
+  // v0.33: modelli di pagina (solo per un appunto nuovo e vuoto)
+  const modelli = a || ap.testo ? null : h('div.chips.appunto-modelli', null, h('span.tenue.piccolo', null, 'Modello:'), MODELLI_APPUNTO.map(md => h('button.chip' + (md.id === 'vuoto' ? '.attivo' : ''), { title: md.sotto, onclick: (e: Event) => {
+    modelli!.querySelectorAll('.chip').forEach(c => c.classList.toggle('attivo', c === e.currentTarget));
+    if (!testo.value.trim() || MODELLI_APPUNTO.some(x => x.testo === testo.value)) testo.value = md.testo;
+    if (pagina && !pagina.dati().t.length) { svuota(zonaMano); pagina = paginaMano(zonaMano, undefined, modifica, md.sf, aggiungiCarta); } else if (!pagina) sfondoModello = md.sf;
+    avviso(md.nome + ': ' + md.sotto, 2500);
+  } }, md.nome)));
+  v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
   aggiornaStato();
   setTimeout(() => { if (modo === 'mano' && !alRiassunto && a) return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
 }
@@ -388,3 +396,13 @@ function rigaAppuntoErrore(d: Domanda): HTMLElement | null {
       : h('div.tenue.piccolo', null, '📝 Il tuo appunto «' + a0.titolo + '» non sembra parlarne.'),
     h('button.btn-testo', { onclick: (e: Event) => { Appunti.aggiungiRiga(a0, '- ' + d.q.replace(/\s::\s/g, ' ') + ' :: ' + d.giusta); (e.target as HTMLElement).textContent = '✓ aggiunta a «' + a0.titolo + '»'; } }, '➕ Aggiungi all\'appunto come flashcard'));
 }
+
+// ---------- v0.33: modelli di pagina ----------
+const MODELLI_APPUNTO: { id: string; nome: string; sotto: string; testo: string; sf: Mano['sf'] }[] = [
+  { id: 'vuoto', nome: 'Vuoto', sotto: 'Pagina libera', testo: '', sf: 'quadretti' },
+  { id: 'lezione', nome: 'Lezione', sotto: 'Concetti → domande → collegamenti', testo: '# Concetti chiave\n- \n\n# Domande\n- domanda :: risposta\n\n# Collegamenti\n- vedi [[ ]]\n', sf: 'righe' },
+  { id: 'cornell', nome: 'Cornell', sotto: 'Spunti · appunti · riassunto', testo: '# Argomento\n- \n- domanda-spunto? :: risposta\n\n# Argomento 2\n- \n', sf: 'cornell' },
+  { id: 'esercizio', nome: 'Esercizio', sotto: 'Dati · formule · svolgimento · errore', testo: '# Testo e dati\n- \n\n# Formule che servono\n- {{formula}}\n\n# Svolgimento\n1. \n\n# Risultato ed errore fatto\n- Risultato: \n- Errore che ho fatto :: cosa ricordare la prossima volta\n', sf: 'esercizio' },
+  { id: 'reazione', nome: 'Reazione', sotto: 'Reagenti · condizioni · meccanismo · prodotti', testo: '# Reazione\n- Reagenti: \n- Condizioni / catalizzatore: \n- Prodotti: \n\n# Meccanismo\n1. \n\n# Da ricordare\n- Prodotto di questa reazione :: \n- Il catalizzatore è {{…}}\n', sf: 'quadretti' },
+  { id: 'confronto', nome: 'Confronto', sotto: 'A vs B: somiglianze e differenze', testo: '# A\n- \n\n# B\n- \n\n# Differenze chiave\n- Differenza tra A e B :: \n', sf: 'righe' },
+];

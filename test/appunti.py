@@ -153,5 +153,30 @@ with sync_playwright() as p:
     pg.click('a.ap-link'); pg.wait_for_timeout(200)
     ok('Chi 2.2.4 Calore latente' in pg.inner_text('.visore-titolo'), 'il link apre l\'appunto citato')
 
+    # --- v0.33: modelli, lazo, scarabocchio ---
+    pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, .dialogo-sfondo').forEach(e => e.remove()); vai('appunti')"); pg.wait_for_timeout(200)
+    pg.click('text=＋ Nuovo appunto'); pg.wait_for_selector('.appunto-modelli')
+    pg.click('.appunto-modelli .chip:has-text("Esercizio")'); pg.wait_for_timeout(100)
+    ok('# Svolgimento' in pg.input_value('.appunto-testo'), 'modello Esercizio nel testo')
+    ok(pg.evaluate("document.querySelector('.mano-vivo') !== null"), 'pagina a mano già aperta')
+    pg.screenshot(path='test/appunti-modello.png')
+    tratto = '''([x0, y0, tipo, zig]) => { const c = document.querySelector('.mano-vivo'), r = c.getBoundingClientRect();
+      const ev = (n, x, y) => c.dispatchEvent(new PointerEvent(n, { pointerId: 9, pointerType: 'pen', pressure: .5, clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true }));
+      ev('pointerdown', x0, y0); for (let i = 1; i < 30; i++) ev('pointermove', zig ? x0 + (i % 2 ? 40 : 0) : x0 + i * 4, zig ? y0 + i * 0.5 : y0 + Math.sin(i) * 3); ev('pointerup', x0 + 60, y0); }'''
+    pg.evaluate(tratto, [40, 200, 'pen', False]); pg.evaluate(tratto, [40, 260, 'pen', False])
+    n = lambda: pg.evaluate("Array.from(document.querySelectorAll('.mano-vivo')).length && window._n")
+    # lazo intorno al primo tratto
+    pg.click('.mano-barra button[title^="Lazo"]')
+    pg.evaluate('''() => { const c = document.querySelector('.mano-vivo'), r = c.getBoundingClientRect();
+      const ev = (n, x, y) => c.dispatchEvent(new PointerEvent(n, { pointerId: 10, pointerType: 'pen', clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true }));
+      const y = document.querySelector('.mano-vivo').getBoundingClientRect(); ev('pointerdown', 25, 130); ev('pointermove', 200, 130); ev('pointermove', 200, 200); ev('pointermove', 25, 200); ev('pointerup', 25, 132); }''')
+    ok('1 tratto' in pg.inner_text('.mano-azioni'), 'lazo: 1 tratto selezionato')
+    pg.click('.mano-azioni button:has-text("Elimina")'); pg.wait_for_timeout(100)
+    pg.click('.mano-barra button[title^="Penna"]')
+    pg.evaluate(tratto, [40, 255, 'pen', True]); pg.wait_for_timeout(100)
+    pg.fill('.appunto-titolo', 'Prova lazo'); pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(300)
+    a = pg.evaluate("Appunti.tutti().find(a => a.titolo === 'Prova lazo')")
+    ok(a and not a.get('mano'), 'lazo elimina + scarabocchio cancella l\'altro tratto (pagina vuota)')
+
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)
