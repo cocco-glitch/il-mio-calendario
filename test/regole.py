@@ -31,7 +31,7 @@ try:
         cnt = pg.evaluate("() => { let a = 0; for (let k = 0; k < 20; k++) a += Generatori.serie('C', '2.3.3', 8).filter(d => d.id === 'g-c-molarita').length; return a / 20; }")
         assert cnt >= 5, cnt     # metà dai deboli + metà a rotazione => ~6 su 8
         # banca: domanda sbagliata 2 volte -> avviso; ordine «deboli-prima»
-        pg.click('text=Chiudi'); pg.wait_for_timeout(100)
+        pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(100)
         pg.evaluate("""async () => { const B = await Banca.carica(3); const d = B.domande.filter(x => x.sk === 'C-3.1.1-1')[5];
               Stato.salva({ id: 'sq-' + d.id, type: 'statq', updatedAt: 0, sk: d.sk, n: 2, ok: 0, ultima: '', esito: false }, true); window.__d5 = d.q; }""")
         pg.evaluate("Regole.sezioneAltro()")  # si costruisce senza errori

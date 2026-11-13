@@ -23,7 +23,7 @@ try:
         r = pg.evaluate("Stato.tutti('modq')")
         assert len(r) == 1 and r[0]['campi']['q'] == 'Domanda modificata da me?' and r[0]['originale']['q'] == orig, r
         # riapro: la modifica resta
-        pg.click('text=Chiudi'); pg.wait_for_timeout(200)
+        pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(200)
         pg.evaluate("document.querySelectorAll('.foglio-sfondo').forEach(x=>x.remove())")
         pg.evaluate(apri); pg.wait_for_selector('.qz-domanda')
         assert pg.inner_text('.qz-domanda') == 'Domanda modificata da me?'
@@ -56,7 +56,7 @@ try:
         pg.click('[data-az=ripristina]'); pg.wait_for_timeout(200)
         pg.click('[data-az=tutto]'); pg.wait_for_timeout(300)
         assert pg.locator('.qz-metro span').count() == n0, pg.locator('.qz-metro span').count()   # 17 + nuova
-        pg.click('text=Chiudi'); pg.wait_for_timeout(200); pg.evaluate("document.querySelectorAll('.foglio-sfondo').forEach(x=>x.remove())")
+        pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(200); pg.evaluate("document.querySelectorAll('.foglio-sfondo').forEach(x=>x.remove())")
         pg.evaluate(apri); pg.wait_for_selector('.qz-domanda')
         assert pg.locator('.qz-metro span').count() == n0 + 1      # + ripristinata
         assert not errori, errori
