@@ -49,3 +49,8 @@ Una riga per scelta importante: data · decisione · motivo.
 - Carte automatiche dalla sintassi `::` / `{{…}}` (RemNote, Obsidian): niente doppio lavoro appunto → carta.
 - Copia su Drive solo con conferma nell'app a ogni salvataggio modificato (regola dell'utente: niente su Drive senza conferma).
 - L'AI non scrive gli appunti (toglierebbe l'elaborazione generativa): le domande dai PDF/slide e dagli appunti le prepara Claude come pacchetti (fase 4).
+
+## v0.29 — Appunti fase 2 + AI (13/11)
+- iOS dà memorie separate a Safari e all'app sull'icona Home: la chiave Groq salvata in Safari non c'era nell'app. Soluzione: copia della chiave in un file privato sul Drive dell'utente, solo con la sua conferma.
+- AI come allenatore, non come scrittore: propone domande (che lo studente sceglie) e commenta il riassunto (cosa manca/sbagliato) senza riscriverlo — l'elaborazione generativa resta dello studente.
+- Riassunto facoltativo: una sola richiesta gentile per appunto lungo (scelta dell'utente).

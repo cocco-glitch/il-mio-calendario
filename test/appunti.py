@@ -51,5 +51,34 @@ with sync_playwright() as p:
     # nello step
     pg.evaluate("UI.studioStep = Studio.pkStep()[1].id; UI.studioSub = 'C2.2'; UI.studioVista = 'schede'; vai('studio')"); pg.wait_for_timeout(200)
     ok(pg.locator('button', has_text='📝 Chi 2.2.4').count() == 1 and pg.locator('button', has_text='＋ Appunto').count() == 1, 'sotto-step: appunto collegato + nuovo')
+    # --- v0.29: Cornell, copri e ricorda, AI ---
+    ap = pg.evaluate("Appunti.tutti()[0]")
+    sez = pg.evaluate("Appunti.sezioni(Appunti.tutti()[0])")
+    ok([x['titolo'] for x in sez] == ['Calore latente', 'Formule'] and 'Calore latente di fusione del ghiaccio' in sez[0]['spunti'], 'sezioni + spunti Cornell: %s' % [(x['titolo'], x['spunti']) for x in sez])
+    pg.evaluate("apriCornell(Appunti.tutti()[0], true)"); pg.wait_for_selector('.cornell-testo.coperto')
+    ok(pg.locator('.cornell-testo.coperto').count() == 2, 'copri e ricorda: testo coperto')
+    pg.screenshot(path='test/appunti-cornell.png')
+    pg.locator('.cornell-azioni button:has-text("Scopri")').first.click(); pg.locator('.voto-3').first.click()
+    ok(len(pg.evaluate("Appunti.daRipassare(Appunti.tutti()[0])")) == 1, 'sezione valutata esce dal ripasso di oggi')
+    pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(150)
+    # AI: Groq simulato, chiave recuperata dal Drive
+    pg.evaluate('''() => { localStorage.removeItem('imc-groq-chiave');
+      Object.defineProperty(Drive, 'pronto', { get: () => true });
+      Drive.preparaCartelle = async () => {}; Drive.idCartella = () => 'dati'; Drive.trovaFile = async n => n === 'chiave-ai.json' ? { id: 'k1' } : null;
+      Drive.scaricaTesto = async id => JSON.stringify({ groq: 'gsk_prova' });
+      window.fetch = async (u, o) => { window._ultimo = JSON.parse(o.body); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(
+        JSON.parse(o.body).messages[0].content.includes('riassunto') ? { ok: 'Bene', manca: ['il valore 334 J/g'], errori: [] } : { domande: [{ q: 'Cosa misura il calore latente?', r: 'energia per il cambio di stato' }, { q: 'Unità del calore latente', r: 'J/g' }] }) } }] }), { status: 200 }); }; }''')
+    pg.evaluate("vai('appunti')"); pg.wait_for_timeout(150)
+    pg.locator('.voce-lista', has_text='Calore latente').first.click(); pg.wait_for_selector('.appunto-testo')
+    pg.click('.appunto-barra button.ai'); pg.wait_for_selector('.foglio .gen-arg')
+    ok(pg.evaluate("localStorage.getItem('imc-groq-chiave')") == 'gsk_prova', 'chiave Groq recuperata dal Drive')
+    ok(pg.locator('.foglio .gen-arg').count() == 2, 'AI: 2 domande proposte')
+    pg.locator('.foglio .gen-arg input').nth(1).uncheck(); pg.click('.foglio button:has-text("Aggiungi le scelte")'); pg.wait_for_timeout(300)
+    ok('Cosa misura il calore latente? :: energia' in pg.input_value('.appunto-testo') and 'Unità del' not in pg.input_value('.appunto-testo'), 'solo la domanda scelta aggiunta come riga ::')
+    ok(pg.evaluate("Carte.carteDi('mz-appunti').some(c => c.f === 'Cosa misura il calore latente?')"), 'e diventa flashcard')
+    pg.fill('.appunto-riassunto', 'Il calore latente serve a cambiare stato senza cambiare temperatura.'); pg.wait_for_timeout(100)
+    pg.click('.visore-testa .btn-testo:has-text("⋯")'); pg.click('.dialogo button:has-text("Riscontro AI")'); pg.wait_for_selector('.foglio:has-text("Manca")')
+    ok('334 J/g' in pg.inner_text('.foglio'), 'riscontro sul riassunto: cosa manca')
+
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)

@@ -99,3 +99,5 @@ Il piano per rendere l'app adatta a qualsiasi studio è in `docs/PROGRESSIONE.md
   Test: `test/secondo.py`.
 
 **Appunti (v0.28, `07-appunti.ts`):** record `appunto`; carte nel mazzo `mz-ap-<id>` sotto `mz-appunti`, campo `ctx` della carta = percorso dei titoli. `Appunti.sincronizzaCarte` aggiunge/toglie le carte in base al testo. Drive: `Drive.sottocartella('Appunti')`, `drive.h` = hash del contenuto caricato (per sapere se la copia è da aggiornare); la richiesta di conferma (`chiediDrive`) parte alla chiusura dell'editor. Test: `test/appunti.py`.
+
+**Appunti fase 2 + AI (v0.29):** `Appunti.sezioni/valutaSezione/daRipassare` (memoria `mem-ap-<id>-<hash sezione>`, `er` = `appunto:…`); `apriCornell(a, copri)`; `aiDomande`, `aiRiassunto` usano `Spiega.chat`. Chiave Groq: `Spiega.pronta()` = chiave locale o recupero da `dati/chiave-ai.json` (scritto solo dopo conferma, da `salvaSuDrive`); recupero automatico anche dopo ogni sync riuscita.

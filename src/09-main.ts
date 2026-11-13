@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.28.0';
+const VERSIONE = '0.29.0';
 
 function applicaTema(): void {
   const i = imp();
@@ -105,7 +105,7 @@ async function avvia(): Promise<void> {
   Stato.pulisci(); // v0.17: lapidi vecchie del registro notifiche
   Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
   Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
-  Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); });
+  Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva) Spiega.recuperaDaDrive(); });
   disegna();
   Drive.precarica();
   Timer.parti();

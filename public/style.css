@@ -548,3 +548,15 @@ body:has(.visore) .foglio-sfondo { z-index: 27; }
 .appunto-barra button.attivo { background: var(--accento); color: #fff; }
 .appunto-testo { flex: 1; min-height: 55vh; resize: none; border: 1px solid var(--linea); border-radius: 14px; padding: 14px; font: 16px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--sup); color: var(--testo); tab-size: 2; }
 .appunto-anteprima { background: var(--sup); border-radius: 14px; padding: 14px 16px; line-height: 1.55; min-height: 55vh; border: 1px solid var(--linea); }
+/* Appunti fase 2 (v0.29): Cornell, copri e ricorda, riassunto */
+.appunto-riassunto { border: 1px dashed var(--linea); border-radius: 12px; padding: 10px 12px; font: inherit; background: var(--sup); color: var(--testo); resize: vertical; }
+.appunto-barra button.ai { background: color-mix(in srgb, var(--accento) 18%, var(--sup2)); }
+.cornell { display: flex; flex-direction: column; gap: 10px; max-width: 820px; margin: 0 auto; width: 100%; padding-bottom: 40px; }
+.cornell-riga { display: grid; grid-template-columns: minmax(110px, 34%) 1fr; gap: 12px; background: var(--sup); border: 1px solid var(--linea); border-radius: 14px; padding: 12px; }
+.cornell-spunti { border-right: 2px solid color-mix(in srgb, var(--accento) 35%, transparent); padding-right: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.cornell-spunto { color: var(--accento); font-weight: 600; }
+.cornell-testo { line-height: 1.5; transition: filter .25s; }
+.cornell-testo.coperto { filter: blur(7px); user-select: none; pointer-events: none; }
+.cornell-azioni { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cornell-riassunto { background: color-mix(in srgb, var(--accento) 8%, var(--sup)); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 420px) { .cornell-riga { grid-template-columns: 1fr; } .cornell-spunti { border-right: 0; border-bottom: 2px solid color-mix(in srgb, var(--accento) 35%, transparent); padding: 0 0 8px; } }

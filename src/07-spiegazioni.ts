@@ -25,6 +25,28 @@ const Spiega = (() => {
   const leggi = (k: string) => { try { return localStorage.getItem(k) || ''; } catch (_) { return ''; } };
   const scrivi = (k: string, v: string) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (_) { /* niente */ } };
   const chiave = () => leggi(KC);
+  // v0.29: la chiave può viaggiare tra i TUOI dispositivi (iPhone dall'icona Home, Safari, iPad, PC hanno
+  // memorie separate) tramite un file privato sul tuo Drive, «dati/chiave-ai.json» — solo dopo conferma.
+  const FILE_K = 'chiave-ai.json';
+  async function recuperaDaDrive(): Promise<boolean> {
+    if (chiave() || !Drive.pronto) return false;
+    try {
+      await Drive.preparaCartelle(); const f = await Drive.trovaFile(FILE_K, Drive.idCartella('dati')); if (!f) return false;
+      const d = JSON.parse(await Drive.scaricaTesto(f.id)); if (!d || !/^gsk_/.test(d.groq || '')) return false;
+      scrivi(KC, d.groq); if (d.modello) scrivi(KM, d.modello); avviso('✨ AI pronta: chiave Groq recuperata dal tuo Drive.'); return true;
+    } catch (_) { return false; }
+  }
+  async function salvaSuDrive(): Promise<void> {
+    if (!Drive.collegato || !chiave()) return;
+    const s = await chiedi('Salvare la chiave Groq anche sul tuo Drive?', [{ testo: '☁︎ Sì, per gli altri miei dispositivi', valore: 'si' }],
+      'File privato «Calendario personale/dati/chiave-ai.json»: l\'app sull\'icona Home, su iPad e PC la recupera da sola. Puoi cancellare il file quando vuoi.');
+    if (s !== 'si' || serveGoogle()) return;
+    try { await Drive.preparaCartelle(); const dir = Drive.idCartella('dati'), f = await Drive.trovaFile(FILE_K, dir);
+      await Drive.carica(FILE_K, dir, JSON.stringify({ groq: chiave(), modello: modello() }), 'application/json', f ? f.id : undefined); avviso('☁︎ Chiave salvata sul Drive.'); }
+    catch (e: any) { avviso('Drive: ' + (e.message || e), 6000); }
+  }
+  /** Garantisce la chiave: locale, oppure dal Drive. */
+  async function pronta(): Promise<boolean> { return !!chiave() || await recuperaDaDrive(); }
   const modello = () => leggi(KM) || PRINCIPALE;
   function hash(s: string): string { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -60,6 +82,7 @@ const Spiega = (() => {
   }
 
   async function genera(d: DatiDomanda, l: string): Promise<{ testo: string; modello: string }> {
+    await pronta();
     const modelli = [modello()]; if (modelli[0] !== RISERVA) modelli.push(RISERVA);
     let ultimo: any = null;
     for (const m of modelli) {
@@ -73,6 +96,7 @@ const Spiega = (() => {
 
   /** Q5: chiamata generica (messaggi liberi, risposta JSON) con lo stesso modello di riserva. */
   async function chat(msgs: { role: string; content: string }[], temperatura = 0.4): Promise<any> {
+    await pronta();
     if (!chiave()) throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
     const modelli = [modello()]; if (modelli[0] !== RISERVA) modelli.push(RISERVA);
     let ultimo: any = null;
@@ -104,7 +128,7 @@ const Spiega = (() => {
     if (!d || !d.q || !d.corretta || !LIV[l]) { rispondi({ errore: 'Non riesco a leggere la domanda.' }); return; }
     const id = idDi(d, l), c = Stato.prendi<Spiegazione>(id);
     if (c && !c.deleted && !m.forza) { rispondi({ testo: c.testo, modello: c.modello, salvata: true }); return; }
-    if (!chiave()) { rispondi({ errore: 'Manca la chiave Groq: incollala in Altro → Spiegazioni AI.' }); return; }
+    if (!await pronta()) { rispondi({ errore: 'Manca la chiave Groq: incollala in Altro → Spiegazioni AI.' }); return; }
     try {
       const g = await genera(d, l);
       Stato.salva({ id, type: 'spiegazione', updatedAt: 0, q: d.q, giusta: d.corretta, livello: l, testo: g.testo, modello: g.modello, quiz: d.titolo } as Spiegazione, true);
@@ -183,7 +207,7 @@ const Spiega = (() => {
   // ---- Altro → Spiegazioni AI ----
   function sezione(): HTMLElement {
     const inp = h('input', { type: 'text', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: false, style: { fontFamily: 'monospace' } }) as HTMLInputElement;
-    const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
+    const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); if (/^gsk_/.test(v)) setTimeout(salvaSuDrive, 600); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
     const incolla = async () => {
       try { const t = await navigator.clipboard.readText(); if (!t) { avviso('Gli appunti sono vuoti.'); return; } inp.value = t; salvaChiave(); }
       catch (_) { inp.focus(); avviso('Tieni premuto nel campo e scegli «Incolla».', 6000); }
@@ -207,5 +231,5 @@ const Spiega = (() => {
       h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
   }
 
-  return { inietta, sezione, genera, idDi, chat, materia };
+  return { inietta, sezione, genera, idDi, chat, materia, pronta, recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
