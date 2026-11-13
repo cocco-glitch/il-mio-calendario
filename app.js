@@ -2381,7 +2381,42 @@ const Appunti = (() => {
         Stato.salva(a);
         return sincronizzaCarte(a);
     }
-    function nuovo(extra = {}) { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', ...extra }; }
+    function nuovo(extra = {}) { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', creato: ymd(new Date()), ...extra }; }
+    /** Domande sbagliate dei quiz dello stesso sotto-step, ancora aperte. */
+    function errori(a) { if (!a.sub)
+        return []; return Domande.aperte().filter(d => { const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId); return !!t && t.k === a.sub; }); }
+    /** Importa file .md/.txt da Drive (o una cartella, ricorsiva): un file = un appunto; reimportare aggiorna lo stesso. */
+    async function importaDrive(voci, percorso = '') {
+        let n = 0;
+        for (const v of voci) {
+            if (v.mimeType === 'application/vnd.google-apps.folder') {
+                n += await importaDrive(await Drive.elencaCompleti(v.id), percorso + ' ' + v.name);
+                continue;
+            }
+            if (!/\.(md|markdown|txt)$/i.test(v.name))
+                continue;
+            let testo = (await Drive.scaricaTesto(v.id)).replace(/^\uFEFF/, '').replace(/\r/g, '');
+            let titolo = v.name.replace(/\.(md|markdown|txt)$/i, '');
+            const t1 = /^#\s+(.+)\n+/.exec(testo);
+            if (t1) {
+                titolo = t1[1].trim();
+                testo = testo.slice(t1[0].length);
+            }
+            let a = tutti().find(x => x.fonte && x.fonte.id === v.id) || nuovo({ fonte: { id: v.id } });
+            if (a.testo === testo && a.titolo === titolo)
+                continue;
+            a = { ...a, titolo, testo, fonte: { id: v.id, agg: ymd(new Date()) } };
+            const col = Carte.collega(titolo, percorso).sub ? Carte.collega(titolo, percorso) : Carte.collega(v.name.replace(/\.(md|markdown|txt)$/i, ''), percorso);
+            if (col.sub) {
+                a.sub = col.sub;
+                a.micro = col.micro;
+            }
+            Stato.salva(a);
+            sincronizzaCarte(a);
+            n++;
+        }
+        return n;
+    }
     function elimina(a) {
         for (const c of Carte.carte().filter(c => c.mazzo === 'mz-ap-' + a.id.replace(/^ap-/, '')))
             Stato.elimina(c.id);
@@ -2442,9 +2477,13 @@ const Appunti = (() => {
         Stato.salva({ id, type: 'memoria', updatedAt: 0, er: 'appunto:' + a.id + ':' + s, d: st.d, s: st.s, due: ymd(d), ultimo: oggiK, n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g]]).slice(-30) });
     }
     /** Sezioni da ripassare oggi (mai ripassate o scadute). */
-    function daRipassare(a, oggiK = ymd(new Date())) { return sezioni(a).filter(s => { const m = Stato.prendi(idMemS(a, s.id)); return !m || m.due <= oggiK; }); }
+    /** Sezioni da ripassare oggi: scadute, oppure mai ripassate se l'appunto è di ieri o prima (un giorno di distanza aiuta il ricordo). */
+    function daRipassare(a, oggiK = ymd(new Date())) {
+        const nato = a.creato || ymd(new Date(a.updatedAt || Date.now()));
+        return sezioni(a).filter(s => { const m = Stato.prendi(idMemS(a, s.id)); return m ? m.due <= oggiK : nato < oggiK; });
+    }
     const appuntiDaRipassare = () => tutti().filter(a => daRipassare(a).length);
-    return { sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
+    return { errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
 })();
 /** Chiede conferma e salva la copia su Drive (regola: niente su Drive senza conferma). */
 async function chiediDrive(a, forza = false) {
@@ -2482,7 +2521,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     const aggiornaStato = () => {
         const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
         svuota(stato);
-        stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato');
+        stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
     };
     let timer = 0;
     const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (!ap.testo.trim() && !ap.titolo.trim())
@@ -2582,7 +2621,7 @@ function vistaAppunti() {
             c.setSelectionRange(c.value.length, c.value.length);
         } }, 250); } });
     const nCarte = Carte.conta(['mz-appunti']);
-    return h('div.pagina', null, h('section.card', null, campo, h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'), Appunti.appuntiDaRipassare().length ? h('button.btn.neutro', { onclick: () => { const l = Appunti.appuntiDaRipassare(); apriCornell(l[0], true); } }, '🧠 Ripassa appunti (' + Appunti.appuntiDaRipassare().length + ')') : null, nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null), h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')), tutti.length ? Array.from(gruppi.entries()).map(([g, l]) => h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))
+    return h('div.pagina', null, h('section.card', null, campo, h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'), h('button.btn.neutro', { onclick: () => importaAppunti() }, '⤓ Importa'), Appunti.appuntiDaRipassare().length ? h('button.btn.neutro', { onclick: () => { const l = Appunti.appuntiDaRipassare(); apriCornell(l[0], true); } }, '🧠 Ripassa appunti (' + Appunti.appuntiDaRipassare().length + ')') : null, nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null), h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')), tutti.length ? Array.from(gruppi.entries()).map(([g, l]) => h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))
         : h('section.card', null, h('div.vuoto', null, q ? 'Nessun appunto trovato.' : 'Ancora nessun appunto. Tocca «Nuovo appunto».')));
 }
 /** Nel sotto-step: appunti collegati + nuovo appunto già collegato. */
@@ -2619,7 +2658,8 @@ function apriCornell(a, copri = false) {
         }
         return h('section.cornell-riga', null, spunti, h('div', null, testo, azioni));
     });
-    v.corpo.append(h('div.cornell', null, righe, h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
+    const err = Appunti.errori(a);
+    v.corpo.append(h('div.cornell', null, righe, err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub) + ' (' + err.length + ')'), err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null)), h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null, h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
         : h('button.btn-testo', { onclick: () => { v.chiudi(); apriAppunto(a, {}, true); } }, '✍️ Scrivilo in 2-3 frasi con parole tue: fissa più di una rilettura'))));
 }
 // ---------- AI (Groq) sugli appunti ----------
@@ -2664,6 +2704,30 @@ async function aiRiassunto(a) {
     catch (e) {
         avviso(String(e.message || e), 8000);
     }
+}
+async function importaAppunti() {
+    const s = await chiedi('Importa appunti da Drive', [{ testo: '📄 File .md / .txt', valore: 'file' }, { testo: '📁 Cartella (anche sottocartelle)', valore: 'cart' }], 'Ogni file diventa un appunto (titolo = prima riga «# …» o nome del file). Reimportare aggiorna lo stesso appunto. Un numero di step nel nome o nella cartella lo collega.');
+    if (!s || serveGoogle())
+        return;
+    const sc = await scegliFileDrive(s === 'cart' ? { titolo: 'Cartella di appunti', mime: 'application/vnd.google-apps.folder' } : { titolo: 'File di appunti', multi: true });
+    if (!sc.length)
+        return;
+    avviso('Importo…', 5000);
+    try {
+        const n = await Appunti.importaDrive(sc);
+        avviso(n ? n + ' appunti importati o aggiornati.' : 'Già aggiornati.');
+    }
+    catch (e) {
+        avviso('Import non riuscito: ' + (e.message || e), 8000);
+    }
+    disegna();
+}
+/** Riquadro in Oggi. */
+function widgetAppunti() {
+    const l = Appunti.appuntiDaRipassare();
+    if (!l.length)
+        return null;
+    return scheda('Appunti da ripassare', h('div.tenue.piccolo', null, l.length + (l.length === 1 ? ' appunto' : ' appunti') + ' · copri, ricorda, scopri'), l.slice(0, 3).map(a => h('button.voce-lista', { onclick: () => apriCornell(a, true) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo), h('span.voce-sotto', null, Appunti.daRipassare(a).length + ' sezioni')))));
 }
 
 // 07-carte.ts — Flashcard (v0.18, F3).
@@ -6531,6 +6595,9 @@ const StudiaOra = (() => {
         const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
         if (nc.ripasso + nc.nuove && Carte.mazzi().length)
             metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
+        // 1c) appunti da ripassare (copri e ricorda): ~4 min ciascuno, al massimo 3
+        for (const a of Appunti.appuntiDaRipassare().slice(0, 3))
+            metti({ tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto: 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni', min: 4, id: a.id });
         // 2) step del giorno
         for (const vg of Studio.vociDelGiorno(giorno)) {
             if (vg.v.speciale || vg.p.modo === 'raffinamento')
@@ -6579,6 +6646,13 @@ function eseguiVoce(v) {
     if (v.tipo === 'carte') {
         avviaCarte(undefined, 'Flashcard');
         return;
+    }
+    if (v.tipo === 'appunto' && v.id) {
+        const a = Stato.prendi(v.id);
+        if (a) {
+            apriCornell(a, true);
+            return;
+        }
     }
     if (v.id) {
         const t = trovaScheda(v.id);
@@ -7738,7 +7812,7 @@ function taskDelGiorno(g) {
     return Stato.tutti('task').filter(t => !t.fatto && t.scadenza && t.scadenza.slice(0, 10) === k && categoriaVisibile(t.categoriaId)).sort(ordinaTask);
 }
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Studia ora'], ['carte', 'Flashcard di oggi'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Studia ora'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget() {
     const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
@@ -7789,6 +7863,7 @@ function vistaOggi() {
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
             case 'studiaora': return Studio.pkStep().length ? widgetStudiaOra() : null;
             case 'carte': return widgetCarte();
+            case 'appunti': return widgetAppunti();
             case 'ripassi': return widgetRipassi();
             case 'chiusura': return widgetChiusura();
             case 'esami': return widgetEsami();
@@ -8342,7 +8417,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.29.0';
+const VERSIONE = '0.30.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
