@@ -27,7 +27,7 @@ const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleap
 // la seconda persona: scrivere il suo Gmail in SECONDO_ACCOUNT (minuscolo) e ripubblicare; deve
 // anche essere tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
 const PROPRIETARIO = 'cocco.haloa@gmail.com';
-const SECONDO_ACCOUNT = '';
+const SECONDO_ACCOUNT = 'nicoleschirru@gmail.com';
 const ACCOUNT_AMMESSI = [PROPRIETARIO, SECONDO_ACCOUNT].filter(Boolean);
 const CARTELLA_APP = 'Calendario personale';
 /** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
