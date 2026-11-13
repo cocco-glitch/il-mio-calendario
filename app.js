@@ -1283,8 +1283,12 @@ const Drive = (() => {
                 }
                 stato.email = email;
                 LS.set('email', stato.email);
-                if (email.toLowerCase() !== PROPRIETARIO && typeof Studio !== 'undefined')
-                    Studio.togliSito();
+                if (typeof Studio !== 'undefined') {
+                    if (email.toLowerCase() !== PROPRIETARIO)
+                        Studio.togliSito();
+                    else
+                        Studio.caricaDalSito();
+                }
             }
             await preparaCartelle();
             // 1. scarico il file remoto
@@ -1457,7 +1461,7 @@ const Drive = (() => {
         elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
         get collegato() { return !!stato.email; },
         /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
-        eProprietario() { return !stato.email || stato.email.toLowerCase() === PROPRIETARIO; },
+        eProprietario() { return !!stato.email && stato.email.toLowerCase() === PROPRIETARIO; },
         /** true se c'è un token valido adesso (senza aprire finestre). */
         get pronto() { return !!token && Date.now() < scadenzaToken; },
     };
@@ -7672,7 +7676,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.26.1';
+const VERSIONE = '0.26.2';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
