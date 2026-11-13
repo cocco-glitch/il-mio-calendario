@@ -153,7 +153,7 @@ const QuizApp = (() => {
       let s2 = '<div class="qz-metro" style="--n:' + P.length + '">' + P.map((y, k) => '<span class="' + (y.ok === null ? (k === cur ? 'ora' : '') : y.ok ? 'ok' : 'ko') + '"></span>').join('') + '</div>'
         + '<div class="qz-stat"><span>Domanda <b>' + (cur + 1) + '</b> di ' + P.length + (ripasso ? ' · ripasso errori' : '') + '</span><span>Punteggio <b>' + punti() + '</b></span></div>'
         + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (mc ? 'Risposta multipla' : 'A completamento') + '</span></div>';
-      for (const g of d.img || []) if (dati.immagini[g.i]) s2 += '<figure class="qz-fig">' + dati.immagini[g.i] + '<figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
+      for (const g of d.img || []) if (dati.immagini[g.i]) s2 += '<figure class="qz-fig"><button type="button" class="qz-zoom-b" data-zoom="' + esc(g.i) + '" aria-label="Ingrandisci immagine">' + dati.immagini[g.i] + '</button><figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
       s2 += '<p class="qz-domanda">' + (mc ? fmt(d.q) : fmtQ(d.q)) + '</p><div class="chips">';
       if (mc) { const rest = 2 - x.hid.length; s2 += '<button type="button" class="chip" data-az="aiuto"' + (a || rest <= 0 ? ' disabled' : '') + '>💡 Suggerimento (' + rest + ')</button>'; }
       s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
@@ -213,6 +213,10 @@ const QuizApp = (() => {
     }
     app.addEventListener('click', ev => {
       const b = (ev.target as Element).closest('button') as HTMLButtonElement | null; if (!b || b.disabled) return;
+      if (b.dataset.zoom) {
+        const z = h('div.qz-zoom', { onclick: () => z.remove() }); z.innerHTML = '<div class="qz-zoom-box">' + (dati.immagini[b.dataset.zoom] || '') + '</div><div class="qz-zoom-x">Tocca per chiudere</div>';
+        v.corpo.appendChild(z); return;
+      }
       if (b.dataset.k != null) { rispondi(parseInt(b.dataset.k, 10)); return; }
       if (b.dataset.ai) { chiediAI(b.dataset.ai, !!b.dataset.forza); return; }
       const az = b.dataset.az, x = P[cur];
