@@ -2487,7 +2487,34 @@ const Appunti = (() => {
         return sezioni(a).filter(s => { const m = Stato.prendi(idMemS(a, s.id)); return m ? m.due <= oggiK : nato < oggiK; });
     }
     const appuntiDaRipassare = () => tutti().filter(a => daRipassare(a).length);
-    return { errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
+    /** v0.32: sezione dell'appunto che parla di più di un testo (parole in comune, pesate per lunghezza). */
+    function sezionePer(a, testo) {
+        const parole = (s) => new Set(norm(s).split(/[^a-z0-9àèéìòù]+/).filter(w => w.length > 3));
+        const q = parole(testo);
+        let best = null, punti = 0;
+        for (const s of sezioni(a)) {
+            const p = parole(s.titolo + ' ' + s.testo);
+            let n = 0;
+            q.forEach(w => { if (p.has(w))
+                n++; });
+            if (n > punti) {
+                punti = n;
+                best = s;
+            }
+        }
+        return punti >= 2 ? best : null;
+    }
+    /** Aggiunge una riga-carta in fondo, sotto «## Dagli errori dei quiz». */
+    function aggiungiRiga(a, riga) {
+        if (a.testo.includes(riga))
+            return;
+        a.testo = /^## Dagli errori dei quiz$/m.test(a.testo) ? a.testo.replace(/\s*$/, '') + '\n' + riga + '\n' : a.testo.replace(/\s*$/, '') + '\n\n## Dagli errori dei quiz\n' + riga + '\n';
+        salva(a);
+    }
+    /** Appunti che citano questo con [[titolo]]. */
+    function citatoDa(a) { const t = norm(a.titolo); return tutti().filter(x => x.id !== a.id && (x.testo.match(/\[\[([^\]]+)\]\]/g) || []).some(l => norm(l.slice(2, -2)) === t || t.includes(norm(l.slice(2, -2))))); }
+    function trova(titolo) { const t = norm(titolo); return tutti().find(x => norm(x.titolo) === t) || tutti().find(x => norm(x.titolo).includes(t)); }
+    return { sezionePer, aggiungiRiga, citatoDa, trova, errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
 })();
 /** Chiede conferma e salva la copia su Drive (regola: niente su Drive senza conferma). */
 async function chiediDrive(a, forza = false) {
@@ -2566,12 +2593,13 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
         modifica();
     };
     const aCapo = (pref) => { const s = testo.selectionStart, ini = testo.value.lastIndexOf('\n', s - 1) + 1; testo.setRangeText(pref, ini, ini, 'end'); testo.focus(); modifica(); };
-    const barra = h('div.appunto-barra', null, h('button', { title: 'Titolo', onclick: () => aCapo('# ') }, 'H'), h('button', { title: 'Punto', onclick: () => aCapo('- ') }, '•'), h('button', { title: 'Rientra', onclick: () => aCapo('  ') }, '⇥'), h('button', { title: 'Domanda :: risposta', onclick: () => inserisci('', ' :: ', '') }, '::'), h('button', { title: 'Completamento', onclick: () => inserisci('{{', '}}', 'parola') }, '{ }'), h('button.ai', { title: 'Domande con l\'AI', onclick: () => { salvaOra(); aiDomande(Stato.prendi(ap.id) || ap, r => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + r.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + r.length + ' domande aggiunte.'); }); } }, '✨'), h('button', { title: 'Grassetto', onclick: () => inserisci('**', '**', 'testo') }, h('b', null, 'B')), h('button', { title: 'Anteprima', onclick: (e) => { const on = !!anteprima.hidden; anteprima.hidden = !on; testo.hidden = on; e.currentTarget.classList.toggle('attivo', on); if (on) {
-            anteprima.innerHTML = htmlCarta(testo.value.replace(/\s::\s/g, ' → '), 'mostra');
+    const barra = h('div.appunto-barra', null, h('button', { title: 'Titolo', onclick: () => aCapo('# ') }, 'H'), h('button', { title: 'Punto', onclick: () => aCapo('- ') }, '•'), h('button', { title: 'Rientra', onclick: () => aCapo('  ') }, '⇥'), h('button', { title: 'Domanda :: risposta', onclick: () => inserisci('', ' :: ', '') }, '::'), h('button', { title: 'Completamento', onclick: () => inserisci('{{', '}}', 'parola') }, '{ }'), h('button.ai', { title: 'Domande con l\'AI', onclick: () => { salvaOra(); aiDomande(Stato.prendi(ap.id) || ap, r => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + r.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + r.length + ' domande aggiunte.'); }); } }, '✨'), h('button', { title: 'Collegamento a un altro appunto', onclick: () => inserisci('[[', ']]', 'titolo') }, '[[ ]]'), h('button', { title: 'Grassetto', onclick: () => inserisci('**', '**', 'testo') }, h('b', null, 'B')), h('button', { title: 'Anteprima', onclick: (e) => { const on = !!anteprima.hidden; anteprima.hidden = !on; testo.hidden = on; e.currentTarget.classList.toggle('attivo', on); if (on) {
+            anteprima.innerHTML = conLink(htmlCarta(testo.value.replace(/\s::\s/g, ' → '), 'mostra'));
             caricaImmagini(anteprima);
+            attivaLink(anteprima, () => { salvaOra(); cambiato = false; v.chiudi(); });
         } } }, '👁'));
     v.barra.append(h('button.btn-testo', { onclick: async () => {
-            const s = await chiedi(ap.titolo || 'Appunto', [{ testo: '📑 Vista Cornell', valore: 'cornell' }, { testo: '🧠 Copri e ricorda', valore: 'copri' }, { testo: '✨ Riscontro AI sul riassunto', valore: 'airiass' }, { testo: '☁︎ Salva su Drive', valore: 'drive' }, { testo: '🃏 Ripassa le sue carte', valore: 'carte' }, { testo: '🗑 Elimina appunto', valore: 'del', pericolo: true }]);
+            const s = await chiedi(ap.titolo || 'Appunto', [{ testo: '🗣 Spiegamelo (Feynman)', valore: 'feyn' }, { testo: '📑 Vista Cornell', valore: 'cornell' }, { testo: '🧠 Copri e ricorda', valore: 'copri' }, { testo: '✨ Riscontro AI sul riassunto', valore: 'airiass' }, { testo: '☁︎ Salva su Drive', valore: 'drive' }, { testo: '🃏 Ripassa le sue carte', valore: 'carte' }, { testo: '🗑 Elimina appunto', valore: 'del', pericolo: true }]);
             if (s === 'drive') {
                 salvaOra();
                 const x = Stato.prendi(ap.id);
@@ -2586,6 +2614,20 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
                     cambiato = false;
                     v.chiudi();
                     apriCornell(x, s === 'copri');
+                }
+            }
+            if (s === 'feyn') {
+                salvaOra();
+                const x = Stato.prendi(ap.id);
+                if (x) {
+                    const sz = Appunti.sezioni(x);
+                    if (!sz.length)
+                        avviso('Scrivi prima qualcosa.');
+                    else if (sz.length === 1)
+                        spiegamelo(x, sz[0]);
+                    else
+                        chiedi('Quale sezione?', sz.map(z => ({ testo: z.titolo, valore: z.id }))).then(id => { const z = sz.find(q => q.id === id); if (z)
+                            spiegamelo(x, z); });
                 }
             }
             if (s === 'airiass') {
@@ -2685,10 +2727,13 @@ function apriCornell(a, copri = false) {
     let fatte = 0;
     const righe = sez.map(s => {
         const testo = h('div.cornell-testo' + (copri ? '.coperto' : ''));
-        testo.innerHTML = htmlCarta(s.testo.replace(/\s::\s/g, ' → '), 'mostra');
+        testo.innerHTML = conLink(htmlCarta(s.testo.replace(/\s::\s/g, ' → '), 'mostra'));
         caricaImmagini(testo);
+        attivaLink(testo, v.chiudi);
         const spunti = h('div.cornell-spunti', null, h('b', null, s.titolo), s.spunti.map(x => h('div.cornell-spunto', null, x)));
         const azioni = h('div.cornell-azioni');
+        if (!copri)
+            azioni.append(h('button.btn-testo', { onclick: () => spiegamelo(a, s) }, '🗣 Spiegamelo'));
         if (copri) {
             const voti = () => h('div.carte-voti', null, ['Non ricordavo', 'A fatica', 'Bene', 'Facile'].map((t, i) => h('button.voto.voto-' + (i + 1), { onclick: () => {
                     Appunti.valutaSezione(a, s.id, i + 1);
@@ -2702,7 +2747,7 @@ function apriCornell(a, copri = false) {
         return h('section.cornell-riga', null, spunti, h('div', null, testo, azioni));
     });
     const err = Appunti.errori(a);
-    v.corpo.append(h('div.cornell', null, !manoVuota(a.mano) ? h('img.cornell-mano', { src: immagineMano(a.mano, 1200), alt: 'Pagina a mano' }) : null, righe, err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub) + ' (' + err.length + ')'), err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null)), h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null, h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
+    v.corpo.append(h('div.cornell', null, !manoVuota(a.mano) ? h('img.cornell-mano', { src: immagineMano(a.mano, 1200), alt: 'Pagina a mano' }) : null, righe, err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub) + ' (' + err.length + ')'), err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null, h('button.btn-testo', { onclick: (e) => { Appunti.aggiungiRiga(a, '- ' + d.q.replace(/\s::\s/g, ' ') + ' :: ' + d.giusta); e.target.textContent = '✓ aggiunta come flashcard'; } }, '➕ Aggiungi all\'appunto come flashcard'))), h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null, (() => { const c = Appunti.citatoDa(a); return c.length ? h('div.cornell-riassunto', null, h('b', null, '🔗 Citato in'), c.map(x => h('button.btn-testo', { onclick: () => { v.chiudi(); apriCornell(x); } }, x.titolo))) : null; })(), h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
         : h('button.btn-testo', { onclick: () => { v.chiudi(); apriAppunto(a, {}, true); } }, '✍️ Scrivilo in 2-3 frasi con parole tue: fissa più di una rilettura'))));
 }
 // ---------- AI (Groq) sugli appunti ----------
@@ -2771,6 +2816,73 @@ function widgetAppunti() {
     if (!l.length)
         return null;
     return scheda('Appunti da ripassare', h('div.tenue.piccolo', null, l.length + (l.length === 1 ? ' appunto' : ' appunti') + ' · copri, ricorda, scopri'), l.slice(0, 3).map(a => h('button.voce-lista', { onclick: () => apriCornell(a, true) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo), h('span.voce-sotto', null, Appunti.daRipassare(a).length + ' sezioni')))));
+}
+// ---------- v0.32: collegamenti [[…]] ----------
+function conLink(html) { return html.replace(/\[\[([^\]]+)\]\]/g, (_t, x) => '<a href="#" class="ap-link" data-ap="' + esc(x) + '">' + esc(x) + '</a>'); }
+function attivaLink(el, prima) {
+    el.querySelectorAll('a.ap-link').forEach(l => l.addEventListener('click', e => {
+        e.preventDefault();
+        const x = Appunti.trova(l.dataset.ap || '');
+        if (!x) {
+            avviso('Nessun appunto «' + l.dataset.ap + '»: crealo con questo titolo.', 5000, () => apriAppunto(undefined, { titolo: l.dataset.ap || '' }));
+            return;
+        }
+        if (prima)
+            prima();
+        apriCornell(x);
+    }));
+}
+// ---------- v0.32: «Spiegamelo» (metodo Feynman) ----------
+/** Spieghi la sezione con parole tue (scritte o dettate); l'AI confronta con l'appunto e dà un voto, che entra nel ripasso. */
+function spiegamelo(a, s) {
+    const campo = h('textarea.appunto-testo', { style: { minHeight: '30vh' }, placeholder: 'Spiega «' + s.titolo + '» come a un amico che non ne sa nulla, senza guardare l\'appunto. Puoi dettare con il microfono della tastiera.' });
+    const fs = foglio({ titolo: '🗣 Spiegami: ' + s.titolo, etichettaSalva: '✨ Valuta', corpo: h('div.modulo', null, s.spunti.length ? h('div.tenue.piccolo', null, 'Spunti: ' + s.spunti.slice(0, 4).join(' · ')) : null, campo),
+        salva: () => { if (campo.value.trim().length < 30) {
+            avviso('Scrivi almeno un paio di frasi.');
+            return false;
+        } valuta(); }
+    });
+    async function valuta() {
+        const t = campo.value.trim();
+        if (t.length < 30) {
+            avviso('Scrivi almeno un paio di frasi.');
+            return;
+        }
+        avviso('✨ Confronto con il tuo appunto…', 15000);
+        try {
+            const d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor per il semestre filtro di Medicina. Confronti la spiegazione dello studente (metodo Feynman) con il suo appunto. Sii preciso e incoraggiante, con il tu, in italiano. NON riscrivere la spiegazione. Rispondi in JSON: {"voto":1-4 (1 = gravi lacune o errori, 2 = parziale, 3 = buona, 4 = completa e corretta),"ok":"cosa hai spiegato bene (1 frase)","manca":["concetto dell\'appunto non spiegato", ...],"errori":["affermazione sbagliata → correzione", ...],"domanda":"una domanda per verificare il punto più debole"}' },
+                { role: 'user', content: 'Sezione dell\'appunto «' + s.titolo + '»:\n' + s.testo.slice(0, 6000) + '\n\nSpiegazione dello studente:\n' + t }], 0.2);
+            const voto = Math.max(1, Math.min(4, Math.round(+d.voto || 2)));
+            Appunti.valutaSezione(a, s.id, voto);
+            const nomi = ['', 'Da riprendere', 'Parziale', 'Buona', 'Completa'];
+            foglio({ titolo: '🗣 ' + nomi[voto] + ' (' + voto + '/4)', corpo: h('div.modulo', null, d.ok ? h('div', null, '✅ ' + d.ok) : null, (d.manca || []).length ? h('div', null, h('b', null, 'Ti è sfuggito:'), d.manca.map(x => h('div', null, '• ' + x))) : null, (d.errori || []).length ? h('div', null, h('b', null, 'Da correggere:'), d.errori.map(x => h('div', null, '• ' + x))) : null, d.domanda ? h('div.cornell-riassunto', null, h('b', null, 'Prova a rispondere:'), h('div', null, d.domanda)) : null, h('div.tenue.piccolo', null, voto <= 2 ? 'Questa sezione tornerà nei ripassi già domani.' : 'Registrato nel ripasso della sezione.')) });
+        }
+        catch (e) {
+            avviso(String(e.message || e), 8000);
+        }
+    }
+    setTimeout(() => campo.focus(), 80);
+    void fs;
+}
+/** v0.32: sotto una domanda sbagliata, la sezione del tuo appunto che ne parla + «aggiungi come flashcard». */
+function rigaAppuntoErrore(d) {
+    const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId);
+    if (!t)
+        return null;
+    const aps = Appunti.tutti().filter(a => a.sub === t.k);
+    if (!aps.length)
+        return h('div.bottoni', null, h('button.btn-testo', { onclick: () => apriAppunto(undefined, { titolo: Studio.etichetta(t.k) + ' ', sub: t.k, testo: '## Dagli errori dei quiz\n- ' + d.q + ' :: ' + d.giusta + '\n' }) }, '📝 Crea un appunto da questo errore'));
+    let best = null;
+    for (const a of aps) {
+        const s = Appunti.sezionePer(a, d.q + ' ' + d.giusta);
+        if (s) {
+            best = { a, s };
+            break;
+        }
+    }
+    const a0 = best ? best.a : aps[0];
+    return h('div.dom-appunto', null, best ? h('details', null, h('summary', null, '📝 Nel tuo appunto: ' + best.a.titolo + ' › ' + best.s.titolo), (() => { const el = h('div.tenue.piccolo'); el.innerHTML = htmlCarta(best.s.testo.replace(/\s::\s/g, ' → '), 'mostra'); return el; })())
+        : h('div.tenue.piccolo', null, '📝 Il tuo appunto «' + a0.titolo + '» non sembra parlarne.'), h('button.btn-testo', { onclick: (e) => { Appunti.aggiungiRiga(a0, '- ' + d.q.replace(/\s::\s/g, ' ') + ' :: ' + d.giusta); e.target.textContent = '✓ aggiunta a «' + a0.titolo + '»'; } }, '➕ Aggiungi all\'appunto come flashcard'));
 }
 
 // 07-carte.ts — Flashcard (v0.18, F3).
@@ -3643,7 +3755,7 @@ function sezioneDomande() {
         .sort((a, b) => b.volte - a.volte || (a.ultima < b.ultima ? 1 : -1));
     const nR = Domande.ricorrenti().length, nA = Domande.aperte().length, nG = Domande.tutte().length - nA;
     const voce = (x) => {
-        const risp = h('div.dom-risposta', { hidden: true }, h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'), x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null, x.esito === 'sbagliata' ? h('div.bottoni', null, h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'), h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);
+        const risp = h('div.dom-risposta', { hidden: true }, h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'), x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null, rigaAppuntoErrore(x), x.esito === 'sbagliata' ? h('div.bottoni', null, h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'), h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);
         return h('div.dom-voce', null, h('div.tenue.piccolo', null, gruppoDomanda(x) + ' · ' + x.titolo + ' · sbagliata ' + x.volte + (x.volte === 1 ? ' volta' : ' volte') + (x.giuste ? ' · giusta ' + x.giuste : '')), h('div.dom-q', null, x.q), h('button.btn-testo', { onclick: (e) => { risp.hidden = !risp.hidden; e.target.textContent = risp.hidden ? 'Prima prova a rispondere, poi mostra la risposta' : 'Nascondi'; } }, 'Prima prova a rispondere, poi mostra la risposta'), risp);
     };
     return h('section.card', null, h('h2.card-titolo', null, 'Domande sbagliate'), h('div.tenue.piccolo', null, 'Raccolte in automatico dai quiz fatti nell\'app (sezione «Da rivedere»). Ricorrenti = sbagliate almeno 2 volte: ripassale prima delle simulazioni.'), h('div.segmenti', null, h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR), h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA), h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)), nA ? h('button.btn.neutro', { onclick: () => { const n = Carte.daErrori(Domande.aperte()).length; if (n)
@@ -8717,7 +8829,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.31.2';
+const VERSIONE = '0.32.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);

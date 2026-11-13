@@ -576,3 +576,7 @@ body:has(.visore) .foglio-sfondo { z-index: 27; }
 .mano-vivo { position: absolute; inset: 0; touch-action: pan-y; }
 .mano-leggi { align-self: flex-start; }
 .cornell-mano { width: 100%; border-radius: 12px; border: 1px solid var(--linea); background: #fff; }
+/* v0.32 collegamenti e errori nell'appunto */
+a.ap-link { color: var(--accento); font-weight: 600; text-decoration: underline dotted; }
+.dom-appunto { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accento) 7%, var(--sup)); }
+.dom-appunto summary { font-size: 13px; font-weight: 600; color: var(--accento); }
