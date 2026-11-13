@@ -25,10 +25,10 @@ with sync_playwright() as p:
     ok(tit[0] == 'Chiudi la giornata', 'la sera è in cima a Oggi: %s' % tit[:2])
     # B2.2 completato oggi, C2.3 no
     pg.evaluate("Studio.schedeDi(Studio.trovaSotto('B2.2').sub).filter(x => x.tipo === 'P').forEach(x => Studio.segna(x.id, { fatta: true, data: '2026-11-12', punteggio: 80 }))")
-    pg.click('text=🌙 Chiudi la giornata'); pg.wait_for_selector('.foglio')
+    pg.click('button:has-text("Chiudi la giornata")'); pg.wait_for_selector('.foglio')
     t = pg.inner_text('.foglio')
     ok('✓ Bio 2.2' in t and 'Chi 2.3' in t and 'Sposta a domani' in t, 'step di oggi con stato')
-    pg.click('.foglio >> text=Sposta a domani'); pg.click('.foglio >> text=🙂 4'); pg.click('.foglio >> text=6 h')
+    pg.click('.foglio >> text=Sposta a domani'); pg.click('.foglio >> text=4'); pg.click('.foglio >> text=6 h')
     pg.locator('.foglio .interruttore input').check(force=True)
     pg.screenshot(path='test/chiusura.png')
     pg.click('.foglio button:has-text("Fatto")'); pg.wait_for_timeout(300)

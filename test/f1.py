@@ -36,7 +36,7 @@ with sync_playwright() as p:
     pg.evaluate("Stato.salva({ id: 'e1', type: 'evento', updatedAt: 0, titolo: 'Chimica 3.1', inizio: '2026-11-12T15:00', fine: '2026-11-12T17:00', tuttoIlGiorno: false, promemoria: [15] })")
     avanza(pg); ok(len(inv) == 0, 'notifiche spente: nessun invio')
     # Attivazione dall'interfaccia
-    pg.evaluate("vai('altro')"); pg.wait_for_timeout(200)
+    pg.evaluate("UI.altroSez='calendario'; vai('altro')"); pg.wait_for_timeout(200)
     pg.locator('.card', has_text='Notifiche sul telefono').locator('.widget-riga', has_text='Notifiche sul telefono').locator('input').check(force=True)
     pg.wait_for_timeout(200)
     topic = pg.evaluate("imp().ntfyTopic")

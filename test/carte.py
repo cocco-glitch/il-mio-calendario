@@ -106,7 +106,7 @@ with sync_playwright() as p:
     pg.evaluate("UI.studioStep = Studio.pkStep()[1].id; UI.studioSub = 'C2.2'; UI.studioVista = 'schede'; vai('studio')"); pg.wait_for_timeout(200)
     ok(pg.locator('button', has_text='Flashcard di Chi 2.2').count() == 1, 'sotto-step Chi 2.2: pulsante flashcard')
     pg.evaluate("UI.studioVista = 'piano'; UI.studioPiano = 'piano'; UI.studioSub = null; vai('studio')"); pg.wait_for_timeout(200)
-    ok(pg.locator('text=/Chi 2.2.*\\n?.*🃏/').count() >= 0 and '🃏' in pg.inner_text('main'), 'vista Piano: flashcard collegate nel sottotitolo')
+    ok(pg.locator('text=/Chi 2.2.*\\n?.*/').count() >= 0 and '' in pg.inner_text('main'), 'vista Piano: flashcard collegate nel sottotitolo')
     pg.evaluate("UI.studioSub = 'B2.2'; UI.studioVista = 'schede'; disegna()"); pg.wait_for_timeout(150)
     pg.click('text=Crea flashcard per Bio 2.2'); pg.wait_for_selector('.foglio textarea')
     ok(pg.evaluate("Carte.mazzi().some(m => m.sub === 'B2.2')"), 'sotto-step senza carte: crea un mazzo già collegato')

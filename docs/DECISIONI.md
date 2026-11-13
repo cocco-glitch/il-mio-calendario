@@ -59,3 +59,11 @@ Una riga per scelta importante: data · decisione · motivo.
 - Modello GoodNotes/Notability: pagina a quadretti/righe con penna a pressione; la conversione in testo è ciò che collega l'inchiostro a carte, quiz e AI.
 - Riconoscimento solo quando l'utente preme ✨ (scelta sua): risparmia il limite gratuito e il testo si controlla sempre prima che diventi carte (Llama 4 Scout può sbagliare su grafie difficili).
 - iPhone: si scrive col dito; iPad con Pencil: il dito scorre (rifiuto del palmo).
+
+## v0.34 — Rebranding «Mix» (13/11/2026)
+- Direzione scelta dall'utente sulla tela Design: impaginazione A (clinico chiaro), barra «Aggiungi» in alto (B), dati in tessere (C).
+- Barra a 5 sezioni (Oggi, Calendario, Studio, Appunti, Altro). Promemoria e Note in Altro (tessere in alto) + riquadri in Oggi; avviso una tantum; la ricerca trova anche le impostazioni.
+- Altro = scorciatoie + 4 gruppi (Aspetto · Studio e AI · Calendario e notifiche · Dati e backup) come sotto-pagine con «‹ Altro» e swipe dal bordo.
+- Niente emoji nell'interfaccia: `04-simboli.ts` le sostituisce al volo con icone SVG (il testo dell'utente non viene toccato).
+- `04-tocco.ts`: clic sonoro generato con Web Audio (disattivabile, volume regolabile), numeri che contano, animazioni di pressione e transizioni direzionali; tutto spento con «Riduci movimento» o Aspetto › Animazioni: Ridotte.
+- Palette: accento #2f6bea (il vecchio #6c8cff migra da solo), Bio verde · Chi ambra · Fis viola.

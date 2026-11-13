@@ -30,7 +30,7 @@ with sync_playwright() as p:
     ok(pre == ['2026-11-15', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19'], 'prima possibile: %s' % pre)
     # Interfaccia: pulsante in Oggi → anteprima → conferma → annulla
     pg.evaluate("vai('oggi')"); pg.wait_for_timeout(200)
-    pg.click('text=↻ Ripianifica i ritardi'); pg.wait_for_selector('.foglio')
+    pg.click('button.ripianifica'); pg.wait_for_selector('.foglio')
     t = pg.inner_text('.foglio')
     ok('Fis 2.2' in t and '01/12' in t, 'anteprima con gli spostamenti')
     pg.click('.foglio >> text=Prima possibile'); pg.wait_for_timeout(100)

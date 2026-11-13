@@ -582,3 +582,103 @@ a.ap-link { color: var(--accento); font-weight: 600; text-decoration: underline 
 .dom-appunto summary { font-size: 13px; font-weight: 600; color: var(--accento); }
 .mano-azioni { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 4px 8px; border-radius: 10px; background: color-mix(in srgb, #4c6ef5 10%, var(--sup)); }
 .appunto-modelli { flex-wrap: wrap; }
+
+/* ==========================================================
+   v0.34 — REBRANDING «Mix» (A impaginazione · B aggiungi in alto · C dati in tessere)
+   Palette: blu clinico, grigi bluastri, materie Bio verde · Chi ambra · Fis viola.
+   ========================================================== */
+:root {
+  --bg: #f5f7fa; --sup: #ffffff; --sup2: #eef1f5; --linea: #e3e8ef;
+  --testo: #0f1b2d; --tenue: #4a5668; --rosso: #c2410c;
+  --ombra: 0 1px 2px rgba(15, 27, 45, .05), 0 6px 20px rgba(15, 27, 45, .05);
+  --ombra-forte: 0 1px 2px rgba(15, 27, 45, .06), 0 12px 32px rgba(15, 27, 45, .08);
+  --bio: #0e9f6e; --chi: #d97706; --fis: #6d5bd0;
+  --premi: cubic-bezier(.2, .8, .2, 1);
+}
+:root[data-tema="scuro"] {
+  --bg: #0b0d12; --sup: #151821; --sup2: #1e222d; --linea: #272c38;
+  --testo: #eceef2; --tenue: #9aa1ae; --rosso: #fb923c;
+  --ombra: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 1px 2px rgba(0, 0, 0, .4);
+  --ombra-forte: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 10px 30px rgba(0, 0, 0, .45);
+  --bio: #34d399; --chi: #fbbf24; --fis: #a78bfa;
+}
+body { font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, sans-serif); }
+.testata h1 { font-size: 30px; font-weight: 720; letter-spacing: -.025em; }
+.testata-tit { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.indietro { display: inline-flex; align-items: center; gap: 2px; color: var(--accento); font-weight: 600; font-size: 15px; min-height: 32px; margin-left: -6px; }
+.card { border-radius: max(var(--raggio), 18px); padding: 16px; box-shadow: var(--ombra); }
+.card-titolo { font-size: 15px; font-weight: 700; text-transform: none; letter-spacing: -.01em; color: var(--testo); margin-bottom: 6px; }
+.oggi-testa { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); padding: 0 2px; margin-top: -6px; }
+.rapido { border-radius: 14px; min-height: 48px; border: 1px solid var(--linea); box-shadow: none; }
+.btn { border-radius: 14px; font-weight: 620; letter-spacing: -.005em; }
+.chip { border-radius: 999px; }
+
+/* tessere dati (esami + ritardo) */
+.tessere { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tessera { background: var(--sup); border-radius: 16px; padding: 12px; box-shadow: var(--ombra); display: flex; flex-direction: column; gap: 2px; text-align: left; min-height: 88px; min-width: 0; }
+.tessera-num { font-size: 26px; font-weight: 750; letter-spacing: -.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tessera-num small { font-size: 13px; font-weight: 600; color: var(--tenue); letter-spacing: 0; }
+.tessera.primo .tessera-num { color: var(--accento); }
+.tessera.ritardo .tessera-num { color: var(--chi); }
+.tessera-eti { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tessera-sotto { font-size: 12px; color: var(--tenue); }
+
+/* indicatore del piano: una riga discreta, non un allarme */
+.indicatore-riga { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.indicatore { display: inline-flex; align-items: center; gap: 8px; width: auto; flex: 1; min-width: 0; padding: 8px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+.indicatore.ritardo { background: color-mix(in srgb, var(--chi) 14%, transparent); color: color-mix(in srgb, var(--chi) 70%, var(--testo)); }
+.pallino-stato { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.ripianifica { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; min-height: 36px; }
+
+/* Altro: tessere in vista + gruppi */
+.tessere-altro { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tessera-altro { background: var(--sup); border-radius: 18px; padding: 14px; box-shadow: var(--ombra); display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.tessera-ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; }
+.tessera-altro.arancio .tessera-ico { background: color-mix(in srgb, var(--chi) 16%, transparent); color: var(--chi); }
+.tessera-altro.viola .tessera-ico { background: color-mix(in srgb, var(--fis) 16%, transparent); color: var(--fis); }
+.tessera-tit { font-size: 16px; font-weight: 650; }
+.drive-mini { flex-direction: row; align-items: center; gap: 12px; text-align: left; }
+.gruppo-titolo.fuori { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); margin: 6px 4px -4px; }
+.lista-gruppi { padding: 0 0 0 16px; gap: 0; }
+.riga-gruppo { display: flex; align-items: center; gap: 12px; padding: 12px 16px 12px 0; min-height: 60px; border-top: 1px solid var(--linea); text-align: left; color: var(--testo); }
+.riga-gruppo:first-child { border-top: 0; }
+.riga-gruppo > .ico:last-child, .drive-mini > .ico:last-child { color: var(--tenue); }
+.gruppo-ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: #fff; flex: none; }
+
+/* icone al posto degli emoji */
+.ico.sim { display: inline-flex; vertical-align: -0.2em; margin-right: .1em; }
+.ico.sim svg { width: 1.15em; height: 1.15em; }
+.btn .ico.sim, .chip .ico.sim, .btn-testo .ico.sim { margin-right: .3em; }
+
+/* ---------- MICRO-INTERAZIONI ---------- */
+button, .chip, .tessera, .tessera-altro, .card[role=button], a { transition: transform .18s var(--premi), background-color .2s, box-shadow .2s, opacity .2s; }
+button:active:not(:disabled), .chip:active { transform: scale(.97); }
+.btn:active:not(:disabled), .tessera:active, .tessera-altro:active { transform: scale(.955); }
+.tabbar button:active .tab-ico { transform: scale(.86); }
+.tab-ico { transition: transform .22s var(--molla, var(--premi)); }
+.tabbar button.attivo .tab-ico { animation: tab-salta .42s var(--molla, var(--premi)); }
+@keyframes tab-salta { 0% { transform: scale(.8); } 55% { transform: scale(1.12); } 100% { transform: scale(1); } }
+.fab:active { transform: scale(.9) rotate(90deg); }
+/* il pulsante principale di Studia ora "respira" una volta all'arrivo */
+main.entra .btn.studia-ora { animation: invito .7s .25s var(--molla, var(--premi)) both; }
+@keyframes invito { 0% { transform: scale(.94); } 60% { transform: scale(1.03); } 100% { transform: scale(1); } }
+/* spunta che si disegna */
+input[type=checkbox]:checked { animation: spunta .3s var(--molla, var(--premi)); }
+@keyframes spunta { 0% { transform: scale(.7); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }
+
+/* ---------- TRANSIZIONI TRA PAGINE ---------- */
+main.entra.da-dx > .pagina { animation: da-dx .32s var(--dolce, var(--premi)); }
+main.entra.da-sx > .pagina { animation: da-sx .32s var(--dolce, var(--premi)); }
+main.entra > .pagina.sotto { animation: spinta .34s var(--dolce, var(--premi)); }
+@keyframes da-dx { from { opacity: 0; transform: translateX(28px); } }
+@keyframes da-sx { from { opacity: 0; transform: translateX(-28px); } }
+@keyframes spinta { from { opacity: .4; transform: translateX(60px); } }
+/* le schede di una pagina arrivano in cascata */
+main.entra > .pagina > * { animation: cascata .38s var(--dolce, var(--premi)) both; }
+main.entra > .pagina > *:nth-child(2) { animation-delay: .03s; } main.entra > .pagina > *:nth-child(3) { animation-delay: .06s; }
+main.entra > .pagina > *:nth-child(4) { animation-delay: .09s; } main.entra > .pagina > *:nth-child(5) { animation-delay: .12s; }
+main.entra > .pagina > *:nth-child(n+6) { animation-delay: .15s; }
+@keyframes cascata { from { opacity: 0; transform: translateY(8px); } }
+:root[data-animazioni="no"] *, :root[data-animazioni="no"] *::before { animation: none !important; transition: none !important; }
+@media (prefers-reduced-motion: reduce) { button:active, .tessera:active { transform: none !important; } }
+.piu-testa { background: var(--accento); color: #fff; border-radius: 50%; width: 40px; height: 40px; margin-left: 4px; box-shadow: 0 4px 12px color-mix(in srgb, var(--accento) 35%, transparent); }

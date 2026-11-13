@@ -27,6 +27,7 @@ const UI = {
   studioSub: null as string | null,
   soloPrior: false,
   pianoScorso: false,
+  altroSez: null as string | null,   // v0.34: sotto-pagina di Altro
 };
 const ORA_PX = 52; // altezza di un'ora nella griglia oraria
 
@@ -127,10 +128,7 @@ function vistaOggi(): HTMLElement {
   const occDomani = occorrenzeDelGiorno(domani);
 
   return h('div.pagina', null,
-    h('div.oggi-testa', null,
-      h('div.oggi-giorno', null, String(g.getDate())),
-      h('div', null, h('div.oggi-sett', null, maiuscola(fmt(g, { weekday: 'long' }))), h('div.tenue', null, maiuscola(fmt(g, { month: 'long', year: 'numeric' })))),
-    ),
+    h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))),
     campoRapido(),
     ordineWidget().map(w => {
       switch (w) {
@@ -395,7 +393,7 @@ function vistaCerca(): HTMLElement {
   function aggiorna(): void {
     svuota(ris);
     const q = norm(UI.q.trim());
-    if (q.length < 2) { ris.appendChild(vuoto('Scrivi almeno 2 lettere: cerco in eventi, promemoria e note.')); return; }
+    if (q.length < 2) { ris.appendChild(vuoto('Scrivi almeno 2 lettere: cerco in eventi, promemoria, note e impostazioni.')); return; }
     const ev = Stato.tutti<Evento>('evento').filter(e => norm(e.titolo + ' ' + (e.luogo || '') + ' ' + (e.note || '')).includes(q)).sort((a, b) => a.inizio < b.inizio ? 1 : -1);
     const tk = Stato.tutti<Task>('task').filter(t => norm(t.titolo + ' ' + (t.note || '')).includes(q));
     const nt = Stato.tutti<Nota>('nota').filter(n => norm(n.titolo + ' ' + n.testo + ' ' + n.tag.join(' ')).includes(q));
@@ -405,7 +403,10 @@ function vistaCerca(): HTMLElement {
     if (tk.length) ris.appendChild(scheda('Promemoria · ' + tk.length, tk.slice(0, 50).map(rigaTask)));
     if (nt.length) ris.appendChild(scheda('Note · ' + nt.length, nt.slice(0, 50).map(n => h('button.voce-lista', { onclick: () => apriNota(n) },
       h('span.voce-corpo', null, h('span.voce-titolo', null, n.titolo || '(senza titolo)'), h('span.voce-sotto', null, n.testo.slice(0, 80)))))));
-    if (!ev.length && !tk.length && !nt.length) ris.appendChild(vuoto('Nessun risultato.'));
+    const imps = GRUPPI_ALTRO.filter(g => norm(g[1] + ' ' + g[2] + ' ' + PAROLE_ALTRO[g[0]]).split(/\s+/).some(p => p.startsWith(q) || q.split(/\s+/).some(w => w.length > 2 && p.startsWith(w))));
+    if (imps.length) ris.appendChild(scheda('Impostazioni', imps.map(g => h('button.voce-lista', { onclick: () => { UI.altroSez = g[0]; vai('altro'); } },
+      h('span.voce-corpo', null, h('span.voce-titolo', null, g[1]), h('span.voce-sotto', null, 'Altro › ' + g[1] + ' · ' + g[2]))))));
+    if (!ev.length && !tk.length && !nt.length && !imps.length) ris.appendChild(vuoto('Nessun risultato.'));
   }
   aggiorna();
   const campo = h('input.rapido', { type: 'search', placeholder: 'Cerca ovunque…', value: UI.q, oninput: (e: Event) => { UI.q = (e.target as HTMLInputElement).value; aggiorna(); } }) as HTMLInputElement;
@@ -464,31 +465,70 @@ function vistaAltro(): HTMLElement {
          h('div.bottoni', null, h('button.btn', { onclick: () => Drive.login() }, 'Accedi con Google'))],
   );
 
-  return h('div.pagina', null,
-    sezDrive,
-    sezioneAspetto(salvaImp),
-    sezioneLayout(salvaImp),
-    sezionePreset(salvaImp),
-    scheda('Categorie', cats, nuovaCat),
-    sezioneStudio(salvaImp),
-    sezioneNotifiche(salvaImp),
-    Spiega.sezione(),
-    Regole.sezioneAltro(),
-    sezioneCalendari(salvaImp),
-    scheda('I miei dati',
+  const sezDati = scheda('I miei dati',
       h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'),
       anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null,
       h('div.bottoni', null,
         h('button.btn', { onclick: esporta }, 'Esporta backup'),
-        h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport),
-    ),
-    h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE),
+        h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport));
+  const versione = h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE);
+
+  // v0.34: Altro = scorciatoie in vista + 4 gruppi di impostazioni (sotto-pagine)
+  switch (UI.altroSez) {
+    case 'aspetto': return h('div.pagina.sotto', null, sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp));
+    case 'studio': return h('div.pagina.sotto', null, sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());
+    case 'calendario': return h('div.pagina.sotto', null, scheda('Categorie', cats, nuovaCat), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp));
+    case 'dati': return h('div.pagina.sotto', null, sezDrive, sezDati, versione);
+  }
+  const nTask = Stato.tutti<Task>('task').filter(t => !t.fatto).length;
+  const nNote = Stato.tutti<Nota>('nota').length;
+  const tessera = (sch: Scheda, ic: string, tit: string, sotto: string, cls: string) =>
+    h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
+  return h('div.pagina', null,
+    h('div.tessere-altro', null,
+      tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'),
+      tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')),
+    h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } },
+      h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')),
+      icona('dx', 18)),
+    h('div.gruppo-titolo.fuori', null, 'Impostazioni'),
+    h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) =>
+      h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } },
+        h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)),
+        h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)),
+        icona('dx', 18)))),
+    versione,
   );
+}
+
+/** v0.34: i gruppi di Altro: [chiave, titolo, sottotitolo, icona, colore]. Anche la ricerca li usa. */
+const GRUPPI_ALTRO: [string, string, string, string, string][] = [
+  ['aspetto', 'Aspetto', 'Tema, colori, carattere, suoni e animazioni, layout', 'ingranaggio', '#0B5FD9'],
+  ['studio', 'Studio e AI', 'Piano, ripassi, chiave AI, regole', 'studio', '#0E9F6E'],
+  ['calendario', 'Calendario e notifiche', 'Categorie, avvisi, Google Calendar e .ics', 'cal', '#D97706'],
+  ['dati', 'Dati e backup', 'Google Drive, esporta, importa', 'nuvola', '#64748B'],
+];
+/** Parole che portano a ciascun gruppo dalla ricerca. */
+const PAROLE_ALTRO: Record<string, string> = {
+  aspetto: 'tema scuro chiaro colore accento sfondo vetro carattere font testo dimensione densità angoli layout riquadri widget barra sezioni preset suono suoni tap clic animazioni movimento',
+  studio: 'studio piano ripassi ripasso fsrs ai intelligenza artificiale groq chiave regole quiz',
+  calendario: 'categorie categoria notifiche notifica avvisi promemoria google calendar ics calendari esterni',
+  dati: 'drive google sincronizza sincronizzazione backup esporta importa dati account scollega',
+};
+
+function sezioneSuoni(salva: SalvaImp): HTMLElement {
+  const i = imp() as any;
+  return scheda('Suoni e animazioni',
+    riga('Suono di tap', selettore([['si', 'Attivo'], ['no', 'Spento']], i.suono === 'no' || i.suono === false ? 'no' : 'si', function (this: HTMLSelectElement) { salva({ suono: this.value } as any); if (this.value === 'si') Tocco.clic(); })),
+    riga('Volume', h('input', { type: 'range', min: '0.05', max: '1', step: '0.05', value: String(typeof i.volumeTap === 'number' ? i.volumeTap : 0.35), 'aria-label': 'Volume del tap',
+      onchange: (e: Event) => { salva({ volumeTap: +(e.target as HTMLInputElement).value } as any); Tocco.clic(); } })),
+    riga('Animazioni', selettore([['si', 'Attive'], ['no', 'Ridotte']], i.animazioni === 'no' ? 'no' : 'si', function (this: HTMLSelectElement) { salva({ animazioni: this.value } as any); })),
+    h('div.tenue.piccolo', null, 'Su iPhone il suono parte dopo il primo tocco. Con «Riduci movimento» attivo nelle impostazioni dell\'iPhone le animazioni si spengono da sole.'));
 }
 
 // ---------- Impostazioni: aspetto, layout, preset, calendari esterni ----------
 type SalvaImp = (mod: Partial<Impostazioni>) => void;
-const ACCENTI = ['#6c8cff', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
+const ACCENTI = ['#2f6bea', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
 const CAMPI_ASPETTO: (keyof Impostazioni)[] = ['tema', 'accento', 'sfondo', 'font', 'scala', 'densita', 'raggio', 'widget', 'widgetNascosti', 'tabNascoste', 'nav', 'vistaIniziale'];
 
 function sezioneAspetto(salva: SalvaImp): HTMLElement {

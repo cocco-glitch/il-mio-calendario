@@ -26,7 +26,7 @@ with sync_playwright() as p:
 
     # --- procedura guidata con la proposta iniziale (raffinamento tra i due appelli) ---
     pg.evaluate("UI.studioVista = 'piano'; vai('studio')"); pg.wait_for_timeout(200)
-    pg.click('text=✨ Genera un piano'); pg.wait_for_selector('.gen-passi')
+    pg.click('text=Genera un piano'); pg.wait_for_selector('.gen-passi')
     pg.screenshot(path='test/gen-esame.png')
     ok(pg.input_value('.visore input[type=date] >> nth=0') == '2027-01-10' and pg.input_value('.visore input[type=date] >> nth=1') == '2026-12-11', 'proposta: dal 11/12 al secondo appello 10/01')
     ok(pg.locator('.segmenti button.attivo', has_text='Raffinamento').count() == 1, 'proposta: modo raffinamento')
@@ -98,7 +98,7 @@ with sync_playwright() as p:
     ok(len(r['fuori']) == 3 and 'non entrano' in r['avvisi'][0], 'avviso quando gli argomenti non entrano')
 
     # --- elimina ---
-    pg.click('text=🗑 Elimina'); pg.click('.dialogo button:has-text("Elimina il piano")'); pg.wait_for_timeout(200)
+    pg.click('text=Elimina'); pg.click('.dialogo button:has-text("Elimina il piano")'); pg.wait_for_timeout(200)
     ok(not pg.evaluate("Studio.pkPiani().some(p => /^gen-/.test(p.id))"), 'piano generato eliminato')
 
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))

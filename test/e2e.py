@@ -22,7 +22,7 @@ with sync_playwright() as p:
     pg.screenshot(path='test/01-oggi.png')
 
     # evento ricorrente settimanale con promemoria e checklist, creato dall'interfaccia
-    pg.click('.fab'); pg.click('.dialogo >> text=Evento')
+    pg.click('[aria-label="Nuovo"] >> visible=true'); pg.click('.dialogo >> text=Evento')
     pg.fill('.titolo-grande', 'Palestra')
     pg.locator('.foglio select').first.select_option('W')
     pg.locator('.gruppo:has(.gruppo-titolo:text("Promemoria")) select').select_option('30')
@@ -61,7 +61,7 @@ with sync_playwright() as p:
     ok(n == 3, 'modifica della serie applicata (%s)' % n)
 
     # promemoria
-    pg.click('.tabbar >> text=Promemoria')
+    pg.click('.tabbar >> text=Altro'); pg.click('.tessera-altro >> text=Promemoria')
     pg.fill('.rapido', 'Comprare quaderni'); pg.keyboard.press('Enter')
     ok(pg.locator('.task >> text=Comprare quaderni').count() == 1, 'promemoria in Inbox')
     pg.locator('.task .spunta').first.click()
@@ -70,7 +70,7 @@ with sync_playwright() as p:
     pg.screenshot(path='test/07-promemoria.png')
 
     # note + ricerca
-    pg.click('.tabbar >> text=Note'); pg.click('.fab')
+    pg.click('.tabbar >> text=Altro'); pg.click('.tessera-altro >> text=Note'); pg.click('.fab')
     pg.fill('.titolo-grande', 'Idee'); pg.fill('.nota-testo', '**Ripassare** i gas\n- Boyle\n- Charles')
     pg.fill('.foglio input[placeholder^="tag"]', 'chimica'); pg.click('.foglio-testa >> text=Salva')
     ok(pg.locator('.nota-card >> text=Idee').count() == 1, 'nota creata')
@@ -78,7 +78,7 @@ with sync_playwright() as p:
     ok(pg.locator('.card >> text=Idee').count() == 1, 'ricerca globale trova la nota')
 
     # tema chiaro salvato
-    pg.click('.tabbar >> text=Altro'); pg.locator('.card select').first.select_option('chiaro')
+    pg.click('.tabbar >> text=Altro'); pg.click('.riga-gruppo >> text=Aspetto'); pg.locator('.card select').first.select_option('chiaro')
     ok(pg.evaluate('document.documentElement.dataset.tema') == 'chiaro', 'tema chiaro applicato')
     pg.screenshot(path='test/08-impostazioni-chiaro.png', full_page=True)
     pg.reload(); pg.wait_for_selector('.tabbar')

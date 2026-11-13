@@ -2,14 +2,16 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.33.0';
+const VERSIONE = '0.34.0';
 
 function applicaTema(): void {
   const i = imp();
   const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
   const r = document.documentElement, st = r.style;
-  st.setProperty('--accento', i.accento);
+  // v0.34: il vecchio blu predefinito passa al nuovo blu del rebranding
+  st.setProperty('--accento', !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento);
+  r.dataset.animazioni = (i as any).animazioni === 'no' ? 'no' : 'si';
   if (i.sfondo) st.setProperty('--bg', i.sfondo); else st.removeProperty('--bg');
   const FONT: Record<string, string> = { sistema: '', arrotondato: 'ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif', serif: 'ui-serif, "New York", Georgia, "Times New Roman", serif', mono: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' };
   if (i.font && FONT[i.font]) st.setProperty('--font', FONT[i.font]); else st.removeProperty('--font');
@@ -19,7 +21,7 @@ function applicaTema(): void {
   r.dataset.nav = i.nav || 'auto';
   r.dataset.vetro = (i as any).vetro === false || (i as any).vetro === 'no' ? 'no' : 'si';   // v0.20: vetro leggero (disattivabile)
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', i.sfondo || (scuro ? '#0e1014' : '#f4f5f8'));
+  if (meta) meta.setAttribute('content', i.sfondo || (scuro ? '#0b0d12' : '#f5f7fa'));
 }
 
 /** Ricostruisce l'intera schermata (le viste sono leggere: va benissimo così). */
@@ -32,32 +34,41 @@ function disegna(): void {
   const scrollMain = vecchioMain ? vecchioMain.scrollTop : 0;
   const stessaScheda = vecchioMain && vecchioMain.dataset.scheda === UI.scheda + (UI.scheda === 'cal' ? UI.vista : '');
 
-  const titoli: Record<Scheda, string> = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', appunti: 'Appunti', task: 'Promemoria', note: 'Note', altro: 'Impostazioni', cerca: 'Cerca' };
+  const titoli: Record<Scheda, string> = { oggi: 'Oggi', cal: 'Calendario', studio: 'Studio', appunti: 'Appunti', task: 'Promemoria', note: 'Note', altro: UI.altroSez ? (GRUPPI_ALTRO.find(g => g[0] === UI.altroSez) || ['', 'Altro'])[1] : 'Altro', cerca: 'Cerca' };
   const vista = UI.scheda === 'oggi' ? vistaOggi() : UI.scheda === 'cal' ? vistaCalendario() : UI.scheda === 'studio' ? vistaStudio() : UI.scheda === 'task' ? vistaTask()
     : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'appunti' ? vistaAppunti() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
 
   const daFare = Stato.tutti<Task>('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(oggi()))).length;
-  const schede: [Scheda, string, string][] = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['appunti', 'Appunti', 'appunti'], ['task', 'Promemoria', 'task'], ['note', 'Note', 'note'], ['altro', 'Altro', 'altro']];
+  // v0.34: 5 sezioni in barra; Promemoria e Note vivono in Altro (con scorciatoie in Oggi)
+  const schede: [Scheda, string, string][] = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['appunti', 'Appunti', 'appunti'], ['altro', 'Altro', 'altro']];
   const nascoste = imp().tabNascoste || [];
-  const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) =>
-    h('button' + (UI.scheda === s ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; vai(s); }, 'aria-current': UI.scheda === s ? 'page' : null },
-      h('span.tab-ico', null, icona(ic), s === 'task' && daFare ? h('span.badge', null, String(daFare)) : null),
-      h('span.tab-eti', null, t))));
-
+  const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
+  const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => {
+    const att = UI.scheda === s || (s === 'altro' && inAltro);
+    return h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; if (s === 'altro') UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null },
+      h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null),
+      h('span.tab-eti', null, t));
+  }));
+  // direzione dell'animazione: verso destra o sinistra secondo la posizione in barra
+  const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro', 'task', 'note', 'cerca'];
+  const prima = vecchioMain ? ordine.indexOf((vecchioMain.dataset.scheda || '').replace(/(giorno|settimana|mese|agenda)$/, '')) : -1;
+  const dir = prima < 0 ? '' : ordine.indexOf(UI.scheda) >= prima ? '.da-dx' : '.da-sx';
+  const indietro = inAltro || (UI.scheda === 'altro' && UI.altroSez)
+    ? h('button.indietro', { onclick: () => { if (UI.scheda === 'altro') UI.altroSez = null; vai('altro'); } }, icona('sx', 20), 'Altro') : null;
   const giornoNuovo = UI.scheda === 'cal' ? UI.data : undefined;
   const nuovo = () => UI.scheda === 'task' ? apriTask() : UI.scheda === 'note' ? apriNota() : UI.scheda === 'appunti' ? apriAppunto() : apriNuovo(giornoNuovo);
 
-  const main = h('main' + (stessaScheda ? '' : '.entra'), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
+  const main = h('main' + (stessaScheda ? '' : '.entra' + dir), { 'data-scheda': UI.scheda + (UI.scheda === 'cal' ? UI.vista : '') }, vista);
   svuota(app);
   aggiungi(app, [
     h('header.testata', null,
-      h('h1', null, titoli[UI.scheda]),
+      h('div.testata-tit', null, indietro, h('h1', null, titoli[UI.scheda])),
       h('div.testata-azioni', null,
         Drive.stato.sync === 'spento' ? null : h('button.sync-ind', { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa') Drive.login(); else vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)),
         h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')),
-        h('button.btn-ico.solo-pc', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
+        h('button.btn-ico' + (UI.scheda === 'oggi' ? '.piu-testa' : '.solo-pc'), { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
     nav, main,
-    UI.scheda === 'altro' || UI.scheda === 'cerca' || UI.scheda === 'studio' ? null : h('button.fab', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu', 26)),
+    UI.scheda === 'altro' || UI.scheda === 'cerca' || UI.scheda === 'studio' || UI.scheda === 'oggi' ? null : h('button.fab', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu', 26)),
   ]);
 
   const griglia = app.querySelector('.gr-scroll');
@@ -66,6 +77,30 @@ function disegna(): void {
     else griglia.scrollTop = Math.max(0, (Math.min(new Date().getHours(), 20) - 1.5) * ORA_PX); // parte vicino all'ora attuale
   }
   if (stessaScheda) main.scrollTop = scrollMain;
+  else Tocco.conta(main);
+  if (inAltro || (UI.scheda === 'altro' && UI.altroSez)) attivaIndietroSwipe(main);
+}
+
+/** v0.34: nelle sotto-pagine si torna indietro scorrendo dal bordo sinistro (come su iPhone). */
+function attivaIndietroSwipe(el: HTMLElement): void {
+  let x0 = -1, y0 = 0;
+  el.addEventListener('touchstart', e => { const t = e.touches[0]; x0 = t.clientX < 28 ? t.clientX : -1; y0 = t.clientY; }, { passive: true });
+  el.addEventListener('touchend', e => {
+    if (x0 < 0) return;
+    const t = e.changedTouches[0];
+    if (t.clientX - x0 > 80 && Math.abs(t.clientY - y0) < 60) { if (UI.scheda === 'altro') UI.altroSez = null; vai('altro'); }
+  }, { passive: true });
+}
+
+/** v0.34: una volta sola, dico dove sono finiti Promemoria e Note. */
+function avvisoNovita(): void {
+  if (navigator.webdriver) return; // nei test automatici niente finestre
+  try {
+    if (localStorage.getItem('imc-novita-034')) return;
+    if (!Stato.tutti<Task>('task').length && !Stato.tutti<Nota>('nota').length) { localStorage.setItem('imc-novita-034', '1'); return; }
+  } catch (_) { return; }
+  chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], 'Promemoria e Note ora sono in Altro (in alto, ben visibili) e restano anche nei riquadri di Oggi. Con la lente puoi cercare anche le impostazioni.')
+    .then(() => { try { localStorage.setItem('imc-novita-034', '1'); } catch (_) { /* niente */ } });
 }
 
 // ---------- Avvisi in-app (Livello 1 dei promemoria) ----------
@@ -106,7 +141,10 @@ async function avvia(): Promise<void> {
   Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
   Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
   Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva) Spiega.recuperaDaDrive(); });
+  attivaSimboli();
+  Tocco.attiva();
   disegna();
+  avvisoNovita();
   Drive.precarica();
   Timer.parti();
   Studio.caricaDalSito();

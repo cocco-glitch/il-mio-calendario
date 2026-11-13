@@ -184,11 +184,18 @@ function vistaEsami(): HTMLElement {
     h('button.btn', { onclick: () => editorEsame() }, '+ Aggiungi esame / appello'));
 }
 function widgetEsami(): HTMLElement | null {
-  const prossimi = Stato.tutti<Esame>('esame').filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 3);
+  const prossimi = Stato.tutti<Esame>('esame').filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 2);
   if (!prossimi.length) return null;
-  return scheda('Prossimi esami', prossimi.map(e => { const d = giorniA(e.data); return h('button.voce-lista', { onclick: () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); } },
-    h('span.esame-giorni', null, String(d), h('small', null, d === 1 ? 'giorno' : 'giorni')),
-    h('span.voce-corpo', null, h('span.voce-titolo', null, e.nome), h('span.voce-sotto', null, dataLunga(daYmd(e.data)) + ' · ' + testoCountdown(d)))); }));
+  // v0.34: dati raccolti in tessere (giorni agli esami + step in ritardo)
+  const apri = () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); };
+  const rit = Studio.pkPiani().length ? Studio.inRitardo().length : 0;
+  return h('div.tessere', { 'aria-label': 'Prossimi esami' },
+    prossimi.map((e, i) => { const d = giorniA(e.data); return h('button.tessera' + (i === 0 ? '.primo' : ''), { onclick: apri, title: e.nome + ' · ' + dataLunga(daYmd(e.data)) },
+      h('span.tessera-num', null, h('span.conta', null, String(d)), h('small', null, d === 1 ? ' giorno' : ' giorni')),
+      h('span.tessera-eti', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')),
+      h('span.tessera-sotto', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' }))); }),
+    rit ? h('button.tessera.ritardo', { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } },
+      h('span.tessera-num', null, h('span.conta', null, String(rit))), h('span.tessera-eti', null, rit === 1 ? 'step indietro' : 'step indietro'), h('span.tessera-sotto', null, 'Vedi il piano')) : null);
 }
 function editorEsame(es?: Esame): void {
   const e: Esame = es ? JSON.parse(JSON.stringify(es)) : { id: 'esame-' + uid(), type: 'esame', updatedAt: 0, nome: '', data: ymd(piuGiorni(oggi(), 30)) };

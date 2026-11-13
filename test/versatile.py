@@ -42,7 +42,7 @@ with sync_playwright() as p:
     ok(pg.evaluate("tutteLeSchede().filter(x => daRifare(x.s.id)).length") == 1, 'rifatta con 85%: esce dal registro')
     # --- timer
     pg.evaluate("Timer.avvia({ m: 'C', k: 'C2.3', titolo: 'Chi 2.3' })"); pg.wait_for_selector('#timer-barra')
-    ok('📚 25:00' in pg.inner_text('#timer-barra') or '📚 24:5' in pg.inner_text('#timer-barra'), 'barra del timer: ' + pg.inner_text('#timer-barra'))
+    ok('25:00' in pg.inner_text('#timer-barra') or '24:5' in pg.inner_text('#timer-barra'), 'barra del timer: ' + pg.inner_text('#timer-barra'))
     pg.clock.run_for(25 * 60 * 1000 + 2000); pg.wait_for_timeout(200)
     ok(pg.evaluate("Stato.tutti('sessione').reduce((t, s) => t + s.minuti, 0)") == 25 and 'Pausa' in pg.inner_text('#timer-barra'), 'sessione di 25 min registrata, poi pausa')
     pg.clock.run_for(5 * 60 * 1000 + 2000); pg.wait_for_timeout(200)
@@ -55,8 +55,8 @@ with sync_playwright() as p:
     pg.screenshot(path='test/42-statistiche.png', full_page=True)
     # --- esami
     pg.click('.segmenti >> text=Esami'); pg.click('text=+ Aggiungi esame'); pg.fill('.foglio .titolo-grande', 'Primo appello'); pg.fill('.foglio input[type=date]', '2026-12-10'); pg.click('.foglio-testa >> text=Salva')
-    pg.click('.tabbar >> text=Oggi'); txt = pg.inner_text('.pagina')
-    ok('PROSSIMI ESAMI' in txt.upper() and '28' in txt and 'Primo appello' in txt, 'Oggi: conto alla rovescia 28 giorni')
+    pg.click('.tabbar >> text=Oggi'); pg.wait_for_timeout(1100); txt = pg.inner_text('.pagina')
+    ok('28' in txt and '1° appello' in txt, 'Oggi: conto alla rovescia 28 giorni')
     ok(any('Primo appello' in x for x in pg.evaluate("Studio.vociDelGiorno(daYmd('2026-12-10')).map(x => x.v.t)")), 'esame nel calendario')
     pg.screenshot(path='test/43-oggi.png', full_page=True)
     # --- trascinamento (mouse) nella vista Giorno

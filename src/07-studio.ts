@@ -430,9 +430,9 @@ function indicatoreStudio(): HTMLElement | null {
   if (!Studio.pkPiani().length) return null;
   const r = Studio.inRitardo();
   const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } },
-    r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
-  // v0.10: ripianificazione in un tocco (solo piano principale)
-  return Ripianifica.inRitardo().length ? h('div', null, ind, h('button.btn.neutro', { style: { marginTop: '8px', width: '100%' }, onclick: () => apriRipianifica() }, '↻ Ripianifica i ritardi')) : ind;
+    h('span.pallino-stato'), r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
+  // v0.10: ripianificazione in un tocco (solo piano principale) — v0.34: compatta, sulla stessa riga
+  return Ripianifica.inRitardo().length ? h('div.indicatore-riga', null, ind, h('button.btn-testo.ripianifica', { onclick: () => apriRipianifica() }, icona('ripeti', 16), 'Ripianifica')) : ind;
 }
 
 // ---------- Vista STUDIO ----------
