@@ -155,6 +155,7 @@ with sync_playwright() as p:
 
     # --- v0.33: modelli, lazo, scarabocchio ---
     pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, .dialogo-sfondo').forEach(e => e.remove()); vai('appunti')"); pg.wait_for_timeout(200)
+    pg.evaluate("localStorage.setItem('pref-mano', JSON.stringify({ scarab: true })); PREF_MANO.scarab = true")
     pg.click('text=＋ Nuovo appunto'); pg.wait_for_selector('.appunto-modelli')
     pg.click('.appunto-modelli .chip:has-text("Esercizio")'); pg.wait_for_timeout(100)
     ok('# Svolgimento' in pg.input_value('.appunto-testo'), 'modello Esercizio nel testo')

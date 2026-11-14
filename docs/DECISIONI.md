@@ -98,3 +98,6 @@ Scouting Freenotes / GoodNotes / Notability. Aggiunti: 4 penne (stilografica a p
 
 ## v0.39.1 — Righello, pagine, filtro del lazo
 Righello trascinabile e ruotabile (si ferma a 0/45/90°): la penna lungo il bordo traccia una riga dritta. Fogli a pagine A4 (1000×1414) con separatori numerati, finestra 📑 con miniature, vai a pagina, aggiungi/elimina pagina (annullabile). Lazo: tutto / solo inchiostro / solo allegati. Google Foto: coperto dalla libreria del telefono (📎), nessuna API.
+
+## v0.40 — Foglio nero, barra a tendina, scarabocchio facoltativo
+Tema del foglio per appunto (standard / bianco griglia scura / nero griglia chiara, inchiostro scuro mostrato chiaro sul nero). Griglia legata alla carta (si ingrandisce con lo zoom). Barra strumenti a tendina (chiusa: strumento attivo, colore, annulla/ripeti). Scarabocchio-per-cancellare spento di base, si attiva nel pannello ⚙︎.
