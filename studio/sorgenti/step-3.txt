@@ -21,6 +21,28 @@ R 3.1.6 3/3 | Problemi di stechiometria biomedica | 108-111 | UD3.1: slide 35–
 P 3.1.7 1/3 | Il reagente limitante: concetto | 111-113 | UD3.1: slide 37
 P 3.1.7 2/3 | Problemi sul reagente limitante | 111-113 | UD3.1: slide 37–39
 P 3.1.7 3/3 | Resa teorica e resa percentuale | 111-114 | UD3.1: slide 37–39
+@C 3.2 | Termodinamica (entalpia, entropia, Gibbs) e cinetica (Arrhenius, catalisi) | Lun 16/11 – giorno 6 di 23 · in coppia con B3.2 | Simulazione 3 Dom 22/11 · Sprint Chimica Sab 05/12 · raffinamento 10/12–10/01
+= 15 5 42 25 42
+P 3.2.1 1/2 | Sistemi, funzioni di stato ed energia interna | 233-238 | UD1.7: slide 2–10
+R 3.2.1 2/2 | Primo principio: calore, lavoro e problemi | 233-238 | UD1.7: slide 11–15
+P 3.2.2 1/2 | Entalpia, reazioni esotermiche ed endotermiche | 238-241 | UD1.7: slide 16–23
+P 3.2.2 2/2 | Problemi: ΔH di reazione e legge di Hess | 238-241 | UD1.7: slide 20–24
+P 3.2.3 1/2 | Entropia e secondo principio | 245-246 | UD1.7: slide 25–37, 42
+R 3.2.3 2/2 | Confrontare entropie: segno di ΔS e terzo principio | 245-246 | UD1.7: slide 38–42
+P 3.2.4 1/3 | Energia libera di Gibbs e spontaneità | 241-250 | UD1.7: slide 43–48
+P 3.2.4 2/3 | Problemi: ΔG e temperatura di inversione | 241-250 | UD1.7: slide 44–51
+P 3.2.4 3/3 | Trabocchetti: spontaneo, veloce, esotermico, esoergonico | 241-250 | UD1.7: slide 26–30, 46–52
+P 3.2.5 1/2 | Velocità media, istantanea e iniziale | 179-182 | UD3.2: slide 2–9
+P 3.2.5 2/2 | Problemi sulla velocità di reazione | 179-182 | UD3.2: slide 6–11
+P 3.2.6 1/2 | Stadi elementari, molecolarità e stadio lento | 182-183,188 | UD3.2: slide 12–14, 36
+R 3.2.6 2/2 | Legge cinetica e ordini dalle velocità iniziali | 182-183,188 | UD3.2: slide 15–19
+P 3.2.7 1/3 | Cinetica del primo ordine ed emivita | 188-192 | UD3.2: slide 22–28
+P 3.2.7 2/3 | Ordine zero, secondo ordine e unità di k | 188-192 | UD3.2: slide 20–21, 29–35
+R 3.2.7 3/3 | Problemi su emivite e leggi integrate | 188-192 | UD3.2: slide 25–35
+P 3.2.8 1/3 | Teoria degli urti e fattori che influenzano la velocità | 183-198 | UD3.2: slide 37–48
+P 3.2.8 2/3 | Arrhenius, energia di attivazione e temperatura | 183-198 | UD3.2: slide 45, 49–51
+R 3.2.8 3/3 | Profili energetici: stato di transizione e intermedi | 183-198 | UD3.2: slide 52–58
+P 3.2.9 1/1 | Catalizzatori: omogenei, eterogenei, enzimi | 198-202 | UD3.2: slide 59–65
 @B 3.1 | Replicazione del DNA (+ cromosomi, telomeri, genoma umano, trasferimento genico nei batteri) | Sab 14/11 – giorno 4 di 23 · in coppia con C3.1 | Simulazione 3 Dom 22/11 · Sprint Biologia Ven 04/12 · raffinamento 10/12–10/01
 = 13 7 28 18 30
 P 3.1.1 1/2 | Modelli di replicazione ed esperimento di Meselson e Stahl | 144-145 | U3_L1 (tutta la lezione)
@@ -43,6 +65,26 @@ P 3.1.8 2/3 | Sequenze ripetute in tandem: satelliti, minisatelliti, microsatell
 R 3.1.8 3/3 | Sequenze disperse: trasposoni, LINE, SINE e retrovirus endogeni | 196-198
 R 3.1.9 1/1 | Il genoma mitocondriale | 199-200
 P 3.1.10 1/1 | Trasferimento genico orizzontale nei batteri | 58-59,68,144
+@B 3.2 | Il gene, trascrizione, maturazione dell’RNA, miRNA | Lun 16/11 – giorno 6 di 23 · in coppia con C3.2 | Simulazione 3 Dom 22/11 · Sprint Biologia Ven 04/12 · raffinamento 10/12–10/01
+= 12 6 24 15 26
+P 3.2.1 1/2 | Il gene e le regole della trascrizione | 158-159,172 | U3_L3 (tutta la lezione)
+P 3.2.1 2/2 | Problemi: dalla sequenza di DNA all'RNA | 158-159,172 | U3_L3 (tutta la lezione)
+P 3.2.2 1/2 | Trascrizione nei procarioti: inizio e allungamento | 159-161 | U3_L3 (tutta la lezione)
+R 3.2.2 2/2 | Terminazione e confronti nei batteri | 159-162 | U3_L3 (tutta la lezione)
+P 3.2.3 1/2 | L'operone lac | 204-207 | U3_L6 (tutta la lezione)
+P 3.2.3 2/2 | Problemi: mutanti e combinazioni glucosio e lattosio | 204-207 | U3_L6 (tutta la lezione)
+P 3.2.4 1/3 | RNA polimerasi eucariotiche e promotore basale | 162-165 | U3_L3 (tutta la lezione)
+P 3.2.4 2/3 | Fattori generali e specifici, enhancer e silencer | 164-165,212 | U3_L3 e U3_L6 (tutta la lezione)
+R 3.2.4 3/3 | Recettori steroidei e controllo combinatorio | 165,212 | U3_L6 (tutta la lezione)
+P 3.2.5 1/3 | Cap e coda di poli(A) | 167-170 | U3_L4 (tutta la lezione)
+P 3.2.5 2/3 | Splicing e spliceosoma | 167-170 | U3_L4 (tutta la lezione)
+R 3.2.5 3/3 | Controllo qualità ed errori di splicing | 170,216 | U3_L4 (tutta la lezione)
+P 3.2.6 1/2 | Splicing alternativo ed editing | 170,212-215 | U3_L7 (tutta la lezione)
+R 3.2.6 2/2 | Ribozimi | 170-173,208 | U3_L4 (tutta la lezione)
+P 3.2.7 1/2 | Maturazione di rRNA e tRNA | 162,170-172 | U3_L4 (tutta la lezione)
+R 3.2.7 2/2 | Problemi su conteggi e localizzazioni | 162-163,170-172 | U3_L4 (tutta la lezione)
+P 3.2.8 1/2 | Degradazione dell'mRNA e microRNA | 169,216-217 | U3_L7 (tutta la lezione)
+R 3.2.8 2/2 | Scenari applicativi su miRNA e stabilità | 169,216-217 | U3_L7 (tutta la lezione)
 @F 3.1 | Statica dei fluidi: pressione, Stevino, Pascal, Archimede | Dom 15/11 – giorno 5 di 23 · in coppia con F2.4 | Simulazione 3 Dom 22/11 · Sprint Fisica Dom 06/12 · raffinamento 10/12–10/01
 = 15 5 7 5 7
 P 3.1.1 1/3 | Fluidi e pressione: definizione e unità di misura | 95-96 | UD3 parte I: slide 4–13
