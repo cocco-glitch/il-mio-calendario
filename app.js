@@ -151,6 +151,40 @@ function md(src) {
         out.push('</ul>');
     return out.join('');
 }
+/** v0.37: SVG «puliti» prima di metterli nella pagina: niente script, eventi on*, link javascript:, oggetti incorporati. */
+const SVG_PULITI = new Map();
+function svgSicuro(svg) {
+    if (!svg)
+        return '';
+    const c = SVG_PULITI.get(svg);
+    if (c !== undefined)
+        return c;
+    let out = '';
+    try {
+        // parser HTML (tollerante come innerHTML): lo stesso albero che il browser costruirebbe
+        const doc = new DOMParser().parseFromString('<body>' + svg, 'text/html'), r = doc.body.firstElementChild;
+        if (r && r.nodeName.toLowerCase() === 'svg' && doc.body.children.length === 1) {
+            r.querySelectorAll('script,foreignObject,iframe,object,embed,use[href^="http"],animate,set').forEach(n => n.remove());
+            for (const el of [r, ...Array.from(r.querySelectorAll('*'))])
+                for (const a of Array.from(el.attributes)) {
+                    const n = a.name.toLowerCase(), v = a.value.trim().toLowerCase();
+                    if (n.startsWith('on') || ((n === 'href' || n === 'xlink:href' || n === 'src') && !(v.startsWith('#') || v.startsWith('data:image/'))))
+                        el.removeAttribute(a.name);
+                }
+            out = r.outerHTML;
+        }
+    }
+    catch (_) {
+        out = '';
+    }
+    SVG_PULITI.set(svg, out);
+    return out;
+}
+/** Mescola in modo uniforme (Fisher–Yates); sort con Math.random è sbilanciato. */
+function mescolaU(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+} return a; }
 /** Normalizza per la ricerca: minuscole e senza accenti. */
 function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
 
@@ -2393,7 +2427,7 @@ const AIGen = (() => {
     /** Esame alla cieca: restituisce per ogni domanda se il risolutore ha trovato la corretta senza ambiguità. */
     async function esame(dom, mat, cit) {
         const L = 'ABCDE';
-        const mesc = dom.map(d => { const ord = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5); return { ord, testo: d.q + '\n' + ord.map((k, i) => L[i] + ') ' + d.o[k]).join('\n') }; });
+        const mesc = dom.map(d => { const ord = mescolaU([0, 1, 2, 3, 4]); return { ord, testo: d.q + '\n' + ord.map((k, i) => L[i] + ') ' + d.o[k]).join('\n') }; });
         const msgs = [
             { role: 'system', content: 'Sei un esperto di ' + mat + ' che controlla la qualità dei quiz. Rispondi solo con JSON valido.' },
             { role: 'user', content: 'Testo di riferimento:\n' + cit + '\n\nRisolvi ogni domanda. Per ciascuna indica la lettera giusta e se è ambigua (più di una opzione accettabile, nessuna corretta, o un dato sbagliato rispetto al testo).\n\n'
@@ -3678,7 +3712,7 @@ function avviaCarte(ids, titolo = 'Flashcard') {
         else if (modoQui === 'scelta') {
             const giusta = giustaS, altre = altreS;
             const stesso = new Set(Carte.voci([c.mazzo]).map(y => rispostaDi(y.c, x.rev)));
-            const opz = altre.sort((p, q) => (stesso.has(q) ? 1 : 0) - (stesso.has(p) ? 1 : 0) || Math.random() - .5).slice(0, 3).concat([giusta]).sort(() => Math.random() - .5);
+            const ms = mescolaU(altre), opz = mescolaU(ms.filter(x => stesso.has(x)).concat(ms.filter(x => !stesso.has(x))).slice(0, 3).concat([giusta]));
             const forme = ['▲', '◆', '●', '■'];
             const lista = h('div.carte-opzioni', null, opz.map((o, k) => h('button.opzione.op-' + k, { onclick: (e) => {
                     const ok = o === giusta;
@@ -5244,7 +5278,7 @@ const Generatori = (() => {
             if (d)
                 out.push(d);
         }
-        return out.sort(() => Math.random() - 0.5);
+        return mescolaU(out);
     }
     function titoloMicro(pk, m, micro) {
         for (const ss of mat0(pk, m).sottostep)
@@ -6395,7 +6429,7 @@ const QuizApp = (() => {
                 + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (mc ? 'Risposta multipla' : 'A completamento') + '</span></div>';
             for (const g of d.img || [])
                 if (dati.immagini[g.i])
-                    s2 += '<figure class="qz-fig"><button type="button" class="qz-zoom-b" data-zoom="' + esc(g.i) + '" aria-label="Ingrandisci immagine">' + dati.immagini[g.i] + '</button><figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
+                    s2 += '<figure class="qz-fig"><button type="button" class="qz-zoom-b" data-zoom="' + esc(g.i) + '" aria-label="Ingrandisci immagine">' + svgSicuro(dati.immagini[g.i]) + '</button><figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
             s2 += '<p class="qz-domanda">' + (mc ? fmt(d.q) : fmtQ(d.q)) + '</p><div class="chips">';
             if (mc) {
                 const rest = 2 - x.hid.length;
@@ -6518,7 +6552,7 @@ const QuizApp = (() => {
                 return;
             if (b.dataset.zoom) {
                 const z = h('div.qz-zoom', { onclick: () => z.remove() });
-                z.innerHTML = '<div class="qz-zoom-box">' + (dati.immagini[b.dataset.zoom] || '') + '</div><div class="qz-zoom-x">Tocca per chiudere</div>';
+                z.innerHTML = '<div class="qz-zoom-box">' + svgSicuro(dati.immagini[b.dataset.zoom] || '') + '</div><div class="qz-zoom-x">Tocca per chiudere</div>';
                 v.corpo.appendChild(z);
                 return;
             }
@@ -9764,7 +9798,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.36.0';
+const VERSIONE = '0.37.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
