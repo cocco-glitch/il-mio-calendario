@@ -768,3 +768,9 @@ body.mano-pieno .tabbar, body.mano-pieno .fab { display: none !important; }
 .mano-mini-pag canvas { display: block; width: 100%; height: auto; }
 .mano-mini-piede { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 2px 4px; }
 .mano-opzioni[hidden], .mano-righello[hidden] { display: none; }
+/* v0.40: foglio nero e barra a tendina */
+.mano-foglio.scuro, :root[data-tema="scuro"] .mano-foglio.scuro { background: #16181d; }
+.mano-barra .mano-tendina { font-size: 14px; min-width: 34px; background: color-mix(in srgb, var(--accento) 14%, var(--sup2)); }
+.mano-barra.chiusa > :not(.sempre):not(.attivo):not([aria-label="Annulla"]):not([aria-label="Ripeti"]) { display: none; }
+.mano-barra.chiusa { width: max-content; max-width: 100%; }
+.mano-barra > * { animation: manoApri .16s ease-out; }

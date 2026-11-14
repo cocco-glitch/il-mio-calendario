@@ -5401,7 +5401,7 @@ function riconosciForma(p) {
 }
 // v0.39: appunti a mano copiati col lazo (anche tra un appunto e l'altro)
 let APPUNTI_MANO = null;
-const PREF_MANO = (() => { const d = { tipo: 'p', w: 1, stab: 4, auto: false, tieni: true, gomma: 'tratto', lazo: 'tutto', forma: 'rett', riempi: false, extra: [] }; try {
+const PREF_MANO = (() => { const d = { tipo: 'p', w: 1, stab: 4, auto: false, tieni: true, gomma: 'tratto', lazo: 'tutto', forma: 'rett', riempi: false, scarab: false, barraChiusa: false, extra: [] }; try {
     return { ...d, ...JSON.parse(localStorage.getItem('pref-mano') || '{}') };
 }
 catch (_) {
@@ -5440,15 +5440,20 @@ function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
         g.fillStyle = '#fff';
         g.fillRect(0, 0, vw, vh);
     }
+    const scuro = m.tm === 'scuro' && !sfondoPieno, griglia = scuro ? 'rgba(225,230,245,.24)' : m.tm === 'contrasto' ? 'rgba(40,50,80,.42)' : 'rgba(120,130,160,.22)';
+    if (scuro) {
+        g.fillStyle = '#16181d';
+        g.fillRect(0, 0, vw, vh);
+    }
     if (m.sf === 'puntini' && !sfondoPieno) {
         const passo = v ? v.passo : 25 * scala, fondo = Math.min(vh, H - oy), destra = Math.min(vw, W - ox);
-        g.fillStyle = 'rgba(120,130,160,.45)';
+        g.fillStyle = scuro ? 'rgba(225,230,245,.4)' : m.tm === 'contrasto' ? 'rgba(40,50,80,.6)' : 'rgba(120,130,160,.45)';
         for (let y = passo - (oy % passo); y < fondo; y += passo)
             for (let x = passo - (ox % passo); x < destra; x += passo)
                 g.fillRect(x - 1, y - 1, 2, 2);
     }
     else if (m.sf !== 'bianco' && !sfondoPieno) {
-        g.strokeStyle = 'rgba(120,130,160,.22)';
+        g.strokeStyle = griglia;
         g.lineWidth = 1;
         const passo = v ? v.passo * (m.sf === 'quadretti' ? 1 : 1.6) : (m.sf === 'quadretti' ? 25 : 40) * scala;
         const fondo = Math.min(vh, H - oy), destra = Math.min(vw, W - ox);
@@ -5532,10 +5537,13 @@ function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
         const t = decodTratto(s);
         if (v && !t.p.some(q => q[1] >= y0 && q[1] <= y1))
             continue; // fuori dalla finestra
-        tracciaTratto(g, t, scala);
+        tracciaTratto(g, scuro ? inchiostroScuro(t) : t, scala);
     }
     g.restore();
 }
+/** Sul foglio nero l'inchiostro scuro diventa chiaro (i colori vivi restano). */
+const SCURI = new Set(['#1f2a44', '#000000', '#000', '#111111']);
+function inchiostroScuro(t) { return SCURI.has(t.c.toLowerCase()) ? { ...t, c: '#e9edf6' } : t; }
 function tracciaTratto(g, t, scala) {
     if (!t.p.length)
         return;
@@ -5590,7 +5598,7 @@ const manoVuota = (m) => !m || (!m.t.length && !(m.im && m.im.length));
 function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     const o = typeof opz === 'function' ? { allaCarta: opz } : opz;
     const allaCarta = o.allaCarta;
-    const m = iniziale ? { t: iniziale.t.slice(), h: iniziale.h, sf: iniziale.sf, im: (iniziale.im || []).slice() } : { t: [], h: PAGINA, sf: sfondo || 'quadretti', im: [] };
+    const m = iniziale ? { t: iniziale.t.slice(), h: iniziale.h, sf: iniziale.sf, im: (iniziale.im || []).slice(), ...(iniziale.tm ? { tm: iniziale.tm } : {}) } : { t: [], h: PAGINA, sf: sfondo || 'quadretti', im: [] };
     const storia = [], futuro = [];
     const foto = () => ({ t: m.t.slice(), im: (m.im || []).slice() });
     const ripristina = (f) => { m.t = f.t; m.im = f.im; };
@@ -5631,7 +5639,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     function ridisegna() {
         rif = 0;
         g.setTransform(d, 0, 0, d, 0, 0);
-        disegnaMano(g, m, scala, false, { ox: pag.scrollLeft, oy: pag.scrollTop, w: vw, h: vh, passo: 25 * base }, () => { if (!rif)
+        disegnaMano(g, m, scala, false, { ox: pag.scrollLeft, oy: pag.scrollTop, w: vw, h: vh, passo: 25 * scala }, () => { if (!rif)
             rif = requestAnimationFrame(ridisegna); });
         disegnaSel();
     }
@@ -5933,7 +5941,8 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     const riempi = () => strumento === 'forma' && PREF_MANO.riempi ? colore : undefined;
     // tenuta: forma agganciata mentre la penna resta giù (sposta/ridimensiona/ruota attorno al centro)
     let tenuta = null, timerTieni = 0, ultimoGrezzo = [0, 0], liscio = null;
-    const mostraVivo = (pts, f) => { pulisciVivo(); gv.lineCap = 'round'; gv.lineJoin = 'round'; tracciaTratto(gv, { c: colore, w: spessore(), k: tipoK(), p: pts, ...(f ? { f } : {}) }, scala); };
+    const inkV = () => m.tm === 'scuro' && SCURI.has(colore) ? '#e9edf6' : colore;
+    const mostraVivo = (pts, f) => { pulisciVivo(); gv.lineCap = 'round'; gv.lineJoin = 'round'; tracciaTratto(gv, { c: inkV(), w: spessore(), k: tipoK(), p: pts, ...(f ? { f } : {}) }, scala); };
     function aggancia() {
         if (!cur || tenuta || strumento === 'gomma' || strumento === 'lazo' || strumento === 'forma' || !PREF_MANO.tieni)
             return;
@@ -6046,7 +6055,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             }
             if (tipoK() === 'p') {
                 gv.lineCap = 'round';
-                tracciaTratto(gv, { c: colore, w: spessore(), k: tipoK(), p: [u, p] }, scala);
+                tracciaTratto(gv, { c: inkV(), w: spessore(), k: tipoK(), p: [u, p] }, scala);
             }
             else
                 mostraVivo(cur);
@@ -6095,7 +6104,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             cambia();
             return;
         }
-        if (!tenuta && strumento === 'penna' && eScarabocchio(cur) && cancellaSotto(cur)) {
+        if (!tenuta && strumento === 'penna' && PREF_MANO.scarab && eScarabocchio(cur) && cancellaSotto(cur)) {
             cur = null;
             idPuntatore = -1;
             ridisegna();
@@ -6187,7 +6196,9 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     function aggiornaBarra() {
         svuota(barra);
         const b = (t, att, f, titolo) => h('button' + (att ? '.attivo' : ''), { title: titolo, 'aria-label': titolo, onclick: () => { f(); aggiornaBarra(); } }, t);
-        barra.append(b('✒️', strumento === 'penna', () => { strumento = 'penna'; annullaSel(); }, 'Penna (scarabocchia sopra un tratto per cancellarlo)'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), b('➰', strumento === 'lazo', () => { if (strumento === 'lazo')
+        barra.classList.toggle('chiusa', PREF_MANO.barraChiusa);
+        barra.append(h('button.mano-tendina.sempre', { title: 'Strumenti', 'aria-label': PREF_MANO.barraChiusa ? 'Apri gli strumenti' : 'Chiudi gli strumenti', 'aria-expanded': String(!PREF_MANO.barraChiusa), onclick: () => { PREF_MANO.barraChiusa = !PREF_MANO.barraChiusa; if (PREF_MANO.barraChiusa)
+                opzioni = ''; salvaPrefMano(); aggiornaBarra(); } }, PREF_MANO.barraChiusa ? '▾' : '▴'), b('✒️', strumento === 'penna', () => { strumento = 'penna'; annullaSel(); }, 'Penna'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), b('➰', strumento === 'lazo', () => { if (strumento === 'lazo')
             opzioni = opzioni === 'lazo' ? '' : 'lazo'; strumento = 'lazo'; }, 'Lazo: cerchia tratti o allegati (tocca di nuovo per scegliere cosa selezionare)'), b('📏', rig.on, () => { rig.on = !rig.on; if (rig.on) {
             rig.x = pag.scrollLeft / scala + 60;
             rig.y = pag.scrollTop / scala + 220;
@@ -6244,9 +6255,13 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             return;
         }
         pan.append(riga('Penna', ...[['p', '✒️ Stilografica'], ['b', '🖊 Biro'], ['m', '✏️ Matita'], ['t', '┄ Tratteggio']].map(([k, e]) => scelta(k, PREF_MANO.tipo === k, () => { PREF_MANO.tipo = k; if (strumento !== 'evid')
-            strumento = 'penna'; }, e))), riga('Spessore', cursore(.4, 4, .1, PREF_MANO.w, x => PREF_MANO.w = x)), riga('Stabilizzazione', cursore(0, 10, 1, PREF_MANO.stab, x => PREF_MANO.stab = x)), riga('Forme', scelta('t', PREF_MANO.tieni, () => PREF_MANO.tieni = !PREF_MANO.tieni, (PREF_MANO.tieni ? '✓ ' : '') + 'Disegna e tieni premuto'), scelta('a', PREF_MANO.auto, () => PREF_MANO.auto = !PREF_MANO.auto, (PREF_MANO.auto ? '✓ ' : '') + 'Forma automatica')), riga('Gomma', scelta('g', PREF_MANO.gomma === 'tratto', () => PREF_MANO.gomma = 'tratto', 'Tratto intero'), scelta('g', PREF_MANO.gomma === 'parziale', () => PREF_MANO.gomma = 'parziale', 'Parziale')), h('div.tenue.piccolo', null, 'Gesti: due dita toccano = annulla · tre dita = ripeti · scarabocchio = cancella · pizzica = zoom'));
+            strumento = 'penna'; }, e))), riga('Spessore', cursore(.4, 4, .1, PREF_MANO.w, x => PREF_MANO.w = x)), riga('Stabilizzazione', cursore(0, 10, 1, PREF_MANO.stab, x => PREF_MANO.stab = x)), riga('Forme', scelta('t', PREF_MANO.tieni, () => PREF_MANO.tieni = !PREF_MANO.tieni, (PREF_MANO.tieni ? '✓ ' : '') + 'Disegna e tieni premuto'), scelta('a', PREF_MANO.auto, () => PREF_MANO.auto = !PREF_MANO.auto, (PREF_MANO.auto ? '✓ ' : '') + 'Forma automatica')), riga('Foglio', ...[['', '▢ Standard'], ['contrasto', '▦ Bianco, griglia scura'], ['scuro', '■ Nero, griglia chiara']].map(([k, e]) => scelta(k, (m.tm || '') === k, () => { if (k)
+            m.tm = k;
+        else
+            delete m.tm; pag.classList.toggle('scuro', m.tm === 'scuro'); ridisegna(); cambia(); }, e))), riga('Gomma', scelta('s', PREF_MANO.scarab, () => PREF_MANO.scarab = !PREF_MANO.scarab, (PREF_MANO.scarab ? '✓ ' : '') + 'Scarabocchio cancella'), scelta('g', PREF_MANO.gomma === 'tratto', () => PREF_MANO.gomma = 'tratto', 'Tratto intero'), scelta('g', PREF_MANO.gomma === 'parziale', () => PREF_MANO.gomma = 'parziale', 'Parziale')), h('div.tenue.piccolo', null, 'Gesti: due dita toccano = annulla · tre dita = ripeti · scarabocchio = cancella (se attivo) · pizzica = zoom'));
     }
     pag.classList.toggle('dito', dito);
+    pag.classList.toggle('scuro', m.tm === 'scuro');
     aggiornaBarra();
     azioni.hidden = true;
     contenitore.append(barra, pan, azioni, pag); // v0.36: barra in alto (come Note), mai sopra il testo
@@ -6258,7 +6273,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         dimensiona();
     } });
     ro.observe(pag);
-    return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf, ...(m.im && m.im.length ? { im: m.im.slice() } : {}) }), ridisegna: dimensiona, inserisci, barra, aggiornaBarra };
+    return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf, ...(m.tm ? { tm: m.tm } : {}), ...(m.im && m.im.length ? { im: m.im.slice() } : {}) }), ridisegna: dimensiona, inserisci, barra, aggiornaBarra };
 }
 /** ✨ Trascrive la pagina a mano: mostra il testo da controllare, poi lo aggiunge o sostituisce. */
 async function leggiScrittura(m, dopo) {
@@ -10251,7 +10266,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.39.1';
+const VERSIONE = '0.40.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
