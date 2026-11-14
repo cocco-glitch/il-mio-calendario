@@ -206,7 +206,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
   let strumento: 'penna' | 'evid' | 'gomma' | 'lazo' | 'forma' = 'penna', colore = '#1f2a44', dito = !matchMedia('(pointer: fine), (hover: hover)').matches && !('ontouchstart' in window && navigator.maxTouchPoints > 1 && /iPad|Macintosh/.test(navigator.userAgent));
   let penna = false;   // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
   const cv = h('canvas.mano-tela') as HTMLCanvasElement, g = cv.getContext('2d', { alpha: true })!;
-  const vivo = h('canvas.mano-vivo') as HTMLCanvasElement, gv = (vivo.getContext('2d', { desynchronized: true } as CanvasRenderingContext2DSettings) || vivo.getContext('2d')) as CanvasRenderingContext2D;   // bassa latenza della penna su Android
+  const vivo = h('canvas.mano-vivo') as HTMLCanvasElement, gv = vivo.getContext('2d')!;   // v0.41.3: niente «desynchronized»: su Android rende la tela opaca (foglio nero)
   // la tela è grande quanto la parte visibile (vista «sticky»): nitida a qualunque ingrandimento
   const vista = h('div.mano-vista', null, cv, vivo);
   const box = h('div.mano-box', null, vista);

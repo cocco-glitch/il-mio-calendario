@@ -112,3 +112,6 @@ Icone vettoriali (stesso tratto) per tutti i nuovi pulsanti: microfono, righello
 
 ## v0.41.2 — Ottimizzazione iOS/Android e scorrimento appunti
 Cache dei tratti decodificati con riquadro verticale; tratti a pressione disegnati a gruppi di spessore: ridisegno durante lo scorrimento da ~25 ms a ~3,6 ms per frame (3000 tratti). Tela «viva» a bassa latenza (desynchronized) per la penna su Android. CSS: touch-action manipulation (niente ritardo da doppio tocco), overscroll contenuto, content-visibility sugli elenchi, livelli GPU per le tele, rispetto di «riduci movimento».
+
+## v0.41.3 — Foglio nero su Android
+Tolta la tela «desynchronized»: su Android (GPU) rende la tela viva opaca e copre il foglio di nero. Tolti anche contain:size e i livelli forzati sulle tele. Il foglio dichiara color-scheme light (niente inversione dal dark mode forzato di Samsung/Chrome). Verifica con emulazione Pixel 7 e Galaxy S9+.

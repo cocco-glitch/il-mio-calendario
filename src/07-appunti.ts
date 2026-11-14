@@ -277,7 +277,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   } }, md.nome)));
   v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, bollaCalcolo, testo, anteprima, riass));
   aggiornaStato();
-  setTimeout(() => { if (modo === 'mano' && !alRiassunto && a) return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
+  setTimeout(() => { if (modo === 'mano' && !alRiassunto && a) return; const el = alRiassunto ? riass : a ? testo : titolo; const att = document.activeElement; if (att && att !== document.body && (att as HTMLElement).matches('input, textarea')) return; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
 }
 
 // ---------- Vista «Appunti» ----------
