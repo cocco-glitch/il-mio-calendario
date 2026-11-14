@@ -81,8 +81,8 @@ const Appunti = (() => {
     const cart = await Drive.sottocartella('Appunti');
     const nome = (a.titolo || 'Appunto').replace(/[\\/:*?"<>|]/g, '-') + '.md';
     const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n' + (a.riassunto ? '\n---\n**Riassunto:** ' + a.riassunto + '\n' : '');
-    if (a.mano && a.mano.t.length) {   // v0.31: anche la pagina a mano, come PNG
-      const png = await (await fetch(immagineMano(a.mano, 1400))).blob();
+    if (!manoVuota(a.mano)) {   // v0.31: anche la pagina a mano, come PNG
+      await caricaImmaginiMano(a.mano!); const png = await (await fetch(immagineMano(a.mano!, 1400))).blob();
       a.manoPng = await Drive.carica(nome.replace(/\.md$/, '.png'), cart, png, 'image/png', a.manoPng);
     }
     const id = await Drive.carica(nome, cart, corpo + (a.manoPng ? '\n![Pagina a mano](' + nome.replace(/\.md$/, '.png') + ')\n' : ''), 'text/markdown', a.drive && a.drive.id);
@@ -142,7 +142,7 @@ const Appunti = (() => {
 async function chiediDrive(a: Appunto, forza = false): Promise<void> {
   if (!Drive.collegato || !Appunti.daSalvareSuDrive(a)) { if (forza && !Drive.collegato) avviso('Collega Google Drive da Altro.'); return; }
   const s = await chiedi('Salvare «' + a.titolo + '» su Drive?', [{ testo: a.drive ? '☁︎ Aggiorna la copia' : '☁︎ Salva su Drive', valore: 'si' }],
-    'Copia .md' + (a.mano && a.mano.t.length ? ' + pagina a mano in PNG' : '') + ' in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
+    'Copia .md' + (!manoVuota(a.mano) ? ' + pagina a mano in PNG' : '') + ' in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
   if (s !== 'si') return;
   if (serveGoogle()) return;
   try { await Appunti.suDrive(a); avviso('☁︎ Salvato su Drive.'); } catch (e: any) { avviso('Drive: ' + (e.message || e), 6000); }
@@ -152,13 +152,13 @@ async function chiediDrive(a: Appunto, forza = false): Promise<void> {
 function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = false): void {
   const ap = a ? { ...a } : Appunti.nuovo(extra);
   let cambiato = false;
-  const v = visore(a ? '📝 Appunto' : '📝 Nuovo appunto', () => { if (cambiato) fine(); else if (a) chiediDrive(Stato.prendi<Appunto>(ap.id) || ap); disegna(); });
+  const v = visore(a ? '📝 Appunto' : '📝 Nuovo appunto', () => { document.body.classList.remove('mano-pieno'); if (cambiato) fine(); else if (a) chiediDrive(Stato.prendi<Appunto>(ap.id) || ap); disegna(); });
   const titolo = h('input.appunto-titolo', { type: 'text', placeholder: 'Titolo (es. «Chi 2.2.4 Calore latente» lo collega allo step)', value: ap.titolo }) as HTMLInputElement;
   const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo) as HTMLTextAreaElement;
   const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '') as HTMLTextAreaElement;
   const stato = h('div.appunto-stato.tenue.piccolo');
   // v0.31: modalità a mano (Pencil) o testo; la pagina a mano sta sopra, il testo (anche trascritto) sotto
-  let modo: 'testo' | 'mano' = ap.mano && ap.mano.t.length ? 'mano' : ((imp() as any).modoAppunti === 'mano' ? 'mano' : 'testo');
+  let modo: 'testo' | 'mano' = !manoVuota(ap.mano) ? 'mano' : ((imp() as any).modoAppunti === 'mano' ? 'mano' : 'testo');
   const zonaMano = h('div.mano-zona');
   let pagina: ReturnType<typeof paginaMano> | null = null, sfondoModello: Mano['sf'] | undefined;
   const aggiungiCarta = (riga: string) => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n' : '') + riga + '\n'; modifica(); salvaOra(); avviso('🃏 Flashcard aggiunta al testo dell\'appunto.'); };
@@ -168,7 +168,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     svuota(stato); stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
   };
   let timer = 0;
-  const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (pagina) { const d = pagina.dati(); ap.mano = d.t.length ? d : undefined; } if (!ap.testo.trim() && !ap.titolo.trim() && !ap.mano) return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi<Appunto>(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
+  const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (pagina) { const d = pagina.dati(); ap.mano = manoVuota(d) ? undefined : d; } if (!ap.testo.trim() && !ap.titolo.trim() && !ap.mano) return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi<Appunto>(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
   const modifica = () => { cambiato = true; aggiornaStato(); clearTimeout(timer); timer = setTimeout(salvaOra, 1500) as any; };
   titolo.addEventListener('input', modifica); testo.addEventListener('input', modifica); riass.addEventListener('input', modifica);
   function fine(): void {
@@ -202,43 +202,106 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     if (s === 'del') { const x = Stato.prendi<Appunto>(ap.id); if (x) Appunti.elimina(x); cambiato = false; v.chiudi(); avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).'); }
   } }, '⋯'));
   const scambio = h('div.segmenti.appunto-modo');
-  const leggi = h('button.btn.mano-leggi', { onclick: () => { salvaOra(); if (!pagina) return; leggiScrittura(pagina.dati(), (t, come) => {
+  const leggiOra = () => { salvaOra(); if (!pagina) return; leggiScrittura(pagina.dati(), (t, come) => {
     testo.value = come === 'sostituisci' ? t + '\n' : testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + t + '\n'; modifica(); salvaOra();
     const n = Appunti.estraiCarte(testo.value).length; avviso('✓ Testo aggiunto' + (n ? ' · 🃏 ' + n + ' carte' : ''));
-  }); } }, '✨ Leggi la mia scrittura');
+  }); };
+  // v0.36: tutto schermo (come Note di iPad) con il pannello del testo a scomparsa
+  let pieno = false, testoAperto = false;
+  const pannello = h('div.mano-pannello');
+  const segnaBarra = document.createComment('barra'), segnaTesto = document.createComment('testo');
+  function mettiPieno(on: boolean): void {
+    pieno = on; zonaMano.classList.toggle('pieno', on); document.body.classList.toggle('mano-pieno', on);
+    if (!on && testoAperto) apriTesto(false);
+    if (on) { zonaMano.append(pannello); history.pushState({ manoPieno: 1 }, ''); } else pannello.remove();
+    pagina && pagina.aggiornaBarra();
+    setTimeout(() => pagina && pagina.ridisegna(), 30);
+  }
+  function apriTesto(on: boolean): void {
+    testoAperto = on; pannello.classList.toggle('aperto', on);
+    if (on) { barra.before(segnaBarra); testo.before(segnaTesto); pannello.append(barra, testo); setTimeout(() => testo.focus(), 50); }
+    else { segnaBarra.replaceWith(barra); segnaTesto.replaceWith(testo); }
+    pagina && pagina.aggiornaBarra(); setTimeout(() => pagina && pagina.ridisegna(), 30);
+  }
+  window.addEventListener('popstate', () => { if (pieno) mettiPieno(false); });
+  const fileIns = h('input', { type: 'file', accept: '.pdf,image/*,.txt,.md,text/plain,text/markdown', multiple: true, hidden: true, onchange: async () => {
+    const files = Array.from(fileIns.files || []); fileIns.value = '';
+    for (const f of files) await allegaFile(f);
+  } }) as HTMLInputElement;
+  async function allegaFile(f: File): Promise<void> {
+    const nome = f.name.replace(/\.[^.]+$/, '');
+    if (/\.(txt|md)$/i.test(f.name) || f.type.startsWith('text/')) {
+      const t = await f.text(); testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + '## ' + nome + '\n' + t.trim() + '\n'; modifica(); salvaOra(); avviso('✓ Testo di «' + nome + '» aggiunto all\'appunto'); return;
+    }
+    if (modo !== 'mano') { modo = 'mano'; mostraModo(); }
+    if (!pagina) return;
+    try {
+      avviso('📎 Preparo «' + nome + '»…', 20000);
+      const r = /\.pdf$/i.test(f.name) || f.type === 'application/pdf' ? await pdfInImmagini(f) : { pagine: [await fotoInImmagine(f)], testo: '' };
+      pagina.inserisci(r.pagine);
+      if (r.testo.trim()) { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + '## Dal file: ' + nome + '\n' + r.testo.trim() + '\n'; }
+      modifica(); salvaOra();
+      avviso('📎 ' + r.pagine.length + (r.pagine.length === 1 ? ' pagina inserita' : ' pagine inserite') + (r.testo.trim() ? ' · testo copiato sotto: ✨ crea domande e carte' : '') + '. Scrivici sopra con la penna.', 6000,
+        r.testo.trim() ? () => aiDomande(Stato.prendi<Appunto>(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + rr.length + ' domande aggiunte.'); }) : undefined);
+    } catch (e: any) { avviso('Non riesco ad aprire «' + nome + '»: ' + (e && e.message || e), 8000); }
+  }
+  const opzMano: OpzioniMano = { allaCarta: aggiungiCarta, extra: () => [
+    h('span.mano-sep'),
+    h('button', { title: 'Leggi la mia scrittura (AI)', 'aria-label': 'Leggi la mia scrittura con l\'AI', onclick: leggiOra }, '✨'),
+    h('button', { title: 'Inserisci PDF, slide, foto o testo', 'aria-label': 'Inserisci PDF, slide, foto o testo', onclick: () => fileIns.click() }, '📎'),
+    pieno ? h('button' + (testoAperto ? '.attivo' : ''), { title: 'Testo e strumenti di scrittura', 'aria-label': 'Mostra il testo', onclick: () => apriTesto(!testoAperto) }, 'Aa') : null,
+    h('button', { title: pieno ? 'Esci dal tutto schermo' : 'Tutto schermo', 'aria-label': pieno ? 'Esci dal tutto schermo' : 'Tutto schermo', onclick: () => { if (pieno) history.back(); else mettiPieno(true); } }, pieno ? '⤡' : '⤢')] };
   function mostraModo(): void {
     svuota(scambio);
     scambio.append(...([['testo', '⌨️ Testo'], ['mano', '✍️ A mano']] as const).map(([k, t]) => h('button' + (modo === k ? '.attivo' : ''), { onclick: () => {
       modo = k; const i = imp() as any; i.modoAppunti = k; Stato.salva(i, true); mostraModo(); } }, t)));
-    zonaMano.hidden = modo !== 'mano'; leggi.hidden = modo !== 'mano';
-    if (modo === 'mano' && !pagina) pagina = paginaMano(zonaMano, ap.mano, modifica, sfondoModello, aggiungiCarta);
-    testo.placeholder = modo === 'mano' ? 'Qui sotto il testo: scrivilo, oppure tocca «✨ Leggi la mia scrittura» per trascrivere la pagina.' : testo.placeholder;
+    zonaMano.hidden = modo !== 'mano';
+    if (modo === 'mano' && !pagina) pagina = paginaMano(zonaMano, ap.mano, modifica, sfondoModello, opzMano);
+    testo.placeholder = modo === 'mano' ? 'Testo dell\'appunto: scrivilo qui, oppure tocca ✨ nella barra della penna per trascrivere la pagina.' : testo.placeholder;
   }
   mostraModo();
   // v0.33: modelli di pagina (solo per un appunto nuovo e vuoto)
   const modelli = a || ap.testo ? null : h('div.chips.appunto-modelli', null, h('span.tenue.piccolo', null, 'Modello:'), MODELLI_APPUNTO.map(md => h('button.chip' + (md.id === 'vuoto' ? '.attivo' : ''), { title: md.sotto, onclick: (e: Event) => {
     modelli!.querySelectorAll('.chip').forEach(c => c.classList.toggle('attivo', c === e.currentTarget));
     if (!testo.value.trim() || MODELLI_APPUNTO.some(x => x.testo === testo.value)) testo.value = md.testo;
-    if (pagina && !pagina.dati().t.length) { svuota(zonaMano); pagina = paginaMano(zonaMano, undefined, modifica, md.sf, aggiungiCarta); } else if (!pagina) sfondoModello = md.sf;
+    if (pagina && manoVuota(pagina.dati())) { svuota(zonaMano); pagina = paginaMano(zonaMano, undefined, modifica, md.sf, opzMano); } else if (!pagina) sfondoModello = md.sf;
     avviso(md.nome + ': ' + md.sotto, 2500);
   } }, md.nome)));
-  v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
+  v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, testo, anteprima, riass));
   aggiornaStato();
   setTimeout(() => { if (modo === 'mano' && !alRiassunto && a) return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
 }
 
 // ---------- Vista «Appunti» ----------
+const MINIATURE = new Map<string, string>();
+/** v0.36: miniatura della pagina a mano (cache per versione dell'appunto). */
+function miniaturaMano(a: Appunto): string {
+  const k = a.id + ':' + a.updatedAt; let u = MINIATURE.get(k);
+  if (!u) { const m = { ...a.mano!, h: Math.min(a.mano!.h, 1300) }; u = immagineMano(m, 360); MINIATURE.set(k, u);
+    if ((m.im || []).some(x => !imgPronta(x.s))) caricaImmaginiMano(m).then(() => { MINIATURE.delete(k); if (UI.scheda === 'appunti') disegna(); }); }
+  return u;
+}
 function vistaAppunti(): HTMLElement {
   const q = norm((UI as any).apCerca || '');
   const tutti = Appunti.tutti().filter(a => !q || norm(a.titolo + ' ' + a.testo).includes(q));
   const gruppi = new Map<string, Appunto[]>();
   for (const a of tutti) { const g = a.sub ? formaMateria(materiaDi(a.sub)) + ' ' + nomeMateria(materiaDi(a.sub)) : 'Senza step'; if (!gruppi.has(g)) gruppi.set(g, []); gruppi.get(g)!.push(a); }
+  const griglia = (UI as any).apVista !== 'elenco';
   const voce = (a: Appunto) => {
-    const n = Appunti.estraiCarte(a.testo).length, anteprima = a.testo.replace(/[#*_{}>`-]|::/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110);
+    const n = Appunti.estraiCarte(a.testo).length, anteprima = a.testo.replace(/[#*_{}>`-]|::/g, ' ').replace(/\s+/g, ' ').trim().slice(0, griglia ? 160 : 110);
+    const quando = fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' });
+    if (griglia) return lungo(h('button.nota-tessera', { onclick: () => apriAppunto(a) },
+      h('span.nota-anteprima' + (manoVuota(a.mano) ? '.testo' : ''), null, !manoVuota(a.mano) ? h('img', { src: miniaturaMano(a), alt: '', loading: 'lazy' }) : (anteprima || 'Appunto vuoto')),
+      h('span.nota-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo || 'Appunto'),
+      h('span.nota-sotto', null, quando + (a.sub ? ' · ' + Studio.etichetta(a.sub) : '') + (n ? ' · ' + n + ' carte' : ''))),
+      () => [{ t: 'Apri', ic: 'documento', f: () => apriAppunto(a) }, { t: 'Copri e ricorda', ic: 'cervello', f: () => apriCornell(a, true) },
+        n ? { t: 'Ripassa le sue carte', ic: 'carte', f: () => avviaCarte(['mz-ap-' + a.id.replace(/^ap-/, '')], a.titolo) } : null,
+        { t: 'Vista Cornell', ic: 'modello', f: () => apriCornell(a, false) }], a.titolo || 'Appunto');
     return h('button.voce-lista', { onclick: () => apriAppunto(a) }, h('span.voce-corpo', null,
-      h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, (a.mano && a.mano.t.length ? '✍️ ' : '') + (a.titolo || 'Appunto')),
-      h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' }) + (anteprima ? ' — ' + anteprima : ''))));
+      h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, (!manoVuota(a.mano) ? '✍️ ' : '') + (a.titolo || 'Appunto')),
+      h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + quando + (anteprima ? ' — ' + anteprima : ''))));
   };
+  const cambiaVista = h('div.segmenti.piccoli', null, [['griglia', 'Griglia'], ['elenco', 'Elenco']].map(([k, t]) => h('button' + ((k === 'griglia') === griglia ? '.attivo' : ''), { onclick: () => { (UI as any).apVista = k; disegna(); } }, t)));
   const campo = h('input.campo', { type: 'search', placeholder: 'Cerca negli appunti…', value: (UI as any).apCerca || '', oninput: (e: Event) => { (UI as any).apCerca = (e.target as HTMLInputElement).value; clearTimeout((vistaAppunti as any).t); (vistaAppunti as any).t = setTimeout(() => { disegna(); const c = document.querySelector<HTMLInputElement>('main input[type=search]'); if (c) { c.focus(); c.setSelectionRange(c.value.length, c.value.length); } }, 250); } });
   const nCarte = Carte.conta(['mz-appunti']);
   return h('div.pagina', null,
@@ -248,7 +311,10 @@ function vistaAppunti(): HTMLElement {
         Appunti.appuntiDaRipassare().length ? h('button.btn.neutro', { onclick: () => { const l = Appunti.appuntiDaRipassare(); apriCornell(l[0], true); } }, '🧠 Ripassa appunti (' + Appunti.appuntiDaRipassare().length + ')') : null,
         nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null),
       h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')),
-    tutti.length ? Array.from(gruppi.entries()).map(([g, l]) => h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))
+    tutti.length ? [h('div.note-testa', null, h('span.tenue.piccolo', null, tutti.length + (tutti.length === 1 ? ' appunto' : ' appunti')), cambiaVista),
+      ...Array.from(gruppi.entries()).map(([g, l]) => griglia
+        ? h('section.note-cartella', null, h('h2.gruppo-titolo.fuori', null, g + ' · ' + l.length), h('div.note-griglia', null, l.sort((x, y) => y.updatedAt - x.updatedAt).map(voce)))
+        : h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))]
       : h('section.card', null, h('div.vuoto', null, q ? 'Nessun appunto trovato.' : 'Ancora nessun appunto. Tocca «Nuovo appunto».')));
 }
 

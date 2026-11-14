@@ -72,3 +72,9 @@ Una riga per scelta importante: data · decisione · motivo.
 - Scorrimento orizzontale tra le sezioni della barra (la pagina segue il dito; escluse zone con scorrimento proprio, calendario, tela a mano).
 - Note a mano: zoom 100–400% con due dita (anteprima con transform, ridisegno nitido al rilascio; ctrl+rotella su PC), tela limitata a ~15 Mpx per iOS; barra strumenti fluttuante in basso (prima finiva sotto la testata del visore).
 - «Tieni premuto» (`08-lungo.ts`): menu di scorciatoie collegate su barra, voci del piano, tessere esami, Studia ora.
+
+## v0.36 — Blocco note stile iPad
+- Barra penna in alto, barra testo nel pannello "Aa": niente più sovrapposizioni.
+- Foglio a tutto schermo, zoom fino a 10×, righe/quadretti a passo costante sullo schermo.
+- Inserimento PDF (max 20 pagine, pdf.js da CDN: serve rete), immagini, txt/md; il testo del PDF va negli appunti.
+- Elenco note a griglia con miniature, raggruppate per materia.
