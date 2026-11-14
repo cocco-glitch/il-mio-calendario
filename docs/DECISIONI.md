@@ -92,3 +92,6 @@ Una riga per scelta importante: data · decisione · motivo.
 
 ## v0.38.1 — Fisica 2.4 (corpo rigido)
 Aggiunte 10 schede (8 prioritarie, 2 raffinamento: 2.4.4 e 2.4.5 scheda 3) alla banca Step 2 (180 domande, 12 immagini) e al piano. Fonti: slide UD2 parte IV (13-31) + esercitazione corpo rigido; pagine Scannicchio ancora da collocare.
+
+## v0.39 — Blocco note: penne, forme, stabilizzazione
+Scouting Freenotes / GoodNotes / Notability. Aggiunti: 4 penne (stilografica a pressione, biro, matita, tratteggio), spessore e stabilizzazione regolabili, colori personalizzati (+ ultimi 4), «disegna e tieni premuto» (linea/freccia/rettangolo/triangolo/cerchio/ellisse che poi si ruota e ridimensiona tenendo la penna), forma automatica, strumento Forme con riempimento, evidenziatore che si raddrizza, gomma parziale, sfondo a puntini, lazo con copia/incolla tra appunti, duplica e ricolora, gesti 2 dita = annulla e 3 dita = ripeti, clic e vibrazione all'aggancio. Preferenze in localStorage «pref-mano». Formato tratto retrocompatibile (5° campo = riempimento). Test: test/penne.py.
