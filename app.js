@@ -3122,7 +3122,8 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, bollaCalcolo, testo, anteprima, riass));
     aggiornaStato();
     setTimeout(() => { if (modo === 'mano' && !alRiassunto && a)
-        return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto)
+        return; const el = alRiassunto ? riass : a ? testo : titolo; const att = document.activeElement; if (att && att !== document.body && att.matches('input, textarea'))
+        return; el.focus(); if (alRiassunto)
         el.scrollIntoView({ block: 'center' }); }, 80);
 }
 // ---------- Vista «Appunti» ----------
@@ -6162,7 +6163,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     let strumento = 'penna', colore = '#1f2a44', dito = !matchMedia('(pointer: fine), (hover: hover)').matches && !('ontouchstart' in window && navigator.maxTouchPoints > 1 && /iPad|Macintosh/.test(navigator.userAgent));
     let penna = false; // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
     const cv = h('canvas.mano-tela'), g = cv.getContext('2d', { alpha: true });
-    const vivo = h('canvas.mano-vivo'), gv = (vivo.getContext('2d', { desynchronized: true }) || vivo.getContext('2d')); // bassa latenza della penna su Android
+    const vivo = h('canvas.mano-vivo'), gv = vivo.getContext('2d'); // v0.41.3: niente «desynchronized»: su Android rende la tela opaca (foglio nero)
     // la tela è grande quanto la parte visibile (vista «sticky»): nitida a qualunque ingrandimento
     const vista = h('div.mano-vista', null, cv, vivo);
     const box = h('div.mano-box', null, vista);
@@ -10910,7 +10911,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.41.2';
+const VERSIONE = '0.41.3';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
