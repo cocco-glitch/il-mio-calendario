@@ -3008,7 +3008,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
             }
             modifica();
             salvaOra();
-            avviso('📎 ' + r.pagine.length + (r.pagine.length === 1 ? ' pagina inserita' : ' pagine inserite') + (r.testo.trim() ? ' · testo copiato sotto: ✨ crea domande e carte' : '') + '. Scrivici sopra con la penna.', 6000, r.testo.trim() ? () => aiDomande(Stato.prendi(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + rr.length + ' domande aggiunte.'); }) : undefined);
+            avviso('📎 ' + r.pagine.length + (r.pagine.length === 1 ? ' pagina inserita' : ' pagine inserite') + (r.testo.trim() ? ' · testo copiato sotto: ✨ crea domande e carte' : '') + '. Scrivici sopra con la penna.', 6000, r.testo.trim() ? () => aiDomande(Stato.prendi(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + rr.length + ' domande aggiunte.'); }, { nome, testo: r.testo }) : undefined);
         }
         catch (e) {
             avviso('Non riesco ad aprire «' + nome + '»: ' + (e && e.message || e), 8000);
@@ -3151,8 +3151,9 @@ function apriCornell(a, copri = false) {
 }
 // ---------- AI (Groq) sugli appunti ----------
 /** Propone domande-flashcard dal testo dell'appunto; scegli quali tenere: diventano righe «::». */
-async function aiDomande(a, dopo) {
-    if (!a.testo.trim()) {
+/** fuoco (v0.37): testo di un PDF/slide appena inserito → carte su QUEL testo, non sull'inizio dell'appunto. */
+async function aiDomande(a, dopo, fuoco) {
+    if (!a.testo.trim() && !fuoco) {
         avviso('Scrivi prima qualcosa.');
         return;
     }
@@ -3160,13 +3161,15 @@ async function aiDomande(a, dopo) {
     let d;
     try {
         d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor di ' + Spiega.materia(a.titolo + ' ' + (a.sub ? nomeMateria(materiaDi(a.sub)) : '')) + ' per il semestre filtro di Medicina. Crei flashcard di ripasso SOLO dal testo dello studente, in italiano. Regole: un\'idea per carta; domanda breve e precisa; risposta di poche parole o una formula; niente domande sì/no; non inventare fatti che non sono nel testo. Rispondi in JSON: {"domande":[{"q":"...","r":"..."}]}' },
-            { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nAppunto:\n' + a.testo.slice(0, 9000) + '\n\nCrea da 4 a 8 flashcard sui concetti più importanti che NON hanno già una riga «domanda :: risposta».' }], 0.3);
+            fuoco
+                ? { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nTesto delle slide/PDF «' + fuoco.nome + '»:\n' + fuoco.testo.slice(0, 12000) + '\n\nCrea da ' + (fuoco.testo.length > 4000 ? '8 a 12' : '4 a 8') + ' flashcard sui concetti, definizioni e formule più importanti di QUESTO testo; ignora intestazioni ripetute, numeri di pagina e diciture legali.' }
+                : { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nAppunto:\n' + a.testo.slice(0, 9000) + '\n\nCrea da 4 a 8 flashcard sui concetti più importanti che NON hanno già una riga «domanda :: risposta».' }], 0.3);
     }
     catch (e) {
         avviso(String(e.message || e), 8000);
         return;
     }
-    const lista = (d && d.domande || []).filter((x) => x && x.q && x.r).slice(0, 10);
+    const lista = (d && d.domande || []).filter((x) => x && x.q && x.r).slice(0, 12);
     if (!lista.length) {
         avviso('Nessuna domanda proposta.');
         return;
@@ -6215,10 +6218,13 @@ function sezioneSottostepDeboli() {
 // Il risultato finale passa da Cattura.salva come per le schede HTML (progresso, ripassi, errori).
 const Banca = (() => {
     const file = new Map();
-    function carica(step) {
-        if (!file.has(step))
-            file.set(step, fetch('studio/banca/banca-step-' + step + '.json').then(r => r.ok ? r.json() : null).catch(() => null));
-        return file.get(step);
+    const scarica = (nome) => fetch('studio/banca/' + nome + '.json').then(r => r.ok ? r.json() : null).catch(() => null);
+    /** v0.37: con la materia scarica solo la sua parte (banca-step-N-C.json, ~1/3), altrimenti il file intero. */
+    function carica(step, mat) {
+        const k = step + '-' + (mat || '');
+        if (!file.has(k))
+            file.set(k, mat ? scarica('banca-step-' + step + '-' + mat).then(b => b || carica(step)) : scarica('banca-step-' + step));
+        return file.get(k);
     }
     const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++)
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
@@ -6298,7 +6304,7 @@ const Banca = (() => {
     function nascoste(sk) { return Stato.tutti('modq').filter(r => r.sk === sk && r.nascosta && !r.deleted); }
     /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
     async function scheda(pk, m, micro, s) {
-        const B = await carica(parseInt(micro, 10));
+        const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
         if (B && B.schede[s.id])
             return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
         const K = 'imc-banca-' + s.id;
@@ -6357,6 +6363,16 @@ const QuizApp = (() => {
             r.scelte[o] = (r.scelte[o] || 0) + 1;
         }
         Stato.salva(r, true);
+        // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
+        if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {
+            const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o[oi];
+            if (r.scelte && r.scelte[o] === 2) {
+                const perche = v.d.ew && v.d.ew[oi - 1] ? v.d.ew[oi - 1] : '';
+                const n = Carte.daErrori([{ schedaId: v.d.sk, q: testoPiano(v.d.q) + '\n\nTrappola in cui sei caduto 2 volte: «' + testoPiano(v.d.o[oi]) + '»', giusta: testoPiano(v.d.o[0]), spieg: perche ? 'Perché «' + testoPiano(v.d.o[oi]) + '» è sbagliata: ' + perche : '' }]);
+                if (n.length)
+                    avviso('🪤 Stessa trappola per la seconda volta: aggiunta alle flashcard degli errori.', 5000);
+            }
+        }
     }
     /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
     async function apri(pk, m, micro, s, gen) {
@@ -9798,7 +9814,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.37.0';
+const VERSIONE = '0.38.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
