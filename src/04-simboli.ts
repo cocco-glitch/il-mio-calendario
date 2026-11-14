@@ -56,6 +56,33 @@ Object.assign(ICONE, {
   pausa: '<path d="M8.5 5v14M15.5 5v14" stroke-width="2.6"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
   carica: '<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M4.5 14.5v5h15v-5"/>',
+  // v0.41.1: icone delle nuove funzioni (blocco note, audio, calcoli, menu)
+  microfono: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5M9 20.5h6"/>',
+  righello: '<path d="M3.5 15.5l12-12 5 5-12 12z"/><path d="M7 12l1.8 1.8M9.8 9.2l1.2 1.2M12.6 6.4l1.8 1.8M15.4 3.6"/>',
+  calcolo: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 14.5v3" stroke-width="2.2"/>',
+  cursori: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  duplica: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-3a1 1 0 0 0-1-1h-9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3"/>',
+  altro: '<path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/>',
+  giu: '<path d="M7 10l5 5 5-5"/>',
+  su: '<path d="M7 14l5-5 5 5"/>',
+  linea: '<path d="M5 19L19 5"/>',
+  freccia: '<path d="M5 19L19 5M10 5h9v9"/>',
+  rett: '<rect x="4" y="6.5" width="16" height="11" rx="1.5"/>',
+  cerchio: '<circle cx="12" cy="12" r="7.5"/>',
+  triangolo: '<path d="M12 5l8 14H4z"/>',
+  puntini: '<path d="M7 7h.01M12 7h.01M17 7h.01M7 12h.01M12 12h.01M17 12h.01M7 17h.01M12 17h.01M17 17h.01" stroke-width="2.4"/>',
+  griglia: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M4.5 9.5h15M4.5 14.5h15M9.5 4.5v15M14.5 4.5v15"/>',
+  righe: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M7.5 9h9M7.5 12.5h9M7.5 16h9"/>',
+  foglio: '<rect x="5.5" y="3.5" width="13" height="17" rx="2"/>',
+  cornell: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M9.5 4.5v10M4.5 14.5h15"/>',
+  esercizio: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M4.5 8.5h15M4.5 11.5h15M4.5 16.5h15"/>',
+  foglionero: '<rect x="5.5" y="3.5" width="13" height="17" rx="2" fill="currentColor"/>',
+  tratteggio: '<path d="M4 12h3M10.5 12h3M17 12h3" stroke-width="2.4"/>',
+  ruota: '<path d="M19 12a7 7 0 1 1-2.1-5"/><path d="M19 4.5V8h-3.5"/>',
+  annulla: '<path d="M9 7.5L4.5 12 9 16.5"/><path d="M4.5 12H14a5.5 5.5 0 0 1 0 11"/>',
+  rifai: '<path d="M15 7.5l4.5 4.5-4.5 4.5"/><path d="M19.5 12H10a5.5 5.5 0 0 0 0 11"/>',
+  espandi: '<path d="M14 4.5h5.5V10M10 19.5H4.5V14M19.5 4.5L13.5 10.5M4.5 19.5l6-6"/>',
+  riduci: '<path d="M19.5 10H14V4.5M4.5 14H10v5.5M14 10l5.5-5.5M10 14l-5.5 5.5"/>',
 });
 
 /** emoji → icona (null = l'emoji viene solo tolto, es. le faccine dei voti). */
@@ -67,6 +94,7 @@ const SIMBOLI: Record<string, string | null> = {
   '📁': 'cartella', '📂': 'cartella', '🧩': 'tassello', '📋': 'appunti', '🧪': 'provetta', '☝': 'dito', '⌨': 'tastiera', '💡': 'lampadina',
   '🛟': 'salvagente', '🔎': 'cerca', '🔍': 'cerca', '🎯': 'bersaglio', '📊': 'grafico', '⚙': 'ingranaggio', '☑': 'spunta', '✒': 'penna',
   '🖍': 'evidenziatore', '🧽': 'gomma', '➰': 'lazo', '🖼': 'immagine', '📱': 'telefono', '📤': 'carica', '🔔': 'campana', '★': 'stella', '⭐': 'stella', '🃏': 'carte', '▶': 'play', '⏸': 'pausa', '⏹': 'stop',
+  '🎙': 'microfono', '📏': 'righello', '🧮': 'calcolo', '⧉': 'duplica', '⋯': 'altro', '▾': 'giu', '▴': 'su', '╱': 'linea', '↗': 'freccia', '▭': 'rett', '◯': 'cerchio', '△': 'triangolo', '⁙': 'puntini', '▦': 'griglia', '☰': 'righe', '▢': 'foglio', '◧': 'cornell', '▤': 'esercizio', '■': 'foglionero', '┄': 'tratteggio', '⟳': 'ruota', '↶': 'annulla', '↷': 'rifai', '⤢': 'espandi', '⤡': 'riduci', '🖊': 'penna',
   '😵': null, '😕': null, '😐': null, '🙂': null, '🔥': null, '😌': null,
 };
 const RE_SIMBOLI = new RegExp('(' + Object.keys(SIMBOLI).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\uFE0F?\\s?', 'gu');

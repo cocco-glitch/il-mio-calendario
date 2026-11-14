@@ -91,7 +91,7 @@ const Lezioni = (() => {
   function inMarkdown(seg: Segmento[], titolo: string): string {
     const par: string[] = []; let cur = '', da = 0;
     seg.forEach((x, i) => { if (!cur) da = x.s; cur += (cur ? ' ' : '') + x.t; if (x.e - da > 60 || i === seg.length - 1) { par.push('[' + mmss(da) + '] ' + cur); cur = ''; } });
-    return '## 🎙 ' + titolo + '\n' + par.join('\n\n') + '\n';
+    return '## Lezione audio · ' + titolo + '\n' + par.join('\n\n') + '\n';
   }
   return { processa, inMarkdown, mmss };
 })();
@@ -112,26 +112,39 @@ async function lezioneAudio(contesto: { titolo: string; step: string; testo: str
   const tipo = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(t => (window as any).MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
   const rec = new MediaRecorder(st, { ...(tipo ? { mimeType: tipo } : {}), audioBitsPerSecond: 32000 }), pezzi: Blob[] = [];
   rec.ondataavailable = e => { if (e.data.size) pezzi.push(e.data); };
-  const t0 = Date.now(), orologio = h('div.audio-orologio', null, '0:00'), punto = h('span.audio-punto');
+  // v0.41.1: registrazione IN BACKGROUND: una pillola fissa in alto, puoi continuare a scrivere appunti
+  const t0 = Date.now(), orologio = h('span.audio-orologio', null, '0:00'), punto = h('span.audio-punto');
   let wake: any = null; try { wake = await (navigator as any).wakeLock?.request('screen'); } catch (_) { /* non supportato */ }
-  const tic = setInterval(() => { const sec = (Date.now() - t0) / 1000; orologio.textContent = Lezioni.mmss(sec); }, 500);
-  let pausa = false;
-  const bPausa = h('button.btn.neutro', { onclick: () => { if (pausa) { rec.resume(); bPausa.textContent = '⏸ Pausa'; } else { rec.pause(); bPausa.textContent = '▶ Riprendi'; } pausa = !pausa; punto.classList.toggle('fermo', pausa); } }, '⏸ Pausa');
-  const fine = (usa: boolean) => { clearInterval(tic); try { wake && wake.release(); } catch (_) { /* */ }
-    rec.onstop = () => { st.getTracks().forEach(t => t.stop()); if (usa) elabora(new Blob(pezzi, { type: rec.mimeType || 'audio/mp4' }), 'Lezione ' + new Date().toLocaleDateString('it-IT')); }; rec.stop(); };
+  let pausa = false, inPausa = 0, daPausa = 0;
+  const tic = setInterval(() => { orologio.textContent = Lezioni.mmss(((pausa ? daPausa : Date.now()) - t0 - inPausa) / 1000); }, 500);
+  const bPausa = h('button', { type: 'button', title: 'Pausa', 'aria-label': 'Pausa', onclick: () => { if (pausa) { rec.resume(); inPausa += Date.now() - daPausa; bPausa.textContent = '⏸'; } else { rec.pause(); daPausa = Date.now(); bPausa.textContent = '▶'; } pausa = !pausa; punto.classList.toggle('fermo', pausa); } }, '⏸');
+  const pillola = h('div.audio-pillola', { role: 'status', 'aria-label': 'Registrazione in corso' }, punto, orologio,
+    bPausa,
+    h('button.audio-fine', { type: 'button', title: 'Fine e trascrivi', 'aria-label': 'Fine e trascrivi', onclick: () => fine(true) }, '⏹', h('span', null, 'Fine')),
+    h('button', { type: 'button', title: 'Annulla la registrazione', 'aria-label': 'Annulla la registrazione', onclick: async () => { if (await chiedi('Annullare la registrazione?', [{ testo: 'Annulla e butta l\'audio', valore: 'si', pericolo: true }]) === 'si') { fine(false); avviso('Registrazione annullata.'); } } }, '🗑'));
+  document.body.appendChild(pillola);
+  const avvisoUscita = () => { if (document.hidden) avviso('🎙 La registrazione continua solo con l\'app aperta: torna qui se iOS la mette in pausa.', 6000); };
+  document.addEventListener('visibilitychange', avvisoUscita);
   let finito = false;
-  const fs = foglio({ titolo: '🎙 Registrazione', allaChiusura: () => { if (!finito) { finito = true; fine(false); avviso('Registrazione annullata.'); } }, corpo: h('div.modulo.audio-reg', null, h('div.audio-live', null, punto, orologio),
-    h('div.tenue.piccolo', null, 'Tieni lo schermo acceso e l\'app aperta. Qualità «voce» (circa 14 MB all\'ora).'),
-    h('div.bottoni', null, bPausa, h('button.btn', { onclick: () => { finito = true; fine(true); fs.chiudi(); } }, '⏹ Fine e trascrivi'))) });
+  function fine(usa: boolean): void {
+    if (finito) return; finito = true;
+    clearInterval(tic); document.removeEventListener('visibilitychange', avvisoUscita); pillola.remove(); try { wake && wake.release(); } catch (_) { /* */ }
+    rec.onstop = () => { st.getTracks().forEach(t => t.stop()); if (usa) elabora(new Blob(pezzi, { type: rec.mimeType || 'audio/mp4' }), 'Lezione ' + new Date().toLocaleDateString('it-IT')); };
+    rec.stop();
+  }
   rec.start(10000);
+  avviso('🎙 Registro in sottofondo: continua pure a scrivere. Tocca «Fine» in basso quando la lezione finisce.', 5000);
 
   async function elabora(b: Blob, nome: string): Promise<void> {
-    const stato = h('div.tenue'), barra = h('div.audio-barra', null, h('div'));
-    const fsP = foglio({ titolo: '🎙 ' + nome, corpo: h('div.modulo', null, stato, barra) });
+    // la trascrizione lavora in sottofondo (pillola), poi un avviso apre la revisione
+    const stato = h('span.audio-stato', null, 'Preparo…'), pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), stato);
+    document.body.appendChild(pill);
     try {
       const r = await Lezioni.processa(b, { ...contesto, titolo: contesto.titolo || nome }, t => { stato.textContent = t; });
-      fsP.chiudi(); rivedi(b, nome, r);
-    } catch (e: any) { stato.textContent = '⚠️ ' + (e && e.message || e); }
+      try { Tocco.clic(1); } catch (_) { /* */ } if (navigator.vibrate) navigator.vibrate([10, 60, 10]);
+      svuota(pill); pill.classList.remove('lavora'); pill.classList.add('pronta');   // resta finché non la apri
+      pill.append(h('button.audio-fine', { type: 'button', onclick: () => { pill.remove(); rivedi(b, nome, r); } }, '✓ Trascrizione pronta' + (r.corr.length ? ' · ' + r.corr.length + ' correzioni' : '') + ' — Rivedi'));
+    } catch (e: any) { stato.textContent = '⚠️ ' + (e && e.message || e); pill.append(h('button', { type: 'button', 'aria-label': 'Chiudi', onclick: () => pill.remove() }, '✕')); }
   }
   function rivedi(b: Blob, nome: string, r: { seg: Segmento[]; corr: { i: number; prima: string; dopo: string; nota: string; ok: boolean }[] }): void {
     const url = URL.createObjectURL(b), player = h('audio', { controls: true, src: url, preload: 'metadata', style: { width: '100%' } }) as HTMLAudioElement;

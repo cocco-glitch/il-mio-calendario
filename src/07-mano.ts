@@ -538,7 +538,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
   const COLORI = ['#1f2a44', '#1c7ed6', '#e03131', '#2f9e44', '#f59f00'];
   function aggiornaBarra(): void {
     svuota(barra);
-    const b = (t: string, att: boolean, f: () => void, titolo: string) => h('button' + (att ? '.attivo' : ''), { title: titolo, 'aria-label': titolo, onclick: () => { f(); aggiornaBarra(); } }, t);
+    const b = (t: string | Node, att: boolean, f: () => void, titolo: string) => h('button' + (att ? '.attivo' : ''), { title: titolo, 'aria-label': titolo, onclick: () => { f(); aggiornaBarra(); } }, t);
     barra.classList.toggle('chiusa', PREF_MANO.barraChiusa);
     barra.append(
       h('button.mano-tendina.sempre', { title: 'Strumenti', 'aria-label': PREF_MANO.barraChiusa ? 'Apri gli strumenti' : 'Chiudi gli strumenti', 'aria-expanded': String(!PREF_MANO.barraChiusa), onclick: () => { PREF_MANO.barraChiusa = !PREF_MANO.barraChiusa; if (PREF_MANO.barraChiusa) opzioni = ''; salvaPrefMano(); aggiornaBarra(); } }, PREF_MANO.barraChiusa ? '▾' : '▴'),
@@ -547,7 +547,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
       b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'),
       b('➰', strumento === 'lazo', () => { if (strumento === 'lazo') opzioni = opzioni === 'lazo' ? '' : 'lazo'; strumento = 'lazo'; }, 'Lazo: cerchia tratti o allegati (tocca di nuovo per scegliere cosa selezionare)'),
       b(({ linea: '╱', freccia: '↗', rett: '▭', ellisse: '◯', triangolo: '△' } as any)[PREF_MANO.forma], strumento === 'forma', () => { if (strumento === 'forma') opzioni = opzioni === 'forma' ? '' : 'forma'; strumento = 'forma'; annullaSel(); }, 'Forme: trascina per disegnare (tocca di nuovo per sceglierle)'),
-      b('⚙︎', opzioni === 'penna', () => { opzioni = opzioni === 'penna' ? '' : 'penna'; }, 'Penna: tipo, spessore, stabilizzazione, forme'),
+      b(icona('cursori', 18), opzioni === 'penna', () => { opzioni = opzioni === 'penna' ? '' : 'penna'; }, 'Penna: tipo, spessore, stabilizzazione, forme'),
       h('span.mano-sep'),
       ...COLORI.concat(PREF_MANO.extra).map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma') strumento = 'penna'; aggiornaBarra(); } })),
       (() => { const i = h('input', { type: 'color', value: colore, 'aria-label': 'Colore personalizzato', style: { position: 'absolute', opacity: '0', width: '1px', height: '1px' }, onchange: () => { colore = i.value; if (!COLORI.includes(colore) && !PREF_MANO.extra.includes(colore)) { PREF_MANO.extra = [colore, ...PREF_MANO.extra].slice(0, 4); salvaPrefMano(); } if (strumento === 'gomma') strumento = 'penna'; aggiornaBarra(); } }) as HTMLInputElement;
