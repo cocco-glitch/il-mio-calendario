@@ -2670,7 +2670,8 @@ const Appunti = (() => {
         const cart = await Drive.sottocartella('Appunti');
         const nome = (a.titolo || 'Appunto').replace(/[\\/:*?"<>|]/g, '-') + '.md';
         const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n' + (a.riassunto ? '\n---\n**Riassunto:** ' + a.riassunto + '\n' : '');
-        if (a.mano && a.mano.t.length) { // v0.31: anche la pagina a mano, come PNG
+        if (!manoVuota(a.mano)) { // v0.31: anche la pagina a mano, come PNG
+            await caricaImmaginiMano(a.mano);
             const png = await (await fetch(immagineMano(a.mano, 1400))).blob();
             a.manoPng = await Drive.carica(nome.replace(/\.md$/, '.png'), cart, png, 'image/png', a.manoPng);
         }
@@ -2765,7 +2766,7 @@ async function chiediDrive(a, forza = false) {
             avviso('Collega Google Drive da Altro.');
         return;
     }
-    const s = await chiedi('Salvare «' + a.titolo + '» su Drive?', [{ testo: a.drive ? '☁︎ Aggiorna la copia' : '☁︎ Salva su Drive', valore: 'si' }], 'Copia .md' + (a.mano && a.mano.t.length ? ' + pagina a mano in PNG' : '') + ' in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
+    const s = await chiedi('Salvare «' + a.titolo + '» su Drive?', [{ testo: a.drive ? '☁︎ Aggiorna la copia' : '☁︎ Salva su Drive', valore: 'si' }], 'Copia .md' + (!manoVuota(a.mano) ? ' + pagina a mano in PNG' : '') + ' in «Calendario personale/Appunti». L\'appunto resta comunque salvato nell\'app.');
     if (s !== 'si')
         return;
     if (serveGoogle())
@@ -2782,7 +2783,7 @@ async function chiediDrive(a, forza = false) {
 function apriAppunto(a, extra = {}, alRiassunto = false) {
     const ap = a ? { ...a } : Appunti.nuovo(extra);
     let cambiato = false;
-    const v = visore(a ? '📝 Appunto' : '📝 Nuovo appunto', () => { if (cambiato)
+    const v = visore(a ? '📝 Appunto' : '📝 Nuovo appunto', () => { document.body.classList.remove('mano-pieno'); if (cambiato)
         fine();
     else if (a)
         chiediDrive(Stato.prendi(ap.id) || ap); disegna(); });
@@ -2791,7 +2792,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '');
     const stato = h('div.appunto-stato.tenue.piccolo');
     // v0.31: modalità a mano (Pencil) o testo; la pagina a mano sta sopra, il testo (anche trascritto) sotto
-    let modo = ap.mano && ap.mano.t.length ? 'mano' : (imp().modoAppunti === 'mano' ? 'mano' : 'testo');
+    let modo = !manoVuota(ap.mano) ? 'mano' : (imp().modoAppunti === 'mano' ? 'mano' : 'testo');
     const zonaMano = h('div.mano-zona');
     let pagina = null, sfondoModello;
     const aggiungiCarta = (riga) => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n' : '') + riga + '\n'; modifica(); salvaOra(); avviso('🃏 Flashcard aggiunta al testo dell\'appunto.'); };
@@ -2804,7 +2805,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     let timer = 0;
     const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (pagina) {
         const d = pagina.dati();
-        ap.mano = d.t.length ? d : undefined;
+        ap.mano = manoVuota(d) ? undefined : d;
     } if (!ap.testo.trim() && !ap.titolo.trim() && !ap.mano)
         return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
     const modifica = () => { cambiato = true; aggiornaStato(); clearTimeout(timer); timer = setTimeout(salvaOra, 1500); };
@@ -2893,18 +2894,102 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
             }
         } }, '⋯'));
     const scambio = h('div.segmenti.appunto-modo');
-    const leggi = h('button.btn.mano-leggi', { onclick: () => {
+    const leggiOra = () => {
+        salvaOra();
+        if (!pagina)
+            return;
+        leggiScrittura(pagina.dati(), (t, come) => {
+            testo.value = come === 'sostituisci' ? t + '\n' : testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + t + '\n';
+            modifica();
             salvaOra();
-            if (!pagina)
-                return;
-            leggiScrittura(pagina.dati(), (t, come) => {
-                testo.value = come === 'sostituisci' ? t + '\n' : testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + t + '\n';
-                modifica();
-                salvaOra();
-                const n = Appunti.estraiCarte(testo.value).length;
-                avviso('✓ Testo aggiunto' + (n ? ' · 🃏 ' + n + ' carte' : ''));
-            });
-        } }, '✨ Leggi la mia scrittura');
+            const n = Appunti.estraiCarte(testo.value).length;
+            avviso('✓ Testo aggiunto' + (n ? ' · 🃏 ' + n + ' carte' : ''));
+        });
+    };
+    // v0.36: tutto schermo (come Note di iPad) con il pannello del testo a scomparsa
+    let pieno = false, testoAperto = false;
+    const pannello = h('div.mano-pannello');
+    const segnaBarra = document.createComment('barra'), segnaTesto = document.createComment('testo');
+    function mettiPieno(on) {
+        pieno = on;
+        zonaMano.classList.toggle('pieno', on);
+        document.body.classList.toggle('mano-pieno', on);
+        if (!on && testoAperto)
+            apriTesto(false);
+        if (on) {
+            zonaMano.append(pannello);
+            history.pushState({ manoPieno: 1 }, '');
+        }
+        else
+            pannello.remove();
+        pagina && pagina.aggiornaBarra();
+        setTimeout(() => pagina && pagina.ridisegna(), 30);
+    }
+    function apriTesto(on) {
+        testoAperto = on;
+        pannello.classList.toggle('aperto', on);
+        if (on) {
+            barra.before(segnaBarra);
+            testo.before(segnaTesto);
+            pannello.append(barra, testo);
+            setTimeout(() => testo.focus(), 50);
+        }
+        else {
+            segnaBarra.replaceWith(barra);
+            segnaTesto.replaceWith(testo);
+        }
+        pagina && pagina.aggiornaBarra();
+        setTimeout(() => pagina && pagina.ridisegna(), 30);
+    }
+    window.addEventListener('popstate', () => { if (pieno)
+        mettiPieno(false); });
+    const fileIns = h('input', { type: 'file', accept: '.pdf,image/*,.txt,.md,text/plain,text/markdown', multiple: true, hidden: true, onchange: async () => {
+            const files = Array.from(fileIns.files || []);
+            fileIns.value = '';
+            for (const f of files)
+                await allegaFile(f);
+        } });
+    async function allegaFile(f) {
+        const nome = f.name.replace(/\.[^.]+$/, '');
+        if (/\.(txt|md)$/i.test(f.name) || f.type.startsWith('text/')) {
+            const t = await f.text();
+            testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + '## ' + nome + '\n' + t.trim() + '\n';
+            modifica();
+            salvaOra();
+            avviso('✓ Testo di «' + nome + '» aggiunto all\'appunto');
+            return;
+        }
+        if (modo !== 'mano') {
+            modo = 'mano';
+            mostraModo();
+        }
+        if (!pagina)
+            return;
+        try {
+            avviso('📎 Preparo «' + nome + '»…', 20000);
+            const r = /\.pdf$/i.test(f.name) || f.type === 'application/pdf' ? await pdfInImmagini(f) : { pagine: [await fotoInImmagine(f)], testo: '' };
+            pagina.inserisci(r.pagine);
+            if (r.testo.trim()) {
+                testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + '## Dal file: ' + nome + '\n' + r.testo.trim() + '\n';
+            }
+            modifica();
+            salvaOra();
+            avviso('📎 ' + r.pagine.length + (r.pagine.length === 1 ? ' pagina inserita' : ' pagine inserite') + (r.testo.trim() ? ' · testo copiato sotto: ✨ crea domande e carte' : '') + '. Scrivici sopra con la penna.', 6000, r.testo.trim() ? () => aiDomande(Stato.prendi(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + rr.length + ' domande aggiunte.'); }) : undefined);
+        }
+        catch (e) {
+            avviso('Non riesco ad aprire «' + nome + '»: ' + (e && e.message || e), 8000);
+        }
+    }
+    const opzMano = { allaCarta: aggiungiCarta, extra: () => [
+            h('span.mano-sep'),
+            h('button', { title: 'Leggi la mia scrittura (AI)', 'aria-label': 'Leggi la mia scrittura con l\'AI', onclick: leggiOra }, '✨'),
+            h('button', { title: 'Inserisci PDF, slide, foto o testo', 'aria-label': 'Inserisci PDF, slide, foto o testo', onclick: () => fileIns.click() }, '📎'),
+            pieno ? h('button' + (testoAperto ? '.attivo' : ''), { title: 'Testo e strumenti di scrittura', 'aria-label': 'Mostra il testo', onclick: () => apriTesto(!testoAperto) }, 'Aa') : null,
+            h('button', { title: pieno ? 'Esci dal tutto schermo' : 'Tutto schermo', 'aria-label': pieno ? 'Esci dal tutto schermo' : 'Tutto schermo', onclick: () => { if (pieno)
+                    history.back();
+                else
+                    mettiPieno(true); } }, pieno ? '⤡' : '⤢')
+        ] };
     function mostraModo() {
         svuota(scambio);
         scambio.append(...[['testo', '⌨️ Testo'], ['mano', '✍️ A mano']].map(([k, t]) => h('button' + (modo === k ? '.attivo' : ''), { onclick: () => {
@@ -2915,10 +3000,9 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
                 mostraModo();
             } }, t)));
         zonaMano.hidden = modo !== 'mano';
-        leggi.hidden = modo !== 'mano';
         if (modo === 'mano' && !pagina)
-            pagina = paginaMano(zonaMano, ap.mano, modifica, sfondoModello, aggiungiCarta);
-        testo.placeholder = modo === 'mano' ? 'Qui sotto il testo: scrivilo, oppure tocca «✨ Leggi la mia scrittura» per trascrivere la pagina.' : testo.placeholder;
+            pagina = paginaMano(zonaMano, ap.mano, modifica, sfondoModello, opzMano);
+        testo.placeholder = modo === 'mano' ? 'Testo dell\'appunto: scrivilo qui, oppure tocca ✨ nella barra della penna per trascrivere la pagina.' : testo.placeholder;
     }
     mostraModo();
     // v0.33: modelli di pagina (solo per un appunto nuovo e vuoto)
@@ -2926,21 +3010,36 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
             modelli.querySelectorAll('.chip').forEach(c => c.classList.toggle('attivo', c === e.currentTarget));
             if (!testo.value.trim() || MODELLI_APPUNTO.some(x => x.testo === testo.value))
                 testo.value = md.testo;
-            if (pagina && !pagina.dati().t.length) {
+            if (pagina && manoVuota(pagina.dati())) {
                 svuota(zonaMano);
-                pagina = paginaMano(zonaMano, undefined, modifica, md.sf, aggiungiCarta);
+                pagina = paginaMano(zonaMano, undefined, modifica, md.sf, opzMano);
             }
             else if (!pagina)
                 sfondoModello = md.sf;
             avviso(md.nome + ': ' + md.sotto, 2500);
         } }, md.nome)));
-    v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, leggi, barra, testo, anteprima, riass));
+    v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, testo, anteprima, riass));
     aggiornaStato();
     setTimeout(() => { if (modo === 'mano' && !alRiassunto && a)
         return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto)
         el.scrollIntoView({ block: 'center' }); }, 80);
 }
 // ---------- Vista «Appunti» ----------
+const MINIATURE = new Map();
+/** v0.36: miniatura della pagina a mano (cache per versione dell'appunto). */
+function miniaturaMano(a) {
+    const k = a.id + ':' + a.updatedAt;
+    let u = MINIATURE.get(k);
+    if (!u) {
+        const m = { ...a.mano, h: Math.min(a.mano.h, 1300) };
+        u = immagineMano(m, 360);
+        MINIATURE.set(k, u);
+        if ((m.im || []).some(x => !imgPronta(x.s)))
+            caricaImmaginiMano(m).then(() => { MINIATURE.delete(k); if (UI.scheda === 'appunti')
+                disegna(); });
+    }
+    return u;
+}
 function vistaAppunti() {
     const q = norm(UI.apCerca || '');
     const tutti = Appunti.tutti().filter(a => !q || norm(a.titolo + ' ' + a.testo).includes(q));
@@ -2951,16 +3050,26 @@ function vistaAppunti() {
             gruppi.set(g, []);
         gruppi.get(g).push(a);
     }
+    const griglia = UI.apVista !== 'elenco';
     const voce = (a) => {
-        const n = Appunti.estraiCarte(a.testo).length, anteprima = a.testo.replace(/[#*_{}>`-]|::/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110);
-        return h('button.voce-lista', { onclick: () => apriAppunto(a) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, (a.mano && a.mano.t.length ? '✍️ ' : '') + (a.titolo || 'Appunto')), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' }) + (anteprima ? ' — ' + anteprima : ''))));
+        const n = Appunti.estraiCarte(a.testo).length, anteprima = a.testo.replace(/[#*_{}>`-]|::/g, ' ').replace(/\s+/g, ' ').trim().slice(0, griglia ? 160 : 110);
+        const quando = fmt(new Date(a.updatedAt), { day: 'numeric', month: 'short' });
+        if (griglia)
+            return lungo(h('button.nota-tessera', { onclick: () => apriAppunto(a) }, h('span.nota-anteprima' + (manoVuota(a.mano) ? '.testo' : ''), null, !manoVuota(a.mano) ? h('img', { src: miniaturaMano(a), alt: '', loading: 'lazy' }) : (anteprima || 'Appunto vuoto')), h('span.nota-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo || 'Appunto'), h('span.nota-sotto', null, quando + (a.sub ? ' · ' + Studio.etichetta(a.sub) : '') + (n ? ' · ' + n + ' carte' : ''))), () => [{ t: 'Apri', ic: 'documento', f: () => apriAppunto(a) }, { t: 'Copri e ricorda', ic: 'cervello', f: () => apriCornell(a, true) },
+                n ? { t: 'Ripassa le sue carte', ic: 'carte', f: () => avviaCarte(['mz-ap-' + a.id.replace(/^ap-/, '')], a.titolo) } : null,
+                { t: 'Vista Cornell', ic: 'modello', f: () => apriCornell(a, false) }], a.titolo || 'Appunto');
+        return h('button.voce-lista', { onclick: () => apriAppunto(a) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, (!manoVuota(a.mano) ? '✍️ ' : '') + (a.titolo || 'Appunto')), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (a.sub ? Studio.etichetta(a.sub) + (a.micro ? ' ' + a.micro : '') + ' · ' : '') + (n ? '🃏 ' + n + ' · ' : '') + (a.drive ? (Appunti.daSalvareSuDrive(a) ? '☁︎ da aggiornare · ' : '☁︎ · ') : '') + quando + (anteprima ? ' — ' + anteprima : ''))));
     };
+    const cambiaVista = h('div.segmenti.piccoli', null, [['griglia', 'Griglia'], ['elenco', 'Elenco']].map(([k, t]) => h('button' + ((k === 'griglia') === griglia ? '.attivo' : ''), { onclick: () => { UI.apVista = k; disegna(); } }, t)));
     const campo = h('input.campo', { type: 'search', placeholder: 'Cerca negli appunti…', value: UI.apCerca || '', oninput: (e) => { UI.apCerca = e.target.value; clearTimeout(vistaAppunti.t); vistaAppunti.t = setTimeout(() => { disegna(); const c = document.querySelector('main input[type=search]'); if (c) {
             c.focus();
             c.setSelectionRange(c.value.length, c.value.length);
         } }, 250); } });
     const nCarte = Carte.conta(['mz-appunti']);
-    return h('div.pagina', null, h('section.card', null, campo, h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'), h('button.btn.neutro', { onclick: () => importaAppunti() }, '⤓ Importa'), Appunti.appuntiDaRipassare().length ? h('button.btn.neutro', { onclick: () => { const l = Appunti.appuntiDaRipassare(); apriCornell(l[0], true); } }, '🧠 Ripassa appunti (' + Appunti.appuntiDaRipassare().length + ')') : null, nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null), h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')), tutti.length ? Array.from(gruppi.entries()).map(([g, l]) => h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))
+    return h('div.pagina', null, h('section.card', null, campo, h('div.bottoni', null, h('button.btn', { onclick: () => apriAppunto() }, '＋ Nuovo appunto'), h('button.btn.neutro', { onclick: () => importaAppunti() }, '⤓ Importa'), Appunti.appuntiDaRipassare().length ? h('button.btn.neutro', { onclick: () => { const l = Appunti.appuntiDaRipassare(); apriCornell(l[0], true); } }, '🧠 Ripassa appunti (' + Appunti.appuntiDaRipassare().length + ')') : null, nCarte.nuove + nCarte.ripasso ? h('button.btn.neutro', { onclick: () => avviaCarte(['mz-appunti'], 'Carte dagli appunti') }, '🃏 Ripassa ' + (nCarte.nuove + nCarte.ripasso)) : null), h('div.tenue.piccolo', null, 'Scrivi «domanda :: risposta» o {{parola}} dentro un appunto: diventa una flashcard. Un titolo con il numero dello step lo collega al piano.')), tutti.length ? [h('div.note-testa', null, h('span.tenue.piccolo', null, tutti.length + (tutti.length === 1 ? ' appunto' : ' appunti')), cambiaVista),
+        ...Array.from(gruppi.entries()).map(([g, l]) => griglia
+            ? h('section.note-cartella', null, h('h2.gruppo-titolo.fuori', null, g + ' · ' + l.length), h('div.note-griglia', null, l.sort((x, y) => y.updatedAt - x.updatedAt).map(voce)))
+            : h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))]
         : h('section.card', null, h('div.vuoto', null, q ? 'Nessun appunto trovato.' : 'Ancora nessun appunto. Tocca «Nuovo appunto».')));
 }
 /** Nel sotto-step: appunti collegati + nuovo appunto già collegato. */
@@ -5163,39 +5272,55 @@ function decodTratto(s) {
     return { c, w: +w, k, p: (pts || '').split(' ').filter(Boolean).map(x => x.split(',').map(Number)) };
 }
 function codTratto(c, w, k, p) { return c + '|' + w + '|' + k + '|' + p.map(q => q.join(',')).join(' '); }
-/** Disegna sfondo + tratti su un contesto (scala = pixel per unità logica). */
-function disegnaMano(g, m, scala, sfondoPieno = false) {
+const CACHE_IMG = new Map();
+function imgPronta(s, poi) {
+    let i = CACHE_IMG.get(s);
+    if (!i) {
+        i = new Image();
+        i.src = s;
+        CACHE_IMG.set(s, i);
+    }
+    if (i.complete && i.naturalWidth)
+        return i;
+    if (poi)
+        i.addEventListener('load', poi, { once: true });
+    return null;
+}
+function caricaImmaginiMano(m) {
+    return Promise.all((m.im || []).map(x => new Promise(r => { if (imgPronta(x.s, () => r()))
+        r();
+    else
+        setTimeout(r, 4000); }))).then(() => undefined);
+}
+/** Disegna sfondo + allegati + tratti. Con «v» disegna solo la finestra visibile e tiene righe e quadretti di misura fissa sullo schermo. */
+function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
     const W = LARG * scala, H = m.h * scala;
-    g.clearRect(0, 0, W, H);
+    const ox = v ? v.ox : 0, oy = v ? v.oy : 0, vw = v ? v.w : W, vh = v ? v.h : H;
+    g.clearRect(0, 0, vw, vh);
     if (sfondoPieno) {
         g.fillStyle = '#fff';
-        g.fillRect(0, 0, W, H);
+        g.fillRect(0, 0, vw, vh);
     }
     if (m.sf !== 'bianco' && !sfondoPieno) {
         g.strokeStyle = 'rgba(120,130,160,.22)';
         g.lineWidth = 1;
-        const passo = (m.sf === 'quadretti' ? 25 : 40) * scala;
+        const passo = v ? v.passo * (m.sf === 'quadretti' ? 1 : 1.6) : (m.sf === 'quadretti' ? 25 : 40) * scala;
+        const fondo = Math.min(vh, H - oy), destra = Math.min(vw, W - ox);
         g.beginPath();
-        for (let y = passo; y < H; y += passo) {
+        for (let y = passo - (oy % passo); y < fondo; y += passo) {
             g.moveTo(0, y);
-            g.lineTo(W, y);
+            g.lineTo(destra, y);
         }
         if (m.sf === 'quadretti')
-            for (let x = passo; x < W; x += passo) {
+            for (let x = passo - (ox % passo); x < destra; x += passo) {
                 g.moveTo(x, 0);
-                g.lineTo(x, H);
+                g.lineTo(x, fondo);
             }
         g.stroke();
     }
-    if (m.sf === 'cornell' || m.sf === 'esercizio') { // v0.33: modelli di pagina
-        g.strokeStyle = 'rgba(120,130,160,.18)';
-        g.lineWidth = 1;
-        g.beginPath();
-        for (let y = 40 * scala; y < H; y += 40 * scala) {
-            g.moveTo(0, y);
-            g.lineTo(W, y);
-        }
-        g.stroke();
+    g.save();
+    g.translate(-ox, -oy);
+    if (m.sf === 'cornell' || m.sf === 'esercizio') { // v0.33: modelli di pagina (le zone seguono il foglio)
         g.strokeStyle = 'rgba(70,100,220,.45)';
         g.lineWidth = 2;
         g.fillStyle = 'rgba(70,100,220,.75)';
@@ -5224,10 +5349,31 @@ function disegnaMano(g, m, scala, sfondoPieno = false) {
                 g.fillText(t, 14 * scala, H * f + 30 * scala);
         }
     }
+    // v0.36: allegati (pagine PDF, slide, foto) sotto l'inchiostro
+    for (const im of m.im || []) {
+        if ((im.y + im.h) * scala < oy || im.y * scala > oy + vh)
+            continue;
+        const img = imgPronta(im.s, poi);
+        if (img)
+            g.drawImage(img, im.x * scala, im.y * scala, im.w * scala, im.h * scala);
+        else {
+            g.fillStyle = 'rgba(120,130,160,.12)';
+            g.fillRect(im.x * scala, im.y * scala, im.w * scala, im.h * scala);
+        }
+        g.strokeStyle = 'rgba(120,130,160,.35)';
+        g.lineWidth = 1;
+        g.strokeRect(im.x * scala, im.y * scala, im.w * scala, im.h * scala);
+    }
     g.lineCap = 'round';
     g.lineJoin = 'round';
-    for (const s of m.t)
-        tracciaTratto(g, decodTratto(s), scala);
+    const y0 = oy / scala - 40, y1 = (oy + vh) / scala + 40;
+    for (const s of m.t) {
+        const t = decodTratto(s);
+        if (v && !t.p.some(q => q[1] >= y0 && q[1] <= y1))
+            continue; // fuori dalla finestra
+        tracciaTratto(g, t, scala);
+    }
+    g.restore();
 }
 function tracciaTratto(g, t, scala) {
     if (!t.p.length)
@@ -5260,56 +5406,72 @@ function immagineMano(m, larghezza = 1000) {
     disegnaMano(cv.getContext('2d'), m, s, true);
     return cv.toDataURL('image/png');
 }
-const manoVuota = (m) => !m || !m.t.length;
-/** Editor a mano dentro un elemento. Restituisce l'interfaccia per leggere i dati. */
-function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
-    const m = iniziale ? { t: iniziale.t.slice(), h: iniziale.h, sf: iniziale.sf } : { t: [], h: 1400, sf: sfondo || 'quadretti' };
+const manoVuota = (m) => !m || (!m.t.length && !(m.im && m.im.length));
+function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
+    const o = typeof opz === 'function' ? { allaCarta: opz } : opz;
+    const allaCarta = o.allaCarta;
+    const m = iniziale ? { t: iniziale.t.slice(), h: iniziale.h, sf: iniziale.sf, im: (iniziale.im || []).slice() } : { t: [], h: 1400, sf: sfondo || 'quadretti', im: [] };
     const storia = [], futuro = [];
+    const foto = () => ({ t: m.t.slice(), im: (m.im || []).slice() });
+    const ripristina = (f) => { m.t = f.t; m.im = f.im; };
     let strumento = 'penna', colore = '#1f2a44', dito = !matchMedia('(pointer: fine), (hover: hover)').matches && !('ontouchstart' in window && navigator.maxTouchPoints > 1 && /iPad|Macintosh/.test(navigator.userAgent));
     let penna = false; // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
     const cv = h('canvas.mano-tela'), g = cv.getContext('2d');
     const vivo = h('canvas.mano-vivo'), gv = vivo.getContext('2d');
-    // v0.35: il foglio si ingrandisce con due dita (come Note di iOS): la tela interna si allarga e si scorre
-    const box = h('div.mano-box', null, cv, vivo);
+    // la tela è grande quanto la parte visibile (vista «sticky»): nitida a qualunque ingrandimento
+    const vista = h('div.mano-vista', null, cv, vivo);
+    const box = h('div.mano-box', null, vista);
     const pag = h('div.mano-foglio', null, box);
-    let scala = 1, zoom = 1, dpr = Math.min(2, window.devicePixelRatio || 1);
+    let base = 1, scala = 1, zoom = 1, vw = 360, vh = 400, d = Math.min(2, window.devicePixelRatio || 1);
+    const ZMAX = 10;
     function dimensiona() {
-        const w = (pag.clientWidth || 360) * zoom;
-        scala = w / LARG;
-        const hh = m.h * scala, d = Math.min(dpr, Math.sqrt(15e6 / Math.max(1, w * hh))); // iOS: tele oltre ~16 Mpx diventano bianche
-        box.style.width = w + 'px';
-        box.style.transform = '';
+        const pw = pag.clientWidth || 360;
+        base = pw / LARG;
+        scala = base * zoom;
+        box.style.width = LARG * scala + 'px';
+        box.style.height = m.h * scala + 'px';
+        vw = pw;
+        vh = Math.min(pag.clientHeight || 400, m.h * scala);
+        vista.style.width = vw + 'px';
+        vista.style.height = vh + 'px';
         for (const c of [cv, vivo]) {
-            c.width = Math.round(w * d);
-            c.height = Math.round(hh * d);
-            c.style.width = w + 'px';
-            c.style.height = hh + 'px';
+            c.width = Math.round(vw * d);
+            c.height = Math.round(vh * d);
+            c.style.width = vw + 'px';
+            c.style.height = vh + 'px';
         }
-        g.setTransform(d, 0, 0, d, 0, 0);
-        gv.setTransform(d, 0, 0, d, 0, 0);
-        disegnaMano(g, m, scala);
-        if (zoomEti)
-            zoomEti.hidden = zoom === 1, zoomEti.textContent = Math.round(zoom * 100) + '%';
+        if (zoomEti) {
+            zoomEti.hidden = zoom === 1;
+            zoomEti.textContent = Math.round(zoom * 100) + '%';
+        }
+        ridisegna();
     }
+    let rif = 0;
+    function ridisegna() {
+        rif = 0;
+        g.setTransform(d, 0, 0, d, 0, 0);
+        disegnaMano(g, m, scala, false, { ox: pag.scrollLeft, oy: pag.scrollTop, w: vw, h: vh, passo: 25 * base }, () => { if (!rif)
+            rif = requestAnimationFrame(ridisegna); });
+        disegnaSel();
+    }
+    pag.addEventListener('scroll', () => { if (!rif)
+        rif = requestAnimationFrame(ridisegna); }, { passive: true });
+    const pulisciVivo = () => { gv.setTransform(1, 0, 0, 1, 0, 0); gv.clearRect(0, 0, vivo.width, vivo.height); gv.setTransform(d, 0, 0, d, -pag.scrollLeft * d, -pag.scrollTop * d); };
     let zoomEti = null;
-    const scorritore = () => { for (let e = pag.parentElement; e; e = e.parentElement) {
-        const o = getComputedStyle(e).overflowY;
-        if ((o === 'auto' || o === 'scroll') && e.scrollHeight > e.clientHeight)
-            return e;
-    } return document.scrollingElement; };
     function impostaZoom(z, cx, cy) {
-        z = Math.max(1, Math.min(4, z));
-        const r = box.getBoundingClientRect(), pr = pag.getBoundingClientRect();
-        const mx = cx != null ? cx : pr.left + pr.width / 2, my = cy != null ? cy : pr.top + Math.min(pr.height, innerHeight) / 2;
-        const fx = (mx - r.left) / scala, fy = (my - r.top) / scala; // punto del foglio sotto le dita
+        z = Math.max(1, Math.min(ZMAX, z));
+        const pr = pag.getBoundingClientRect();
+        const mx = (cx != null ? cx : pr.left + pr.width / 2) - pr.left, my = (cy != null ? cy : pr.top + pr.height / 2) - pr.top;
+        const fx = (mx + pag.scrollLeft) / scala, fy = (my + pag.scrollTop) / scala; // punto del foglio sotto le dita
         zoom = z;
         dimensiona();
-        pag.scrollLeft = fx * scala - (mx - pr.left);
-        const r2 = box.getBoundingClientRect();
-        scorritore().scrollTop += (r2.top + fy * scala) - my;
+        pag.scrollLeft = fx * scala - mx;
+        pag.scrollTop = fy * scala - my;
+        ridisegna();
+        aggiornaBarra();
     }
     // pizzico: anteprima con transform (fluida), poi ridisegno nitido al rilascio
-    let pz = null;
+    let pz = null, kz = 1;
     const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     pag.addEventListener('touchstart', e => {
         if (e.touches.length !== 2)
@@ -5318,53 +5480,56 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
             cur = null;
             idPuntatore = -1;
             if (storia.length)
-                m.t = storia.pop();
-            gv.clearRect(0, 0, vivo.width, vivo.height);
-            disegnaMano(g, m, scala);
+                ripristina(storia.pop());
+            pulisciVivo();
+            ridisegna();
         }
-        const r = box.getBoundingClientRect(), cx = (e.touches[0].clientX + e.touches[1].clientX) / 2, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        pz = { d0: dist(e.touches), z0: zoom, cx, cy, ox: cx - r.left, oy: cy - r.top };
-        box.style.transformOrigin = pz.ox + 'px ' + pz.oy + 'px';
+        const r = vista.getBoundingClientRect(), cx = (e.touches[0].clientX + e.touches[1].clientX) / 2, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        pz = { d0: dist(e.touches), z0: zoom, cx, cy };
+        kz = 1;
+        vista.style.transformOrigin = (cx - r.left) + 'px ' + (cy - r.top) + 'px';
     }, { passive: true, capture: true });
     pag.addEventListener('touchmove', e => {
         if (!pz || e.touches.length !== 2)
             return;
         e.preventDefault();
-        const z = Math.max(1, Math.min(4, pz.z0 * dist(e.touches) / pz.d0));
-        box.style.transform = 'scale(' + (z / pz.z0) + ')';
+        const z = Math.max(1, Math.min(ZMAX, pz.z0 * dist(e.touches) / pz.d0));
+        kz = z / pz.z0;
+        vista.style.transform = 'scale(' + kz + ')';
     }, { passive: false, capture: true });
     const finePizzico = (e) => {
         if (!pz || e.touches.length >= 2)
             return;
-        const m0 = box.style.transform.match(/scale\(([\d.]+)\)/), k = m0 ? parseFloat(m0[1]) : 1, p0 = pz;
+        const p0 = pz;
         pz = null;
-        box.style.transform = '';
-        if (Math.abs(k - 1) > .02)
-            impostaZoom(p0.z0 * k, p0.cx, p0.cy);
+        vista.style.transform = '';
+        if (Math.abs(kz - 1) > .02)
+            impostaZoom(p0.z0 * kz, p0.cx, p0.cy);
     };
     pag.addEventListener('touchend', finePizzico, { capture: true });
     pag.addEventListener('touchcancel', finePizzico, { capture: true });
     // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad)
     pag.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey)
         return; e.preventDefault(); impostaZoom(zoom * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); }, { passive: false });
-    const salvaStoria = () => { storia.push(m.t.slice()); if (storia.length > 60)
+    const salvaStoria = () => { storia.push(foto()); if (storia.length > 60)
         storia.shift(); futuro.length = 0; };
-    // --- v0.33: lazo (seleziona, sposta, elimina, trasforma in carta) ---
-    let sel = new Set(), poligono = null, trascina = null, spost = [0, 0];
+    // --- lazo (seleziona tratti e allegati, sposta, elimina, trasforma in carta) ---
+    let sel = new Set(), selIm = new Set(), poligono = null, trascina = null, spost = [0, 0];
     const dentro = (p, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
         const a = poly[i], b = poly[j];
         if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0])
             c = !c;
     } return c; };
     function riquadro() {
-        if (!sel.size)
+        if (!sel.size && !selIm.size)
             return null;
         let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
         sel.forEach(i => decodTratto(m.t[i]).p.forEach(q => { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }));
+        selIm.forEach(i => { const a = m.im[i]; x0 = Math.min(x0, a.x); y0 = Math.min(y0, a.y); x1 = Math.max(x1, a.x + a.w); y1 = Math.max(y1, a.y + a.h); });
         return [x0 - 10, y0 - 10, x1 + 10, y1 + 10];
     }
     function disegnaSel() {
-        gv.clearRect(0, 0, vivo.width, vivo.height);
+        pulisciVivo();
         if (poligono && poligono.length > 1) {
             gv.setLineDash([6, 6]);
             gv.strokeStyle = '#4c6ef5';
@@ -5391,17 +5556,19 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
             return;
         salvaStoria();
         sel.forEach(i => { const t = decodTratto(m.t[i]); m.t[i] = codTratto(t.c, t.w, t.k, t.p.map(q => [q[0] + dx, q[1] + dy, q[2]])); });
-        disegnaMano(g, m, scala);
+        selIm.forEach(i => { const a = m.im[i]; m.im[i] = { ...a, x: a.x + dx, y: a.y + dy }; });
+        ridisegna();
         cambia();
     }
-    function annullaSel() { sel = new Set(); poligono = null; spost = [0, 0]; disegnaSel(); aggiornaAzioni(); }
+    function annullaSel() { sel = new Set(); selIm = new Set(); poligono = null; spost = [0, 0]; disegnaSel(); aggiornaAzioni(); }
     const azioni = h('div.mano-azioni');
     function aggiornaAzioni() {
         svuota(azioni);
-        azioni.hidden = !sel.size;
-        if (!sel.size)
+        const n = sel.size + selIm.size;
+        azioni.hidden = !n;
+        if (!n)
             return;
-        azioni.append(h('span.tenue.piccolo', null, sel.size + (sel.size === 1 ? ' tratto' : ' tratti') + ' · trascina per spostare'), h('button.btn-testo', { onclick: () => { salvaStoria(); m.t = m.t.filter((_s, i) => !sel.has(i)); disegnaMano(g, m, scala); cambia(); annullaSel(); } }, '🗑 Elimina'), ...(allaCarta ? [h('button.btn-testo', { onclick: () => cartaDaSelezione() }, '🃏 Diventa flashcard')] : []), h('button.btn-testo', { onclick: annullaSel }, 'Fine'));
+        azioni.append(h('span.tenue.piccolo', null, (sel.size ? sel.size + (sel.size === 1 ? ' tratto' : ' tratti') : '') + (sel.size && selIm.size ? ' + ' : '') + (selIm.size ? selIm.size + (selIm.size === 1 ? ' allegato' : ' allegati') : '') + ' · trascina per spostare'), h('button.btn-testo', { onclick: () => { salvaStoria(); m.t = m.t.filter((_s, i) => !sel.has(i)); m.im = (m.im || []).filter((_s, i) => !selIm.has(i)); ridisegna(); cambia(); annullaSel(); } }, '🗑 Elimina'), ...(allaCarta && sel.size ? [h('button.btn-testo', { onclick: () => cartaDaSelezione() }, '🃏 Diventa flashcard')] : []), h('button.btn-testo', { onclick: annullaSel }, 'Fine'));
     }
     async function cartaDaSelezione() {
         const r = riquadro(), parte = { t: Array.from(sel).map(i => { const t = decodTratto(m.t[i]); return codTratto(t.c, t.w, t.k, t.p.map(q => [q[0] - r[0] + 20, q[1] - r[1] + 20, q[2]])); }), h: r[3] - r[1] + 40, sf: 'bianco' };
@@ -5420,7 +5587,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
             salva: () => { if (!f.value.trim())
                 return false; allaCarta('- ' + f.value.trim() + (rr.value.trim() ? ' :: ' + rr.value.trim() : '')); annullaSel(); } });
     }
-    // --- v0.33: scarabocchio per cancellare (come GoodNotes): zig-zag rapido sopra dei tratti ---
+    // --- scarabocchio per cancellare (come GoodNotes): zig-zag rapido sopra dei tratti ---
     function eScarabocchio(p) {
         if (p.length < 12)
             return false;
@@ -5428,14 +5595,14 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
         for (let i = 1; i < p.length; i++) {
             const dx = p[i][0] - p[i - 1][0];
             lung += Math.hypot(dx, p[i][1] - p[i - 1][1]);
-            const d = Math.sign(dx);
-            if (d && dir && d !== dir)
+            const dd = Math.sign(dx);
+            if (dd && dir && dd !== dir)
                 inv++;
-            if (d)
-                dir = d;
+            if (dd)
+                dir = dd;
         }
         const xs = p.map(q => q[0]), ys = p.map(q => q[1]), w = Math.max(...xs) - Math.min(...xs), hh = Math.max(...ys) - Math.min(...ys);
-        return inv >= 6 && lung > 3 * Math.max(w, 40) && hh < 140;
+        return inv >= 6 && lung > 3 * Math.max(w, 40 / zoom) && hh < 140 / zoom;
     }
     function cancellaSotto(p) {
         const xs = p.map(q => q[0]), ys = p.map(q => q[1]), r = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
@@ -5445,8 +5612,11 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
     }
     // --- input ---
     let cur = null, idPuntatore = -1;
-    const punto = (e) => { const r = vivo.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / scala), Math.round((e.clientY - r.top) / scala), Math.round((e.pointerType === 'pen' ? (e.pressure || .5) : .5) * 100)]; };
+    const arrot = (x) => Math.round(x * 10) / 10;
+    const punto = (e) => { const r = vivo.getBoundingClientRect(); return [arrot((e.clientX - r.left + pag.scrollLeft) / scala), arrot((e.clientY - r.top + pag.scrollTop) / scala), Math.round((e.pointerType === 'pen' ? (e.pressure || .5) : .5) * 100)]; };
     const scrive = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && dito && !penna);
+    // lo spessore resta uguale sullo schermo: ingrandendo scrivi più fine (come Note e GoodNotes)
+    const spessore = () => arrot((strumento === 'evid' ? 22 : 3) / zoom);
     vivo.addEventListener('pointerdown', e => {
         if (e.pointerType === 'pen' && !penna) {
             penna = true;
@@ -5460,13 +5630,8 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
         }
         catch (_) { /* puntatore sintetico */ }
         idPuntatore = e.pointerId;
+        pulisciVivo();
         if (strumento === 'lazo') {
-            idPuntatore = e.pointerId;
-            try {
-                vivo.setPointerCapture(e.pointerId);
-            }
-            catch (_) { /* sintetico */ }
-            e.preventDefault();
             const p = punto(e), r = riquadro();
             if (r && p[0] >= r[0] && p[0] <= r[2] && p[1] >= r[1] && p[1] <= r[3]) {
                 trascina = p;
@@ -5475,6 +5640,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
                 return;
             }
             sel = new Set();
+            selIm = new Set();
             aggiornaAzioni();
             poligono = [p];
             cur = [p];
@@ -5500,7 +5666,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
                 disegnaSel();
                 continue;
             }
-            if (Math.abs(p[0] - u[0]) + Math.abs(p[1] - u[1]) < 2)
+            if (Math.abs(p[0] - u[0]) + Math.abs(p[1] - u[1]) < 2 / zoom)
                 continue;
             if (strumento === 'gomma') {
                 cancellaVicino(p);
@@ -5509,7 +5675,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
             }
             cur.push(p);
             gv.lineCap = 'round';
-            tracciaTratto(gv, { c: colore, w: strumento === 'evid' ? 22 : 3, k: strumento === 'evid' ? 'e' : 'p', p: [u, p] }, scala);
+            tracciaTratto(gv, { c: colore, w: spessore(), k: strumento === 'evid' ? 'e' : 'p', p: [u, p] }, scala);
         }
         if (cur[cur.length - 1][1] > m.h - 150) {
             m.h += 500;
@@ -5529,6 +5695,8 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
                 const poly = poligono;
                 m.t.forEach((s, i) => { const pts = decodTratto(s).p; if (pts.filter(q => dentro(q, poly)).length > pts.length / 2)
                     sel.add(i); });
+                (m.im || []).forEach((a, i) => { if (dentro([a.x + a.w / 2, a.y + a.h / 2], poly))
+                    selIm.add(i); });
             }
             poligono = null;
             cur = null;
@@ -5540,32 +5708,50 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
         if (strumento === 'penna' && eScarabocchio(cur) && cancellaSotto(cur)) {
             cur = null;
             idPuntatore = -1;
-            gv.clearRect(0, 0, vivo.width, vivo.height);
-            disegnaMano(g, m, scala);
+            ridisegna();
             cambia();
             avviso('Cancellato con lo scarabocchio', 1500);
             return;
         }
         if (strumento !== 'gomma')
-            m.t.push(codTratto(colore, strumento === 'evid' ? 22 : 3, strumento === 'evid' ? 'e' : 'p', cur));
+            m.t.push(codTratto(colore, spessore(), strumento === 'evid' ? 'e' : 'p', cur));
         cur = null;
         idPuntatore = -1;
-        gv.clearRect(0, 0, vivo.width, vivo.height);
-        disegnaMano(g, m, scala);
+        ridisegna();
         cambia();
     };
     vivo.addEventListener('pointerup', fine);
     vivo.addEventListener('pointercancel', fine);
     // Scribble di iPadOS: sulla tela i tocchi dello stilo non devono diventare testo né scorrere la pagina
-    vivo.addEventListener('touchstart', e => { const t = e.touches[0]; if ((t && t.touchType === 'stylus') || (dito && !penna))
+    vivo.addEventListener('touchstart', e => { const t = e.touches[0]; if (e.touches.length === 1 && ((t && t.touchType === 'stylus') || (dito && !penna)))
         e.preventDefault(); }, { passive: false });
-    vivo.addEventListener('touchmove', e => { const t = e.touches[0]; if ((t && t.touchType === 'stylus') || (dito && !penna))
+    vivo.addEventListener('touchmove', e => { const t = e.touches[0]; if (e.touches.length === 1 && ((t && t.touchType === 'stylus') || (dito && !penna)))
         e.preventDefault(); }, { passive: false });
     function cancellaVicino(p) {
-        const r = 14, prima = m.t.length;
+        const r = 14 / zoom, prima = m.t.length;
         m.t = m.t.filter(s => !decodTratto(s).p.some(q => Math.abs(q[0] - p[0]) < r && Math.abs(q[1] - p[1]) < r));
         if (m.t.length !== prima)
-            disegnaMano(g, m, scala);
+            ridisegna();
+    }
+    /** v0.36: inserisce immagini (pagine PDF, slide, foto) dove stai guardando, una sotto l'altra. */
+    function inserisci(l) {
+        if (!l.length)
+            return;
+        salvaStoria();
+        let y = Math.round(pag.scrollTop / scala) + 20;
+        const occ = (m.im || []).reduce((mx, a) => Math.max(mx, a.y + a.h), 0);
+        if (occ > y)
+            y = occ + 20;
+        m.im = m.im || [];
+        for (const x of l) {
+            const w = LARG - 80, hh = Math.round(w * x.h / x.w);
+            m.im.push({ s: x.s, x: 40, y, w, h: hh });
+            y += hh + 24;
+        }
+        if (y + 200 > m.h)
+            m.h = Math.ceil((y + 400) / 100) * 100;
+        dimensiona();
+        cambia();
     }
     // --- barra strumenti ---
     const barra = h('div.mano-barra');
@@ -5573,28 +5759,32 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, allaCarta) {
     function aggiornaBarra() {
         svuota(barra);
         const b = (t, att, f, titolo) => h('button' + (att ? '.attivo' : ''), { title: titolo, 'aria-label': titolo, onclick: () => { f(); aggiornaBarra(); } }, t);
-        barra.append(b('✒️', strumento === 'penna', () => { strumento = 'penna'; annullaSel(); }, 'Penna (scarabocchia sopra un tratto per cancellarlo)'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), b('➰', strumento === 'lazo', () => { strumento = 'lazo'; }, 'Lazo: cerchia per selezionare, poi sposta, elimina o crea una flashcard'), h('span.mano-sep'), ...COLORI.map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma')
+        barra.append(b('✒️', strumento === 'penna', () => { strumento = 'penna'; annullaSel(); }, 'Penna (scarabocchia sopra un tratto per cancellarlo)'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), b('➰', strumento === 'lazo', () => { strumento = 'lazo'; }, 'Lazo: cerchia tratti o allegati per spostarli, eliminarli o farne una flashcard'), h('span.mano-sep'), ...COLORI.map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma')
                 strumento = 'penna'; aggiornaBarra(); } })), h('span.mano-sep'), b('↶', false, () => { if (storia.length) {
-            futuro.push(m.t.slice());
-            m.t = storia.pop();
-            disegnaMano(g, m, scala);
+            futuro.push(foto());
+            ripristina(storia.pop());
+            ridisegna();
             cambia();
         } }, 'Annulla'), b('↷', false, () => { if (futuro.length) {
-            storia.push(m.t.slice());
-            m.t = futuro.pop();
-            disegnaMano(g, m, scala);
+            storia.push(foto());
+            ripristina(futuro.pop());
+            ridisegna();
             cambia();
-        } }, 'Ripeti'), b({ quadretti: '▦', righe: '☰', bianco: '▢', cornell: '◧', esercizio: '▤' }[m.sf], false, () => { const o = ['quadretti', 'righe', 'bianco', 'cornell', 'esercizio']; m.sf = o[(o.indexOf(m.sf) + 1) % o.length]; disegnaMano(g, m, scala); cambia(); }, 'Sfondo: quadretti / righe / bianco / Cornell / esercizio'), (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')), penna ? h('span.tenue.piccolo', null, '✏️ Pencil: il dito scorre') : b(dito ? '☝️ dito: scrive' : '☝️ dito: scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito'));
+        } }, 'Ripeti'), b({ quadretti: '▦', righe: '☰', bianco: '▢', cornell: '◧', esercizio: '▤' }[m.sf], false, () => { const oo = ['quadretti', 'righe', 'bianco', 'cornell', 'esercizio']; m.sf = oo[(oo.indexOf(m.sf) + 1) % oo.length]; ridisegna(); cambia(); }, 'Sfondo: quadretti / righe / bianco / Cornell / esercizio'), (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')), ...(penna ? [h('span.tenue.piccolo.mano-nota', null, '✏️ Pencil: il dito scorre')] : [b(dito ? '☝️ scrive' : '☝️ scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito')]), ...(o.extra ? o.extra().filter(Boolean) : []));
     }
     pag.classList.toggle('dito', dito);
     aggiornaBarra();
     azioni.hidden = true;
-    contenitore.append(azioni, pag, barra); // v0.35: barra fluttuante in basso, sempre visibile mentre scorri i fogli
+    contenitore.append(barra, azioni, pag); // v0.36: barra in alto (come Note), mai sopra il testo
     requestAnimationFrame(dimensiona);
-    const ro = new ResizeObserver(() => { const w = pag.clientWidth * zoom; if (w && Math.abs(w / LARG - scala) > .001)
-        dimensiona(); });
+    let ultimaL = 0, ultimaA = 0;
+    const ro = new ResizeObserver(() => { const l = pag.clientWidth, a = pag.clientHeight; if (l && (Math.abs(l - ultimaL) > .5 || Math.abs(a - ultimaA) > .5)) {
+        ultimaL = l;
+        ultimaA = a;
+        dimensiona();
+    } });
     ro.observe(pag);
-    return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf }), ridisegna: dimensiona };
+    return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf, ...(m.im && m.im.length ? { im: m.im.slice() } : {}) }), ridisegna: dimensiona, inserisci, barra, aggiornaBarra };
 }
 /** ✨ Trascrive la pagina a mano: mostra il testo da controllare, poi lo aggiunge o sostituisce. */
 async function leggiScrittura(m, dopo) {
@@ -5603,9 +5793,10 @@ async function leggiScrittura(m, dopo) {
         return;
     }
     avviso('✨ Leggo la tua scrittura…', 20000);
+    await caricaImmaginiMano(m);
     let t = '';
     try {
-        t = await Spiega.vede('Trascrivi FEDELMENTE il testo scritto a mano in questa pagina di appunti di studio (italiano; chimica, biologia o fisica). '
+        t = await Spiega.vede('Trascrivi FEDELMENTE il testo scritto a mano in questa pagina di appunti di studio (italiano; chimica, biologia o fisica). Se nella pagina ci sono slide o pagine stampate incollate, trascrivi solo le annotazioni a mano e, tra parentesi quadre, il titolo della slide a cui si riferiscono. '
             + 'Regole: mantieni l\'ordine e gli a capo; titoli sottolineati o grandi → «# titolo»; elenchi → «- punto» (rientro per i sotto-punti); '
             + 'se c\'è una freccia o «::» tra domanda e risposta scrivi «domanda :: risposta»; parole racchiuse tra graffe {{…}} restano così; '
             + 'formule con simboli corretti (es. ΔH, H₂O, →); se una parola è illeggibile scrivi [?]. Non aggiungere nulla, non commentare: restituisci solo il testo in Markdown.', immagineMano(m, 1200));
@@ -5621,6 +5812,68 @@ async function leggiScrittura(m, dopo) {
     }
     const campo = h('textarea.appunto-testo', { style: { minHeight: '40vh' } }, t);
     const fs = foglio({ titolo: '✨ Controlla la trascrizione', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Correggi dove serve ([?] = illeggibile). Le righe «domanda :: risposta» e i {{completamenti}} diventeranno flashcard.'), campo, h('div.bottoni', null, h('button.btn', { onclick: () => { fs.chiudi(); dopo(campo.value.trim(), 'aggiungi'); } }, 'Aggiungi al testo'), h('button.btn.neutro', { onclick: () => { fs.chiudi(); dopo(campo.value.trim(), 'sostituisci'); } }, 'Sostituisci il testo'))) });
+}
+// ---------- v0.36: allegati (PDF, slide, foto) ----------
+// PDF.js (Mozilla) viene caricato solo la prima volta che inserisci un PDF; le pagine diventano immagini
+// JPEG leggere (larghezza 1000 px) da annotare a mano, e il loro testo va nel testo dell'appunto.
+let pdfjsPronto = null;
+function caricaPdfJs() {
+    if (window.pdfjsLib)
+        return Promise.resolve(window.pdfjsLib);
+    if (!pdfjsPronto)
+        pdfjsPronto = new Promise((ok, ko) => {
+            const s = document.createElement('script');
+            s.src = PDFJS + 'pdf.min.js';
+            s.onload = () => { const L = window.pdfjsLib; if (!L)
+                return ko(new Error('PDF.js non disponibile')); L.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; ok(L); };
+            s.onerror = () => { pdfjsPronto = null; ko(new Error('serve la connessione per aprire i PDF')); };
+            document.head.appendChild(s);
+        });
+    return pdfjsPronto;
+}
+async function pdfInImmagini(f, max = 20) {
+    const L = await caricaPdfJs();
+    const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+    const n = Math.min(doc.numPages, max), pagine = [], testi = [];
+    for (let i = 1; i <= n; i++) {
+        const p = await doc.getPage(i), v0 = p.getViewport({ scale: 1 }), sc = 1000 / v0.width, v = p.getViewport({ scale: sc });
+        const c = document.createElement('canvas');
+        c.width = Math.round(v.width);
+        c.height = Math.round(v.height);
+        const cx = c.getContext('2d');
+        cx.fillStyle = '#fff';
+        cx.fillRect(0, 0, c.width, c.height);
+        await p.render({ canvasContext: cx, viewport: v }).promise;
+        pagine.push({ s: c.toDataURL('image/jpeg', .7), w: c.width, h: c.height });
+        try {
+            const tc = await p.getTextContent();
+            const t = tc.items.map((x) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+            if (t)
+                testi.push('### Pagina ' + i + '\n' + t);
+        }
+        catch (_) { /* pagina senza testo (scansione) */ }
+    }
+    if (doc.numPages > max)
+        avviso('Inserite le prime ' + max + ' pagine su ' + doc.numPages + ' (per non appesantire l\'appunto).', 6000);
+    return { pagine, testo: testi.join('\n\n') };
+}
+function fotoInImmagine(f) {
+    return new Promise((ok, ko) => {
+        const u = URL.createObjectURL(f), i = new Image();
+        i.onload = () => {
+            const sc = Math.min(1, 1200 / i.naturalWidth), c = document.createElement('canvas');
+            c.width = Math.round(i.naturalWidth * sc);
+            c.height = Math.round(i.naturalHeight * sc);
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#fff';
+            cx.fillRect(0, 0, c.width, c.height);
+            cx.drawImage(i, 0, 0, c.width, c.height);
+            URL.revokeObjectURL(u);
+            ok({ s: c.toDataURL('image/jpeg', .75), w: c.width, h: c.height });
+        };
+        i.onerror = () => { URL.revokeObjectURL(u); ko(new Error('immagine non leggibile')); };
+        i.src = u;
+    });
 }
 
 // 07-memoria.ts — Motore dei ripassi (F2): ripetizione spaziata con FSRS.
@@ -9511,7 +9764,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.35.0';
+const VERSIONE = '0.36.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
