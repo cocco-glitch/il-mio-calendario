@@ -18,10 +18,13 @@ interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Part
 interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; }
 
 const Banca = (() => {
-  const file = new Map<number, Promise<BancaFile | null>>();
-  function carica(step: number): Promise<BancaFile | null> {
-    if (!file.has(step)) file.set(step, fetch('studio/banca/banca-step-' + step + '.json').then(r => r.ok ? r.json() : null).catch(() => null));
-    return file.get(step)!;
+  const file = new Map<string, Promise<BancaFile | null>>();
+  const scarica = (nome: string) => fetch('studio/banca/' + nome + '.json').then(r => r.ok ? r.json() : null).catch(() => null);
+  /** v0.37: con la materia scarica solo la sua parte (banca-step-N-C.json, ~1/3), altrimenti il file intero. */
+  function carica(step: number, mat?: string): Promise<BancaFile | null> {
+    const k = step + '-' + (mat || '');
+    if (!file.has(k)) file.set(k, mat ? scarica('banca-step-' + step + '-' + mat).then(b => b || carica(step)) : scarica('banca-step-' + step));
+    return file.get(k)!;
   }
   const hash = (s: string) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
   const norm = (s: string) => String(s).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -72,7 +75,7 @@ const Banca = (() => {
 
   /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
   async function scheda(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<{ domande: DomB[]; immagini: Record<string, string>; fonte: string }> {
-    const B = await carica(parseInt(micro, 10));
+    const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
     if (B && B.schede[s.id]) return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
     const K = 'imc-banca-' + s.id;
     try { const c = localStorage.getItem(K); if (c) { const j = JSON.parse(c); return { domande: applica(j.domande, s.id), immagini: j.immagini || {}, fonte: 'copia' }; } } catch (_) { /* niente */ }
@@ -105,6 +108,15 @@ const QuizApp = (() => {
     r.n++; if (v.ok) r.ok++; r.ultima = ymd(new Date()); r.esito = !!v.ok;
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
     Stato.salva(r, true);
+    // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
+    if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {
+      const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi];
+      if (r.scelte && r.scelte[o] === 2) {
+        const perche = v.d.ew && v.d.ew[oi - 1] ? v.d.ew[oi - 1] : '';
+        const n = Carte.daErrori([{ schedaId: v.d.sk, q: testoPiano(v.d.q) + '\n\nTrappola in cui sei caduto 2 volte: «' + testoPiano(v.d.o![oi]) + '»', giusta: testoPiano(v.d.o![0]), spieg: perche ? 'Perché «' + testoPiano(v.d.o![oi]) + '» è sbagliata: ' + perche : '' }]);
+        if (n.length) avviso('🪤 Stessa trappola per la seconda volta: aggiunta alle flashcard degli errori.', 5000);
+      }
+    }
   }
 
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */

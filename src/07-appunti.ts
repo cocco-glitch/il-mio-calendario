@@ -242,7 +242,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
       if (r.testo.trim()) { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + '## Dal file: ' + nome + '\n' + r.testo.trim() + '\n'; }
       modifica(); salvaOra();
       avviso('📎 ' + r.pagine.length + (r.pagine.length === 1 ? ' pagina inserita' : ' pagine inserite') + (r.testo.trim() ? ' · testo copiato sotto: ✨ crea domande e carte' : '') + '. Scrivici sopra con la penna.', 6000,
-        r.testo.trim() ? () => aiDomande(Stato.prendi<Appunto>(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + rr.length + ' domande aggiunte.'); }) : undefined);
+        r.testo.trim() ? () => aiDomande(Stato.prendi<Appunto>(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + rr.length + ' domande aggiunte.'); }, { nome, testo: r.testo }) : undefined);
     } catch (e: any) { avviso('Non riesco ad aprire «' + nome + '»: ' + (e && e.message || e), 8000); }
   }
   const opzMano: OpzioniMano = { allaCarta: aggiungiCarta, extra: () => [
@@ -363,15 +363,18 @@ function apriCornell(a: Appunto, copri = false): void {
 
 // ---------- AI (Groq) sugli appunti ----------
 /** Propone domande-flashcard dal testo dell'appunto; scegli quali tenere: diventano righe «::». */
-async function aiDomande(a: Appunto, dopo: (righe: string[]) => void): Promise<void> {
-  if (!a.testo.trim()) { avviso('Scrivi prima qualcosa.'); return; }
+/** fuoco (v0.37): testo di un PDF/slide appena inserito → carte su QUEL testo, non sull'inizio dell'appunto. */
+async function aiDomande(a: Appunto, dopo: (righe: string[]) => void, fuoco?: { nome: string; testo: string }): Promise<void> {
+  if (!a.testo.trim() && !fuoco) { avviso('Scrivi prima qualcosa.'); return; }
   avviso('✨ Preparo le domande…', 15000);
   let d: any;
   try {
     d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor di ' + Spiega.materia(a.titolo + ' ' + (a.sub ? nomeMateria(materiaDi(a.sub)) : '')) + ' per il semestre filtro di Medicina. Crei flashcard di ripasso SOLO dal testo dello studente, in italiano. Regole: un\'idea per carta; domanda breve e precisa; risposta di poche parole o una formula; niente domande sì/no; non inventare fatti che non sono nel testo. Rispondi in JSON: {"domande":[{"q":"...","r":"..."}]}' },
-      { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nAppunto:\n' + a.testo.slice(0, 9000) + '\n\nCrea da 4 a 8 flashcard sui concetti più importanti che NON hanno già una riga «domanda :: risposta».' }], 0.3);
+      fuoco
+        ? { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nTesto delle slide/PDF «' + fuoco.nome + '»:\n' + fuoco.testo.slice(0, 12000) + '\n\nCrea da ' + (fuoco.testo.length > 4000 ? '8 a 12' : '4 a 8') + ' flashcard sui concetti, definizioni e formule più importanti di QUESTO testo; ignora intestazioni ripetute, numeri di pagina e diciture legali.' }
+        : { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nAppunto:\n' + a.testo.slice(0, 9000) + '\n\nCrea da 4 a 8 flashcard sui concetti più importanti che NON hanno già una riga «domanda :: risposta».' }], 0.3);
   } catch (e: any) { avviso(String(e.message || e), 8000); return; }
-  const lista: { q: string; r: string }[] = (d && d.domande || []).filter((x: any) => x && x.q && x.r).slice(0, 10);
+  const lista: { q: string; r: string }[] = (d && d.domande || []).filter((x: any) => x && x.q && x.r).slice(0, 12);
   if (!lista.length) { avviso('Nessuna domanda proposta.'); return; }
   const scelte = lista.map(() => true);
   foglio({ titolo: '✨ Domande proposte', etichettaSalva: 'Aggiungi le scelte', corpo: h('div.modulo', null,

@@ -84,3 +84,8 @@ Una riga per scelta importante: data · decisione · motivo.
 - Service worker: dati di studio dalla cache con aggiornamento in sottofondo; rete lenta → dopo 4 s usa la cache.
 - SVG dei quiz ripuliti (niente script/eventi/link javascript:) prima di entrare nella pagina; CSP minima (object-src, base-uri, form-action) e referrer stretto.
 - test/tutti.sh distingue i test «saltati» dai falliti.
+
+## v0.38 — Proposte del controllo generale
+- Banca domande divisa per materia in dist (banca-step-N-C/B/F.json, generate dal build): una scheda scarica ~1/3 del file; ripiego sul file intero.
+- Trappole ripetute: se scegli lo stesso distrattore 2 volte, diventa una flashcard negli «Errori dei quiz» con il perché è sbagliato (ew).
+- PDF/slide negli appunti: le flashcard AI si fanno sul testo del file appena inserito (fino a 12 carte), non sull'inizio dell'appunto.

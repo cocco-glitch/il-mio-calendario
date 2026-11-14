@@ -25,6 +25,18 @@ writeFileSync('dist/.nojekyll', '');
 execSync('node studio/genera.mjs', { stdio: 'inherit' });
 cpSync('studio/pacchetti', 'dist/studio', { recursive: true });
 cpSync('studio/banca', 'dist/studio/banca', { recursive: true }); // v0.22: banca domande (Quiz Studio)
+// v0.37: una banca per materia (l'app scarica solo quella della scheda aperta)
+for (const f of readdirSync('studio/banca').filter(f => /^banca-step-\d+\.json$/.test(f))) {
+  const b = JSON.parse(readFileSync('studio/banca/' + f, 'utf8'));
+  for (const m of ['C', 'B', 'F']) {
+    const schede = Object.fromEntries(Object.entries(b.schede).filter(([k]) => k.startsWith(m + '-')));
+    if (!Object.keys(schede).length) continue;
+    const domande = b.domande.filter(d => d.sk.startsWith(m + '-'));
+    const usate = new Set(domande.flatMap(d => (d.img || []).map(i => i.i)));
+    const immagini = Object.fromEntries(Object.entries(b.immagini || {}).filter(([k]) => usate.has(k)));
+    writeFileSync('dist/studio/banca/' + f.replace('.json', '-' + m + '.json'), JSON.stringify({ ...b, schede, domande, immagini }));
+  }
+}
 
 // Anteprima in un solo file: niente manifest/service worker.
 const html = readFileSync('public/index.html', 'utf8')
