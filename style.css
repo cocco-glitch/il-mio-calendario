@@ -746,3 +746,15 @@ body.mano-pieno .tabbar, body.mano-pieno .fab { display: none !important; }
 .nota-tessera:active .nota-anteprima { transform: scale(.97); }
 .mano-nota { white-space: nowrap; flex: none; padding: 0 4px; }
 .mano-barra button { white-space: nowrap; }
+/* v0.39 blocco note: pannello penne e forme */
+.mano-opzioni { display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: 6px 0; border-radius: 14px; background: var(--vetro-forte, var(--sup)); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1px solid var(--linea); animation: manoApri .18s ease-out; }
+.mano-riga { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.mano-riga > span:first-child { min-width: 104px; }
+.mano-riga input[type=range] { flex: 1; min-width: 140px; accent-color: var(--accento); }
+.mano-riga .chip { padding: 6px 10px; border-radius: 999px; background: var(--sup2); color: var(--testo); font-size: 14px; transition: transform .12s; }
+.mano-riga .chip:active { transform: scale(.94); }
+.mano-riga .chip.attivo { background: color-mix(in srgb, var(--accento) 25%, var(--sup2)); outline: 2px solid var(--accento); }
+.mano-barra .mano-piu { display: grid; place-items: center; background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); color: #fff; font-weight: 700; cursor: pointer; flex: none; position: relative; overflow: hidden; }
+.mano-barra button { transition: transform .12s ease; }
+.mano-barra button:active { transform: scale(.9); }
+@keyframes manoApri { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
