@@ -109,3 +109,6 @@ Tema del foglio per appunto (standard / bianco griglia scura / nero griglia chia
 
 ## v0.41.1 — Icone coerenti e registrazione in sottofondo
 Icone vettoriali (stesso tratto) per tutti i nuovi pulsanti: microfono, righello, calcolo, cursori penna, forme, sfondi, menu, annulla/ripeti, schermo intero. La registrazione è una pillola fissa in basso (tempo, pausa, Fine, annulla) e non blocca l appunto; anche la trascrizione lavora in sottofondo e la pillola diventa «Rivedi» finché non la apri. Nota: il mapping dell emoji 🎚 rompeva il fuoco della textarea, quindi il pulsante usa direttamente icona(cursori).
+
+## v0.41.2 — Ottimizzazione iOS/Android e scorrimento appunti
+Cache dei tratti decodificati con riquadro verticale; tratti a pressione disegnati a gruppi di spessore: ridisegno durante lo scorrimento da ~25 ms a ~3,6 ms per frame (3000 tratti). Tela «viva» a bassa latenza (desynchronized) per la penna su Android. CSS: touch-action manipulation (niente ritardo da doppio tocco), overscroll contenuto, content-visibility sugli elenchi, livelli GPU per le tele, rispetto di «riduci movimento».

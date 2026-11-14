@@ -14,6 +14,13 @@ const LARG = 1000, PAGINA = 1414;   // v0.39.1: pagine A4 (1000 × 1414) una sot
 
 // v0.39 tipi: p = stilografica (pressione), b = biro, m = matita, t = tratteggio, e = evidenziatore; 5° campo facoltativo = riempimento.
 type Tratto = { c: string; w: number; k: string; p: number[][]; f?: string };
+// v0.41.2: cache dei tratti già decodificati (+ riquadro) — lo scorrimento non riparsa più ogni tratto a ogni frame
+const CACHE_TR = new Map<string, Tratto & { y0: number; y1: number }>();
+function trattoCache(s: string): Tratto & { y0: number; y1: number } {
+  let t = CACHE_TR.get(s);
+  if (!t) { const d = decodTratto(s); let y0 = 1e9, y1 = -1e9; for (const q of d.p) { if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; } t = { ...d, y0, y1 }; if (CACHE_TR.size > 20000) CACHE_TR.clear(); CACHE_TR.set(s, t); }
+  return t;
+}
 function decodTratto(s: string): Tratto {
   const [c, w, k, pts, f] = s.split('|');
   return { c, w: +w, k, p: (pts || '').split(' ').filter(Boolean).map(x => x.split(',').map(Number)), ...(f ? { f } : {}) };
@@ -147,8 +154,8 @@ function disegnaMano(g: CanvasRenderingContext2D, m: Mano, scala: number, sfondo
   g.lineCap = 'round'; g.lineJoin = 'round';
   const y0 = oy / scala - 40, y1 = (oy + vh) / scala + 40;
   for (const s of m.t) {
-    const t = decodTratto(s);
-    if (v && !t.p.some(q => q[1] >= y0 && q[1] <= y1)) continue;   // fuori dalla finestra
+    const t = trattoCache(s);
+    if (v && (t.y1 < y0 || t.y0 > y1)) continue;   // fuori dalla finestra
     tracciaTratto(g, scuro ? inchiostroScuro(t) : t, scala);
   }
   g.restore();
@@ -167,11 +174,14 @@ function tracciaTratto(g: CanvasRenderingContext2D, t: Tratto, scala: number): v
     g.setLineDash([]); g.globalAlpha = 1; return;
   }
   if (t.p.length === 1) { g.fillStyle = t.c; g.beginPath(); g.arc(t.p[0][0] * scala, t.p[0][1] * scala, t.w * scala / 2, 0, 7); g.fill(); g.globalAlpha = 1; return; }
+  // v0.41.2: segmenti consecutivi con spessore quasi uguale in un solo percorso (molti meno stroke() per frame)
+  let lw = -1; g.beginPath();
   for (let i = 1; i < t.p.length; i++) {
-    const a = t.p[i - 1], b = t.p[i];
-    g.lineWidth = Math.max(.6, t.w * scala * (t.k === 'e' ? 1 : .45 + (b[2] || 50) / 100));
-    g.beginPath(); g.moveTo(a[0] * scala, a[1] * scala); g.lineTo(b[0] * scala, b[1] * scala); g.stroke();
+    const a = t.p[i - 1], b = t.p[i], w = Math.round(Math.max(.6, t.w * scala * (.45 + (b[2] || 50) / 100)) * 4) / 4;
+    if (w !== lw) { if (lw > 0) g.stroke(); g.beginPath(); g.lineWidth = lw = w; g.moveTo(a[0] * scala, a[1] * scala); }
+    g.lineTo(b[0] * scala, b[1] * scala);
   }
+  g.stroke();
   g.globalAlpha = 1;
 }
 /** Immagine PNG (fondo bianco) della pagina, per l'AI o per Drive. */
@@ -195,8 +205,8 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
   const ripristina = (f: Foto) => { m.t = f.t; m.im = f.im; };
   let strumento: 'penna' | 'evid' | 'gomma' | 'lazo' | 'forma' = 'penna', colore = '#1f2a44', dito = !matchMedia('(pointer: fine), (hover: hover)').matches && !('ontouchstart' in window && navigator.maxTouchPoints > 1 && /iPad|Macintosh/.test(navigator.userAgent));
   let penna = false;   // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
-  const cv = h('canvas.mano-tela') as HTMLCanvasElement, g = cv.getContext('2d')!;
-  const vivo = h('canvas.mano-vivo') as HTMLCanvasElement, gv = vivo.getContext('2d')!;
+  const cv = h('canvas.mano-tela') as HTMLCanvasElement, g = cv.getContext('2d', { alpha: true })!;
+  const vivo = h('canvas.mano-vivo') as HTMLCanvasElement, gv = (vivo.getContext('2d', { desynchronized: true } as CanvasRenderingContext2DSettings) || vivo.getContext('2d')) as CanvasRenderingContext2D;   // bassa latenza della penna su Android
   // la tela è grande quanto la parte visibile (vista «sticky»): nitida a qualunque ingrandimento
   const vista = h('div.mano-vista', null, cv, vivo);
   const box = h('div.mano-box', null, vista);

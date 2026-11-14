@@ -809,3 +809,11 @@ body.mano-pieno .tabbar, body.mano-pieno .fab { display: none !important; }
 .audio-giro { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accento); border-top-color: transparent; animation: audioGiro .8s linear infinite; }
 @keyframes audioGiro { to { transform: rotate(360deg); } }
 .audio-pillola.pronta { padding: 6px; }
+/* v0.41.2 ottimizzazione iOS/Android */
+button, a, .chip, [role=tab], .nota-tessera { touch-action: manipulation; }   /* niente ritardo da doppio tocco */
+.mano-foglio { overscroll-behavior: contain; scroll-behavior: auto; -webkit-overflow-scrolling: touch; }
+.mano-vista { contain: layout paint size; }
+.mano-vista canvas { transform: translateZ(0); backface-visibility: hidden; }
+.nota-tessera, .voce-lista { content-visibility: auto; contain-intrinsic-size: auto 88px; }
+.foglio-corpo, .tendina-menu, .mano-miniature, .audio-corr { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
