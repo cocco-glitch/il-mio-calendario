@@ -88,9 +88,9 @@ with sync_playwright() as p:
     ok(pg.evaluate("Studio.inRitardo().every(v => !/^R\\d/.test(v.k))"), 'il raffinamento non conta come ritardo adesso')
     # copertura
     ok(pg.evaluate("Studio.pkPiano().copertura.length") == 124, '124 argomenti del syllabus')
-    pg.click('.tabbar >> text=Studio'); pg.click('.segmenti >> text=Syllabus'); pg.wait_for_selector('.etichetta.stato-n'); pg.screenshot(path='test/26-syllabus.png')
+    pg.click('.tabbar >> text=Studio'); pg.click('.segmenti .tendina-btn'); pg.click('.tendina-menu >> text=Syllabus'); pg.wait_for_selector('.etichetta.stato-n'); pg.screenshot(path='test/26-syllabus.png')
     # tabelle
-    pg.click('.segmenti >> text=Tabelle'); pg.click('text=+ Nuova tabella'); pg.fill('.foglio .titolo-grande', 'Errori ricorrenti'); pg.locator('.foglio select').select_option('studio'); pg.click('.foglio-testa >> text=Crea')
+    pg.click('.segmenti .tendina-btn'); pg.click('.tendina-menu >> text=Tabelle'); pg.click('text=+ Nuova tabella'); pg.fill('.foglio .titolo-grande', 'Errori ricorrenti'); pg.locator('.foglio select').select_option('studio'); pg.click('.foglio-testa >> text=Crea')
     pg.wait_for_selector('table.tab'); pg.locator('table.tab textarea').first.fill('Osmolarità'); pg.locator('table.tab textarea').first.dispatch_event('change')
     pg.locator('table.tab input[type=date]').first.fill('2026-11-12'); pg.locator('table.tab input[type=date]').first.dispatch_event('change')
     pg.click('text=+ Aggiungi riga'); pg.wait_for_timeout(200)

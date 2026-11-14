@@ -77,7 +77,7 @@ with sync_playwright() as p:
     ok('Cosa misura il calore latente? :: energia' in pg.input_value('.appunto-testo') and 'Unità del' not in pg.input_value('.appunto-testo'), 'solo la domanda scelta aggiunta come riga ::')
     ok(pg.evaluate("Carte.carteDi('mz-appunti').some(c => c.f === 'Cosa misura il calore latente?')"), 'e diventa flashcard')
     pg.fill('.appunto-riassunto', 'Il calore latente serve a cambiare stato senza cambiare temperatura.'); pg.wait_for_timeout(100)
-    pg.click('.visore-testa .btn-testo:has-text("⋯")'); pg.click('.dialogo button:has-text("Riscontro AI")'); pg.wait_for_selector('.foglio:has-text("Manca")')
+    pg.click('.visore-testa .tendina-btn'); pg.click('.tendina-menu button:has-text("Riscontro AI")'); pg.wait_for_selector('.foglio:has-text("Manca")')
     ok('334 J/g' in pg.inner_text('.foglio'), 'riscontro sul riassunto: cosa manca')
 
     # --- v0.30: Studia ora, Oggi, errori dei quiz, import ---

@@ -78,10 +78,10 @@ function riconosciForma(p: number[][]): { pts: number[][]; chiusa: boolean; nome
 }
 // v0.39: appunti a mano copiati col lazo (anche tra un appunto e l'altro)
 let APPUNTI_MANO: { t: string[]; im: ImgMano[] } | null = null;
-const PREF_MANO = (() => { const d = { tipo: 'p', w: 1, stab: 4, auto: false, tieni: true, gomma: 'tratto', lazo: 'tutto', forma: 'rett' as FormaK, riempi: false, scarab: false, barraChiusa: false, extra: [] as string[] }; try { return { ...d, ...JSON.parse(localStorage.getItem('pref-mano') || '{}') }; } catch (_) { return d; } })();
+const PREF_MANO = (() => { const d = { tipo: 'p', w: 1, stab: 4, auto: false, tieni: true, gomma: 'tratto', lazo: 'tutto', forma: 'rett' as FormaK, riempi: false, scarab: false, barraChiusa: false, calcoli: true, extra: [] as string[] }; try { return { ...d, ...JSON.parse(localStorage.getItem('pref-mano') || '{}') }; } catch (_) { return d; } })();
 const salvaPrefMano = () => { try { localStorage.setItem('pref-mano', JSON.stringify(PREF_MANO)); } catch (_) { /* privato */ } };
 
-interface ImgMano { s: string; x: number; y: number; w: number; h: number; }
+interface ImgMano { s: string; x: number; y: number; w: number; h: number; r?: 1; }   // r = risultato di un calcolo (senza cornice)
 /** Vista di disegno: la tela copre solo la parte visibile del foglio (ox, oy = scorrimento in pixel). */
 interface VistaMano { ox: number; oy: number; w: number; h: number; passo: number; }
 const CACHE_IMG = new Map<string, HTMLImageElement>();
@@ -142,7 +142,7 @@ function disegnaMano(g: CanvasRenderingContext2D, m: Mano, scala: number, sfondo
     const img = imgPronta(im.s, poi);
     if (img) g.drawImage(img, im.x * scala, im.y * scala, im.w * scala, im.h * scala);
     else { g.fillStyle = 'rgba(120,130,160,.12)'; g.fillRect(im.x * scala, im.y * scala, im.w * scala, im.h * scala); }
-    g.strokeStyle = 'rgba(120,130,160,.35)'; g.lineWidth = 1; g.strokeRect(im.x * scala, im.y * scala, im.w * scala, im.h * scala);
+    if (!im.r) { g.strokeStyle = 'rgba(120,130,160,.35)'; g.lineWidth = 1; g.strokeRect(im.x * scala, im.y * scala, im.w * scala, im.h * scala); }
   }
   g.lineCap = 'round'; g.lineJoin = 'round';
   const y0 = oy / scala - 40, y1 = (oy + vh) / scala + 40;
@@ -309,7 +309,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
         const c = document.createElement('canvas'); c.width = 150; c.height = Math.round(PAGINA * s);
         c.getContext('2d')!.drawImage(cv2, 0, k * PAGINA * s, 150, PAGINA * s, 0, 0, 150, PAGINA * s);
         griglia.append(h('div.mano-mini', null, h('button.mano-mini-pag', { onclick: () => { fs.chiudi(); vaiPagina(k); }, 'aria-label': 'Vai a pagina ' + (k + 1) }, c), h('div.mano-mini-piede', null, h('span', null, String(k + 1)),
-          ...(n > 1 ? [h('button.btn-testo', { 'aria-label': 'Elimina pagina ' + (k + 1), onclick: () => { if (!confirm('Eliminare la pagina ' + (k + 1) + ' e quello che contiene? (puoi annullare con ↶)')) return; salvaStoria();
+          ...(n > 1 ? [h('button.btn-testo', { 'aria-label': 'Elimina pagina ' + (k + 1), onclick: async () => { if (await chiedi('Eliminare la pagina ' + (k + 1) + '?', [{ testo: 'Elimina', valore: 'si', pericolo: true }], 'Puoi annullare con ↶') !== 'si') return; salvaStoria();
             const y0 = k * PAGINA, y1 = y0 + PAGINA, sposta1 = (y: number) => y >= y1 ? y - PAGINA : y;
             m.t = m.t.map(decodTratto).filter(t => !t.p.every(q => q[1] >= y0 && q[1] < y1)).map(t => codTratto(t.c, t.w, t.k, t.p.map(q => [q[0], sposta1(q[1]), q[2]]), t.f));
             m.im = (m.im || []).filter(a => !(a.y >= y0 && a.y < y1)).map(a => ({ ...a, y: sposta1(a.y) }));
@@ -377,6 +377,43 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
     m.t = m.t.filter(s => decodTratto(s).p.filter(q => q[0] >= r[0] && q[0] <= r[2] && q[1] >= r[1] && q[1] <= r[3]).length < 2);
     return m.t.length !== prima;
   }
+  // --- v0.41: calcoli scritti a mano dopo «=» (come Math Notes): l'AI LEGGE l'espressione, il conto lo fa l'app ---
+  let timerUguale = 0;
+  const bboxT = (p: number[][]) => { const xs = p.map(q => q[0]), ys = p.map(q => q[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+  function eUguale(a: number[][], b: number[][]): boolean {
+    const trattino = (p: number[][]) => { const r = bboxT(p), w = r[2] - r[0], hh = r[3] - r[1]; return p.length >= 2 && w >= 8 && w <= 160 && hh < Math.max(6, w * .3) && lungTratto(p) < w * 1.4; };
+    if (!trattino(a) || !trattino(b)) return false;
+    const ra = bboxT(a), rb = bboxT(b), wa = ra[2] - ra[0], wb = rb[2] - rb[0];
+    const sovr = Math.min(ra[2], rb[2]) - Math.max(ra[0], rb[0]), gap = Math.abs((ra[1] + ra[3]) / 2 - (rb[1] + rb[3]) / 2);
+    return wa / wb > .45 && wa / wb < 2.2 && sovr > .5 * Math.min(wa, wb) && gap > 3 && gap < Math.max(wa, wb) * .9;
+  }
+  async function controllaUguale(): Promise<void> {
+    if (m.t.length < 3) return;
+    const ta = decodTratto(m.t[m.t.length - 2]), tb = decodTratto(m.t[m.t.length - 1]);
+    if (ta.k === 'e' || tb.k === 'e' || !eUguale(ta.p, tb.p)) return;
+    const ra = bboxT(ta.p), rb = bboxT(tb.p), x0 = Math.min(ra[0], rb[0]), x1 = Math.max(ra[2], rb[2]), yc = (ra[1] + ra[3] + rb[1] + rb[3]) / 4, banda = Math.max(45, (x1 - x0) * 1.3);
+    const riga = m.t.slice(0, -2).map(decodTratto).filter(t => { if (t.k === 'e') return false; const r = bboxT(t.p), c = (r[1] + r[3]) / 2; return Math.abs(c - yc) < banda && r[2] <= x0 + 4 && r[0] > x0 - 900; });
+    if (!riga.length) return;
+    const bx = [Math.min(...riga.map(t => bboxT(t.p)[0])), Math.min(...riga.map(t => bboxT(t.p)[1])), x1, Math.max(...riga.map(t => bboxT(t.p)[3]))];
+    const parte: Mano = { t: riga.concat([ta, tb]).map(t => codTratto('#000', t.w, 'b', t.p.map(q => [q[0] - bx[0] + 20, q[1] - bx[1] + 20, 50]))), h: bx[3] - bx[1] + 40, sf: 'bianco' };
+    avviso('🧮 Leggo il calcolo…', 8000);
+    let letto = '';
+    try { letto = await Spiega.vede('Nell\'immagine c\'è un\'espressione matematica scritta a mano che finisce con «=». Trascrivi SOLO l\'espressione a sinistra dell\'uguale, su una riga, in forma calcolabile: * per moltiplicare, / per dividere, ^ per le potenze, sqrt() per la radice, parentesi dove servono; numeri con la virgola come scritti. Niente altro testo.', immagineMano({ ...parte, h: Math.max(parte.h, 80) }, 700)); }
+    catch (e: any) { avviso(String(e.message || e), 5000); return; }
+    letto = letto.replace(/^```\w*|```$/g, '').replace(/=\s*$/, '').split('\n')[0].trim();
+    const campo = h('input.campo', { value: letto, inputmode: 'text', autocapitalize: 'off' }) as HTMLInputElement, esito = h('div.calcolo-esito');
+    const ricalcola = () => { try { esito.textContent = '= ' + Calcolo.formatta(Calcolo.valuta(campo.value)); esito.classList.remove('errore'); } catch (e: any) { esito.textContent = e.message; esito.classList.add('errore'); } };
+    campo.addEventListener('input', ricalcola); ricalcola();
+    foglio({ titolo: '🧮 Calcolo', etichettaSalva: 'Scrivi', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Ho letto così (controlla che ogni cifra sia giusta, correggi se serve):'), campo, esito),
+      salva: () => { let r: number; try { r = Calcolo.valuta(campo.value); } catch (_) { return false; } scriviRisultato(Calcolo.formatta(r), x1 + 10, yc, Math.max(28, (x1 - x0) * 1.2), tb.c); } });
+  }
+  function scriviRisultato(t: string, x: number, yc: number, alto: number, c: string): void {
+    const cv2 = document.createElement('canvas'), px = 3, font = 'italic ' + Math.round(alto * px) + 'px "Bradley Hand", "Segoe Print", "Comic Sans MS", "Chalkboard SE", cursive';
+    const g2 = cv2.getContext('2d')!; g2.font = font; const w = Math.ceil(g2.measureText(t).width) + 8 * px;
+    cv2.width = w; cv2.height = Math.round(alto * 1.4 * px); g2.font = font; g2.fillStyle = m.tm === 'scuro' && SCURI.has(c) ? '#e9edf6' : c; g2.textBaseline = 'middle'; g2.fillText(t, 4 * px, cv2.height / 2);
+    salvaStoria(); m.im = m.im || []; m.im.push({ s: cv2.toDataURL('image/png'), x: Math.round(x), y: Math.round(yc - alto * .7), w: Math.round(w / px), h: Math.round(cv2.height / px), r: 1 });
+    ridisegna(); cambia(); try { Tocco.clic(.7); } catch (_) { /* */ }
+  }
   // --- input ---
   let cur: number[][] | null = null, idPuntatore = -1, puntoInizio: number[] | null = null;
   const arrot = (x: number) => Math.round(x * 10) / 10;
@@ -408,6 +445,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
       if (r && p[0] >= r[0] && p[0] <= r[2] && p[1] >= r[1] && p[1] <= r[3]) { trascina = p; spost = [0, 0]; cur = [p]; return; }
       sel = new Set(); selIm = new Set(); aggiornaAzioni(); poligono = [p]; cur = [p]; return;
     }
+    clearTimeout(timerUguale);
     salvaStoria(); cur = [punto(e)]; puntoInizio = cur[0].slice(); liscio = cur[0].slice(); ultimoGrezzo = cur[0].slice(); tenuta = null;
     if (strumento === 'gomma') cancellaVicino(cur[0]);
     if (strumento === 'penna' || strumento === 'evid') { clearTimeout(timerTieni); timerTieni = window.setTimeout(aggancia, 550); }
@@ -464,6 +502,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
     }
     if (strumento !== 'gomma') m.t.push(codTratto(colore, spessore(), tipoK(), cur));
     cur = null; tenuta = null; idPuntatore = -1; ridisegna(); cambia();
+    clearTimeout(timerUguale); if (strumento === 'penna' && PREF_MANO.calcoli && Spiega.attiva) timerUguale = window.setTimeout(controllaUguale, 800);
   };
   vivo.addEventListener('pointerup', fine); vivo.addEventListener('pointercancel', fine);
   // Scribble di iPadOS: sulla tela i tocchi dello stilo non devono diventare testo né scorrere la pagina
@@ -492,6 +531,8 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
     if (y + 200 > m.h) m.h = Math.ceil((y + 400) / 100) * 100;
     dimensiona(); cambia();
   }
+  const incolla = () => { const c = APPUNTI_MANO!; salvaStoria(); const dy = Math.round(pag.scrollTop / scala) + 40; const ys = c.t.flatMap(s => decodTratto(s).p.map(q => q[1])).concat(c.im.map(a => a.y)); const y0 = ys.length ? Math.min(...ys) : 0;
+        m.t.push(...c.t.map(s => { const t = decodTratto(s); return codTratto(t.c, t.w, t.k, t.p.map(q => [q[0], q[1] - y0 + dy, q[2]]), t.f); })); m.im = (m.im || []).concat(c.im.map(a => ({ ...a, y: a.y - y0 + dy }))); ridisegna(); cambia(); };
   // --- barra strumenti ---
   const barra = h('div.mano-barra');
   const COLORI = ['#1f2a44', '#1c7ed6', '#e03131', '#2f9e44', '#f59f00'];
@@ -505,12 +546,8 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
       b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'),
       b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'),
       b('➰', strumento === 'lazo', () => { if (strumento === 'lazo') opzioni = opzioni === 'lazo' ? '' : 'lazo'; strumento = 'lazo'; }, 'Lazo: cerchia tratti o allegati (tocca di nuovo per scegliere cosa selezionare)'),
-      b('📏', rig.on, () => { rig.on = !rig.on; if (rig.on) { rig.x = pag.scrollLeft / scala + 60; rig.y = pag.scrollTop / scala + 220; rig.L = Math.min(800, (vw / scala) - 120); } posRighello(); }, 'Righello: trascinalo, ruotalo con ⟳; la penna lungo il bordo traccia dritto'),
-      b('📑', false, pagine, 'Pagine: miniature, vai a una pagina, aggiungi o elimina'),
       b(({ linea: '╱', freccia: '↗', rett: '▭', ellisse: '◯', triangolo: '△' } as any)[PREF_MANO.forma], strumento === 'forma', () => { if (strumento === 'forma') opzioni = opzioni === 'forma' ? '' : 'forma'; strumento = 'forma'; annullaSel(); }, 'Forme: trascina per disegnare (tocca di nuovo per sceglierle)'),
       b('⚙︎', opzioni === 'penna', () => { opzioni = opzioni === 'penna' ? '' : 'penna'; }, 'Penna: tipo, spessore, stabilizzazione, forme'),
-      ...(APPUNTI_MANO ? [b('📋', false, () => { const c = APPUNTI_MANO!; salvaStoria(); const dy = Math.round(pag.scrollTop / scala) + 40; const ys = c.t.flatMap(s => decodTratto(s).p.map(q => q[1])).concat(c.im.map(a => a.y)); const y0 = ys.length ? Math.min(...ys) : 0;
-        m.t.push(...c.t.map(s => { const t = decodTratto(s); return codTratto(t.c, t.w, t.k, t.p.map(q => [q[0], q[1] - y0 + dy, q[2]]), t.f); })); m.im = (m.im || []).concat(c.im.map(a => ({ ...a, y: a.y - y0 + dy }))); ridisegna(); cambia(); }, 'Incolla')] : []),
       h('span.mano-sep'),
       ...COLORI.concat(PREF_MANO.extra).map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma') strumento = 'penna'; aggiornaBarra(); } })),
       (() => { const i = h('input', { type: 'color', value: colore, 'aria-label': 'Colore personalizzato', style: { position: 'absolute', opacity: '0', width: '1px', height: '1px' }, onchange: () => { colore = i.value; if (!COLORI.includes(colore) && !PREF_MANO.extra.includes(colore)) { PREF_MANO.extra = [colore, ...PREF_MANO.extra].slice(0, 4); salvaPrefMano(); } if (strumento === 'gomma') strumento = 'penna'; aggiornaBarra(); } }) as HTMLInputElement;
@@ -518,7 +555,12 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
       h('span.mano-sep'),
       b('↶', false, () => { if (storia.length) { futuro.push(foto()); ripristina(storia.pop()!); ridisegna(); cambia(); } }, 'Annulla'),
       b('↷', false, () => { if (futuro.length) { storia.push(foto()); ripristina(futuro.pop()!); ridisegna(); cambia(); } }, 'Ripeti'),
-      b(({ quadretti: '▦', righe: '☰', puntini: '⁙', bianco: '▢', cornell: '◧', esercizio: '▤' } as any)[m.sf], false, () => { const oo: Mano['sf'][] = ['quadretti', 'righe', 'puntini', 'bianco', 'cornell', 'esercizio']; m.sf = oo[(oo.indexOf(m.sf) + 1) % oo.length]; ridisegna(); cambia(); }, 'Sfondo: quadretti / righe / puntini / bianco / Cornell / esercizio'),
+      tendina('⋯', () => [
+        ...(['quadretti', 'righe', 'puntini', 'bianco', 'cornell', 'esercizio'] as Mano['sf'][]).map(k => ({ testo: ({ quadretti: '▦ Quadretti', righe: '☰ Righe', puntini: '⁙ Puntini', bianco: '▢ Bianco', cornell: '◧ Cornell', esercizio: '▤ Esercizio' } as any)[k], attiva: m.sf === k, azione: () => { m.sf = k; ridisegna(); cambia(); } })),
+        { testo: (rig.on ? '✓ ' : '') + '📏 Righello', attiva: rig.on, azione: () => { rig.on = !rig.on; if (rig.on) { rig.x = pag.scrollLeft / scala + 60; rig.y = pag.scrollTop / scala + 220; rig.L = Math.min(800, (vw / scala) - 120); } posRighello(); aggiornaBarra(); } },
+        { testo: '📑 Pagine', azione: pagine },
+        APPUNTI_MANO ? { testo: '📋 Incolla', azione: incolla } : null,
+      ], 'Foglio: sfondo, righello, pagine, incolla'),
       (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')),
       ...(penna ? [h('span.tenue.piccolo.mano-nota', null, '✏️ Pencil: il dito scorre')] : [b(dito ? '☝️ scrive' : '☝️ scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito')]),
       ...(o.extra ? o.extra().filter(Boolean) as HTMLElement[] : []));
@@ -544,6 +586,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
       riga('Stabilizzazione', cursore(0, 10, 1, PREF_MANO.stab, x => PREF_MANO.stab = x)),
       riga('Forme', scelta('t', PREF_MANO.tieni, () => PREF_MANO.tieni = !PREF_MANO.tieni, (PREF_MANO.tieni ? '✓ ' : '') + 'Disegna e tieni premuto'), scelta('a', PREF_MANO.auto, () => PREF_MANO.auto = !PREF_MANO.auto, (PREF_MANO.auto ? '✓ ' : '') + 'Forma automatica')),
       riga('Foglio', ...([['', '▢ Standard'], ['contrasto', '▦ Bianco, griglia scura'], ['scuro', '■ Nero, griglia chiara']] as [string, string][]).map(([k, e]) => scelta(k, (m.tm || '') === k, () => { if (k) m.tm = k as any; else delete m.tm; pag.classList.toggle('scuro', m.tm === 'scuro'); ridisegna(); cambia(); }, e))),
+      riga('Calcoli', scelta('c', PREF_MANO.calcoli, () => PREF_MANO.calcoli = !PREF_MANO.calcoli, (PREF_MANO.calcoli ? '✓ ' : '') + 'Risultato dopo «=» (AI legge, l\'app calcola)')),
       riga('Gomma', scelta('s', PREF_MANO.scarab, () => PREF_MANO.scarab = !PREF_MANO.scarab, (PREF_MANO.scarab ? '✓ ' : '') + 'Scarabocchio cancella'), scelta('g', PREF_MANO.gomma === 'tratto', () => PREF_MANO.gomma = 'tratto', 'Tratto intero'), scelta('g', PREF_MANO.gomma === 'parziale', () => PREF_MANO.gomma = 'parziale', 'Parziale')),
       h('div.tenue.piccolo', null, 'Gesti: due dita toccano = annulla · tre dita = ripeti · scarabocchio = cancella (se attivo) · pizzica = zoom'));
   }

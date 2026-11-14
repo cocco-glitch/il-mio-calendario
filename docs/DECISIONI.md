@@ -101,3 +101,8 @@ Righello trascinabile e ruotabile (si ferma a 0/45/90°): la penna lungo il bord
 
 ## v0.40 — Foglio nero, barra a tendina, scarabocchio facoltativo
 Tema del foglio per appunto (standard / bianco griglia scura / nero griglia chiara, inchiostro scuro mostrato chiaro sul nero). Griglia legata alla carta (si ingrandisce con lo zoom). Barra strumenti a tendina (chiusa: strumento attivo, colore, annulla/ripeti). Scarabocchio-per-cancellare spento di base, si attiva nel pannello ⚙︎.
+
+## v0.41 — Calcoli dopo «=», lezioni audio, standard menu a tendina
+- Calcolo (07-calcolo.ts): valutatore senza eval; nel testo bolla col risultato dopo «=», Invio inserisce; variabili «m=2» dalle righe sopra; trig in gradi. A mano: «=» disegnato → l AI legge solo l espressione (da confermare), il conto lo fa l app, risultato scritto in grafia accanto (allegato r:1). Opzione nel pannello ⚙︎.
+- Lezioni audio (07-audio.ts): registra (32 kbps, wake lock) o carica; Groq Whisper turbo → controllo di coerenza AI (segmenti dubbi + glossario, aiutato da avg_logprob) → ritrascrizione con large-v3 e scelta tra due ascolti, senza inventare; revisione con ▶ e spunta; file >25 MB divisi in WAV 16 kHz da 10 min; audio facoltativo su Drive «Lezioni audio».
+- Standard menu a tendina (tendina() in 04-componenti): in ogni barra 3-5 azioni frequenti, le rare nel menu. Applicato a: barra testo appunti, azioni appunto, foglio (sfondo/righello/pagine/incolla), viste di Studio (Statistiche/Esami/Syllabus/Tabelle).

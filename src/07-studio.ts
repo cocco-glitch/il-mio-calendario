@@ -441,7 +441,11 @@ function vistaStudio(): HTMLElement {
   if (UI.studioSub) { const t = Studio.trovaSotto(UI.studioSub); if (t) return vistaSottostep(t.pk, t.mat, t.sub); UI.studioSub = null; }
   const pk = pks.find(p => p.id === UI.studioStep) || pks[pks.length - 1];
   const voci: [typeof UI.studioVista, string][] = [['schede', 'Schede'], ['carte', 'Carte'], ['piano', 'Piano'], ['errori', 'Errori'], ['statistiche', 'Statistiche'], ['esami', 'Esami'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
-  const seg = h('div.segmenti.scorre', { role: 'tablist' }, voci.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.studioVista = v; UI.pianoScorso = false; disegna(); } }, t)));
+  // v0.41 standard a tendina: 4 viste frequenti in vista, le altre nel menu «Altro ▾» (quella aperta resta visibile)
+  const vai = (v: typeof UI.studioVista) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
+  const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
+  const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)),
+    tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })), 'Altre viste: statistiche, esami, syllabus, tabelle'));
   if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
   if (UI.studioVista === 'errori') return h('div.pagina', null, seg, vistaErrori());

@@ -50,11 +50,11 @@ with sync_playwright() as p:
     pg.evaluate("Timer.avvia({ m: 'B', titolo: 'Bio' })"); pg.clock.run_for(10 * 60 * 1000); pg.evaluate("Timer.ferma()")
     ok(pg.evaluate("Stato.tutti('sessione').filter(s => s.m === 'B')[0].minuti") == 10, 'fermato a 10 minuti: registrati 10')
     # --- statistiche
-    pg.click('.tabbar >> text=Studio'); pg.click('.segmenti >> text=Statistiche'); pg.wait_for_selector('.grafico')
+    pg.click('.tabbar >> text=Studio'); pg.click('.segmenti .tendina-btn'); pg.click('.tendina-menu >> text=Statistiche'); pg.wait_for_selector('.grafico')
     ok('35 min' in pg.inner_text('.pagina'), 'statistiche: 35 min di studio')
     pg.screenshot(path='test/42-statistiche.png', full_page=True)
     # --- esami
-    pg.click('.segmenti >> text=Esami'); pg.click('text=+ Aggiungi esame'); pg.fill('.foglio .titolo-grande', 'Primo appello'); pg.fill('.foglio input[type=date]', '2026-12-10'); pg.click('.foglio-testa >> text=Salva')
+    pg.click('.segmenti .tendina-btn'); pg.click('.tendina-menu >> text=Esami'); pg.click('text=+ Aggiungi esame'); pg.fill('.foglio .titolo-grande', 'Primo appello'); pg.fill('.foglio input[type=date]', '2026-12-10'); pg.click('.foglio-testa >> text=Salva')
     pg.click('.tabbar >> text=Oggi'); pg.wait_for_timeout(1100); txt = pg.inner_text('.pagina')
     ok('28' in txt and '1° appello' in txt, 'Oggi: conto alla rovescia 28 giorni')
     ok(any('Primo appello' in x for x in pg.evaluate("Studio.vociDelGiorno(daYmd('2026-12-10')).map(x => x.v.t)")), 'esame nel calendario')

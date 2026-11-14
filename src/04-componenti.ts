@@ -39,8 +39,10 @@ function foglio(opz: {
   salva?: () => boolean | void;       // ritorna false per non chiudere
   etichettaSalva?: string;
   elimina?: () => void;
+  allaChiusura?: () => void;          // v0.41: chiamata comunque si chiuda (Annulla, sfondo, Esc, salva)
 }): { chiudi: () => void } {
-  const chiudi = () => { sfondo.remove(); document.removeEventListener('keydown', tasto); };
+  let chiuso = false;
+  const chiudi = () => { if (chiuso) return; chiuso = true; sfondo.remove(); document.removeEventListener('keydown', tasto); if (opz.allaChiusura) opz.allaChiusura(); };
   const tasto = (e: KeyboardEvent) => { if (e.key === 'Escape') chiudi(); };
   const sfondo = h('div.foglio-sfondo', { onclick: (e: Event) => { if (e.target === sfondo) chiudi(); } },
     h('div.foglio', { role: 'dialog', 'aria-label': opz.titolo },
@@ -143,4 +145,29 @@ function campoRicorrenza(iniziale: Ricorrenza | undefined, giornoBase: () => Dat
 
 function selettoreCategoria(valore?: string): HTMLSelectElement {
   return selettore([['', 'Nessuna'] as [string, string]].concat(categorie().map(c => [c.id, c.nome] as [string, string])), valore || '');
+}
+
+/** v0.41 STANDARD «menu a tendina»: un pulsante che apre un piccolo menu accanto a sé.
+ *  Regola d'interfaccia: in ogni barra restano in vista le 3-5 azioni frequenti; le rare vanno qui.
+ *  Si chiude toccando fuori, con Esc o scegliendo una voce. */
+type VoceTendina = { testo: string; azione: () => void; attiva?: boolean; pericolo?: boolean } | null;
+function tendina(icona: string, voci: () => VoceTendina[], titolo = 'Altro'): HTMLElement {
+  const b = h('button.tendina-btn', { type: 'button', title: titolo, 'aria-label': titolo, 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, icona);
+  b.addEventListener('click', e => {
+    e.stopPropagation();
+    if (document.querySelector('.tendina-menu')) { (document.querySelector('.tendina-menu') as any)._chiudi(); return; }
+    const r = b.getBoundingClientRect();
+    const menu = h('div.tendina-menu', { role: 'menu' }, ...voci().filter(Boolean).map(v => h('button' + (v!.attiva ? '.attiva' : '') + (v!.pericolo ? '.pericolo' : ''), { role: 'menuitem', type: 'button', onclick: (ev: Event) => { ev.stopPropagation(); chiudi(); v!.azione(); } }, v!.testo)));
+    document.body.appendChild(menu);
+    const mw = menu.offsetWidth, mh = menu.offsetHeight, W = innerWidth, H = innerHeight;
+    menu.style.left = Math.max(8, Math.min(W - mw - 8, r.right - mw)) + 'px';
+    menu.style.top = (r.bottom + mh + 8 < H ? r.bottom + 6 : Math.max(8, r.top - mh - 6)) + 'px';
+    b.setAttribute('aria-expanded', 'true');
+    const fuori = (ev: Event) => { if (!menu.contains(ev.target as Node)) chiudi(); };
+    const tasto = (ev: KeyboardEvent) => { if (ev.key === 'Escape') chiudi(); };
+    function chiudi(): void { menu.remove(); b.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', fuori, true); document.removeEventListener('keydown', tasto); }
+    (menu as any)._chiudi = chiudi;
+    setTimeout(() => { document.addEventListener('pointerdown', fuori, true); document.addEventListener('keydown', tasto); }, 0);
+  });
+  return b;
 }

@@ -185,22 +185,29 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   const barra = h('div.appunto-barra', null,
     h('button', { title: 'Titolo', onclick: () => aCapo('# ') }, 'H'),
     h('button', { title: 'Punto', onclick: () => aCapo('- ') }, '•'),
-    h('button', { title: 'Rientra', onclick: () => aCapo('  ') }, '⇥'),
     h('button', { title: 'Domanda :: risposta', onclick: () => inserisci('', ' :: ', '') }, '::'),
-    h('button', { title: 'Completamento', onclick: () => inserisci('{{', '}}', 'parola') }, '{ }'),
     h('button.ai', { title: 'Domande con l\'AI', onclick: () => { salvaOra(); aiDomande(Stato.prendi<Appunto>(ap.id) || ap, r => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + r.join('\n') + '\n'; modifica(); salvaOra(); avviso('🃏 ' + r.length + ' domande aggiunte.'); }); } }, '✨'),
-    h('button', { title: 'Collegamento a un altro appunto', onclick: () => inserisci('[[', ']]', 'titolo') }, '[[ ]]'),
-    h('button', { title: 'Grassetto', onclick: () => inserisci('**', '**', 'testo') }, h('b', null, 'B')),
-    h('button', { title: 'Anteprima', onclick: (e: Event) => { const on = !!anteprima.hidden; anteprima.hidden = !on; testo.hidden = on; (e.currentTarget as HTMLElement).classList.toggle('attivo', on); if (on) { anteprima.innerHTML = conLink(htmlCarta(testo.value.replace(/\s::\s/g, ' → '), 'mostra')); caricaImmagini(anteprima); attivaLink(anteprima, () => { salvaOra(); cambiato = false; v.chiudi(); }); } } }, '👁'));
-  v.barra.append(h('button.btn-testo', { onclick: async () => {
-    const s = await chiedi(ap.titolo || 'Appunto', [{ testo: '🗣 Spiegamelo (Feynman)', valore: 'feyn' }, { testo: '📑 Vista Cornell', valore: 'cornell' }, { testo: '🧠 Copri e ricorda', valore: 'copri' }, { testo: '✨ Riscontro AI sul riassunto', valore: 'airiass' }, { testo: '☁︎ Salva su Drive', valore: 'drive' }, { testo: '🃏 Ripassa le sue carte', valore: 'carte' }, { testo: '🗑 Elimina appunto', valore: 'del', pericolo: true }]);
+    h('button', { title: 'Registra o carica una lezione audio', 'aria-label': 'Lezione audio', onclick: () => audioOra() }, '🎙'),
+    h('button', { title: 'Anteprima', onclick: (e: Event) => { const on = !!anteprima.hidden; anteprima.hidden = !on; testo.hidden = on; (e.currentTarget as HTMLElement).classList.toggle('attivo', on); if (on) { anteprima.innerHTML = conLink(htmlCarta(testo.value.replace(/\s::\s/g, ' → '), 'mostra')); caricaImmagini(anteprima); attivaLink(anteprima, () => { salvaOra(); cambiato = false; v.chiudi(); }); } } }, '👁'),
+    tendina('▾', () => [
+      { testo: '⇥  Rientra (sotto-punto)', azione: () => aCapo('  ') },
+      { testo: '{ }  Completamento', azione: () => inserisci('{{', '}}', 'parola') },
+      { testo: '[[ ]]  Collegamento a un appunto', azione: () => inserisci('[[', ']]', 'titolo') },
+      { testo: 'B  Grassetto', azione: () => inserisci('**', '**', 'testo') },
+      { testo: '🧮  Calcolo: scrivi «12*3,5=» → risultato', azione: () => { testo.focus(); avviso('Scrivi un calcolo e «=»: il risultato appare sopra il testo, Invio per inserirlo. Variabili: «m=2» poi «m*9,81=». Gradi per sin/cos/tan.', 7000); } },
+    ], 'Altri strumenti di scrittura'));
+  const bollaCalcolo = calcoliInTesto(testo, modifica);
+  const audioOra = () => { salvaOra(); const col = Carte.collega(titolo.value); lezioneAudio({ titolo: titolo.value.trim(), step: col.sub ? Studio.etichetta(col.sub) : '', testo: testo.value }, md => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + md; modifica(); salvaOra(); avviso('🎙 Trascrizione aggiunta · ✨ crea domande e carte', 6000, () => aiDomande(Stato.prendi<Appunto>(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); })); }); };
+  const azioneTesta = async (s: string) => {
     if (s === 'drive') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { x.drive && !Appunti.daSalvareSuDrive(x) ? avviso('Copia su Drive già aggiornata.') : chiediDrive(x, true); } }
     if (s === 'cornell' || s === 'copri') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { cambiato = false; v.chiudi(); apriCornell(x, s === 'copri'); } }
     if (s === 'feyn') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { const sz = Appunti.sezioni(x); if (!sz.length) avviso('Scrivi prima qualcosa.'); else if (sz.length === 1) spiegamelo(x, sz[0]); else chiedi('Quale sezione?', sz.map(z => ({ testo: z.titolo, valore: z.id }))).then(id => { const z = sz.find(q => q.id === id); if (z) spiegamelo(x, z); }); } }
     if (s === 'airiass') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) aiRiassunto(x); }
     if (s === 'carte') { salvaOra(); avviaCarte(['mz-ap-' + ap.id.replace(/^ap-/, '')], ap.titolo); }
     if (s === 'del') { const x = Stato.prendi<Appunto>(ap.id); if (x) Appunti.elimina(x); cambiato = false; v.chiudi(); avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).'); }
-  } }, '⋯'));
+  };
+  v.barra.append(tendina('⋯', () => ([['🗣 Spiegamelo (Feynman)', 'feyn'], ['📑 Vista Cornell', 'cornell'], ['🧠 Copri e ricorda', 'copri'], ['✨ Riscontro AI sul riassunto', 'airiass'], ['🎙 Lezione audio', 'audio'], ['☁︎ Salva su Drive', 'drive'], ['🃏 Ripassa le sue carte', 'carte']] as [string, string][]).map(([t, k]) => ({ testo: t, azione: () => k === 'audio' ? audioOra() : azioneTesta(k) }))
+    .concat([{ testo: '🗑 Elimina appunto', azione: () => azioneTesta('del'), pericolo: true } as any]), 'Azioni dell\'appunto'));
   const scambio = h('div.segmenti.appunto-modo');
   const leggiOra = () => { salvaOra(); if (!pagina) return; leggiScrittura(pagina.dati(), (t, come) => {
     testo.value = come === 'sostituisci' ? t + '\n' : testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + t + '\n'; modifica(); salvaOra();
@@ -219,8 +226,8 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   }
   function apriTesto(on: boolean): void {
     testoAperto = on; pannello.classList.toggle('aperto', on);
-    if (on) { barra.before(segnaBarra); testo.before(segnaTesto); pannello.append(barra, testo); setTimeout(() => testo.focus(), 50); }
-    else { segnaBarra.replaceWith(barra); segnaTesto.replaceWith(testo); }
+    if (on) { barra.before(segnaBarra); testo.before(segnaTesto); pannello.append(barra, bollaCalcolo, testo); setTimeout(() => testo.focus(), 50); }
+    else { segnaBarra.replaceWith(barra); segnaTesto.replaceWith(testo); testo.before(bollaCalcolo); }
     pagina && pagina.aggiornaBarra(); setTimeout(() => pagina && pagina.ridisegna(), 30);
   }
   window.addEventListener('popstate', () => { if (pieno) mettiPieno(false); });
@@ -249,6 +256,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     h('span.mano-sep'),
     h('button', { title: 'Leggi la mia scrittura (AI)', 'aria-label': 'Leggi la mia scrittura con l\'AI', onclick: leggiOra }, '✨'),
     h('button', { title: 'Inserisci PDF, slide, foto o testo', 'aria-label': 'Inserisci PDF, slide, foto o testo', onclick: () => fileIns.click() }, '📎'),
+    h('button', { title: 'Lezione audio', 'aria-label': 'Lezione audio', onclick: () => audioOra() }, '🎙'),
     pieno ? h('button' + (testoAperto ? '.attivo' : ''), { title: 'Testo e strumenti di scrittura', 'aria-label': 'Mostra il testo', onclick: () => apriTesto(!testoAperto) }, 'Aa') : null,
     h('button', { title: pieno ? 'Esci dal tutto schermo' : 'Tutto schermo', 'aria-label': pieno ? 'Esci dal tutto schermo' : 'Tutto schermo', onclick: () => { if (pieno) history.back(); else mettiPieno(true); } }, pieno ? '⤡' : '⤢')] };
   function mostraModo(): void {
@@ -267,7 +275,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     if (pagina && manoVuota(pagina.dati())) { svuota(zonaMano); pagina = paginaMano(zonaMano, undefined, modifica, md.sf, opzMano); } else if (!pagina) sfondoModello = md.sf;
     avviso(md.nome + ': ' + md.sotto, 2500);
   } }, md.nome)));
-  v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, testo, anteprima, riass));
+  v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, bollaCalcolo, testo, anteprima, riass));
   aggiornaStato();
   setTimeout(() => { if (modo === 'mano' && !alRiassunto && a) return; const el = alRiassunto ? riass : a ? testo : titolo; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
 }
