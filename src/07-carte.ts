@@ -307,7 +307,7 @@ function avviaCarte(ids?: string[], titolo = 'Flashcard'): void {
     } else if (modoQui === 'scelta') {
       const giusta = giustaS, altre = altreS;
       const stesso = new Set(Carte.voci([c.mazzo]).map(y => rispostaDi(y.c, x.rev)));
-      const opz = altre.sort((p, q) => (stesso.has(q) ? 1 : 0) - (stesso.has(p) ? 1 : 0) || Math.random() - .5).slice(0, 3).concat([giusta]).sort(() => Math.random() - .5);
+      const ms = mescolaU(altre), opz = mescolaU(ms.filter(x => stesso.has(x)).concat(ms.filter(x => !stesso.has(x))).slice(0, 3).concat([giusta]));
       const forme = ['▲', '◆', '●', '■'];
       const lista = h('div.carte-opzioni', null, opz.map((o, k) => h('button.opzione.op-' + k, { onclick: (e: Event) => {
         const ok = o === giusta; lista.querySelectorAll('button').forEach((b, q) => { (b as HTMLButtonElement).disabled = true; if (opz[q] === giusta) b.classList.add('giusta'); });

@@ -78,3 +78,9 @@ Una riga per scelta importante: data · decisione · motivo.
 - Foglio a tutto schermo, zoom fino a 10×, righe/quadretti a passo costante sullo schermo.
 - Inserimento PDF (max 20 pagine, pdf.js da CDN: serve rete), immagini, txt/md; il testo del PDF va negli appunti.
 - Elenco note a griglia con miniature, raggruppate per materia.
+
+## v0.37 — Controllo generale (qualità, prestazioni, sicurezza)
+- Mescolamento uniforme (Fisher–Yates) in carte a scelta, quiz AI ed esercizi: prima la risposta giusta finiva più spesso in A o in fondo (31–32% invece di 20–25%).
+- Service worker: dati di studio dalla cache con aggiornamento in sottofondo; rete lenta → dopo 4 s usa la cache.
+- SVG dei quiz ripuliti (niente script/eventi/link javascript:) prima di entrare nella pagina; CSP minima (object-src, base-uri, form-action) e referrer stretto.
+- test/tutti.sh distingue i test «saltati» dai falliti.

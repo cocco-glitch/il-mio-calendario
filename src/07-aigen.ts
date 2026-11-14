@@ -54,7 +54,7 @@ const AIGen = (() => {
   /** Esame alla cieca: restituisce per ogni domanda se il risolutore ha trovato la corretta senza ambiguità. */
   async function esame(dom: any[], mat: string, cit: string): Promise<{ ok: boolean; motivo: string }[]> {
     const L = 'ABCDE';
-    const mesc = dom.map(d => { const ord = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5); return { ord, testo: d.q + '\n' + ord.map((k, i) => L[i] + ') ' + d.o[k]).join('\n') }; });
+    const mesc = dom.map(d => { const ord = mescolaU([0, 1, 2, 3, 4]); return { ord, testo: d.q + '\n' + ord.map((k, i) => L[i] + ') ' + d.o[k]).join('\n') }; });
     const msgs = [
       { role: 'system', content: 'Sei un esperto di ' + mat + ' che controlla la qualità dei quiz. Rispondi solo con JSON valido.' },
       { role: 'user', content: 'Testo di riferimento:\n' + cit + '\n\nRisolvi ogni domanda. Per ciascuna indica la lettera giusta e se è ambigua (più di una opzione accettabile, nessuna corretta, o un dato sbagliato rispetto al testo).\n\n'

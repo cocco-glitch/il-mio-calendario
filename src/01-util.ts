@@ -121,5 +121,29 @@ function md(src: string): string {
   return out.join('');
 }
 
+/** v0.37: SVG «puliti» prima di metterli nella pagina: niente script, eventi on*, link javascript:, oggetti incorporati. */
+const SVG_PULITI = new Map<string, string>();
+function svgSicuro(svg: string): string {
+  if (!svg) return '';
+  const c = SVG_PULITI.get(svg); if (c !== undefined) return c;
+  let out = '';
+  try {
+    // parser HTML (tollerante come innerHTML): lo stesso albero che il browser costruirebbe
+    const doc = new DOMParser().parseFromString('<body>' + svg, 'text/html'), r = doc.body.firstElementChild as Element | null;
+    if (r && r.nodeName.toLowerCase() === 'svg' && doc.body.children.length === 1) {
+      r.querySelectorAll('script,foreignObject,iframe,object,embed,use[href^="http"],animate,set').forEach(n => n.remove());
+      for (const el of [r, ...Array.from(r.querySelectorAll('*'))]) for (const a of Array.from(el.attributes)) {
+        const n = a.name.toLowerCase(), v = a.value.trim().toLowerCase();
+        if (n.startsWith('on') || ((n === 'href' || n === 'xlink:href' || n === 'src') && !(v.startsWith('#') || v.startsWith('data:image/')))) el.removeAttribute(a.name);
+      }
+      out = r.outerHTML;
+    }
+  } catch (_) { out = ''; }
+  SVG_PULITI.set(svg, out); return out;
+}
+
+/** Mescola in modo uniforme (Fisher–Yates); sort con Math.random è sbilanciato. */
+function mescolaU<T>(a: T[]): T[] { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
 /** Normalizza per la ricerca: minuscole e senza accenti. */
 function norm(s: string): string { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }

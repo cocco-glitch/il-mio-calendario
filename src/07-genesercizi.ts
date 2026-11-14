@@ -368,7 +368,7 @@ const Generatori = (() => {
     const ms = per(m, micro); if (!ms.length) return [];
     const out: DomB[] = [], scelti = Regole.scegliModelli(ms, n * 2);   // Q4: quota ai modelli dove sbagli
     for (let i = 0; out.length < n && i < scelti.length; i++) { const d = genera(scelti[i]); if (d) out.push(d); }
-    return out.sort(() => Math.random() - 0.5);
+    return mescolaU(out);
   }
   function titoloMicro(pk: PkStep, m: string, micro: string): string {
     for (const ss of mat0(pk, m).sottostep) for (const mi of ss.microstep) if (mi.n === micro && mi.schede[0]) return mi.schede[0].titolo;

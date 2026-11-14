@@ -13,13 +13,19 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   // Solo i file dell'app (stessa origine, GET). Le chiamate a Google non passano dalla cache.
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  // Rete prima (così gli aggiornamenti arrivano subito), cache se offline.
-  e.respondWith(
-    fetch(e.request).then(r => {
-      if (r.ok) { const copia = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copia)); }
-      return r;
-    }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('index.html')))
-  );
+  // v0.37: i dati di studio (banca domande, pacchetti) si aprono subito dalla cache e si aggiornano
+  // in sottofondo; il resto è «rete prima» ma con 4 s di pazienza, poi cache (rete lenta = app non bloccata).
+  const salva = (r) => { if (r && r.ok) { const copia = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copia)); } return r; };
+  const dallaCache = () => caches.match(e.request, { ignoreSearch: true });
+  if (url.pathname.includes('/studio/')) {
+    const rete = fetch(e.request).then(salva);
+    e.respondWith(dallaCache().then(r => r || rete));
+    e.waitUntil(rete.catch(() => null));
+    return;
+  }
+  const rete = fetch(e.request).then(salva);
+  const attesa = new Promise(ok => setTimeout(ok, 4000)).then(dallaCache).then(r => r || rete);
+  e.respondWith(Promise.race([rete, attesa]).catch(() => dallaCache().then(r => r || caches.match('index.html'))));
 });
 
 // pdf.js dal CDN: lo tengo in cache per aprire i PDF anche offline.
