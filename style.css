@@ -758,3 +758,13 @@ body.mano-pieno .tabbar, body.mano-pieno .fab { display: none !important; }
 .mano-barra button { transition: transform .12s ease; }
 .mano-barra button:active { transform: scale(.9); }
 @keyframes manoApri { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+/* v0.39.1 righello e pagine */
+.mano-righello { position: absolute; z-index: 3; transform-origin: 0 0; background: repeating-linear-gradient(90deg, rgba(40,50,80,.55) 0 1px, transparent 1px 10px) top/100% 12px no-repeat, rgba(235,238,248,.82); border: 1px solid rgba(40,50,80,.35); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.15); touch-action: none; cursor: grab; -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.mano-righello-gradi { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -30%); font: 600 12px system-ui; color: #334; pointer-events: none; }
+.mano-righello-ruota { position: absolute; right: 4px; top: 50%; transform: translateY(-40%); width: 30px; height: 30px; border-radius: 50%; background: var(--accento); color: #fff; font-size: 16px; touch-action: none; }
+.mano-miniature { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; max-height: 60vh; overflow: auto; }
+.mano-mini-pag { padding: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--linea); background: #fff; transition: transform .12s; }
+.mano-mini-pag:active { transform: scale(.95); }
+.mano-mini-pag canvas { display: block; width: 100%; height: auto; }
+.mano-mini-piede { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 2px 4px; }
+.mano-opzioni[hidden], .mano-righello[hidden] { display: none; }
