@@ -89,3 +89,6 @@ Una riga per scelta importante: data · decisione · motivo.
 - Banca domande divisa per materia in dist (banca-step-N-C/B/F.json, generate dal build): una scheda scarica ~1/3 del file; ripiego sul file intero.
 - Trappole ripetute: se scegli lo stesso distrattore 2 volte, diventa una flashcard negli «Errori dei quiz» con il perché è sbagliato (ew).
 - PDF/slide negli appunti: le flashcard AI si fanno sul testo del file appena inserito (fino a 12 carte), non sull'inizio dell'appunto.
+
+## v0.38.1 — Fisica 2.4 (corpo rigido)
+Aggiunte 10 schede (8 prioritarie, 2 raffinamento: 2.4.4 e 2.4.5 scheda 3) alla banca Step 2 (180 domande, 12 immagini) e al piano. Fonti: slide UD2 parte IV (13-31) + esercitazione corpo rigido; pagine Scannicchio ancora da collocare.

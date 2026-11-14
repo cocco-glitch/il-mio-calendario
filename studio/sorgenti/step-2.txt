@@ -166,3 +166,15 @@ P 2.3.6 1/2 | Quantità di moto e impulso | 40-41 | UD2 parte IV: slide 6-13, 17
 P 2.3.6 2/2 | Problemi su quantità di moto e impulso | 40-41 | UD2 parte IV: slide 6-13
 P 2.3.7 1/2 | Gli urti: elastici e anelastici | 66-67 | UD2 parte IV: slide 5, 12-13
 P 2.3.7 2/2 | Problemi sugli urti | 66-67 | UD2 parte IV: slide 5-13
+@F 2.4 | Corpo rigido: centro di massa, momento, equilibrio, leve | Sab 14/11 · schede create, Scannicchio da collocare | Simulazione 3 Dom 22/11 · Sprint Fisica Dom 06/12 · raffinamento 10/12–10/01
+= 8 2 0 0 0
+P 2.4.1 1/2 | Centro di massa: definizione e moto | | UD2 parte IV: slide 13-16
+P 2.4.1 2/2 | Problemi sul centro di massa | | UD2 parte IV: slide 13-16
+P 2.4.2 1/2 | Corpo rigido e momento torcente | | UD2 parte IV: slide 17-24
+P 2.4.2 2/2 | Problemi sul momento torcente | | UD2 parte IV: slide 17-24
+P 2.4.3 1/2 | Equilibrio del corpo rigido | | UD2 parte IV: slide 25-28
+P 2.4.3 2/2 | Problemi sull'equilibrio rotazionale | | UD2 parte IV: slide 25-28
+R 2.4.4 1/1 | Grandezze rotazionali e traslazionali | | UD2 parte IV: slide 29-31
+P 2.4.5 1/3 | Le leve: tre generi e guadagno | | UD2 parte IV: slide 29-31
+P 2.4.5 2/3 | Problemi sulle leve del corpo umano | | UD2 parte IV: slide 29-31
+R 2.4.5 3/3 | Trabocchetti su leve e momenti | | UD2 parte IV: slide 29-31

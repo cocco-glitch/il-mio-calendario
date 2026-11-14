@@ -49,7 +49,7 @@ with sync_playwright() as p:
     n = pg.evaluate("(() => { const t = Studio.trovaSotto('C2.2'), n = Studio.numeri(Studio.schedeDi(t.sub)); return [n.P, n.R, n.pagP.size, n.pagR.size, n.pagT.size]; })()")
     ok(n == [9, 3, 19, 11, 19], 'numeri Chimica 2.2: %s' % n)
     tot = pg.evaluate("(() => { const s = PK2().materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)); const n = Studio.numeri(s); return [n.P, n.R]; })()")
-    ok(tot == [111, 35], 'totale Step 2: %s' % tot)
+    ok(tot == [119, 37], 'totale Step 2: %s' % tot)
     # viste native
     pg.evaluate("UI.studioStep = PK2().id"); pg.click('.tabbar >> text=Studio'); pg.wait_for_selector('.voce-lista.sotto'); pg.screenshot(path='test/22-studio.png', full_page=True)
     pg.locator('.voce-lista.sotto', has_text='2.2 · Liquidi').click(); pg.wait_for_selector('.blocchi'); pg.screenshot(path='test/23-sottostep.png', full_page=True)
