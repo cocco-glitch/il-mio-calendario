@@ -798,3 +798,14 @@ body.mano-pieno .tabbar, body.mano-pieno .fab { display: none !important; }
 .audio-prima { text-decoration: line-through; opacity: .6; font-size: 14px; }
 .audio-dopo { font-weight: 600; }
 .segmenti .tendina-btn { height: auto; min-height: 36px; padding: 0 12px; font-size: 14px; font-weight: 600; background: transparent; width: auto; }
+/* v0.41.1 registrazione e trascrizione in sottofondo */
+.audio-pillola { position: fixed; z-index: 900; bottom: calc(env(safe-area-inset-bottom) + 76px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-radius: 999px; background: var(--vetro-forte, var(--sup)); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border: 1px solid var(--linea); box-shadow: 0 8px 24px rgba(0,0,0,.2); animation: tendinaApri .2s ease-out; max-width: 94vw; }
+.audio-pillola .audio-orologio { font: 600 16px ui-monospace, monospace; min-width: 48px; }
+.audio-pillola button { min-width: 36px; height: 36px; border-radius: 999px; background: var(--sup2); color: var(--testo); display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 10px; transition: transform .12s; }
+.audio-pillola button:active { transform: scale(.92); }
+.audio-pillola .audio-fine { background: var(--accento); color: #fff; font-weight: 600; }
+.audio-pillola.lavora { padding-right: 14px; font-size: 14px; }
+.audio-stato { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70vw; }
+.audio-giro { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accento); border-top-color: transparent; animation: audioGiro .8s linear infinite; }
+@keyframes audioGiro { to { transform: rotate(360deg); } }
+.audio-pillola.pronta { padding: 6px; }

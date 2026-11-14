@@ -792,6 +792,33 @@ Object.assign(ICONE, {
     pausa: '<path d="M8.5 5v14M15.5 5v14" stroke-width="2.6"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
     carica: '<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M4.5 14.5v5h15v-5"/>',
+    // v0.41.1: icone delle nuove funzioni (blocco note, audio, calcoli, menu)
+    microfono: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5M9 20.5h6"/>',
+    righello: '<path d="M3.5 15.5l12-12 5 5-12 12z"/><path d="M7 12l1.8 1.8M9.8 9.2l1.2 1.2M12.6 6.4l1.8 1.8M15.4 3.6"/>',
+    calcolo: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 14.5v3" stroke-width="2.2"/>',
+    cursori: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+    duplica: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-3a1 1 0 0 0-1-1h-9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3"/>',
+    altro: '<path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/>',
+    giu: '<path d="M7 10l5 5 5-5"/>',
+    su: '<path d="M7 14l5-5 5 5"/>',
+    linea: '<path d="M5 19L19 5"/>',
+    freccia: '<path d="M5 19L19 5M10 5h9v9"/>',
+    rett: '<rect x="4" y="6.5" width="16" height="11" rx="1.5"/>',
+    cerchio: '<circle cx="12" cy="12" r="7.5"/>',
+    triangolo: '<path d="M12 5l8 14H4z"/>',
+    puntini: '<path d="M7 7h.01M12 7h.01M17 7h.01M7 12h.01M12 12h.01M17 12h.01M7 17h.01M12 17h.01M17 17h.01" stroke-width="2.4"/>',
+    griglia: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M4.5 9.5h15M4.5 14.5h15M9.5 4.5v15M14.5 4.5v15"/>',
+    righe: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M7.5 9h9M7.5 12.5h9M7.5 16h9"/>',
+    foglio: '<rect x="5.5" y="3.5" width="13" height="17" rx="2"/>',
+    cornell: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M9.5 4.5v10M4.5 14.5h15"/>',
+    esercizio: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M4.5 8.5h15M4.5 11.5h15M4.5 16.5h15"/>',
+    foglionero: '<rect x="5.5" y="3.5" width="13" height="17" rx="2" fill="currentColor"/>',
+    tratteggio: '<path d="M4 12h3M10.5 12h3M17 12h3" stroke-width="2.4"/>',
+    ruota: '<path d="M19 12a7 7 0 1 1-2.1-5"/><path d="M19 4.5V8h-3.5"/>',
+    annulla: '<path d="M9 7.5L4.5 12 9 16.5"/><path d="M4.5 12H14a5.5 5.5 0 0 1 0 11"/>',
+    rifai: '<path d="M15 7.5l4.5 4.5-4.5 4.5"/><path d="M19.5 12H10a5.5 5.5 0 0 0 0 11"/>',
+    espandi: '<path d="M14 4.5h5.5V10M10 19.5H4.5V14M19.5 4.5L13.5 10.5M4.5 19.5l6-6"/>',
+    riduci: '<path d="M19.5 10H14V4.5M4.5 14H10v5.5M14 10l5.5-5.5M10 14l-5.5 5.5"/>',
 });
 /** emoji → icona (null = l'emoji viene solo tolto, es. le faccine dei voti). */
 const SIMBOLI = {
@@ -802,6 +829,7 @@ const SIMBOLI = {
     '📁': 'cartella', '📂': 'cartella', '🧩': 'tassello', '📋': 'appunti', '🧪': 'provetta', '☝': 'dito', '⌨': 'tastiera', '💡': 'lampadina',
     '🛟': 'salvagente', '🔎': 'cerca', '🔍': 'cerca', '🎯': 'bersaglio', '📊': 'grafico', '⚙': 'ingranaggio', '☑': 'spunta', '✒': 'penna',
     '🖍': 'evidenziatore', '🧽': 'gomma', '➰': 'lazo', '🖼': 'immagine', '📱': 'telefono', '📤': 'carica', '🔔': 'campana', '★': 'stella', '⭐': 'stella', '🃏': 'carte', '▶': 'play', '⏸': 'pausa', '⏹': 'stop',
+    '🎙': 'microfono', '📏': 'righello', '🧮': 'calcolo', '⧉': 'duplica', '⋯': 'altro', '▾': 'giu', '▴': 'su', '╱': 'linea', '↗': 'freccia', '▭': 'rett', '◯': 'cerchio', '△': 'triangolo', '⁙': 'puntini', '▦': 'griglia', '☰': 'righe', '▢': 'foglio', '◧': 'cornell', '▤': 'esercizio', '■': 'foglionero', '┄': 'tratteggio', '⟳': 'ruota', '↶': 'annulla', '↷': 'rifai', '⤢': 'espandi', '⤡': 'riduci', '🖊': 'penna',
     '😵': null, '😕': null, '😐': null, '🙂': null, '🔥': null, '😌': null,
 };
 const RE_SIMBOLI = new RegExp('(' + Object.keys(SIMBOLI).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\uFE0F?\\s?', 'gu');
@@ -3484,7 +3512,7 @@ const Lezioni = (() => {
             par.push('[' + mmss(da) + '] ' + cur);
             cur = '';
         } });
-        return '## 🎙 ' + titolo + '\n' + par.join('\n\n') + '\n';
+        return '## Lezione audio · ' + titolo + '\n' + par.join('\n\n') + '\n';
     }
     return { processa, inMarkdown, mmss };
 })();
@@ -3520,24 +3548,41 @@ async function lezioneAudio(contesto, aggiungi) {
     const rec = new MediaRecorder(st, { ...(tipo ? { mimeType: tipo } : {}), audioBitsPerSecond: 32000 }), pezzi = [];
     rec.ondataavailable = e => { if (e.data.size)
         pezzi.push(e.data); };
-    const t0 = Date.now(), orologio = h('div.audio-orologio', null, '0:00'), punto = h('span.audio-punto');
+    // v0.41.1: registrazione IN BACKGROUND: una pillola fissa in alto, puoi continuare a scrivere appunti
+    const t0 = Date.now(), orologio = h('span.audio-orologio', null, '0:00'), punto = h('span.audio-punto');
     let wake = null;
     try {
         wake = await navigator.wakeLock?.request('screen');
     }
     catch (_) { /* non supportato */ }
-    const tic = setInterval(() => { const sec = (Date.now() - t0) / 1000; orologio.textContent = Lezioni.mmss(sec); }, 500);
-    let pausa = false;
-    const bPausa = h('button.btn.neutro', { onclick: () => { if (pausa) {
+    let pausa = false, inPausa = 0, daPausa = 0;
+    const tic = setInterval(() => { orologio.textContent = Lezioni.mmss(((pausa ? daPausa : Date.now()) - t0 - inPausa) / 1000); }, 500);
+    const bPausa = h('button', { type: 'button', title: 'Pausa', 'aria-label': 'Pausa', onclick: () => { if (pausa) {
             rec.resume();
-            bPausa.textContent = '⏸ Pausa';
+            inPausa += Date.now() - daPausa;
+            bPausa.textContent = '⏸';
         }
         else {
             rec.pause();
-            bPausa.textContent = '▶ Riprendi';
-        } pausa = !pausa; punto.classList.toggle('fermo', pausa); } }, '⏸ Pausa');
-    const fine = (usa) => {
+            daPausa = Date.now();
+            bPausa.textContent = '▶';
+        } pausa = !pausa; punto.classList.toggle('fermo', pausa); } }, '⏸');
+    const pillola = h('div.audio-pillola', { role: 'status', 'aria-label': 'Registrazione in corso' }, punto, orologio, bPausa, h('button.audio-fine', { type: 'button', title: 'Fine e trascrivi', 'aria-label': 'Fine e trascrivi', onclick: () => fine(true) }, '⏹', h('span', null, 'Fine')), h('button', { type: 'button', title: 'Annulla la registrazione', 'aria-label': 'Annulla la registrazione', onclick: async () => { if (await chiedi('Annullare la registrazione?', [{ testo: 'Annulla e butta l\'audio', valore: 'si', pericolo: true }]) === 'si') {
+            fine(false);
+            avviso('Registrazione annullata.');
+        } } }, '🗑'));
+    document.body.appendChild(pillola);
+    const avvisoUscita = () => { if (document.hidden)
+        avviso('🎙 La registrazione continua solo con l\'app aperta: torna qui se iOS la mette in pausa.', 6000); };
+    document.addEventListener('visibilitychange', avvisoUscita);
+    let finito = false;
+    function fine(usa) {
+        if (finito)
+            return;
+        finito = true;
         clearInterval(tic);
+        document.removeEventListener('visibilitychange', avvisoUscita);
+        pillola.remove();
         try {
             wake && wake.release();
         }
@@ -3545,24 +3590,29 @@ async function lezioneAudio(contesto, aggiungi) {
         rec.onstop = () => { st.getTracks().forEach(t => t.stop()); if (usa)
             elabora(new Blob(pezzi, { type: rec.mimeType || 'audio/mp4' }), 'Lezione ' + new Date().toLocaleDateString('it-IT')); };
         rec.stop();
-    };
-    let finito = false;
-    const fs = foglio({ titolo: '🎙 Registrazione', allaChiusura: () => { if (!finito) {
-            finito = true;
-            fine(false);
-            avviso('Registrazione annullata.');
-        } }, corpo: h('div.modulo.audio-reg', null, h('div.audio-live', null, punto, orologio), h('div.tenue.piccolo', null, 'Tieni lo schermo acceso e l\'app aperta. Qualità «voce» (circa 14 MB all\'ora).'), h('div.bottoni', null, bPausa, h('button.btn', { onclick: () => { finito = true; fine(true); fs.chiudi(); } }, '⏹ Fine e trascrivi'))) });
+    }
     rec.start(10000);
+    avviso('🎙 Registro in sottofondo: continua pure a scrivere. Tocca «Fine» in basso quando la lezione finisce.', 5000);
     async function elabora(b, nome) {
-        const stato = h('div.tenue'), barra = h('div.audio-barra', null, h('div'));
-        const fsP = foglio({ titolo: '🎙 ' + nome, corpo: h('div.modulo', null, stato, barra) });
+        // la trascrizione lavora in sottofondo (pillola), poi un avviso apre la revisione
+        const stato = h('span.audio-stato', null, 'Preparo…'), pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), stato);
+        document.body.appendChild(pill);
         try {
             const r = await Lezioni.processa(b, { ...contesto, titolo: contesto.titolo || nome }, t => { stato.textContent = t; });
-            fsP.chiudi();
-            rivedi(b, nome, r);
+            try {
+                Tocco.clic(1);
+            }
+            catch (_) { /* */ }
+            if (navigator.vibrate)
+                navigator.vibrate([10, 60, 10]);
+            svuota(pill);
+            pill.classList.remove('lavora');
+            pill.classList.add('pronta'); // resta finché non la apri
+            pill.append(h('button.audio-fine', { type: 'button', onclick: () => { pill.remove(); rivedi(b, nome, r); } }, '✓ Trascrizione pronta' + (r.corr.length ? ' · ' + r.corr.length + ' correzioni' : '') + ' — Rivedi'));
         }
         catch (e) {
             stato.textContent = '⚠️ ' + (e && e.message || e);
+            pill.append(h('button', { type: 'button', 'aria-label': 'Chiudi', onclick: () => pill.remove() }, '✕'));
         }
     }
     function rivedi(b, nome, r) {
@@ -6769,7 +6819,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         barra.append(h('button.mano-tendina.sempre', { title: 'Strumenti', 'aria-label': PREF_MANO.barraChiusa ? 'Apri gli strumenti' : 'Chiudi gli strumenti', 'aria-expanded': String(!PREF_MANO.barraChiusa), onclick: () => { PREF_MANO.barraChiusa = !PREF_MANO.barraChiusa; if (PREF_MANO.barraChiusa)
                 opzioni = ''; salvaPrefMano(); aggiornaBarra(); } }, PREF_MANO.barraChiusa ? '▾' : '▴'), b('✒️', strumento === 'penna', () => { strumento = 'penna'; annullaSel(); }, 'Penna'), b('🖍', strumento === 'evid', () => strumento = 'evid', 'Evidenziatore'), b('🧽', strumento === 'gomma', () => strumento = 'gomma', 'Gomma (tocca un tratto)'), b('➰', strumento === 'lazo', () => { if (strumento === 'lazo')
             opzioni = opzioni === 'lazo' ? '' : 'lazo'; strumento = 'lazo'; }, 'Lazo: cerchia tratti o allegati (tocca di nuovo per scegliere cosa selezionare)'), b({ linea: '╱', freccia: '↗', rett: '▭', ellisse: '◯', triangolo: '△' }[PREF_MANO.forma], strumento === 'forma', () => { if (strumento === 'forma')
-            opzioni = opzioni === 'forma' ? '' : 'forma'; strumento = 'forma'; annullaSel(); }, 'Forme: trascina per disegnare (tocca di nuovo per sceglierle)'), b('⚙︎', opzioni === 'penna', () => { opzioni = opzioni === 'penna' ? '' : 'penna'; }, 'Penna: tipo, spessore, stabilizzazione, forme'), h('span.mano-sep'), ...COLORI.concat(PREF_MANO.extra).map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma')
+            opzioni = opzioni === 'forma' ? '' : 'forma'; strumento = 'forma'; annullaSel(); }, 'Forme: trascina per disegnare (tocca di nuovo per sceglierle)'), b(icona('cursori', 18), opzioni === 'penna', () => { opzioni = opzioni === 'penna' ? '' : 'penna'; }, 'Penna: tipo, spessore, stabilizzazione, forme'), h('span.mano-sep'), ...COLORI.concat(PREF_MANO.extra).map(c => h('button.mano-colore' + (c === colore ? '.attivo' : ''), { 'aria-label': 'Colore', style: { background: c }, onclick: () => { colore = c; if (strumento === 'gomma')
                 strumento = 'penna'; aggiornaBarra(); } })), (() => {
             const i = h('input', { type: 'color', value: colore, 'aria-label': 'Colore personalizzato', style: { position: 'absolute', opacity: '0', width: '1px', height: '1px' }, onchange: () => { colore = i.value; if (!COLORI.includes(colore) && !PREF_MANO.extra.includes(colore)) {
                     PREF_MANO.extra = [colore, ...PREF_MANO.extra].slice(0, 4);
@@ -10833,7 +10883,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.41.0';
+const VERSIONE = '0.41.1';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
