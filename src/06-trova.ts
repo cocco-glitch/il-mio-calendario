@@ -64,10 +64,16 @@ const Trova = (() => {
     return { ...f, punti: Math.round(p), perche, cartella: cart };
   }
 
-  /** PACCHETTI (piani, step, corsi): ovunque nel Drive. */
-  async function pacchetti(): Promise<Trovato[]> {
-    const firma = await query("fullText contains 'pacchetto-studio'", 300);
-    const json = await query("(mimeType = 'application/json' or name contains '.json')", 400);
+  /** PACCHETTI (piani, step, corsi): ovunque nel Drive.
+   *  v0.43 memoria: dopo una ricerca completa, per 7 giorni cerca solo i file MODIFICATI da allora
+   *  e riaggiunge quelli già noti (MemoriaIA, tipo «pacchetto»): molte meno chiamate al Drive. */
+  async function pacchetti(completa = false): Promise<Trovato[]> {
+    let ultima = 0; try { ultima = +(localStorage.getItem('trova-ultima') || 0); } catch (_) { /* */ }
+    const incr = !completa && Date.now() - ultima < 7 * 864e5 ? " and modifiedTime > '" + new Date(ultima - 36e5).toISOString() + "'" : '';
+    const firma = await query("fullText contains 'pacchetto-studio'" + incr, 300);
+    const json = await query("(mimeType = 'application/json' or name contains '.json')" + incr, 400);
+    if (incr) { for (const x of MemoriaIA.migliori('ricerca', 'pacchetto', 60)) if (x.v && x.v.id && !firma.some(f => f.id === x.v.id)) firma.push({ ...x.v, noto: true }); }
+    else { try { localStorage.setItem('trova-ultima', String(Date.now())); } catch (_) { /* */ } }
     const visti = new Map<string, any>(); for (const f of firma) visti.set(f.id, { f, firma: true }); for (const f of json) if (!visti.has(f.id)) visti.set(f.id, { f, firma: false });
     const parole = contesto().concat(['pacchetto', 'raffinamento', 'banca']);
     const tipi = /step|piano|pacchett|corso|raffinamento|banca|indice/;
@@ -76,19 +82,30 @@ const Trova = (() => {
     return out.sort((a, b) => b.punti - a.punti);
   }
 
-  /** FILE PER UN ARGOMENTO (fonti di studio: PDF, Documenti, slide, testi). */
+  /** FILE PER UN ARGOMENTO (fonti di studio: PDF, Documenti, slide, testi).
+   *  v0.43 memoria: prima guarda «dove stava cosa» (argomenti simili già cercati e usati con successo):
+   *  se la memoria è buona basta UNA ricerca nel Drive invece di sei. */
   async function fonti(argomento: string, extraParole: string[] = [], max = 12): Promise<Trovato[]> {
+    const ricordati = MemoriaIA.migliori('ricerca', 'posto', 3, argomento).filter(x => MemoriaIA.simile(argomento, x.k) >= .5);
+    const daMemoria: Trovato[] = [];
+    for (const x of ricordati) for (const f of (x.v && x.v.files) || []) if (!daMemoria.some(y => y.id === f.id)) daMemoria.push({ ...f, punti: 40 + Math.round(10 * x.n), perche: ['già usata per «' + x.k + '»'], cartella: f.cartella || '' });
+    const memBuona = daMemoria.length >= 1 && ricordati.some(x => MemoriaIA.simile(argomento, x.k) >= .75);
     const chiavi = Array.from(new Set((argomento + ' ' + extraParole.join(' ')).split(/[\s,;:/()«»"]+/).map(norm2).filter(w => w.length > 3 && !STOP.has(w)))).slice(0, 8);
     if (!chiavi.length) return [];
     const tipiQ = "(mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'text/plain' or mimeType = 'text/markdown')";
     const visti = new Map<string, { f: any; colpi: number }>();
     // una ricerca per ogni parola (nel testo) + una con tutte insieme (più precisa)
-    const qs = [chiavi.map(w => "fullText contains '" + esc(w) + "'").join(' and '), ...chiavi.slice(0, 5).map(w => "fullText contains '" + esc(w) + "'")];
+    const qs = [chiavi.map(w => "fullText contains '" + esc(w) + "'").join(' and '), ...(memBuona ? [] : chiavi.slice(0, 5).map(w => "fullText contains '" + esc(w) + "'"))];
     for (let i = 0; i < qs.length; i++) for (const f of await query(qs[i] + ' and ' + tipiQ, i ? 40 : 60)) { const v = visti.get(f.id) || { f, colpi: 0 }; v.colpi += i ? 1 : 4; visti.set(f.id, v); }
     const parole = chiavi.concat(contesto());
     const out: Trovato[] = [];
     for (const { f, colpi } of visti.values()) { const t = await punteggio(f, parole, {}); t.punti += colpi * 9; t.perche.unshift('testo: ' + colpi + ' corrispondenze'); out.push(t); }
+    for (const m of daMemoria) { const o = out.find(y => y.id === m.id); if (o) { o.punti += m.punti; o.perche.unshift(m.perche[0]); } else out.push(m); }
     return out.sort((a, b) => b.punti - a.punti).slice(0, max);
+  }
+  /** Ricorda dove stava cosa: argomento → file usati (con pagine utili). */
+  function ricordaPosto(argomento: string, files: { id: string; name: string; mimeType: string; cartella?: string; pagine?: string }[]): void {
+    if (files.length) MemoriaIA.nota('ricerca', 'posto', argomento, { files: files.map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, cartella: f.cartella || '', modifiedTime: '' })) });
   }
 
   /** Un file per nome (es. una scheda quiz) quando la cartella indicata dal pacchetto non esiste. */
@@ -98,5 +115,5 @@ const Trova = (() => {
     const t = await punteggio(r[0], contesto(), {}); impara([t.parents && t.parents[0]]); return t;
   }
   const STOP = new Set(['della', 'delle', 'degli', 'dello', 'nella', 'nelle', 'sulla', 'sulle', 'come', 'cosa', 'quale', 'quali', 'questo', 'questa', 'sono', 'fare', 'crea', 'creami', 'quiz', 'scheda', 'domande', 'voglio', 'vorrei', 'perche', 'anche', 'tutto', 'tutti', 'ogni', 'dove', 'quando', 'with', 'from']);
-  return { pacchetti, fonti, perNome, impara, contesto };
+  return { pacchetti, fonti, perNome, impara, contesto, ricordaPosto };
 })();

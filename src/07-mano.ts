@@ -436,7 +436,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
     const r = riquadro()!, parte: Mano = { t: Array.from(sel).map(i => { const t = decodTratto(m.t[i]); return codTratto(t.c, t.w, t.k, t.p.map(q => [q[0] - r[0] + 20, q[1] - r[1] + 20, q[2]])); }), h: r[3] - r[1] + 40, sf: 'bianco' };
     avviso('✨ Leggo la selezione…', 15000);
     let t = '';
-    try { t = await Spiega.vede('Trascrivi fedelmente il testo scritto a mano (italiano, chimica/biologia/fisica). Restituisci solo il testo, su una riga; formule con simboli corretti.', immagineMano(parte, 800)); }
+    try { t = await Spiega.vede('Trascrivi fedelmente il testo scritto a mano (italiano, chimica/biologia/fisica). Restituisci solo il testo, su una riga; formule con simboli corretti.' + suggScrittura('scrittura'), immagineMano(parte, 800)); }
     catch (e: any) { avviso(String(e.message || e), 8000); return; }
     t = t.replace(/^```\w*\s*|```$/g, '').replace(/\s+/g, ' ').trim();
     const f = h('input.campo', { value: t.includes('::') ? t.split('::')[0].trim() : t }) as HTMLInputElement, rr = h('input.campo', { value: t.includes('::') ? t.split('::').slice(1).join('::').trim() : '', placeholder: 'Risposta (o lascia vuoto e usa {{…}} nella domanda)' }) as HTMLInputElement;
@@ -478,14 +478,16 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
     const parte: Mano = { t: riga.concat([ta, tb]).map(t => codTratto('#000', t.w, 'b', t.p.map(q => [q[0] - bx[0] + 20, q[1] - bx[1] + 20, 50]))), h: bx[3] - bx[1] + 40, sf: 'bianco' };
     avviso('🧮 Leggo il calcolo…', 8000);
     let letto = '';
-    try { letto = await Spiega.vede('Nell\'immagine c\'è un\'espressione matematica scritta a mano che finisce con «=». Trascrivi SOLO l\'espressione a sinistra dell\'uguale, su una riga, in forma calcolabile: * per moltiplicare, / per dividere, ^ per le potenze, sqrt() per la radice, parentesi dove servono; numeri con la virgola come scritti. Niente altro testo.', immagineMano({ ...parte, h: Math.max(parte.h, 80) }, 700)); }
+    try { letto = await Spiega.vede('Nell\'immagine c\'è un\'espressione matematica scritta a mano che finisce con «=». Trascrivi SOLO l\'espressione a sinistra dell\'uguale, su una riga, in forma calcolabile: * per moltiplicare, / per dividere, ^ per le potenze, sqrt() per la radice, parentesi dove servono; numeri con la virgola come scritti. Niente altro testo.' + suggScrittura('calcolo'), immagineMano({ ...parte, h: Math.max(parte.h, 80) }, 700)); }
     catch (e: any) { avviso(String(e.message || e), 5000); return; }
     letto = letto.replace(/^```\w*|```$/g, '').replace(/=\s*$/, '').split('\n')[0].trim();
     const campo = h('input.campo', { value: letto, inputmode: 'text', autocapitalize: 'off' }) as HTMLInputElement, esito = h('div.calcolo-esito');
     const ricalcola = () => { try { esito.textContent = '= ' + Calcolo.formatta(Calcolo.valuta(campo.value)); esito.classList.remove('errore'); } catch (e: any) { esito.textContent = e.message; esito.classList.add('errore'); } };
     campo.addEventListener('input', ricalcola); ricalcola();
     foglio({ titolo: '🧮 Calcolo', etichettaSalva: 'Scrivi', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Ho letto così (controlla che ogni cifra sia giusta, correggi se serve):'), campo, esito),
-      salva: () => { let r: number; try { r = Calcolo.valuta(campo.value); } catch (_) { return false; } scriviRisultato(Calcolo.formatta(r), x1 + 10, yc, Math.max(28, (x1 - x0) * 1.2), tb.c); } });
+      salva: () => { let r: number; try { r = Calcolo.valuta(campo.value); } catch (_) { return false; }
+        // v0.43 memoria: se l'utente ha corretto la lettura, impara quali segni della sua grafia vengono confusi
+        if (campo.value.replace(/\s/g, '') !== letto.replace(/\s/g, '')) { const a = letto.replace(/\s/g, ''), bb = campo.value.replace(/\s/g, ''); if (a.length === bb.length) for (let k = 0; k < a.length; k++) { if (a[k] !== bb[k]) { MemoriaIA.nota('calcolo', 'correzione', a[k], bb[k]); MemoriaIA.nota('scrittura', 'correzione', a[k], bb[k], .5); } } else MemoriaIA.nota('calcolo', 'correzione', a, bb); } scriviRisultato(Calcolo.formatta(r), x1 + 10, yc, Math.max(28, (x1 - x0) * 1.2), tb.c); } });
   }
   function scriviRisultato(t: string, x: number, yc: number, alto: number, c: string): void {
     const cv2 = document.createElement('canvas'), px = 3, font = 'italic ' + Math.round(alto * px) + 'px "Bradley Hand", "Segoe Print", "Comic Sans MS", "Chalkboard SE", cursive';
@@ -697,7 +699,7 @@ async function leggiScrittura(m: Mano, dopo: (testo: string, modo: 'aggiungi' | 
   await caricaImmaginiMano(m);
   let t = '';
   try {
-    t = await Spiega.vede('Trascrivi FEDELMENTE il testo scritto a mano in questa pagina di appunti di studio (italiano; chimica, biologia o fisica). Se nella pagina ci sono slide o pagine stampate incollate, trascrivi solo le annotazioni a mano e, tra parentesi quadre, il titolo della slide a cui si riferiscono. '
+    t = await Spiega.vede(suggScrittura('scrittura') + '\nTrascrivi FEDELMENTE il testo scritto a mano in questa pagina di appunti di studio (italiano; chimica, biologia o fisica). Se nella pagina ci sono slide o pagine stampate incollate, trascrivi solo le annotazioni a mano e, tra parentesi quadre, il titolo della slide a cui si riferiscono. '
       + 'Regole: mantieni l\'ordine e gli a capo; titoli sottolineati o grandi → «# titolo»; elenchi → «- punto» (rientro per i sotto-punti); '
       + 'se c\'è una freccia o «::» tra domanda e risposta scrivi «domanda :: risposta»; parole racchiuse tra graffe {{…}} restano così; '
       + 'formule con simboli corretti (es. ΔH, H₂O, →); se una parola è illeggibile scrivi [?]. Non aggiungere nulla, non commentare: restituisci solo il testo in Markdown.', immagineMano(m, 1200));
@@ -716,6 +718,12 @@ async function leggiScrittura(m: Mano, dopo: (testo: string, modo: 'aggiungi' | 
 // PDF.js (Mozilla) viene caricato solo la prima volta che inserisci un PDF; le pagine diventano immagini
 // JPEG leggere (larghezza 1000 px) da annotare a mano, e il loro testo va nel testo dell'appunto.
 let pdfjsPronto: Promise<any> | null = null;
+/** v0.43 memoria: suggerimenti sulla grafia dell'utente e sui suoi termini tecnici per l'AI che legge la scrittura a mano. */
+function suggScrittura(ambito: 'calcolo' | 'scrittura'): string {
+  const c = MemoriaIA.migliori(ambito, 'correzione', 8, undefined, 1).map(x => '«' + x.k + '» spesso è «' + x.v + '»');
+  const t = MemoriaIA.migliori('audio', 'termine', 25).concat(MemoriaIA.migliori('scrittura', 'termine', 15)).map(x => x.k);
+  return (c.length ? ' Nella grafia di questo studente: ' + c.join('; ') + '.' : '') + (ambito === 'scrittura' && t.length ? ' Termini che usa spesso: ' + t.join(', ') + '.' : '');
+}
 function caricaPdfJs(): Promise<any> {
   if ((window as any).pdfjsLib) return Promise.resolve((window as any).pdfjsLib);
   if (!pdfjsPronto) pdfjsPronto = new Promise((ok, ko) => {

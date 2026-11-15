@@ -62,7 +62,7 @@ const Spiega = (() => {
   async function chiama(mod: string, d: DatiDomanda, l: string): Promise<string> {
     const sys = 'Sei un tutor di ' + materia(d.titolo) + ' per il semestre filtro di Medicina. Rispondi in italiano corretto e semplice, rivolgendoti allo studente con il tu. '
       + 'Basati sul testo di riferimento del corso e su conoscenze certe; non inventare dati, numeri o citazioni. Se il testo di riferimento non basta, dillo. '
-      + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.';
+      + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.' + MemoriaIA.linee('spiegazioni', 4);
     const u = 'Quiz: ' + d.titolo + '\nDomanda: ' + d.q
       + (d.opts.length ? '\nOpzioni: ' + d.opts.join(' | ') : '')
       + '\nRisposta corretta: ' + d.corretta
@@ -251,7 +251,8 @@ const Spiega = (() => {
         h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'),
         h('button.btn.neutro', { onclick: prova }, 'Prova')),
       h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'),
-      IA.campoGemini());
+      IA.campoGemini(),
+      MemoriaIA.sezione());
   }
 
   return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };

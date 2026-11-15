@@ -30,7 +30,28 @@ const CreaQuiz = (() => {
 
   // ---------- 2) lettura delle fonti ----------
   type Fonte = { nome: string; id: string; testo: string; pagine: string };
-  async function leggi(f: Trovato, chiavi: string[], budget: number, passo: (t: string) => void): Promise<Fonte | null> {
+  /** Lezioni che la memoria ricava dai problemi trovati (così il generatore non li ripete). */
+  const LEZIONE: [RegExp, string][] = [
+    [/corretta è la più lunga/, 'Scrivi l\'opzione corretta breve quanto i distrattori: mai la più lunga né la più dettagliata.'],
+    [/contenuta in un distrattore/, 'Il testo della corretta non deve comparire dentro un distrattore.'],
+    [/citazione non trovata/, 'Copia le citazioni carattere per carattere dalle FONTI (stessa punteggiatura), senza riassumere né unire frasi diverse.'],
+    [/non digitabile/, 'Nei completamenti solo risposte digitabili da tastiera: niente apici, pedici, ², ·, Δ, π, frecce.'],
+    [/4 «perché/, 'Per ogni multipla scrivi esattamente 4 testi in "ew", uno per distrattore, nello stesso ordine.'],
+    [/alla cieca|più risposte difendibili/, 'Ogni multipla deve avere UNA sola risposta difendibile secondo la fonte: distrattori chiaramente sbagliati, niente opzioni parzialmente vere.'],
+    [/ha completato con/, 'Nei completamenti la frase deve ammettere una sola risposta: aggiungi contesto e metti tra le risposte accettate le varianti corrette.'],
+    [/quasi uguale/, 'Varia concetto e formulazione di ogni domanda: niente domande che chiedono la stessa cosa.'],
+    [/manca lo spazio/, 'Nei completamenti scrivi «……» nel punto dove va la risposta.'],
+    [/troppo corta/, 'La correzione deve avere almeno 4 passaggi: Cosa chiede, Il concetto, i Passaggi, In sintesi.'],
+    [/^contenuto:/, 'Controlla ogni affermazione sulla fonte prima di scriverla; niente dati che la fonte non contiene.'],
+    [/^italiano:/, 'Rileggi l\'italiano: accordi, accenti (è/e, perché, più), apostrofi e punteggiatura.'],
+  ];
+  function impara(problemi: string[], materia: string): void {
+    for (const p of problemi) for (const [re, l] of LEZIONE) if (re.test(p)) { MemoriaIA.nota('quiz', 'lezione', l.slice(0, 60), l); if (/^italiano:/.test(p)) MemoriaIA.nota('quiz', 'lezione', 'ita-' + p.slice(9, 60), 'Errore già fatto (' + materia + '): ' + p.slice(9, 160)); }
+  }
+  async function leggi(f: Trovato, chiavi: string[], budget: number, passo: (t: string) => void, argomento = ''): Promise<Fonte | null> {
+    // v0.43 memoria: pagine che in passato hanno dato citazioni buone per argomenti simili
+    const utili = new Set<number>(); for (const x of MemoriaIA.migliori('ricerca', 'pagine', 5, argomento)) if (x.k.startsWith(f.id + '|')) for (const p of String(x.v || '').split(',')) if (+p) utili.add(+p);
+    if (utili.size >= 2) budget = Math.round(budget * .65);   // so già dove guardare: mando meno testo all'AI
     try {
       if (f.mimeType === 'application/pdf') {
         const L = await caricaPdfJs(); passo('Leggo «' + f.name + '»…');
@@ -42,7 +63,7 @@ const CreaQuiz = (() => {
           const t = tc.items.map((x: any) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/Volume concesso in uso a[^\n]*/gi, '').trim();
           if (t.length < 40) continue;
           const tn = n2(t); let s = 0; for (const w of chiavi) { const k = tn.split(w).length - 1; s += k ? 3 + Math.min(k, 8) : 0; }
-          pag.push({ i, t, s });
+          pag.push({ i, t, s: s + (utili.has(i) ? 25 : 0) });
         }
         const scelte = pag.filter(x => x.s > 0).sort((a, b) => b.s - a.s);
         const tieni: typeof pag = []; let tot = 0;
@@ -75,7 +96,7 @@ const CreaQuiz = (() => {
     'Niente domande duplicate o quasi uguali tra loro né con quelle elencate come già presenti.',
   ];
   function msgGenera(o: { argomento: string; materia: string; cosa: string; extra: string }, fonti: Fonte[], nMcq: number, nFill: number, gia: string[], feedback = ''): { role: string; content: string }[] {
-    return [{ role: 'system', content: 'Sei un docente esperto che scrive schede di quiz di ' + o.materia + '. Regole obbligatorie:\n- ' + REGOLE.join('\n- ') + '\nRispondi SOLO con JSON valido: {"domande":[{"t","lv","q","o","e","ew","a","show","r","cit":[{"t","f"}]}]}.' },
+    return [{ role: 'system', content: 'Sei un docente esperto che scrive schede di quiz di ' + o.materia + '. Regole obbligatorie:\n- ' + REGOLE.join('\n- ') + MemoriaIA.linee('quiz', 8) + '\nRispondi SOLO con JSON valido: {"domande":[{"t","lv","q","o","e","ew","a","show","r","cit":[{"t","f"}]}]}.' },
       { role: 'user', content: 'ARGOMENTO: ' + o.argomento + '\nCOSA VOGLIO: ' + o.cosa + (o.extra ? '\nINDICAZIONI: ' + o.extra : '') + '\n\nScrivi ' + (nMcq ? nMcq + ' domande a risposta multipla' : '') + (nMcq && nFill ? ' e ' : '') + (nFill ? nFill + ' completamenti' : '') + ' (prima le multiple).'
         + (gia.length ? '\n\nDOMANDE GIÀ PRESENTI (non ripeterle):\n- ' + gia.slice(0, 40).join('\n- ') : '') + (feedback ? '\n\nCORREGGI QUESTI PROBLEMI:\n' + feedback : '')
         + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }];
@@ -137,7 +158,7 @@ const CreaQuiz = (() => {
   async function crea(o: { argomento: string; materia: string; cosa: string; extra: string; fonti: Trovato[]; nMcq: number; nFill: number }, passo: (t: string) => void): Promise<QCreato> {
     const chiavi = Array.from(new Set((o.argomento + ' ' + o.extra).split(/[\s,;:/()«»"]+/).map(n2).filter(w => w.length > 3))).slice(0, 12);
     const budget = IA.gemini ? 120000 : 22000, fonti: Fonte[] = [];
-    for (const f of o.fonti) { const x = await leggi(f, chiavi, Math.round(budget / Math.max(1, o.fonti.length)), passo); if (x) fonti.push(x); }
+    for (const f of o.fonti) { const x = await leggi(f, chiavi, Math.round(budget / Math.max(1, o.fonti.length)), passo, o.argomento); if (x) fonti.push(x); }
     if (!fonti.length) throw new Error('Nelle fonti scelte non ho trovato pagine su «' + o.argomento + '». Prova parole chiave diverse (sinonimi, nome del capitolo) o altre fonti.');
     const testoFonti = fonti.map(f => f.testo).join('\n');
     const banca = Stato.tutti<QCreato>('qcreato').flatMap(r => r.domande.map(d => d.q)).slice(-200);
@@ -162,6 +183,7 @@ const CreaQuiz = (() => {
         catch (e: any) { passo('⚠️ Revisione non riuscita (' + (e.message || e) + '): tengo solo i controlli automatici.'); }
       }
       buone = buone.concat(candidate.filter(d => !problemi.has(d)));
+      problemi.forEach(p => impara(p, o.materia));
       const ko = candidate.filter(d => problemi.has(d));
       const mancaM = o.nMcq - buone.filter(d => d.t === 'mcq').length, mancaF = o.nFill - buone.filter(d => d.t === 'fill').length;
       if (!ko.length || (mancaM <= 0 && mancaF <= 0)) { scartate += ko.length; break; }
@@ -180,6 +202,9 @@ const CreaQuiz = (() => {
     const rec: QCreato = { id, type: 'qcreato', updatedAt: 0, titolo: o.argomento.charAt(0).toUpperCase() + o.argomento.slice(1), materia: o.materia, argomento: o.argomento, cosa: o.cosa,
       fonti: fonti.map(f => ({ nome: f.nome, id: f.id, pagine: f.pagine })), domande, creato: new Date().toISOString(), modelli: Array.from(modelli), scartate };
     Stato.salva(rec);
+    // v0.43 memoria: dove stava cosa (argomento → file) e quali pagine hanno dato citazioni buone
+    Trova.ricordaPosto(o.argomento, o.fonti.filter(f => fonti.some(x => x.id === f.id)));
+    for (const f of fonti) { const pp = new Set<string>(); for (const d of domande) for (const c of d.cit || []) { const m = /p\.\s*(\d+)/.exec(c.f); if (m && n2(c.f).includes(n2(f.nome).slice(0, 15))) pp.add(m[1]); } if (pp.size) MemoriaIA.nota('ricerca', 'pagine', f.id + '|' + o.argomento, Array.from(pp).join(',')); }
     return rec;
   }
   function linkFonte(fonti: Fonte[], f: string): string | undefined {

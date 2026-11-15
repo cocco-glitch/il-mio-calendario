@@ -119,22 +119,26 @@ const Studio = (() => {
   async function caricaDaDrive(avanzamento?: (t: string) => void): Promise<number> {
     await Drive.preparaCartelle();
     let n = 0; const visti = new Set<string>(); ultimiTrovati = [];
-    const prova = async (id: string, nome: string, cartella: string, par?: string): Promise<boolean> => {
+    const prova = async (id: string, nome: string, cartella: string, par?: string, mod?: string): Promise<boolean> => {
       if (visti.has(id)) return false; visti.add(id);
+      const noto = MemoriaIA.migliori('ricerca', 'pacchetto', 200).find(x => x.v && x.v.id === id);
+      if (noto && mod && noto.v.modifiedTime === mod && noto.v.importato) { ultimiTrovati.push(...(noto.v.titoli || []).map((t: any) => ({ nome, cartella, tipo: t.tipo, titolo: t.titolo }))); return true; }   // invariato: non lo riscarico
       let j: any; try { j = JSON.parse((await Drive.scaricaTesto(id)).replace(/^\uFEFF/, '')); } catch (_) { return false; }
       const lista = Array.isArray(j) ? j : j && Array.isArray(j.pacchetti) ? j.pacchetti : [j];
       let buoni = 0;
       for (const c of lista) if (c && c.formato === 'pacchetto-studio') { buoni++; if (importa(c)) n++; ultimiTrovati.push({ nome, cartella, tipo: c.tipo, titolo: c.titolo || c.id }); }
-      if (buoni) Trova.impara([par]);
+      if (buoni) { Trova.impara([par]); MemoriaIA.nota('ricerca', 'pacchetto', id, { id, name: nome, mimeType: 'application/json', modifiedTime: mod || '', parents: par ? [par] : [], importato: true, titoli: lista.filter((c: any) => c && c.formato === 'pacchetto-studio').map((c: any) => ({ tipo: c.tipo, titolo: c.titolo || c.id })) }); }
+      else if (!noto) MemoriaIA.nota('ricerca', 'nonpacchetto', id, null);   // JSON che non è un pacchetto: la prossima volta lo salto
       return buoni > 0;
     };
     // 1) la cartella dell'app (veloce)
     for (const f of await Drive.elencaTutti(Drive.idCartella('studio'))) if (/\.json$/i.test(f.name)) await prova(f.id, f.name, 'Calendario personale/studio');
     // 2) tutto il Drive, in ordine di probabilità
     avanzamento && avanzamento('Cerco i pacchetti in tutto il Drive…');
-    const cand = (await Trova.pacchetti()).filter(c => c.punti > 5).slice(0, 60);
+    const scarti = new Set(MemoriaIA.migliori('ricerca', 'nonpacchetto', 300).map(x => x.k));
+    const cand = (await Trova.pacchetti()).filter(c => c.punti > 5 && !scarti.has(c.id)).slice(0, 60);
     let i = 0;
-    for (const c of cand) { i++; avanzamento && avanzamento('Controllo ' + i + '/' + cand.length + ': ' + c.name); await prova(c.id, c.name, c.cartella || '', c.parents && c.parents[0]); }
+    for (const c of cand) { i++; avanzamento && avanzamento('Controllo ' + i + '/' + cand.length + ': ' + c.name); await prova(c.id, c.name, c.cartella || '', c.parents && c.parents[0], c.modifiedTime); }
     return n;
   }
   const trovati = () => ultimiTrovati;

@@ -56,9 +56,16 @@ const Lezioni = (() => {
   /** Il processo completo. Restituisce i segmenti finali e le correzioni fatte. */
   async function processa(b: Blob, contesto: { titolo: string; step: string; testo: string }, passo: (t: string) => void): Promise<{ seg: Segmento[]; corr: { i: number; prima: string; dopo: string; nota: string; ok: boolean }[] }> {
     const prompt = 'Lezione universitaria in italiano (semestre filtro di Medicina: chimica, biologia, fisica). Argomento: ' + contesto.titolo + (contesto.step ? ' (' + contesto.step + ')' : '') + '. ' + contesto.testo.replace(/\s+/g, ' ').slice(0, 300);
+    // v0.43 memoria: i termini già incontrati entrano nel «prompt» di Whisper, che li usa durante il
+    // riconoscimento dei suoni (così una parola corretta più volte viene riconosciuta giusta la volta dopo)
+    const noti = MemoriaIA.migliori('audio', 'termine', 40).map(x => x.k);
+    const promptM = prompt + (noti.length ? ' Termini: ' + noti.join(', ') + '.' : '');
     passo('1/3 Trascrivo…');
-    const seg = await trascrivi(b, prompt, 'whisper-large-v3-turbo', t => passo('1/3 Trascrivo ' + t));
+    const seg = await trascrivi(b, promptM, 'whisper-large-v3-turbo', t => passo('1/3 Trascrivo ' + t));
     if (!seg.length) throw new Error('non ho sentito parole nell\'audio');
+    // correzioni confermate più volte: applicate subito, senza chiedere all'AI (meno token)
+    const daMemoria: { i: number; prima: string; dopo: string; nota: string; ok: boolean }[] = [];
+    seg.forEach((x, i) => { const c = MemoriaIA.correggi('audio', x.t); if (c.cambi.length) { daMemoria.push({ i, prima: x.t, dopo: c.testo, nota: 'dalla memoria: ' + c.cambi.map(z => z.prima + ' → ' + z.dopo).join(', '), ok: true }); x.t = c.testo; x.lp = 0; } });
     // 2) controllo di coerenza (blocchi da ~120 segmenti per restare nei limiti)
     passo('2/3 Controllo la coerenza del testo…');
     const dubbi = new Map<number, string>(), termini = new Set<string>();
@@ -66,16 +73,18 @@ const Lezioni = (() => {
       const righe = seg.slice(a, a + 120).map((x, k) => (a + k) + (x.lp != null && (x.lp < -.6 || (x.cr || 0) > 2.4) ? ' ⚠' : '') + ' | ' + x.t).join('\n');
       const r = await Spiega.chat([{ role: 'system', content: 'Sei un revisore di trascrizioni automatiche di lezioni universitarie italiane. Rispondi SOLO in JSON.' },
         { role: 'user', content: 'Argomento: ' + contesto.titolo + (contesto.step ? ' · ' + contesto.step : '') + '\nSegmenti numerati (⚠ = il riconoscitore era poco sicuro):\n' + righe +
+          (daMemoria.length ? '\nCorrezioni già applicate dalla memoria (non segnalarle): ' + daMemoria.map(z => z.nota.replace('dalla memoria: ', '')).join('; ') : '') +
           '\n\nTrova i segmenti con parole probabilmente sentite male (termini tecnici storpiati, frasi senza senso nel contesto, numeri/unità incoerenti). JSON: {"dubbi":[{"i":numero,"motivo":"breve"}],"termini":["termini tecnici corretti dell\'argomento presenti o storpiati"]}. Non segnalare lo stile parlato.' }], .2).catch(() => ({ dubbi: [], termini: [] }));
       for (const d of (r.dubbi || []).slice(0, 40)) if (seg[+d.i]) dubbi.set(+d.i, String(d.motivo || ''));
       for (const t of (r.termini || []).slice(0, 40)) termini.add(String(t));
     }
     seg.forEach((x, i) => { if (x.lp != null && x.lp < -1 && !dubbi.has(i)) dubbi.set(i, 'audio poco chiaro'); });
-    if (!dubbi.size) return { seg, corr: [] };
+    if (!dubbi.size) return { seg, corr: daMemoria };
     // 3) ritrascrizione accurata con il glossario e scelta, solo sui punti dubbi
     passo('3/3 Riascolto i punti dubbi (' + dubbi.size + ')…');
     let seg2: Segmento[] = [];
-    try { seg2 = await trascrivi(b, prompt + ' Termini: ' + Array.from(termini).join(', '), 'whisper-large-v3', t => passo('3/3 Riascolto ' + t)); } catch (_) { /* resta la prima versione */ }
+    termini.forEach(t => MemoriaIA.nota('audio', 'termine', t, null, .3));
+    try { seg2 = await trascrivi(b, promptM + ' ' + Array.from(termini).join(', '), 'whisper-large-v3', t => passo('3/3 Riascolto ' + t)); } catch (_) { /* resta la prima versione */ }
     const idx = Array.from(dubbi.keys()), corr: { i: number; prima: string; dopo: string; nota: string; ok: boolean }[] = [];
     for (let a = 0; a < idx.length; a += 25) {
       const casi = idx.slice(a, a + 25).map(i => { const x = seg[i], alt = seg2.filter(y => y.e > x.s - .3 && y.s < x.e + .3).map(y => y.t).join(' ');
@@ -85,7 +94,7 @@ const Lezioni = (() => {
           'JSON: {"correzioni":[{"i":numero,"testo":"versione finale","nota":"cosa hai corretto, breve"}]} (ometti i casi già giusti).\n' + JSON.stringify(casi) }], .1).catch(() => ({ correzioni: [] }));
       for (const c of r.correzioni || []) { const i = +c.i, t = String(c.testo || '').trim(); if (seg[i] && t && t !== seg[i].t) corr.push({ i, prima: seg[i].t, dopo: t, nota: String(c.nota || ''), ok: true }); }
     }
-    return { seg, corr };
+    return { seg, corr: daMemoria.concat(corr.filter(c => !daMemoria.some(z => z.i === c.i))) };
   }
   /** Testo Markdown: paragrafi di circa un minuto con il minuto della lezione. */
   function inMarkdown(seg: Segmento[], titolo: string): string {
@@ -157,7 +166,13 @@ async function lezioneAudio(contesto: { titolo: string; step: string; testo: str
       h('div.tenue.piccolo', null, r.seg.length + ' frasi · ' + Lezioni.mmss(r.seg[r.seg.length - 1].e) + ' di audio · ' + r.corr.length + ' correzioni dell\'AI (togli la spunta per tenere l\'originale; ▶ per riascoltare).'),
       player, lista,
       h('button.btn.neutro', { type: 'button', onclick: async () => { try { const c = await Drive.sottocartella('Lezioni audio'); await Drive.carica(nome.replace(/[\\/:*?"<>|]/g, '-') + '.' + ((b.type.split('/')[1] || 'm4a').split(';')[0]), c, b, b.type || 'audio/mp4'); avviso('☁︎ Audio salvato in «Calendario personale/Lezioni audio».'); } catch (e: any) { avviso('Drive: ' + (e && e.message || e), 6000); } } }, '☁︎ Salva anche l\'audio su Drive')),
-      salva: () => { const seg = r.seg.map((x, i) => { const c = r.corr.find(z => z.i === i && z.ok); return c ? { ...x, t: c.dopo } : x; }); aggiungi(Lezioni.inMarkdown(seg, nome)); setTimeout(() => URL.revokeObjectURL(url), 60000); } });
+      salva: () => {
+        // v0.43 memoria: ogni correzione accettata insegna «come suona → come si scrive»; quelle rifiutate la indeboliscono
+        for (const c of r.corr) for (const d of MemoriaIA.differenze(c.prima, c.dopo)) {
+          if (c.ok) { MemoriaIA.nota('audio', 'correzione', d.prima, d.dopo); for (const w of d.dopo.split(/\s+/)) if (w.length > 5) MemoriaIA.nota('audio', 'termine', w.replace(/[.,;:!?]/g, ''), null, .5); }
+          else MemoriaIA.smentisci('audio', 'correzione', d.prima);
+        }
+        const seg = r.seg.map((x, i) => { const c = r.corr.find(z => z.i === i && z.ok); return c ? { ...x, t: c.dopo } : x; }); aggiungi(Lezioni.inMarkdown(seg, nome)); setTimeout(() => URL.revokeObjectURL(url), 60000); } });
     void fs2;
   }
 }

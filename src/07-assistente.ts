@@ -91,7 +91,12 @@ const Assistente = (() => {
     + '- risposta {testo} = solo per domande su come si usa l\'app o se la richiesta non è un\'azione (rispondi in italiano, breve).\n'
     + 'Regole: date sempre assolute calcolate dal contesto; «stasera» = oggi 20:00 se manca l\'ora; più azioni se la frase ne chiede più di una; titoli brevi in italiano con l\'iniziale maiuscola; non inventare dettagli non detti.';
   async function capisci(frase: string): Promise<AzioneA[]> {
-    const r = await IA.chiedi([{ role: 'system', content: SISTEMA + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
+    // v0.43 memoria: frase già vista con azioni senza date → la rifaccio senza chiamare l'AI
+    const uguale = MemoriaIA.migliori('assistente', 'esempio', 1, frase).find(x => norm(x.k) === norm(frase) && x.n >= 2 && (x.v.azioni || []).every((a: any) => !['evento', 'promemoria'].includes(a.tipo)));
+    if (uguale) return uguale.v.azioni;
+    const es = MemoriaIA.migliori('assistente', 'esempio', 4, frase);
+    const esempi = es.length ? '\nESEMPI DI QUESTO UTENTE (richiesta → azioni che ha confermato; le date erano relative al giorno indicato):\n' + es.map(x => '[' + x.v.data + '] «' + x.k + '» → ' + JSON.stringify({ azioni: x.v.azioni })).join('\n') : '';
+    const r = await IA.chiedi([{ role: 'system', content: SISTEMA + MemoriaIA.linee('assistente', 5) + esempi + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
     return ((r.j && r.j.azioni) || []).filter((a: any) => a && typeof a.tipo === 'string').slice(0, 6);
   }
   /** Mostra le azioni capite e le esegue: subito quelle innocue, con un tocco quelle che creano qualcosa. */
@@ -104,7 +109,7 @@ const Assistente = (() => {
     pill.remove();
     if (!az.length) { avviso('Non ho capito: prova a dirlo con altre parole (es. «crea un quiz sulle leve», «domani alle 9 ripasso fisica»).', 6000); return; }
     const innocue = az.every(a => ['apri', 'cerca', 'quiz', 'carte', 'studia_ora', 'quiz_creati', 'pacchetti', 'lezione_audio'].includes(a.tipo)) && az.length === 1;
-    if (innocue) { esegui(az[0]); return; }
+    if (innocue) { esegui(az[0]); MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: az }); return; }
     const risposte = az.filter(a => a.tipo === 'risposta') as { tipo: 'risposta'; testo: string }[], fare = az.filter(a => a.tipo !== 'risposta');
     const scelte = fare.map(() => true);
     foglio({ titolo: '✨ Assistente', etichettaSalva: fare.length ? 'Fai' : 'Ok', corpo: h('div.modulo', null,
@@ -113,6 +118,9 @@ const Assistente = (() => {
       ...fare.map((a, i) => h('label.cq-fonte', null, h('input', { type: 'checkbox', checked: true, onchange: (e: Event) => scelte[i] = (e.target as HTMLInputElement).checked }), h('span', null, descrivi(a))))),
       salva: () => {
         const fatti: Rec[] = []; fare.forEach((a, i) => { if (scelte[i]) { const r = esegui(a); if (r) fatti.push(r); } });
+        // v0.43 memoria: le azioni confermate diventano un esempio; quelle tolte, una lezione
+        const conf = fare.filter((_, i) => scelte[i]); if (conf.length) MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: conf });
+        fare.forEach((a, i) => { if (!scelte[i]) MemoriaIA.nota('assistente', 'lezione', 'no-' + a.tipo + '-' + norm(frase).slice(0, 40), 'Per richieste come «' + frase.slice(0, 80) + '» l\'utente NON voleva: ' + descrivi(a)); });
         if (fatti.length) avviso('✓ Fatto: ' + fatti.length + (fatti.length === 1 ? ' elemento creato' : ' elementi creati'), 5000, () => { const r = fatti[0]; r.type === 'task' ? apriTask(r as Task) : r.type === 'evento' ? apriEvento(r as Evento) : null; });
         disegna();
       } });

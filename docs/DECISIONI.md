@@ -136,3 +136,17 @@ Da 700 px in su: barra della penna su più righe (niente strumenti nascosti), be
 - 07-assistente.ts: il campo della home è anche l'assistente (✨): eventi/promemoria con data restano locali; il resto
   diventa azioni tipizzate (evento, promemoria, appunto, quiz, carte, cerca, apri vista, studia ora, lezione audio,
   pacchetti, risposta) confermate con un tocco.
+
+## v0.43 — Memoria degli assistenti AI (07-memoriaia.ts)
+Un solo algoritmo (voci con conferme × recenza, dimezzamento 45 giorni, tetto 300 per ambito, sincronizzato) usato da
+tutte le AI con ambiti specifici + linee guida generali:
+- ricerca: «dove sta cosa» (argomento → file; file → pagine utili; pacchetti noti con data; JSON che non sono pacchetti).
+  Fonti: con memoria buona 1 query invece di 6; pacchetti: dopo una ricerca completa, per 7 giorni solo file modificati,
+  e i pacchetti invariati non si riscaricano. CreaQuiz manda meno testo (−35%) quando conosce le pagine utili.
+- quiz: i problemi trovati da controlli e revisore diventano lezioni nel prompt del generatore.
+- audio: correzioni accettate «come suona → come si scrive» (differenze parola per parola); termini nel prompt di Whisper
+  (agisce sul riconoscimento dei suoni); dopo 2 conferme la correzione si applica da sola senza AI; le rifiutate si indeboliscono.
+- calcolo / scrittura: segni della grafia confusi (es. 7→1) dalle correzioni dell'utente, passati all'AI che legge.
+- assistente: richieste confermate = esempi (few-shot); azioni tolte = lezioni; richiesta senza date già confermata 2 volte = nessuna chiamata AI.
+- spiegazioni: se dopo la breve chiede la dettagliata, lezione per quella materia.
+Altro → Spiegazioni AI → «Memoria degli assistenti»: vedere e far dimenticare. Test: test/memoria.py (anche sotto sforzo: 5000 voci).
