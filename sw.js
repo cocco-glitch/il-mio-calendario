@@ -1,5 +1,5 @@
 // Service worker: tiene in cache i file dell'app per aprirla offline.
-// mwhp9zy1 viene sostituita da build.mjs: a ogni build la cache si rinnova.
+// mwi5qaz0 viene sostituita da build.mjs: a ogni build la cache si rinnova.
 const CACHE = 'imc-__VERSIONE__';
 const FILE = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icone/icona-180.png', 'icone/icona-192.png', 'icone/icona-512.png'];
 

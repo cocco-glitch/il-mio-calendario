@@ -830,3 +830,11 @@ button, a, .chip, [role=tab], .nota-tessera { touch-action: manipulation; }   /*
   .appunto-modelli { flex-wrap: nowrap; overflow-x: auto; }
   .visore-testa { min-height: 52px; }
 }
+/* v0.42 assistente, quiz creati in app */
+.rapido-riga { display: flex; gap: 8px; align-items: center; }
+.rapido-riga .rapido { flex: 1; min-width: 0; }
+.rapido-ai { flex: none; width: 44px; height: 44px; border-radius: 12px; background: var(--accento); color: #fff; font-size: 18px; display: grid; place-items: center; transition: transform .12s; }
+.rapido-ai:active { transform: scale(.92); }
+.cq-fonti { display: flex; flex-direction: column; gap: 8px; max-height: 42vh; overflow: auto; }
+.cq-fonte { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 10px; border-radius: 10px; background: var(--sup2); }
+.cq-fonte b { word-break: break-word; }

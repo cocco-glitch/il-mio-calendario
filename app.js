@@ -1800,7 +1800,7 @@ const Drive = (() => {
         stato, ascolta(f) { ascoltatori.push(f); },
         sincronizza, programma, login, logout, precarica,
         caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
-        elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
+        elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle, api,
         get collegato() { return !!stato.email; },
         /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
         eProprietario() { return stato.email ? stato.email.toLowerCase() === PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); }, // v0.26.2: senza account solo in prova locale
@@ -2420,6 +2420,193 @@ const Notifiche = (() => {
     }
     async function prova() { await invia({ chiave: 'prova:' + Date.now(), titolo: '✅ Notifiche attive', testo: 'Il mio calendario può avvisarti anche ad app chiusa.', tag: 'white_check_mark' }); }
     return { calcola, allinea, programma, attiva, rigenera, prova, attive, server, PRED, nuovoTopic, fuoriSilenzio };
+})();
+
+// =====================================================================
+// 06-trova.ts — v0.42 RICERCA UNIVERSALE SUL DRIVE (per chiunque usi l'app)
+// Non dipende da cartelle fisse: cerca in TUTTO il Drive dell'utente (scope drive.readonly) e ordina i
+// risultati con un punteggio, come farebbe una persona che conosce le sue cartelle:
+//   1) contenuto: Drive indicizza il testo di JSON/PDF/Docs → «fullText contains» trova i pacchetti
+//      anche se hanno un nome qualunque (cerca la firma "pacchetto-studio");
+//   2) nome del file: parole chiave del tipo cercato (step, piano, quiz, scheda, materie…);
+//   3) cartelle: il nome della cartella e del suo genitore (es. «materiale studio», «fisica quiz»,
+//      «Calendario personale») e le cartelle dove l'app ha già trovato roba (impara da sola);
+//   4) materie e corsi dell'utente (dai pacchetti già presenti e dalle sue parole);
+//   5) recenza e dimensione ragionevole.
+// Ogni risultato porta il «perché» del punteggio, così è verificabile.
+// =====================================================================
+const Trova = (() => {
+    const KCART = 'trova-cartelle'; // cartelle dove l'app ha già trovato cose utili (si impara)
+    const nomiCartelle = new Map();
+    const norm2 = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const esc = (s) => s.replace(/\\/g, '').replace(/'/g, "\\'");
+    const imparate = () => { try {
+        return JSON.parse(localStorage.getItem(KCART) || '{}');
+    }
+    catch (_) {
+        return {};
+    } };
+    function impara(cartelle) {
+        const c = imparate();
+        for (const x of cartelle)
+            if (x)
+                c[x] = (c[x] || 0) + 1;
+        try {
+            localStorage.setItem(KCART, JSON.stringify(c));
+        }
+        catch (_) { /* privato */ }
+    }
+    async function cartella(id) {
+        if (!nomiCartelle.has(id))
+            nomiCartelle.set(id, Drive.api('files/' + id, { query: { fields: 'name,parents' } }).catch(() => null));
+        return nomiCartelle.get(id);
+    }
+    async function query(q, n = 200) {
+        try {
+            const r = await Drive.api('files', { query: { q: 'trashed = false and ' + q, fields: 'files(id,name,mimeType,modifiedTime,size,parents)', pageSize: String(n), orderBy: 'modifiedTime desc', corpora: 'user', includeItemsFromAllDrives: 'false' } });
+            return r.files || [];
+        }
+        catch (e) {
+            if (String(e.message) === 'NOLOGIN')
+                throw e;
+            return [];
+        }
+    }
+    /** Parole che descrivono il mondo dell'utente: materie, corsi, step già presenti. */
+    function contesto() {
+        const o = new Set(['studio', 'materiale', 'quiz', 'schede', 'piano', 'step', 'calendario', 'corso', 'esame', 'lezioni', 'universita']);
+        try {
+            for (const r of Stato.tutti('pacchetto')) {
+                const c = r.contenuto;
+                if (!c)
+                    continue;
+                for (const m of c.materie || []) {
+                    o.add(norm2(m.nome || ''));
+                    if (m.libro)
+                        o.add(norm2(String(m.libro).split(/\s/)[0]));
+                }
+            }
+            for (const c of Stato.tutti('categoria'))
+                if (c.nome)
+                    o.add(norm2(c.nome));
+        }
+        catch (_) { /* senza dati */ }
+        ['chimica', 'biologia', 'fisica', 'matematica', 'anatomia', 'fisiologia', 'istologia', 'biochimica', 'genetica', 'statistica'].forEach(x => o.add(x));
+        return Array.from(o).filter(x => x && x.length > 2);
+    }
+    /** Punteggio di un file rispetto alle parole chiave (con il «perché»). */
+    async function punteggio(f, parole, extra) {
+        const perche = [];
+        let p = 0;
+        const n = norm2(f.name);
+        if (extra.firma) {
+            p += 60;
+            perche.push('contiene la firma del formato');
+        }
+        for (const w of parole)
+            if (w.length > 2 && n.includes(w)) {
+                p += 12;
+                perche.push('nome: «' + w + '»');
+            }
+        if (extra.tipi && extra.tipi.test(n)) {
+            p += 10;
+            perche.push('nome tipico');
+        }
+        const par = (f.parents || [])[0];
+        let cart = '';
+        if (par) {
+            const c = await cartella(par);
+            if (c) {
+                cart = c.name;
+                const cn = norm2(c.name);
+                for (const w of parole)
+                    if (w.length > 2 && cn.includes(w)) {
+                        p += 8;
+                        perche.push('cartella «' + c.name + '»');
+                        break;
+                    }
+                const g = c.parents && c.parents[0] ? await cartella(c.parents[0]) : null;
+                if (g) {
+                    const gn = norm2(g.name);
+                    for (const w of parole)
+                        if (w.length > 2 && gn.includes(w)) {
+                            p += 4;
+                            perche.push('dentro «' + g.name + '»');
+                            break;
+                        }
+                }
+            }
+            const imp = imparate()[par];
+            if (imp) {
+                p += Math.min(20, imp * 5);
+                perche.push('cartella già usata');
+            }
+        }
+        const giorni = (Date.now() - Date.parse(f.modifiedTime || '2000-01-01')) / 864e5;
+        p += Math.max(0, 8 - giorni / 30);
+        if (f.size && +f.size > 25e6) {
+            p -= 30;
+            perche.push('molto grande');
+        }
+        return { ...f, punti: Math.round(p), perche, cartella: cart };
+    }
+    /** PACCHETTI (piani, step, corsi): ovunque nel Drive. */
+    async function pacchetti() {
+        const firma = await query("fullText contains 'pacchetto-studio'", 300);
+        const json = await query("(mimeType = 'application/json' or name contains '.json')", 400);
+        const visti = new Map();
+        for (const f of firma)
+            visti.set(f.id, { f, firma: true });
+        for (const f of json)
+            if (!visti.has(f.id))
+                visti.set(f.id, { f, firma: false });
+        const parole = contesto().concat(['pacchetto', 'raffinamento', 'banca']);
+        const tipi = /step|piano|pacchett|corso|raffinamento|banca|indice/;
+        const out = [];
+        for (const { f, firma: fi } of visti.values()) {
+            if (f.mimeType === 'application/vnd.google-apps.folder')
+                continue;
+            out.push(await punteggio(f, parole, { firma: fi, tipi }));
+        }
+        return out.sort((a, b) => b.punti - a.punti);
+    }
+    /** FILE PER UN ARGOMENTO (fonti di studio: PDF, Documenti, slide, testi). */
+    async function fonti(argomento, extraParole = [], max = 12) {
+        const chiavi = Array.from(new Set((argomento + ' ' + extraParole.join(' ')).split(/[\s,;:/()«»"]+/).map(norm2).filter(w => w.length > 3 && !STOP.has(w)))).slice(0, 8);
+        if (!chiavi.length)
+            return [];
+        const tipiQ = "(mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'text/plain' or mimeType = 'text/markdown')";
+        const visti = new Map();
+        // una ricerca per ogni parola (nel testo) + una con tutte insieme (più precisa)
+        const qs = [chiavi.map(w => "fullText contains '" + esc(w) + "'").join(' and '), ...chiavi.slice(0, 5).map(w => "fullText contains '" + esc(w) + "'")];
+        for (let i = 0; i < qs.length; i++)
+            for (const f of await query(qs[i] + ' and ' + tipiQ, i ? 40 : 60)) {
+                const v = visti.get(f.id) || { f, colpi: 0 };
+                v.colpi += i ? 1 : 4;
+                visti.set(f.id, v);
+            }
+        const parole = chiavi.concat(contesto());
+        const out = [];
+        for (const { f, colpi } of visti.values()) {
+            const t = await punteggio(f, parole, {});
+            t.punti += colpi * 9;
+            t.perche.unshift('testo: ' + colpi + ' corrispondenze');
+            out.push(t);
+        }
+        return out.sort((a, b) => b.punti - a.punti).slice(0, max);
+    }
+    /** Un file per nome (es. una scheda quiz) quando la cartella indicata dal pacchetto non esiste. */
+    async function perNome(parti, tipo) {
+        const q = parti.filter(Boolean).map(x => "name contains '" + esc(x) + "'").join(' and ') + (tipo ? " and mimeType = '" + tipo + "'" : '');
+        const r = await query(q, 20);
+        if (!r.length)
+            return null;
+        const t = await punteggio(r[0], contesto(), {});
+        impara([t.parents && t.parents[0]]);
+        return t;
+    }
+    const STOP = new Set(['della', 'delle', 'degli', 'dello', 'nella', 'nelle', 'sulla', 'sulle', 'come', 'cosa', 'quale', 'quali', 'questo', 'questa', 'sono', 'fare', 'crea', 'creami', 'quiz', 'scheda', 'domande', 'voglio', 'vorrei', 'perche', 'anche', 'tutto', 'tutti', 'ogni', 'dove', 'quando', 'with', 'from']);
+    return { pacchetti, fonti, perNome, impara, contesto };
 })();
 
 // =====================================================================
@@ -3366,6 +3553,182 @@ const MODELLI_APPUNTO = [
     { id: 'reazione', nome: 'Reazione', sotto: 'Reagenti · condizioni · meccanismo · prodotti', testo: '# Reazione\n- Reagenti: \n- Condizioni / catalizzatore: \n- Prodotti: \n\n# Meccanismo\n1. \n\n# Da ricordare\n- Prodotto di questa reazione :: \n- Il catalizzatore è {{…}}\n', sf: 'quadretti' },
     { id: 'confronto', nome: 'Confronto', sotto: 'A vs B: somiglianze e differenze', testo: '# A\n- \n\n# B\n- \n\n# Differenze chiave\n- Differenza tra A e B :: \n', sf: 'righe' },
 ];
+
+// =====================================================================
+// 07-assistente.ts — v0.42 ASSISTENTE DELLA HOME: coordina tutta l'app da una frase.
+// Prima prova il riconoscimento locale (07-rapido: eventi e promemoria con data/ora, offline e immediato);
+// se la frase chiede altro, l'AI «veloce» la traduce in AZIONI tipizzate che l'app esegue con le sue
+// funzioni (mai codice libero): evento, promemoria, appunto, quiz da creare, flashcard, ricerca, apertura
+// di una vista, «studia ora», lezione audio, oppure una risposta sull'uso dell'app.
+// Le azioni che creano qualcosa si confermano con un tocco (si possono togliere); aprire/cercare è immediato.
+// =====================================================================
+const Assistente = (() => {
+    const VISTE = {
+        oggi: () => vai('oggi'), calendario: () => vai('cal'), studio: () => { UI.studioVista = 'schede'; vai('studio'); }, piano: () => { UI.studioVista = 'piano'; vai('studio'); },
+        carte: () => { UI.studioVista = 'carte'; vai('studio'); }, errori: () => { UI.studioVista = 'errori'; vai('studio'); }, statistiche: () => { UI.studioVista = 'statistiche'; vai('studio'); },
+        esami: () => { UI.studioVista = 'esami'; vai('studio'); }, syllabus: () => { UI.studioVista = 'syllabus'; vai('studio'); }, tabelle: () => { UI.studioVista = 'tabelle'; vai('studio'); },
+        appunti: () => vai('appunti'), promemoria: () => vai('task'), note: () => vai('note'), impostazioni: () => vai('altro'), altro: () => vai('altro'),
+    };
+    const GG = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
+    function ricorrenza(s) {
+        if (!s)
+            return undefined;
+        const n = norm(s);
+        if (/giorn/.test(n))
+            return { freq: 'D', interval: 1 };
+        if (/mes/.test(n))
+            return { freq: 'M', interval: 1 };
+        if (/ann/.test(n))
+            return { freq: 'Y', interval: 1 };
+        const by = GG.map((g, i) => n.includes(g) ? i : -1).filter(i => i >= 0);
+        if (/settiman|ogni/.test(n) || by.length)
+            return { freq: 'W', interval: 1, ...(by.length ? { byday: by } : {}) };
+        return undefined;
+    }
+    const ora = (s) => { const m = /^(\d{1,2})[:.](\d{2})/.exec(s || ''); return m ? [+m[1], +m[2]] : undefined; };
+    const giorno = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ''); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
+    function descrivi(a) {
+        switch (a.tipo) {
+            case 'evento': return '📅 Evento «' + a.titolo + '» · ' + (giorno(a.data) ? fmt(giorno(a.data), { weekday: 'short', day: 'numeric', month: 'short' }) : a.data) + (a.tutto_il_giorno ? ' · tutto il giorno' : a.inizio ? ' · ' + a.inizio + (a.fine ? '–' + a.fine : '') : '') + (a.ripeti ? ' · ' + a.ripeti : '');
+            case 'promemoria': return '🔔 Promemoria «' + a.titolo + '»' + (a.data && giorno(a.data) ? ' · ' + fmt(giorno(a.data), { weekday: 'short', day: 'numeric', month: 'short' }) : '') + (a.ora ? ' · ' + a.ora : '') + (a.ripeti ? ' · ' + a.ripeti : '');
+            case 'appunto': return '📝 Nuovo appunto «' + a.titolo + '»' + (a.modo === 'mano' ? ' (a mano)' : '');
+            case 'quiz': return '✨ Crea un quiz su «' + a.argomento + '»' + (a.materia ? ' · ' + a.materia : '');
+            case 'carte': return '🃏 Flashcard' + (a.argomento ? ' su «' + a.argomento + '»' : '');
+            case 'cerca': return '🔎 Cerca «' + a.testo + '»';
+            case 'apri': return '↗ Apri ' + a.vista;
+            case 'studia_ora': return '▶ Studia ora';
+            case 'lezione_audio': return '🎙 Lezione audio' + (a.titolo ? ' «' + a.titolo + '»' : '');
+            case 'pacchetti': return '☁︎ Aggiorna i pacchetti dal Drive';
+            case 'quiz_creati': return '✨ Quiz creati in app';
+            case 'risposta': return '💬 ' + a.testo;
+        }
+    }
+    /** Esegue un'azione con le funzioni dell'app. */
+    function esegui(a) {
+        switch (a.tipo) {
+            case 'evento':
+            case 'promemoria': {
+                const g = giorno(a.data) || inizioGiorno(new Date()), o = a.tipo === 'evento' ? ora(a.inizio) : ora(a.ora);
+                const r = { tipo: a.tipo === 'evento' ? 'evento' : 'task', titolo: a.titolo, giorno: g, ora: o, fine: a.tipo === 'evento' ? ora(a.fine) : undefined,
+                    tuttoIlGiorno: a.tipo === 'evento' ? (!!a.tutto_il_giorno || !o) : false, rrule: ricorrenza(a.ripeti), dataEsplicita: !!a.data };
+                return creaDaRapido(r);
+            }
+            case 'appunto': {
+                const i = imp();
+                if (a.modo) {
+                    i.modoAppunti = a.modo;
+                    Stato.salva(i, true);
+                }
+                vai('appunti');
+                setTimeout(() => apriAppunto(undefined, { titolo: a.titolo, testo: a.testo || '' }), 150);
+                return null;
+            }
+            case 'quiz':
+                CreaQuiz.nuovo({ argomento: a.argomento, materia: a.materia, cosa: a.cosa, extra: a.parole });
+                return null;
+            case 'carte':
+                UI.studioVista = 'carte';
+                vai('studio');
+                return null;
+            case 'cerca':
+                UI.q = a.testo;
+                vai('cerca');
+                return null;
+            case 'apri':
+                (VISTE[norm(a.vista).split(' ')[0]] || VISTE.oggi)();
+                return null;
+            case 'studia_ora':
+                apriStudiaOra();
+                return null;
+            case 'lezione_audio':
+                vai('appunti');
+                setTimeout(() => apriAppunto(undefined, { titolo: a.titolo || 'Lezione ' + new Date().toLocaleDateString('it-IT') }), 150);
+                setTimeout(() => document.querySelector('.appunto-barra button[aria-label="Lezione audio"]')?.click(), 700);
+                return null;
+            case 'pacchetti':
+                UI.studioVista = 'schede';
+                vai('studio');
+                setTimeout(() => Array.from(document.querySelectorAll('button')).find(b => /Aggiorna pacchetti da Drive/.test(b.textContent || ''))?.click(), 300);
+                return null;
+            case 'quiz_creati':
+                CreaQuiz.elenco();
+                return null;
+            case 'risposta': return null;
+        }
+    }
+    function contesto() {
+        const d = new Date(), gs = Array.from({ length: 8 }, (_, i) => { const x = piuGiorni(inizioGiorno(d), i); return ymd(x) + ' ' + fmt(x, { weekday: 'long' }); });
+        const materie = Array.from(new Set(Stato.tutti('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m) => m.nome)).filter(Boolean)));
+        return 'Oggi è ' + ymd(d) + ' (' + fmt(d, { weekday: 'long' }) + '), ore ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ' (fuso Europe/Rome). Prossimi giorni: ' + gs.join(', ') + '.\nMaterie dell\'utente: ' + (materie.join(', ') || 'Chimica, Biologia, Fisica') + '.';
+    }
+    const SISTEMA = 'Sei l\'assistente dell\'app «Il mio calendario» (calendario, promemoria, studio con quiz e flashcard, appunti a mano e a testo). Trasforma la richiesta in AZIONI JSON: {"azioni":[…]}. Tipi ammessi e campi:\n'
+        + '- evento {titolo, data:"YYYY-MM-DD", inizio:"HH:MM"?, fine:"HH:MM"?, tutto_il_giorno?:bool, ripeti?:"ogni giorno|ogni settimana|ogni lun e gio|ogni mese"}\n'
+        + '- promemoria {titolo, data?:"YYYY-MM-DD", ora?:"HH:MM", ripeti?}\n'
+        + '- appunto {titolo, testo?, modo?:"testo"|"mano"}\n'
+        + '- quiz {argomento (preciso), materia?, cosa?:"misto|teoria|problemi|trabocchetti", parole? (sinonimi/capitolo utili alla ricerca nel Drive)} = CREARE un quiz nuovo con l\'AI\n'
+        + '- carte {argomento?} = flashcard / ripasso carte\n'
+        + '- cerca {testo} = cercare tra eventi, promemoria, appunti, note\n'
+        + '- apri {vista: oggi|calendario|studio|piano|carte|errori|statistiche|esami|syllabus|tabelle|appunti|promemoria|note|impostazioni}\n'
+        + '- studia_ora {} | lezione_audio {titolo?} | pacchetti {} (aggiorna piani/quiz dal Drive) | quiz_creati {} (elenco dei quiz creati in app)\n'
+        + '- risposta {testo} = solo per domande su come si usa l\'app o se la richiesta non è un\'azione (rispondi in italiano, breve).\n'
+        + 'Regole: date sempre assolute calcolate dal contesto; «stasera» = oggi 20:00 se manca l\'ora; più azioni se la frase ne chiede più di una; titoli brevi in italiano con l\'iniziale maiuscola; non inventare dettagli non detti.';
+    async function capisci(frase) {
+        const r = await IA.chiedi([{ role: 'system', content: SISTEMA + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
+        return ((r.j && r.j.azioni) || []).filter((a) => a && typeof a.tipo === 'string').slice(0, 6);
+    }
+    /** Mostra le azioni capite e le esegue: subito quelle innocue, con un tocco quelle che creano qualcosa. */
+    async function chiedi(frase) {
+        if (!Spiega.attiva && !IA.gemini) {
+            avviso('Per l\'assistente serve la chiave AI gratuita (Altro → Spiegazioni AI). Intanto: scrivi eventi come «domani 15-17 Chimica».', 7000);
+            return;
+        }
+        const pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), h('span.audio-stato', null, 'Capisco «' + frase.slice(0, 40) + '»…'));
+        document.body.appendChild(pill);
+        let az = [];
+        try {
+            az = await capisci(frase);
+        }
+        catch (e) {
+            pill.remove();
+            avviso(String(e.message || e), 6000);
+            return;
+        }
+        pill.remove();
+        if (!az.length) {
+            avviso('Non ho capito: prova a dirlo con altre parole (es. «crea un quiz sulle leve», «domani alle 9 ripasso fisica»).', 6000);
+            return;
+        }
+        const innocue = az.every(a => ['apri', 'cerca', 'quiz', 'carte', 'studia_ora', 'quiz_creati', 'pacchetti', 'lezione_audio'].includes(a.tipo)) && az.length === 1;
+        if (innocue) {
+            esegui(az[0]);
+            return;
+        }
+        const risposte = az.filter(a => a.tipo === 'risposta'), fare = az.filter(a => a.tipo !== 'risposta');
+        const scelte = fare.map(() => true);
+        foglio({ titolo: '✨ Assistente', etichettaSalva: fare.length ? 'Fai' : 'Ok', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, '«' + frase + '»'), ...risposte.map(r => h('p', null, r.testo)), ...fare.map((a, i) => h('label.cq-fonte', null, h('input', { type: 'checkbox', checked: true, onchange: (e) => scelte[i] = e.target.checked }), h('span', null, descrivi(a))))),
+            salva: () => {
+                const fatti = [];
+                fare.forEach((a, i) => { if (scelte[i]) {
+                    const r = esegui(a);
+                    if (r)
+                        fatti.push(r);
+                } });
+                if (fatti.length)
+                    avviso('✓ Fatto: ' + fatti.length + (fatti.length === 1 ? ' elemento creato' : ' elementi creati'), 5000, () => { const r = fatti[0]; r.type === 'task' ? apriTask(r) : r.type === 'evento' ? apriEvento(r) : null; });
+                disegna();
+            } });
+    }
+    /** Una frase è «da calendario veloce» se ha una data o un orario chiari (la gestisce 07-rapido, offline). */
+    function eRapida(f) {
+        const n = norm(f), r = interpreta(f);
+        if (!r)
+            return false;
+        if (/\b(crea|creami|fammi|apri|cerca|trova|quiz|flashcard|carte|appunt|lezione|studia|pacchett|come si|come faccio|dove|cos[ae])\b/.test(n))
+            return false;
+        return !!(r.ora || r.dataEsplicita || r.rrule || r.tipo === 'task');
+    }
+    return { chiedi, capisci, esegui, descrivi, eRapida };
+})();
 
 // 07-audio.ts — v0.41: lezioni audio (registra o carica) trascritte dall'AI con autocorrezione.
 // Scouting: Groq offre Whisper (large-v3-turbo e large-v3) gratis con la stessa chiave: 25 MB a file,
@@ -4630,6 +4993,359 @@ function sezioneSonno() {
     return h('section.card', null, h('h2.card-titolo', null, 'Sonno, concentrazione e risultati'), h('div.numeri', null, numero(pocoSonno != null ? pocoSonno + '%' : '—', 'con < 7 h di sonno'), numero(sonnoOk != null ? sonnoOk + '%' : '—', 'con ≥ 7 h')), h('div.numeri', null, numero(focusBasso != null ? focusBasso + '%' : '—', 'concentrazione 1–2'), numero(focusAlto != null ? focusAlto + '%' : '—', 'concentrazione 4–5')), h('div.tenue.piccolo', null, 'Media dei punteggi dei quiz fatti in quei giorni (' + giorni.length + ' giornate chiuse). È una correlazione sui tuoi dati, non una prova: più giornate chiudi, più è affidabile.'));
 }
 
+// =====================================================================
+// 07-creaquiz.ts — v0.42 QUIZ «CREATI IN APP» (quando Claude non c'è)
+// Replica il metodo delle schede fatte da Claude (file DIRETTIVE, punti 3-7), in 6 fasi controllabili:
+//   1) RICHIESTA guidata: argomento + materia + cosa vuoi (teoria/problemi/trabocchetti/misto) + parole
+//      chiave facoltative (sinonimi, capitolo, autore del libro, nome del docente, «slide», «UD3»…).
+//   2) FONTI: Trova.fonti cerca in TUTTO il Drive (testo dei PDF, Documenti, Presentazioni) e propone le
+//      migliori con il perché; l'utente può togliere/aggiungere. Dai PDF si leggono solo le pagine
+//      pertinenti (parole chiave per pagina), con il numero di pagina.
+//   3) GENERAZIONE (modello «genera»): 12 multiple A–E + 6 completamenti, tipi Sbarramento/Applicativo/
+//      Trabocchetto/Problema/Completamento, correzione passo-passo (Cosa chiede → Il concetto → Passaggi →
+//      In sintesi), «perché è sbagliata» per ogni distrattore, citazioni VERBATIM con file e pagina.
+//   4) CONTROLLI AUTOMATICI (codice, non AI): formato, 5 opzioni distinte, corretta MAI la più lunga,
+//      completamenti digitabili da tastiera, citazioni davvero presenti nella fonte (parola per parola),
+//      niente doppioni (anche con la banca esistente).
+//   5) REVISIONE INDIPENDENTE (modello DIVERSO): risolve ogni domanda «alla cieca» con le opzioni mescolate,
+//      segnala errori di contenuto, ambiguità, numeri/unità e italiano (ortografia, grammatica) e propone
+//      correzioni. Le domande non superate si rigenerano (max 2 giri), poi si scartano.
+//   6) SALVATAGGIO come scheda «✨ creata in app» (record 'qcreato'): si apre col motore quiz dell'app,
+//      con statistiche, «Rifai gli errori», spiegazione AI. Le schede di Claude restano distinte.
+// =====================================================================
+const CreaQuiz = (() => {
+    const LV = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
+    const n2 = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[«»"“”‘’']/g, '').replace(/\s+/g, ' ').trim();
+    const parole = (s) => new Set(n2(s).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(w => w.length > 3));
+    function simile(a, b) { const A = parole(a), B = parole(b); if (!A.size || !B.size)
+        return 0; let c = 0; A.forEach(w => { if (B.has(w))
+        c++; }); return c / (A.size + B.size - c); }
+    const tutti = () => Stato.tutti('qcreato').filter(r => !r.deleted).sort((a, b) => b.creato < a.creato ? -1 : 1);
+    async function leggi(f, chiavi, budget, passo) {
+        try {
+            if (f.mimeType === 'application/pdf') {
+                const L = await caricaPdfJs();
+                passo('Leggo «' + f.name + '»…');
+                const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()) }).promise;
+                const pag = [];
+                for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
+                    if (i % 25 === 0)
+                        passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);
+                    const tc = await (await doc.getPage(i)).getTextContent();
+                    const t = tc.items.map((x) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/Volume concesso in uso a[^\n]*/gi, '').trim();
+                    if (t.length < 40)
+                        continue;
+                    const tn = n2(t);
+                    let s = 0;
+                    for (const w of chiavi) {
+                        const k = tn.split(w).length - 1;
+                        s += k ? 3 + Math.min(k, 8) : 0;
+                    }
+                    pag.push({ i, t, s });
+                }
+                const scelte = pag.filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+                const tieni = [];
+                let tot = 0;
+                for (const p of scelte) {
+                    if (tot + p.t.length > budget)
+                        break;
+                    tieni.push(p);
+                    tot += p.t.length;
+                }
+                if (!tieni.length)
+                    return null;
+                tieni.sort((a, b) => a.i - b.i);
+                return { nome: f.name.replace(/\.pdf$/i, ''), id: f.id, pagine: tieni.map(x => x.i).join(','), testo: tieni.map(x => '[[' + f.name.replace(/\.pdf$/i, '') + ', p. ' + x.i + ']]\n' + x.t).join('\n\n') };
+            }
+            const ex = f.mimeType.startsWith('application/vnd.google-apps.') ? await (await Drive.api('files/' + f.id + '/export', { query: { mimeType: 'text/plain' } })).text() : await Drive.scaricaTesto(f.id);
+            // documenti lunghi: tengo i paragrafi con le parole chiave
+            const par = ex.split(/\n\s*\n/).map((t, i) => ({ t: t.trim(), i, s: chiavi.reduce((a, w) => a + (n2(t).includes(w) ? 1 : 0), 0) })).filter((x) => x.t);
+            const best = par.filter((x) => x.s).sort((a, b) => b.s - a.s);
+            const tieni = [];
+            let tot = 0;
+            for (const p of best) {
+                if (tot + p.t.length > budget)
+                    break;
+                tieni.push(p);
+                tot += p.t.length;
+            }
+            if (!tieni.length)
+                return null;
+            tieni.sort((a, b) => a.i - b.i);
+            return { nome: f.name, id: f.id, pagine: '', testo: '[[' + f.name + ']]\n' + tieni.map(x => x.t).join('\n\n') };
+        }
+        catch (e) {
+            passo('⚠️ «' + f.name + '» non leggibile: ' + (e.message || e));
+            return null;
+        }
+    }
+    // ---------- 3) generazione ----------
+    const REGOLE = [
+        'Stile: test di ammissione / semestre filtro di Medicina italiano. Italiano corretto, frasi chiare, nessun refuso.',
+        'Usa SOLO le informazioni delle FONTI: niente dati, numeri o fatti che non ci sono. Se un calcolo serve, i dati devono essere nel testo della domanda.',
+        'Multiple (t:"mcq"): 5 opzioni in "o", la CORRETTA È SEMPRE LA PRIMA (verranno mescolate). La corretta NON deve essere la più lunga né la più dettagliata: scrivila breve e simile ai distrattori; allunga i distrattori se serve. Ogni distrattore nasce da un errore tipico preciso (formula invertita, unità non convertita, fattore 2, concetti simili confusi, lettura affrettata).',
+        'Completamenti (t:"fill", lv:"Completamento"): testo con «……» al posto della risposta; "a" = risposte accettate DIGITABILI da tastiera iPhone (numeri semplici, parole; niente apici, pedici, ², ⁻, ·, Δ, π, →); varianti utili (sinonimi, singolare/plurale, con/senza unità); "show" = risposta da mostrare.',
+        'Tipi "lv": Sbarramento (teoria), Applicativo, Trabocchetto, Problema (calcoli), Completamento. Mix adeguato a quanto richiesto.',
+        'Correzione "e" = array di passaggi DISCORSIVI (come un tutor che spiega a voce): "Cosa chiede: …", "Il concetto: … (dove si trova nella fonte)", poi "Passaggio 1: …", "Passaggio 2: …" (nei calcoli: formula, formula inversa esplicita, da dove viene OGNI numero, conversioni di unità esplicite, unità fino in fondo), infine "In sintesi: …" (la regola da ricordare). Minimo 4 elementi.',
+        '"ew" (solo mcq) = 4 testi, uno per ogni distrattore nello stesso ordine di o[1..4]: perché è sbagliato e quale errore di ragionamento c\'è dietro. Per i completamenti "ew" = 1 testo con gli errori più probabili.',
+        '"cit" = 1-2 citazioni copiate PAROLA PER PAROLA dalle FONTI (frase intera, 10-50 parole), con "f" = nome del file e pagina come indicato tra [[ ]]. Non riformulare le citazioni. "r" = fonte breve (file, pagina).',
+        'Niente domande duplicate o quasi uguali tra loro né con quelle elencate come già presenti.',
+    ];
+    function msgGenera(o, fonti, nMcq, nFill, gia, feedback = '') {
+        return [{ role: 'system', content: 'Sei un docente esperto che scrive schede di quiz di ' + o.materia + '. Regole obbligatorie:\n- ' + REGOLE.join('\n- ') + '\nRispondi SOLO con JSON valido: {"domande":[{"t","lv","q","o","e","ew","a","show","r","cit":[{"t","f"}]}]}.' },
+            { role: 'user', content: 'ARGOMENTO: ' + o.argomento + '\nCOSA VOGLIO: ' + o.cosa + (o.extra ? '\nINDICAZIONI: ' + o.extra : '') + '\n\nScrivi ' + (nMcq ? nMcq + ' domande a risposta multipla' : '') + (nMcq && nFill ? ' e ' : '') + (nFill ? nFill + ' completamenti' : '') + ' (prima le multiple).'
+                    + (gia.length ? '\n\nDOMANDE GIÀ PRESENTI (non ripeterle):\n- ' + gia.slice(0, 40).join('\n- ') : '') + (feedback ? '\n\nCORREGGI QUESTI PROBLEMI:\n' + feedback : '')
+                    + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }];
+    }
+    // ---------- 4) controlli automatici ----------
+    const NON_DIGITABILE = /[²³¹⁰⁴-⁹⁻⁺·×÷Δδπ→←↔≈≠≤≥√∞°µ±_^]/;
+    function controlla(d, fontiTesto, altre) {
+        const p = [];
+        if (!d || typeof d.q !== 'string' || d.q.trim().length < 15)
+            return ['testo mancante'];
+        if (!LV.includes(d.lv))
+            d.lv = d.t === 'fill' ? 'Completamento' : 'Applicativo';
+        if (!Array.isArray(d.e) || d.e.filter((x) => typeof x === 'string' && x.trim()).length < 3)
+            p.push('correzione passo-passo troppo corta');
+        if (d.t === 'mcq') {
+            if (!Array.isArray(d.o) || d.o.length !== 5 || d.o.some((x) => typeof x !== 'string' || !x.trim()))
+                p.push('servono 5 opzioni');
+            else {
+                if (new Set(d.o.map((x) => n2(x))).size < 5)
+                    p.push('opzioni uguali');
+                const lc = d.o[0].length, max = Math.max(...d.o.slice(1).map((x) => x.length));
+                if (lc > max)
+                    p.push('la corretta è la più lunga: accorciala o allunga i distrattori');
+                if (d.o.slice(1).some((x) => n2(x).includes(n2(d.o[0])) && n2(d.o[0]).length > 3))
+                    p.push('la corretta è contenuta in un distrattore');
+            }
+            if (!Array.isArray(d.ew) || d.ew.length !== 4 || d.ew.some((x) => typeof x !== 'string' || !x.trim()))
+                p.push('servono 4 «perché è sbagliata»');
+        }
+        else if (d.t === 'fill') {
+            if (!Array.isArray(d.a) || !d.a.length)
+                p.push('mancano le risposte accettate');
+            else if (d.a.some((x) => typeof x !== 'string' || NON_DIGITABILE.test(x)))
+                p.push('risposta non digitabile da tastiera');
+            if (!/……|\.\.\.|___/.test(d.q))
+                p.push('manca lo spazio «……» da completare');
+            if (!d.show)
+                d.show = d.a && d.a[0];
+            if (!Array.isArray(d.ew) || !d.ew.length)
+                d.ew = ['Controlla unità, segno e ortografia della risposta.'];
+        }
+        else
+            p.push('tipo sconosciuto');
+        // citazioni: devono esserci davvero nella fonte (confronto senza spazi/maiuscole/virgolette)
+        const ft = n2(fontiTesto).replace(/[^a-z0-9]/g, '');
+        d.cit = (Array.isArray(d.cit) ? d.cit : []).filter((c) => c && typeof c.t === 'string' && c.t.length > 20 && ft.includes(n2(c.t).replace(/[^a-z0-9]/g, '')));
+        if (!d.cit.length)
+            p.push('citazione non trovata parola per parola nelle fonti');
+        if (altre.some(q => simile(q, d.q) >= .6))
+            p.push('quasi uguale a un\'altra domanda');
+        return p;
+    }
+    // ---------- 5) revisione indipendente ----------
+    async function revisiona(ds, fonti, evita) {
+        const L = 'ABCDE', ordini = ds.map(d => d.t === 'mcq' ? mescolaU([0, 1, 2, 3, 4]) : []);
+        const elenco = ds.map((d, i) => d.t === 'mcq' ? i + ') ' + d.q + '\n' + ordini[i].map((k, j) => '   ' + L[j] + ') ' + d.o[k]).join('\n') : i + ') [completamento] ' + d.q);
+        const r = await IA.chiedi([{ role: 'system', content: 'Sei un revisore severo di quiz universitari italiani. Hai SOLO le fonti. Rispondi in JSON.' },
+            { role: 'user', content: 'Risolvi ogni domanda basandoti SOLO sulle fonti, poi controllala. JSON: {"esiti":[{"i":numero,"risposta":"lettera A-E oppure testo del completamento","ambigua":bool,"errori_contenuto":"…o vuoto","errori_italiano":"…o vuoto"}]}. Segnala come ambigua una multipla con più opzioni difendibili. Segnala errori di italiano (ortografia, grammatica, concordanze, punteggiatura) anche piccoli.\n\nDOMANDE:\n' + elenco.join('\n\n') + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }], 'revisiona', { evita, temp: 0 });
+        const esiti = new Map();
+        for (const x of (r.j && r.j.esiti) || []) {
+            const i = +x.i, d = ds[i];
+            if (!d)
+                continue;
+            const p = [];
+            if (d.t === 'mcq') {
+                const k = L.indexOf(String(x.risposta || '').trim().toUpperCase().charAt(0));
+                if (k < 0 || ordini[i][k] !== 0)
+                    p.push('il revisore, risolvendola alla cieca, ha scelto un\'altra opzione: la domanda è ambigua o la risposta indicata è sbagliata');
+            }
+            else if (!giustaR(String(x.risposta || ''), d.a || []))
+                p.push('il revisore ha completato con «' + String(x.risposta || '').slice(0, 40) + '»: rendi la frase univoca o aggiungi la variante se corretta');
+            if (x.ambigua)
+                p.push('più risposte difendibili');
+            if (x.errori_contenuto && String(x.errori_contenuto).trim().length > 3)
+                p.push('contenuto: ' + x.errori_contenuto);
+            if (x.errori_italiano && String(x.errori_italiano).trim().length > 3)
+                p.push('italiano: ' + x.errori_italiano);
+            if (p.length)
+                esiti.set(i, p);
+        }
+        return { esiti, modello: r.modello };
+    }
+    const normR = (s) => n2(s).replace(',', '.').replace(/[^a-z0-9.\- ]/g, '').trim();
+    function giustaR(v, a) { const x = normR(v); return a.some(y => { const z = normR(y); return x === z || (!!z && x.startsWith(z + ' ')) || (!isNaN(+x.split(' ')[0]) && +x.split(' ')[0] === +z.split(' ')[0] && /\d/.test(z)); }); }
+    // ---------- l'intero processo ----------
+    async function crea(o, passo) {
+        const chiavi = Array.from(new Set((o.argomento + ' ' + o.extra).split(/[\s,;:/()«»"]+/).map(n2).filter(w => w.length > 3))).slice(0, 12);
+        const budget = IA.gemini ? 120000 : 22000, fonti = [];
+        for (const f of o.fonti) {
+            const x = await leggi(f, chiavi, Math.round(budget / Math.max(1, o.fonti.length)), passo);
+            if (x)
+                fonti.push(x);
+        }
+        if (!fonti.length)
+            throw new Error('Nelle fonti scelte non ho trovato pagine su «' + o.argomento + '». Prova parole chiave diverse (sinonimi, nome del capitolo) o altre fonti.');
+        const testoFonti = fonti.map(f => f.testo).join('\n');
+        const banca = Stato.tutti('qcreato').flatMap(r => r.domande.map(d => d.q)).slice(-200);
+        const modelli = new Set();
+        let buone = [], scartate = 0;
+        const genera = async (nM, nF, feedback = '') => {
+            const out = [];
+            for (let k = 0; k < nM; k += 6) {
+                passo('Scrivo le multiple ' + (k + 1) + '–' + Math.min(nM, k + 6) + '…');
+                const r = await IA.chiedi(msgGenera(o, fonti, Math.min(6, nM - k), 0, banca.concat(buone.concat(out).map(d => d.q)), feedback), 'genera', { temp: .5 });
+                modelli.add(r.modello);
+                out.push(...((r.j && r.j.domande) || []).map((d) => ({ ...d, t: 'mcq' })));
+            }
+            if (nF) {
+                passo('Scrivo i completamenti…');
+                const r = await IA.chiedi(msgGenera(o, fonti, 0, nF, banca.concat(buone.concat(out).map(d => d.q)), feedback), 'genera', { temp: .5 });
+                modelli.add(r.modello);
+                out.push(...((r.j && r.j.domande) || []).map((d) => ({ ...d, t: 'fill', lv: 'Completamento' })));
+            }
+            return out;
+        };
+        let candidate = await genera(o.nMcq, o.nFill), giro = 0;
+        while (giro < 3) {
+            giro++;
+            passo('Controlli automatici (giro ' + giro + ')…');
+            const problemi = new Map();
+            candidate.forEach((d, i) => { const p = controlla(d, testoFonti, banca.concat(buone.map(x => x.q), candidate.filter((_, j) => j !== i).map(x => x.q))); if (p.length)
+                problemi.set(d, p); });
+            const sane = candidate.filter(d => !problemi.has(d));
+            if (sane.length) {
+                passo('Revisione indipendente: un altro modello risolve le domande alla cieca e controlla l\'italiano…');
+                const gen = Array.from(modelli).pop() || '';
+                try {
+                    const rv = await revisiona(sane, fonti, gen);
+                    modelli.add(rv.modello);
+                    sane.forEach((d, i) => { const p = rv.esiti.get(i); if (p)
+                        problemi.set(d, p); });
+                }
+                catch (e) {
+                    passo('⚠️ Revisione non riuscita (' + (e.message || e) + '): tengo solo i controlli automatici.');
+                }
+            }
+            buone = buone.concat(candidate.filter(d => !problemi.has(d)));
+            const ko = candidate.filter(d => problemi.has(d));
+            const mancaM = o.nMcq - buone.filter(d => d.t === 'mcq').length, mancaF = o.nFill - buone.filter(d => d.t === 'fill').length;
+            if (!ko.length || (mancaM <= 0 && mancaF <= 0)) {
+                scartate += ko.length;
+                break;
+            }
+            if (giro === 3) {
+                scartate += ko.length;
+                break;
+            }
+            passo('Rigenero ' + ko.length + ' domande con i problemi trovati…');
+            const fb = ko.slice(0, 8).map(d => '- «' + String(d.q).slice(0, 90) + '»: ' + problemi.get(d).join('; ')).join('\n');
+            scartate += ko.length;
+            candidate = await genera(Math.max(0, mancaM), Math.max(0, mancaF), fb);
+        }
+        buone = buone.filter(d => d.t === 'mcq').slice(0, o.nMcq).concat(buone.filter(d => d.t === 'fill').slice(0, o.nFill));
+        if (!buone.length)
+            throw new Error('Nessuna domanda ha superato i controlli. Prova con fonti più pertinenti o un argomento più preciso.');
+        const id = 'qc-' + uid();
+        const domande = buone.map((d, i) => ({ id: id + '-' + (i + 1), sk: id, t: d.t, lv: d.lv, q: String(d.q).trim(), o: d.t === 'mcq' ? d.o.map((x) => String(x).trim()) : undefined,
+            a: d.t === 'fill' ? d.a.map(String) : undefined, show: d.t === 'fill' ? String(d.show || d.a[0]) : undefined, e: d.e.map(String), ew: (d.ew || []).map(String), r: String(d.r || fonti[0].nome),
+            cit: d.cit.map((c) => ({ t: String(c.t).trim(), f: String(c.f || fonti[0].nome), l: linkFonte(fonti, String(c.f || '')) })), gen: true }));
+        const rec = { id, type: 'qcreato', updatedAt: 0, titolo: o.argomento.charAt(0).toUpperCase() + o.argomento.slice(1), materia: o.materia, argomento: o.argomento, cosa: o.cosa,
+            fonti: fonti.map(f => ({ nome: f.nome, id: f.id, pagine: f.pagine })), domande, creato: new Date().toISOString(), modelli: Array.from(modelli), scartate };
+        Stato.salva(rec);
+        return rec;
+    }
+    function linkFonte(fonti, f) {
+        const x = fonti.find(y => f && n2(f).includes(n2(y.nome).slice(0, 20))) || fonti[0];
+        if (!x)
+            return undefined;
+        const p = /p\.\s*(\d+)/.exec(f);
+        return 'https://drive.google.com/file/d/' + x.id + '/view' + (p ? '#page=' + p[1] : '');
+    }
+    // ---------- interfaccia ----------
+    function apri(r) {
+        const pk = { tipo: 'step', id: 'qc', step: 0, titolo: '', aggiornato: '', risorse: { libri: {}, quiz: {} }, materie: [] };
+        const s = { id: r.id, k: 1, n: 1, titolo: r.titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' };
+        QuizApp.apri(pk, r.materia, r.titolo, s, () => r.domande, { occh: r.materia + ' · ✨ creato in app · ' + new Date(r.creato).toLocaleDateString('it-IT'), titolo: r.titolo, chiudi: () => elenco() });
+    }
+    function elenco() {
+        const v = visore('✨ Quiz creati in app', () => { });
+        const lista = tutti();
+        v.corpo.append(h('div.pagina', null, h('div.tenue.piccolo', null, 'Creati dall\'app con il metodo delle schede di Claude (stesse regole, fonti dal tuo Drive, doppio controllo). Le schede di Claude restano a parte.'), h('button.btn', { onclick: () => { v.chiudi(); nuovo(); } }, '＋ Crea un quiz'), lista.length ? h('div.lista', null, ...lista.map(r => {
+            const st = QuizApp.stat(r.id);
+            const ultima = st.length ? st[0] : null;
+            return h('button.voce-lista', { onclick: () => { v.chiudi(); apri(r); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, '✨ ' + r.titolo), h('span.voce-sotto', null, r.materia + ' · ' + r.domande.length + ' domande · ' + new Date(r.creato).toLocaleDateString('it-IT') + (ultima ? ' · ultima: ' + ultima.ok + '/' + ultima.n : '') + ' · fonti: ' + r.fonti.map(f => f.nome + (f.pagine ? ' p. ' + f.pagine.split(',').slice(0, 4).join(',') + (f.pagine.split(',').length > 4 ? '…' : '') : '')).join('; '))));
+        })) : vuoto('Nessun quiz creato in app per ora.')));
+    }
+    async function nuovo(pre = {}) {
+        if (!Spiega.attiva && !IA.gemini) {
+            avviso('Serve una chiave AI gratuita: Altro → Spiegazioni AI.', 6000);
+            return;
+        }
+        const materie = Array.from(new Set(['Chimica', 'Biologia', 'Fisica'].concat(Stato.tutti('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m) => m.nome)).filter(Boolean))));
+        const arg = h('input.campo', { type: 'text', value: pre.argomento || '', placeholder: 'Argomento preciso (es. «leve del corpo umano e guadagno meccanico»)' });
+        const mat = h('select.campo', null, ...materie.map(m => h('option', { value: m, selected: pre.materia ? n2(pre.materia) === n2(m) : false }, m)));
+        let cosa = pre.cosa || 'misto';
+        const cose = [['misto', 'Misto (come le schede)'], ['teoria', 'Teoria e definizioni'], ['problemi', 'Problemi con calcoli'], ['trabocchetti', 'Trabocchetti']];
+        const chips = h('div.chips', null, ...cose.map(([k, t]) => h('button.chip' + (k === cosa ? '.attivo' : ''), { type: 'button', onclick: (e) => { cosa = k; chips.querySelectorAll('.chip').forEach(c => c.classList.remove('attivo')); e.target.classList.add('attivo'); } }, t)));
+        const extra = h('input.campo', { type: 'text', value: pre.extra || '', placeholder: 'Parole chiave in più (sinonimi, capitolo, libro, docente, «slide UD2»)' });
+        const box = h('div.cq-fonti'), stato = h('div.tenue.piccolo');
+        let fonti = [];
+        const cercaFonti = async () => {
+            if (arg.value.trim().length < 4) {
+                avviso('Scrivi l\'argomento.');
+                return;
+            }
+            svuota(box);
+            stato.textContent = 'Cerco le fonti in tutto il tuo Drive…';
+            try {
+                fonti = (await Trova.fonti(arg.value + ' ' + mat.value, extra.value.split(/[,;]/).map(x => x.trim()).filter(Boolean), 10)).map((f, i) => ({ ...f, usa: i < 3 }));
+            }
+            catch (e) {
+                stato.textContent = String(e.message) === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) per cercare le fonti.' : String(e.message || e);
+                return;
+            }
+            stato.textContent = fonti.length ? 'Fonti trovate (le prime 3 sono già scelte; tocca per cambiare):' : 'Nessuna fonte trovata: prova con altre parole chiave (sinonimi, nome del capitolo o del libro).';
+            box.append(...fonti.map(f => h('label.cq-fonte', null, h('input', { type: 'checkbox', checked: f.usa, onchange: (e) => f.usa = e.target.checked }), h('span', null, h('b', null, f.name), h('span.tenue.piccolo', null, ' · ' + (f.cartella ? '«' + f.cartella + '» · ' : '') + f.perche.slice(0, 3).join(', '))))));
+        };
+        const fs = foglio({ titolo: '✨ Crea un quiz', etichettaSalva: 'Crea', corpo: h('div.modulo', null, h('label', null, 'Argomento', arg), h('label', null, 'Materia', mat), h('div', null, h('div.piccolo', null, 'Cosa vuoi'), chips), h('label', null, 'Aiuta la ricerca (facoltativo)', extra), h('div.tenue.piccolo', null, '💡 Più l\'argomento è preciso, migliori sono le fonti e le domande: nomina il capitolo o la lezione, aggiungi sinonimi e il nome del libro o del docente.'), h('button.btn.neutro', { type: 'button', onclick: cercaFonti }, '🔎 Cerca le fonti nel Drive'), stato, box),
+            salva: () => {
+                const scelte = fonti.filter(f => f.usa);
+                if (!scelte.length) {
+                    avviso('Prima cerca e scegli almeno una fonte.');
+                    return false;
+                }
+                const nM = cosa === 'problemi' ? 12 : 12, nF = 6;
+                avvia({ argomento: arg.value.trim(), materia: mat.value, cosa: { misto: 'mix di teoria, applicazioni, trabocchetti e problemi come nelle schede', teoria: 'soprattutto teoria e definizioni (Sbarramento), qualche applicativa', problemi: 'soprattutto problemi con calcoli (Problema), con passaggi numerici completi', trabocchetti: 'soprattutto trabocchetti sugli errori tipici' }[cosa], extra: extra.value.trim(), fonti: scelte, nMcq: nM, nFill: nF });
+            } });
+        void fs;
+        if (pre.argomento)
+            setTimeout(cercaFonti, 200);
+    }
+    async function avvia(o) {
+        const stato = h('span.audio-stato', null, 'Preparo…'), pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), stato);
+        document.body.appendChild(pill);
+        try {
+            const r = await crea(o, t => { stato.textContent = t; });
+            svuota(pill);
+            pill.classList.remove('lavora');
+            pill.classList.add('pronta');
+            pill.append(h('button.audio-fine', { type: 'button', onclick: () => { pill.remove(); apri(r); } }, '✓ Quiz pronto: ' + r.domande.length + ' domande' + (r.scartate ? ' (' + r.scartate + ' scartate dai controlli)' : '') + ' — Apri'));
+            try {
+                Tocco.clic(1);
+            }
+            catch (_) { /* */ }
+        }
+        catch (e) {
+            stato.textContent = '⚠️ ' + (e.message || e);
+            pill.append(h('button', { type: 'button', 'aria-label': 'Chiudi', onclick: () => pill.remove() }, '✕'));
+        }
+    }
+    return { nuovo, elenco, apri, tutti, controlla, crea };
+})();
+
 // 07-domande.ts — Errori ricorrenti, domanda per domanda (v0.16).
 //
 // L'osservatore dei quiz (07-cattura) legge dalla schermata finale la sezione «Da rivedere»: per ogni
@@ -5825,6 +6541,96 @@ const Generatori = (() => {
     return { MODELLI, genera, per, serie, fN, titoloMicro };
 })();
 
+// =====================================================================
+// 07-ia.ts — v0.42 SCELTA DEI MODELLI AI (tutti gratuiti, senza carta)
+// Scouting (15/11): Groq = gratis senza carta, molto veloce (gpt-oss-120b, llama-3.3-70b, gpt-oss-20b);
+// Google AI Studio (Gemini 2.5 Flash / Flash-Lite) = gratis senza carta, contesto da 1M token, ottimo
+// per leggere PDF lunghi, ma con pochi messaggi al giorno. Ogni compito usa il modello più adatto e,
+// se uno manca o è al limite, passa da solo al successivo:
+//   «genera»     quiz e testi lunghi: Gemini 2.5 Flash (fonti lunghe) → gpt-oss-120b → llama-3.3-70b
+//   «revisiona»  controllo indipendente: un modello DIVERSO da chi ha generato (llama-3.3-70b ↔ gpt-oss-120b)
+//   «veloce»     assistente e comandi: gpt-oss-20b → gpt-oss-120b → llama-3.3-70b
+// La chiave Gemini è facoltativa (Altro → Spiegazioni AI).
+// =====================================================================
+const IA = (() => {
+    const KG = 'imc-gemini-chiave';
+    const gemini = () => { try {
+        return localStorage.getItem(KG) || '';
+    }
+    catch (_) {
+        return '';
+    } };
+    const GROQ = 'https://api.groq.com/openai/v1/chat/completions', GEM = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+    const g = (m) => ({ nome: 'Groq ' + m.replace(/^.*\//, ''), url: GROQ, chiave: () => Spiega.chiaveAI(), modello: m });
+    const gm = (m) => ({ nome: 'Gemini ' + m.replace('gemini-', ''), url: GEM, chiave: gemini, modello: m });
+    function catena(r, evita) {
+        const c = r === 'genera' ? [gm('gemini-2.5-flash'), g('openai/gpt-oss-120b'), g('llama-3.3-70b-versatile'), gm('gemini-2.5-flash-lite')]
+            : r === 'revisiona' ? [g('llama-3.3-70b-versatile'), g('openai/gpt-oss-120b'), gm('gemini-2.5-flash'), g('qwen/qwen3-32b')]
+                : [g('openai/gpt-oss-20b'), g('openai/gpt-oss-120b'), g('llama-3.3-70b-versatile'), gm('gemini-2.5-flash-lite')];
+        return c.filter(f => f.chiave() && f.modello !== evita);
+    }
+    function json(t) {
+        t = t.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+        try {
+            return JSON.parse(t);
+        }
+        catch (_) {
+            const a = t.indexOf('{'), b = t.lastIndexOf('}');
+            if (a >= 0 && b > a)
+                return JSON.parse(t.slice(a, b + 1));
+            throw new Error('risposta non in JSON');
+        }
+    }
+    /** Chiede JSON al primo modello disponibile del ruolo. Restituisce anche chi ha risposto. */
+    async function chiedi(msgs, r, o = {}) {
+        await Spiega.pronta();
+        const forn = catena(r, o.evita);
+        if (!forn.length)
+            throw new Error('Serve una chiave AI gratuita: Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
+        let ultimo = null;
+        for (const f of forn) {
+            // i modelli Groq hanno contesto più corto: se il testo è enorme, lo accorcio per loro
+            const lim = f.url === GROQ ? 60000 : 600000;
+            const m2 = msgs.map(x => x.content.length > lim ? { ...x, content: x.content.slice(0, lim) + '\n[…testo accorciato…]' } : x);
+            try {
+                const res = await fetch(f.url, { method: 'POST', headers: { Authorization: 'Bearer ' + f.chiave(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: f.modello, temperature: o.temp == null ? .3 : o.temp, response_format: { type: 'json_object' }, messages: m2 }) });
+                const j = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    const e = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + res.status);
+                    e.stato = res.status;
+                    throw e;
+                }
+                const t = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '';
+                return { j: json(t), modello: f.modello };
+            }
+            catch (e) {
+                ultimo = e;
+            }
+        }
+        if (ultimo && ultimo.stato === 429)
+            throw new Error('Limite gratuito raggiunto su tutti i modelli: riprova tra qualche minuto.');
+        throw new Error(navigator.onLine === false ? 'Sei offline.' : 'AI non raggiungibile: ' + (ultimo && ultimo.message || 'errore'));
+    }
+    /** Campo per la chiave Gemini (facoltativa) dentro Altro → Spiegazioni AI. */
+    function campoGemini() {
+        const inp = h('input', { type: 'text', placeholder: 'AIza… (facoltativa)', value: gemini(), autocomplete: 'off', autocapitalize: 'none', spellcheck: false, style: { fontFamily: 'monospace' } });
+        const salva = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; try {
+            v ? localStorage.setItem(KG, v) : localStorage.removeItem(KG);
+        }
+        catch (_) { /* */ } avviso(v ? (/^AIza/.test(v) ? 'Chiave Gemini salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Gemini (inizia con AIza).') : 'Chiave Gemini rimossa.', 5000); };
+        const prova = async () => { salva(); try {
+            const r = await chiedi([{ role: 'user', content: 'Rispondi in JSON: {"ok":true}' }], 'genera');
+            avviso('✅ Funziona: ' + r.modello, 5000);
+        }
+        catch (e) {
+            avviso(String(e.message || e), 8000);
+        } };
+        return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
+    }
+    return { chiedi, campoGemini, get gemini() { return !!gemini(); } };
+})();
+
 // 07-mano.ts — Scrittura a mano negli appunti (v0.31; v0.39 penne, forme, stabilizzazione: scouting Freenotes/GoodNotes/Notability).
 //
 // Scouting 13/11: GoodNotes / Notability (pagine a quadretti o righe, penna sensibile alla pressione,
@@ -6091,7 +6897,8 @@ function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
         const t = trattoCache(s);
         if (v && (t.y1 < y0 || t.y0 > y1))
             continue; // fuori dalla finestra
-        tracciaTratto(g, scuro ? inchiostroScuro(t) : t, scala);
+        const tv = v && v.veloce && t.k === 'p' ? { ...t, k: 'b' } : t; // v0.42: durante i gesti tratto unico (più veloce), nitido al rilascio
+        tracciaTratto(g, scuro ? inchiostroScuro(tv) : tv, scala);
     }
     g.restore();
 }
@@ -6208,82 +7015,200 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         rif = requestAnimationFrame(ridisegna); }, { passive: true });
     const pulisciVivo = () => { gv.setTransform(1, 0, 0, 1, 0, 0); gv.clearRect(0, 0, vivo.width, vivo.height); gv.setTransform(d, 0, 0, d, -pag.scrollLeft * d, -pag.scrollTop * d); };
     let zoomEti = null;
-    function impostaZoom(z, cx, cy) {
-        z = Math.max(1, Math.min(ZMAX, z));
-        const pr = pag.getBoundingClientRect();
-        const mx = (cx != null ? cx : pr.left + pr.width / 2) - pr.left, my = (cy != null ? cy : pr.top + pr.height / 2) - pr.top;
-        const fx = (mx + pag.scrollLeft) / scala, fy = (my + pag.scrollTop) / scala; // punto del foglio sotto le dita
-        zoom = z;
+    // ---------- v0.42 GESTI COME FREENOTES/GOODNOTES ----------
+    // Due dita: zoom e trascinamento INSIEME (il punto del foglio sotto le dita resta sotto le dita), ridisegno
+    // nitido a ogni frame (niente anteprima sfocata), elastico oltre i limiti, inerzia al rilascio.
+    // Un dito (quando scorre): scorrimento nativo con inerzia del sistema; doppio tocco = zoom 2,5× ↔ 100%.
+    // Tocco a due dita = annulla, a tre = ripeti (solo se le dita non si sono mosse).
+    const ZMIN = 1;
+    let gst = null;
+    let rafG = 0, inerzia = 0;
+    const centro = (t) => [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2];
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const elastico = (z) => z < ZMIN ? ZMIN - (ZMIN - z) * .35 : z > ZMAX ? ZMAX + (z - ZMAX) * .2 : z;
+    /** Disegno «virtuale» durante il gesto: scala e scorrimento calcolati, senza toccare il layout (60 fps). */
+    function disegnaVirtuale(z, sx, sy) {
+        const sc = base * z, W = LARG * sc;
+        const ox = W < vw ? -(vw - W) / 2 : Math.max(0, Math.min(W - vw, sx));
+        const oy = Math.max(-vh * .15, Math.min(m.h * sc - vh * .85, sy));
+        g.setTransform(d, 0, 0, d, 0, 0);
+        disegnaMano(g, m, sc, false, { ox, oy, w: vw, h: vh, passo: 25 * sc, veloce: m.t.length > 600 });
+        pulisciVivo();
+        if (rig.on)
+            righello.style.opacity = '0';
+    }
+    function chiediFrame() { if (!rafG)
+        rafG = requestAnimationFrame(() => { rafG = 0; if (gst)
+            disegnaVirtuale(gst.z, gst.sx, gst.sy); }); }
+    function fermaInerzia() { if (inerzia) {
+        cancelAnimationFrame(inerzia);
+        inerzia = 0;
+    } }
+    function avviaInerzia(vx, vy) {
+        fermaInerzia();
+        let t = performance.now();
+        const passo = (n) => {
+            const dt = Math.min(40, n - t);
+            t = n;
+            vx *= Math.pow(.94, dt / 16);
+            vy *= Math.pow(.94, dt / 16);
+            if (Math.hypot(vx, vy) < .03) {
+                inerzia = 0;
+                return;
+            }
+            pag.scrollLeft -= vx * dt;
+            pag.scrollTop -= vy * dt;
+            inerzia = requestAnimationFrame(passo);
+        };
+        inerzia = requestAnimationFrame(passo);
+    }
+    /** Fissa zoom e scorrimento finali (layout vero), poi ridisegno nitido. */
+    function fissa(z, sx, sy) {
+        zoom = Math.max(ZMIN, Math.min(ZMAX, z));
         dimensiona();
-        pag.scrollLeft = fx * scala - mx;
-        pag.scrollTop = fy * scala - my;
+        pag.scrollLeft = Math.max(0, sx);
+        pag.scrollTop = Math.max(0, sy);
+        righello.style.opacity = '';
         ridisegna();
         aggiornaBarra();
     }
-    // pizzico: anteprima con transform (fluida), poi ridisegno nitido al rilascio
-    let pz = null, kz = 1;
-    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    /** Zoom animato verso z, tenendo fermo il punto (cx, cy) dello schermo. */
+    function zoomAnimato(z1, cx, cy) {
+        fermaInerzia();
+        const pr = pag.getBoundingClientRect(), mx = cx - pr.left, my = cy - pr.top, z0 = zoom;
+        const fx = (mx + pag.scrollLeft) / scala, fy = (my + pag.scrollTop) / scala, t0 = performance.now(), T = 240;
+        const step = (n) => {
+            const k = Math.min(1, (n - t0) / T), e = 1 - Math.pow(1 - k, 3), z = z0 + (z1 - z0) * e, sc = base * z;
+            if (k < 1) {
+                disegnaVirtuale(z, fx * sc - mx, fy * sc - my);
+                requestAnimationFrame(step);
+            }
+            else
+                fissa(z1, fx * base * z1 - mx, fy * base * z1 - my);
+        };
+        requestAnimationFrame(step);
+    }
+    function impostaZoom(z, cx, cy) {
+        z = Math.max(ZMIN, Math.min(ZMAX, z));
+        const pr = pag.getBoundingClientRect();
+        const mx = (cx != null ? cx : pr.left + pr.width / 2) - pr.left, my = (cy != null ? cy : pr.top + pr.height / 2) - pr.top;
+        const fx = (mx + pag.scrollLeft) / scala, fy = (my + pag.scrollTop) / scala;
+        fissa(z, fx * base * z - mx, fy * base * z - my);
+    }
     let gesto = null;
-    pag.addEventListener('touchstart', e => { if (e.touches.length >= 2)
-        gesto = { n: Math.max(gesto && Date.now() - gesto.t < 300 ? gesto.n : 0, e.touches.length), t: gesto && Date.now() - gesto.t < 300 ? gesto.t : Date.now() }; }, { passive: true, capture: true });
-    pag.addEventListener('touchend', e => {
+    pag.addEventListener('touchstart', e => {
+        fermaInerzia();
+        if (e.touches.length >= 2) {
+            const c = e.touches.length === 2 ? centro(e.touches) : [e.touches[0].clientX, e.touches[0].clientY];
+            const vecchio = gesto && Date.now() - gesto.t < 300 ? gesto : null;
+            gesto = { n: Math.max(vecchio ? vecchio.n : 0, e.touches.length), t: vecchio ? vecchio.t : Date.now(), x: c[0], y: c[1], mosso: vecchio ? vecchio.mosso : false };
+        }
+        if (e.touches.length !== 2)
+            return;
+        if (cur) {
+            cur = null;
+            idPuntatore = -1;
+            tenuta = null;
+            clearTimeout(timerTieni);
+            if (storia.length)
+                ripristina(storia.pop());
+            pulisciVivo();
+            ridisegna();
+        }
+        const pr = pag.getBoundingClientRect(), c = centro(e.touches);
+        gst = { f: [(c[0] - pr.left + pag.scrollLeft) / scala, (c[1] - pr.top + pag.scrollTop) / scala], d0: dist(e.touches), z0: zoom, cx: c[0], cy: c[1], z: zoom, sx: pag.scrollLeft, sy: pag.scrollTop, t0: Date.now(), mosso: 0, v: [0, 0], tv: performance.now(), ultimo: c };
+    }, { passive: true, capture: true });
+    pag.addEventListener('touchmove', e => {
+        if (!gst || e.touches.length !== 2)
+            return;
+        e.preventDefault();
+        const pr = pag.getBoundingClientRect(), c = centro(e.touches), zr = gst.z0 * dist(e.touches) / gst.d0, z = elastico(zr), sc = base * z;
+        gst.z = z;
+        gst.sx = gst.f[0] * sc - (c[0] - pr.left);
+        gst.sy = gst.f[1] * sc - (c[1] - pr.top);
+        const n = performance.now(), dt = Math.max(1, n - gst.tv);
+        gst.v = [.7 * ((c[0] - gst.ultimo[0]) / dt) + .3 * gst.v[0], .7 * ((c[1] - gst.ultimo[1]) / dt) + .3 * gst.v[1]];
+        gst.tv = n;
+        gst.ultimo = c;
+        gst.mosso = Math.max(gst.mosso, Math.hypot(c[0] - gst.cx, c[1] - gst.cy), Math.abs(dist(e.touches) - gst.d0));
+        if (gesto && gst.mosso > 10)
+            gesto.mosso = true;
+        chiediFrame();
+    }, { passive: false, capture: true });
+    const fineGesto = (e) => {
+        if (gst && e.touches.length < 2) {
+            const g0 = gst;
+            gst = null;
+            if (rafG) {
+                cancelAnimationFrame(rafG);
+                rafG = 0;
+            }
+            const zf = Math.max(ZMIN, Math.min(ZMAX, g0.z)), pr = pag.getBoundingClientRect(), c = g0.ultimo;
+            if (g0.mosso < 6) {
+                righello.style.opacity = '';
+                ridisegna();
+            }
+            else if (Math.abs(zf - g0.z) > .01)
+                zoomAnimatoDa(g0.z, g0.sx, g0.sy, zf, c[0], c[1]); // elastico: torna dentro i limiti
+            else {
+                fissa(zf, g0.sx, g0.sy);
+                const v = g0.v;
+                if (performance.now() - g0.tv < 60 && Math.hypot(v[0], v[1]) > .25)
+                    avviaInerzia(v[0], v[1]);
+            }
+            void pr;
+        }
         if (!gesto || e.touches.length)
             return;
-        const g0 = gesto;
+        const g1 = gesto;
         gesto = null;
-        if (Date.now() - g0.t > 280 || Math.abs(kz - 1) > .03)
+        if (Date.now() - g1.t > 280 || g1.mosso)
             return;
-        if (g0.n === 2 && storia.length) {
+        if (g1.n === 2 && storia.length) {
             futuro.push(foto());
             ripristina(storia.pop());
             ridisegna();
             cambia();
             avviso('↶ Annullato', 900);
         }
-        else if (g0.n === 3 && futuro.length) {
+        else if (g1.n === 3 && futuro.length) {
             storia.push(foto());
             ripristina(futuro.pop());
             ridisegna();
             cambia();
             avviso('↷ Ripetuto', 900);
         }
-    }, { capture: true });
-    pag.addEventListener('touchstart', e => {
-        if (e.touches.length !== 2)
-            return;
-        if (cur) {
-            cur = null;
-            idPuntatore = -1;
-            if (storia.length)
-                ripristina(storia.pop());
-            pulisciVivo();
-            ridisegna();
-        }
-        const r = vista.getBoundingClientRect(), cx = (e.touches[0].clientX + e.touches[1].clientX) / 2, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        pz = { d0: dist(e.touches), z0: zoom, cx, cy };
-        kz = 1;
-        vista.style.transformOrigin = (cx - r.left) + 'px ' + (cy - r.top) + 'px';
-    }, { passive: true, capture: true });
-    pag.addEventListener('touchmove', e => {
-        if (!pz || e.touches.length !== 2)
-            return;
-        e.preventDefault();
-        const z = Math.max(1, Math.min(ZMAX, pz.z0 * dist(e.touches) / pz.d0));
-        kz = z / pz.z0;
-        vista.style.transform = 'scale(' + kz + ')';
-    }, { passive: false, capture: true });
-    const finePizzico = (e) => {
-        if (!pz || e.touches.length >= 2)
-            return;
-        const p0 = pz;
-        pz = null;
-        vista.style.transform = '';
-        if (Math.abs(kz - 1) > .02)
-            impostaZoom(p0.z0 * kz, p0.cx, p0.cy);
     };
-    pag.addEventListener('touchend', finePizzico, { capture: true });
-    pag.addEventListener('touchcancel', finePizzico, { capture: true });
-    // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad)
+    function zoomAnimatoDa(za, sxa, sya, z1, cx, cy) {
+        const pr = pag.getBoundingClientRect(), mx = cx - pr.left, my = cy - pr.top, sca = base * za;
+        const fx = (sxa + mx) / sca, fy = (sya + my) / sca, t0 = performance.now(), T = 220;
+        const step = (n) => {
+            const k = Math.min(1, (n - t0) / T), e = 1 - Math.pow(1 - k, 3), z = za + (z1 - za) * e, sc = base * z;
+            if (k < 1) {
+                disegnaVirtuale(z, fx * sc - mx, fy * sc - my);
+                requestAnimationFrame(step);
+            }
+            else
+                fissa(z1, fx * base * z1 - mx, fy * base * z1 - my);
+        };
+        requestAnimationFrame(step);
+    }
+    pag.addEventListener('touchend', fineGesto, { capture: true });
+    pag.addEventListener('touchcancel', fineGesto, { capture: true });
+    // doppio tocco con un dito (quando il dito scorre): zoom 2,5× sul punto, di nuovo per tornare al 100%
+    let ultimoTap = { t: 0, x: 0, y: 0 };
+    pag.addEventListener('touchend', e => {
+        if (e.touches.length || e.changedTouches.length !== 1 || (dito && !penna) || gesto)
+            return;
+        const t = e.changedTouches[0], n = Date.now();
+        if (n - ultimoTap.t < 300 && Math.hypot(t.clientX - ultimoTap.x, t.clientY - ultimoTap.y) < 30) {
+            ultimoTap.t = 0;
+            zoomAnimato(zoom > 1.3 ? 1 : 2.5, t.clientX, t.clientY);
+        }
+        else
+            ultimoTap = { t: n, x: t.clientX, y: t.clientY };
+    }, { passive: true });
+    // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad); trackpad a due dita = scorre (nativo)
     pag.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey)
         return; e.preventDefault(); impostaZoom(zoom * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); }, { passive: false });
     const salvaStoria = () => { storia.push(foto()); if (storia.length > 60)
@@ -6605,7 +7530,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             penna = true;
             aggiornaBarra();
         }
-        if (!scrive(e) || cur || pz)
+        if (!scrive(e) || cur || gst)
             return;
         e.preventDefault();
         try {
@@ -7495,8 +8420,8 @@ const QuizApp = (() => {
         }
     }
     /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
-    async function apri(pk, m, micro, s, gen) {
-        const v = visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
+    async function apri(pk, m, micro, s, gen, info) {
+        const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
         v.corpo.classList.add('qz');
         v.corpo.appendChild(h('div.vuoto.centro', null, 'Preparo le domande…'));
         let dati;
@@ -7515,7 +8440,10 @@ const QuizApp = (() => {
         }
         const app = h('div.qz-app');
         svuota(v.corpo);
-        v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
+        if (info)
+            v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, info.occh), h('h1.qz-h1', null, info.titolo)));
+        else
+            v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
         v.corpo.appendChild(app);
         let P = [], cur = 0, ripasso = false, apertaX = false, finito = false;
         const nuovo = (idx, rip) => {
@@ -8137,19 +9065,33 @@ function creaDaRapido(r) {
 }
 /** Campo di aggiunta rapida con anteprima di ciò che verrà creato. */
 function campoRapido() {
+    // v0.42: lo stesso campo è anche l'ASSISTENTE dell'app (✨): eventi/promemoria con data restano locali e immediati,
+    // tutto il resto (quiz, appunti, carte, ricerca, aprire viste, domande sull'app) passa all'assistente AI.
     const anteprima = h('div.rapido-anteprima');
-    const campo = h('input.rapido', { type: 'text', placeholder: '+ Aggiungi: "domani 15-17 Chimica 3.1"', enterKeyHint: 'done', autocomplete: 'off',
-        oninput: () => { const r = interpreta(campo.value); anteprima.textContent = r && campo.value.trim() ? descriviRapido(r) : ''; },
-        onkeydown: (e) => {
-            if (e.key !== 'Enter')
-                return;
-            const r = interpreta(campo.value);
-            if (!r)
-                return;
+    const invia = () => {
+        const f = campo.value.trim();
+        if (!f)
+            return;
+        if (Assistente.eRapida(f)) {
+            const r = interpreta(f);
             const rec = creaDaRapido(r);
+            campo.value = '';
+            anteprima.textContent = '';
             avviso('Creato: ' + descriviRapido(r), 5000, () => rec.type === 'task' ? apriTask(rec) : apriEvento(rec));
-        } });
-    return h('div.rapido-box', null, campo, anteprima);
+            return;
+        }
+        campo.value = '';
+        anteprima.textContent = '';
+        Assistente.chiedi(f);
+    };
+    const campo = h('input.rapido', { type: 'text', placeholder: 'Chiedi o aggiungi… (es. «crea un quiz sulle leve»)', enterKeyHint: 'go', autocomplete: 'off',
+        oninput: () => { const f = campo.value.trim(); const r = f ? interpreta(f) : null; anteprima.textContent = !f ? '' : Assistente.eRapida(f) && r ? descriviRapido(r) : '✨ Assistente: Invio per chiedere'; },
+        onkeydown: (e) => { if (e.key === 'Enter') {
+            e.preventDefault();
+            invia();
+        } } });
+    const bottone = h('button.rapido-ai', { type: 'button', 'aria-label': 'Chiedi all\'assistente', title: 'Assistente', onclick: invia }, '✨');
+    return h('div.rapido-box', null, h('div.rapido-riga', null, campo, bottone), anteprima);
 }
 
 // 07-regole.ts — Quiz Studio Q4 (v0.25): regole che imparano dall'esperienza.
@@ -8898,7 +9840,7 @@ const Spiega = (() => {
                 avviso(String(e.message || e), 8000);
             }
         };
-        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
+        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'), IA.campoGemini());
     }
     return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
@@ -9207,22 +10149,54 @@ const Studio = (() => {
         return n;
     }
     /** Pacchetti nella cartella Drive dell'app (quelli creati da Claude in futuro). */
-    async function caricaDaDrive() {
+    /** v0.42: cerca i pacchetti in TUTTO il Drive (Trova.pacchetti), non solo nella cartella dell'app.
+     *  Legge prima i candidati migliori; accetta file singoli, elenchi o raccolte {pacchetti:[…]}. */
+    let ultimiTrovati = [];
+    async function caricaDaDrive(avanzamento) {
         await Drive.preparaCartelle();
         let n = 0;
-        for (const f of await Drive.elencaTutti(Drive.idCartella('studio'))) {
-            if (!/\.json$/i.test(f.name))
-                continue;
+        const visti = new Set();
+        ultimiTrovati = [];
+        const prova = async (id, nome, cartella, par) => {
+            if (visti.has(id))
+                return false;
+            visti.add(id);
+            let j;
             try {
-                if (importa(JSON.parse(await Drive.scaricaTesto(f.id))))
-                    n++;
+                j = JSON.parse((await Drive.scaricaTesto(id)).replace(/^\uFEFF/, ''));
             }
             catch (_) {
-                avviso('Pacchetto non leggibile: ' + f.name);
+                return false;
             }
+            const lista = Array.isArray(j) ? j : j && Array.isArray(j.pacchetti) ? j.pacchetti : [j];
+            let buoni = 0;
+            for (const c of lista)
+                if (c && c.formato === 'pacchetto-studio') {
+                    buoni++;
+                    if (importa(c))
+                        n++;
+                    ultimiTrovati.push({ nome, cartella, tipo: c.tipo, titolo: c.titolo || c.id });
+                }
+            if (buoni)
+                Trova.impara([par]);
+            return buoni > 0;
+        };
+        // 1) la cartella dell'app (veloce)
+        for (const f of await Drive.elencaTutti(Drive.idCartella('studio')))
+            if (/\.json$/i.test(f.name))
+                await prova(f.id, f.name, 'Calendario personale/studio');
+        // 2) tutto il Drive, in ordine di probabilità
+        avanzamento && avanzamento('Cerco i pacchetti in tutto il Drive…');
+        const cand = (await Trova.pacchetti()).filter(c => c.punti > 5).slice(0, 60);
+        let i = 0;
+        for (const c of cand) {
+            i++;
+            avanzamento && avanzamento('Controllo ' + i + '/' + cand.length + ': ' + c.name);
+            await prova(c.id, c.name, c.cartella || '', c.parents && c.parents[0]);
         }
         return n;
     }
+    const trovati = () => ultimiTrovati;
     function prog(id) { return Stato.prendi('prog-' + id); }
     function fatta(id) { const p = prog(id); return !!(p && p.fatta); }
     function segna(id, mod) {
@@ -9338,11 +10312,20 @@ const Studio = (() => {
         if (s.quizFileId)
             return s.quizFileId;
         const coda = '(scheda ' + s.k + ' di ' + s.n + ').html';
-        const f = (await elenco(pk.risorse.quiz[m])).filter(x => x.name.startsWith(micro + ' ') && x.name.endsWith(coda));
+        let f = [];
+        try {
+            f = (await elenco(pk.risorse.quiz[m])).filter(x => x.name.startsWith(micro + ' ') && x.name.endsWith(coda));
+        }
+        catch (_) { /* cartella di un altro Drive: cerco ovunque */ }
         const esatto = f.find(x => x.name === s.quizFile);
-        if (!f.length)
-            throw new Error('Quiz non trovato su Drive: ' + s.quizFile);
-        return (esatto || f[0]).id;
+        if (esatto || f.length)
+            return (esatto || f[0]).id;
+        // v0.42: la cartella del pacchetto non c'è (es. un altro account): cerco la scheda in tutto il Drive
+        const t = await Trova.perNome([micro + ' ', '(scheda ' + s.k + ' di ' + s.n + ')'], 'text/html') || await Trova.perNome([s.titolo.slice(0, 40)]);
+        if (!t)
+            throw new Error('Quiz non trovato su Drive: ' + s.quizFile + '. Caricalo in qualsiasi cartella del tuo Drive.');
+        s.quizFileId = t.id;
+        return t.id;
     }
     /** Pagina del libro → file PDF diviso + pagina dentro al file. */
     async function pdfPagina(pk, m, pagLibro) {
@@ -9350,14 +10333,23 @@ const Studio = (() => {
         let id = L.file[String(primo)];
         const pref = String(primo).padStart(3, '0');
         if (!id) {
-            const f = (await elenco(L.cartella)).find(x => x.name.startsWith(pref) && /\.pdf$/i.test(x.name));
+            let f;
+            try {
+                f = (await elenco(L.cartella)).find(x => x.name.startsWith(pref) && /\.pdf$/i.test(x.name));
+            }
+            catch (_) { /* altro Drive */ }
+            if (!f) {
+                const t = await Trova.perNome([pref], 'application/pdf');
+                if (t)
+                    f = t;
+            }
             if (!f)
                 throw new Error('PDF del libro non trovato (inizio ' + pref + ').');
             id = f.id;
         }
         return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
     }
-    return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+    return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, trovati, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
         dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 // ---------- Visore a tutto schermo (quiz e PDF) ----------
@@ -9669,7 +10661,7 @@ function vistaStudio() {
     // v0.41 standard a tendina: 4 viste frequenti in vista, le altre nel menu «Altro ▾» (quella aperta resta visibile)
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
-    const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+    const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
     if (UI.studioVista === 'tabelle')
@@ -9688,6 +10680,13 @@ function vistaStudio() {
     }
     if (UI.studioVista !== 'schede')
         UI.studioVista = 'schede';
+    if (!pk && Drive.collegato && !window._pkAuto) { // v0.42: primo avvio di un nuovo account: cerca da solo i pacchetti nel Drive
+        window._pkAuto = true;
+        Studio.caricaDaDrive().then(n => { if (n) {
+            avviso('☁︎ Trovati nel tuo Drive ' + n + ' pacchetti di studio.');
+            disegna();
+        } }).catch(() => { });
+    }
     if (!pk)
         return h('div.pagina', null, seg, vuoto('Nessun corso di studio. Crea il tuo corso (qualsiasi materia o esame) oppure aggiorna i pacchetti dal Drive.'), h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio'), bottoneDrive());
     const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
@@ -9704,13 +10703,18 @@ function bottoneDrive() {
     return h('button.btn.neutro', { onclick: async () => {
             if (serveGoogle())
                 return;
+            const stato = h('div.tenue.piccolo', null, 'Collego il Drive…'), fs = foglio({ titolo: '☁︎ Pacchetti dal Drive', corpo: h('div.modulo', null, stato) });
             try {
-                const n = await Studio.caricaDaDrive();
-                avviso(n ? 'Pacchetti aggiornati da Drive: ' + n : 'Nessun pacchetto nuovo su Drive.');
+                const n = await Studio.caricaDaDrive(t => { stato.textContent = t; });
+                const tr = Studio.trovati();
+                svuota(stato);
+                stato.append(h('div', null, n ? '✓ Aggiornati ' + n + ' pacchetti.' : (tr.length ? '✓ Pacchetti già aggiornati.' : 'Nessun pacchetto trovato nel tuo Drive.')), ...tr.map(x => h('div.piccolo', null, (x.tipo === 'piano' ? '📅 ' : '📘 ') + x.titolo + ' — ' + x.nome + (x.cartella ? ' (in «' + x.cartella + '»)' : ''))), ...(tr.length ? [] : [h('div.piccolo', null, 'Suggerimento: carica i file .json in una cartella qualsiasi del Drive; l\'app li riconosce dal contenuto, non dal nome.')]));
+                disegna();
             }
             catch (e) {
-                avviso(String(e.message || e), 6000);
+                stato.textContent = String(e.message || e) === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : String(e.message || e);
             }
+            void fs;
         } }, 'Aggiorna pacchetti da Drive');
 }
 function vistaSottostep(pk, mat, sub) {
@@ -10937,7 +11941,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.41.4';
+const VERSIONE = '0.42.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
