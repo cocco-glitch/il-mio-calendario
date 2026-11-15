@@ -288,6 +288,16 @@ const DB = (() => {
 // 03-modello.ts — Tipi dei dati, stato in memoria, ricorrenze.
 // ============================================================
 // ---------- Stato ----------
+/** Dati di partenza di un dispositivo nuovo (updatedAt = 1: alla prima sincronizzazione vincono quelli su Drive). */
+function predefiniti() {
+    return [
+        { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi' },
+        { id: 'cat-studio', type: 'categoria', updatedAt: 1, nome: 'Studio', colore: '#6c8cff', visibile: true, ordine: 0 },
+        { id: 'cat-personale', type: 'categoria', updatedAt: 1, nome: 'Personale', colore: '#2fbf8f', visibile: true, ordine: 1 },
+        { id: 'cat-salute', type: 'categoria', updatedAt: 1, nome: 'Salute', colore: '#f0708a', visibile: true, ordine: 2 },
+        { id: 'cat-uni', type: 'categoria', updatedAt: 1, nome: 'Uni', colore: '#e9a23b', visibile: true, ordine: 3 },
+    ];
+}
 const Stato = (() => {
     const rec = new Map();
     const TIPI_SERVIZIO = new Set(['notifica']); // v0.17: lapidi ripulibili dopo 7 giorni
@@ -313,13 +323,7 @@ const Stato = (() => {
             // Primo avvio: categorie e impostazioni di partenza.
             // updatedAt = 1 così, alla prima sincronizzazione, vincono sempre i dati già su Drive.
             if (!rec.has('impostazioni')) {
-                const nuovi = [
-                    { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi' },
-                    { id: 'cat-studio', type: 'categoria', updatedAt: 1, nome: 'Studio', colore: '#6c8cff', visibile: true, ordine: 0 },
-                    { id: 'cat-personale', type: 'categoria', updatedAt: 1, nome: 'Personale', colore: '#2fbf8f', visibile: true, ordine: 1 },
-                    { id: 'cat-salute', type: 'categoria', updatedAt: 1, nome: 'Salute', colore: '#f0708a', visibile: true, ordine: 2 },
-                    { id: 'cat-uni', type: 'categoria', updatedAt: 1, nome: 'Uni', colore: '#e9a23b', visibile: true, ordine: 3 },
-                ];
+                const nuovi = predefiniti();
                 for (const r of nuovi)
                     if (!rec.has(r.id))
                         rec.set(r.id, r);
@@ -370,6 +374,13 @@ const Stato = (() => {
         /** Salva un record aggiornando updatedAt (serve alla sincronizzazione). */
         salva(r, silenzioso = false) {
             r.updatedAt = Date.now();
+            // v0.44 privacy: ogni dato porta l'account a cui appartiene (serve a non mescolare mai gli account)
+            try {
+                const em = JSON.parse(localStorage.getItem('imc-email') || '""');
+                if (em)
+                    r.acc = String(em).toLowerCase();
+            }
+            catch (_) { /* */ }
             rec.set(r.id, r);
             ver++;
             DB.salva([r]);
@@ -410,6 +421,12 @@ const Stato = (() => {
             return cambiati.length;
         },
         esporta() { return Array.from(rec.values()); },
+        /** v0.44: cancella TUTTI i dati locali di questo dispositivo (quelli su Drive restano dove sono). */
+        async svuotaLocale() { const ids = Array.from(rec.keys()); rec.clear(); const p = predefiniti(); for (const r of p)
+            rec.set(r.id, r); ver++; await DB.rimuovi(ids); await DB.salva(p); notifica(); },
+        /** v0.44: rimuove davvero dal dispositivo (senza lapide) i record indicati. */
+        async togliLocale(ids) { for (const id of ids)
+            rec.delete(id); ver++; await DB.rimuovi(ids); notifica(); },
     };
 })();
 function imp() { return Stato.rec.get('impostazioni'); }
@@ -1623,6 +1640,8 @@ const Drive = (() => {
                     token = '';
                     throw new Error('Questa app è privata: l\'account ' + email + ' non è autorizzato.');
                 }
+                // v0.44 privacy: se su questo dispositivo c'erano i dati di un altro account, si cancellano PRIMA di unire
+                await Privacy.primaDiUnire(email);
                 stato.email = email;
                 LS.set('email', stato.email);
                 if (typeof Studio !== 'undefined') {
@@ -1666,7 +1685,14 @@ const Drive = (() => {
                 }
             }
             // 2. unisco (vince l'updatedAt più alto, per record)
+            // v0.44 privacy: mai unire record di un altro account; dispositivo riconosciuto; pulizia di ciò che non è suo
+            if (Privacy.accLocale() !== stato.email.toLowerCase())
+                await Privacy.primaDiUnire(stato.email);
+            remoti = remoti.filter(r => !r.acc || r.acc === stato.email.toLowerCase());
             Stato.unisci(remoti);
+            if (!(await Privacy.dispositivo(stato.email)))
+                return;
+            await Privacy.pulisciAltrui(stato.email);
             // 3. se ho qualcosa di più nuovo del remoto, ricarico
             const remotiMap = new Map(remoti.map(r => [r.id, r.updatedAt || 0]));
             const miei = Stato.esporta();
@@ -2423,6 +2449,203 @@ const Notifiche = (() => {
 })();
 
 // =====================================================================
+// 06-privacy.ts — v0.44 I DATI DI UN ACCOUNT NON FINISCONO MAI IN UN ALTRO
+// Problema: i dati del proprietario ricomparivano nell'app di un altro account (es. dispositivo usato
+// prima da lui, programma del sito, pacchetti trovati nel Drive condiviso) e, una volta uniti, venivano
+// risalvati nel Drive dell'altro → ricomparivano a ogni sincronizzazione.
+// Rimedio (identità = account Google, già con login: nessuna password nuova da ricordare):
+//  1) ogni record porta l'account a cui appartiene («acc»), stampato a ogni salvataggio;
+//  2) il dispositivo ricorda di chi sono i dati locali («accLocale»): se accede un ALTRO account, i dati
+//     locali si cancellano PRIMA di unirli (quelli del proprietario restano al sicuro nel suo Drive);
+//  3) a ogni sincronizzazione di un account non proprietario si eliminano (con lapide, quindi anche dal
+//     suo Drive e dagli altri suoi dispositivi) i record di un altro account e quelli derivati dal programma
+//     del proprietario (pacchetti del sito, progressi, statistiche e modifiche delle sue schede);
+//  4) la ricerca dei pacchetti guarda solo i file DI PROPRIETÀ dell'account (non quelli condivisi con lui);
+//  5) «Dispositivi riconosciuti»: ogni dispositivo si registra (nome, ultimo accesso). Da Altro → Dati
+//     si può scollegare un dispositivo: alla prossima apertura cancella i dati locali ed esce dall'account.
+//     Uscendo dall'account si può anche cancellare subito tutto da questo dispositivo.
+// =====================================================================
+const Privacy = (() => {
+    const KLOC = 'imc-accLocale', KDEV = 'imc-dispositivo';
+    const accLocale = () => { try {
+        return JSON.parse(localStorage.getItem(KLOC) || '""');
+    }
+    catch (_) {
+        return '';
+    } };
+    const setAcc = (e) => { try {
+        localStorage.setItem(KLOC, JSON.stringify(e.toLowerCase()));
+    }
+    catch (_) { /* */ } };
+    function idDispositivo() {
+        let id = '';
+        try {
+            id = localStorage.getItem(KDEV) || '';
+        }
+        catch (_) { /* */ }
+        if (!id) {
+            id = 'dev-' + uid();
+            try {
+                localStorage.setItem(KDEV, id);
+            }
+            catch (_) { /* */ }
+        }
+        return id;
+    }
+    function nomeDispositivo() {
+        const u = navigator.userAgent;
+        const tipo = /iPad|Macintosh.*Mobile|Macintosh(?=.*Safari)(?=.*Version)/.test(u) && navigator.maxTouchPoints > 1 ? 'iPad' : /iPhone/.test(u) ? 'iPhone' : /Android/.test(u) ? (/Mobile/.test(u) ? 'Telefono Android' : 'Tablet Android') : /Windows/.test(u) ? 'PC Windows' : /Mac/.test(u) ? 'Mac' : 'Dispositivo';
+        const br = /Edg\//.test(u) ? 'Edge' : /CriOS|Chrome/.test(u) ? 'Chrome' : /FxiOS|Firefox/.test(u) ? 'Firefox' : /Safari/.test(u) ? 'Safari' : '';
+        return tipo + (br ? ' · ' + br : '');
+    }
+    /** Chiamata appena si conosce l'account del login, PRIMA di unire i dati remoti. */
+    async function primaDiUnire(email) {
+        const e = email.toLowerCase(), prec = accLocale();
+        let svuotato = false;
+        if (prec && prec !== e) {
+            await Stato.svuotaLocale();
+            svuotato = true;
+        }
+        else if (!prec) {
+            // dispositivo di una versione precedente: tolgo i record marcati con un altro account
+            const altrui = Stato.esporta().filter(r => r.acc && r.acc !== e).map(r => r.id);
+            if (altrui.length)
+                await Stato.togliLocale(altrui);
+        }
+        setAcc(e);
+        return svuotato;
+    }
+    /** Id delle schede, dei sotto-step e dei pacchetti del programma del proprietario (dal sito). */
+    let idSito = null;
+    function caricaIdSito() {
+        if (!idSito)
+            idSito = (async () => {
+                const pk = new Set(), voci = new Set(), titoli = new Set();
+                try {
+                    const r = await fetch('studio/indice.json', { cache: 'no-cache' });
+                    if (!r.ok)
+                        return { pk, voci, titoli };
+                    for (const f of await r.json()) {
+                        const p = await fetch('studio/' + f, { cache: 'no-cache' });
+                        if (!p.ok)
+                            continue;
+                        const c = await p.json();
+                        pk.add(c.id);
+                        for (const m of c.materie || [])
+                            for (const ss of m.sottostep || []) {
+                                voci.add(ss.k);
+                                for (const mi of ss.microstep || [])
+                                    for (const s of mi.schede || []) {
+                                        voci.add(s.id);
+                                        titoli.add(norm(s.titolo));
+                                    }
+                            }
+                    }
+                }
+                catch (_) { /* offline */ }
+                if (!pk.size)
+                    idSito = null; // offline: riprovo la prossima volta
+                return { pk, voci, titoli };
+            })();
+        return idSito;
+    }
+    /** Per un account NON proprietario: elimina (con lapide → anche dal suo Drive) ciò che è del proprietario. */
+    async function pulisciAltrui(email) {
+        const e = email.toLowerCase();
+        if (!e || e === PROPRIETARIO)
+            return 0;
+        const s = await caricaIdSito();
+        let n = 0;
+        const togli = (r) => { Stato.elimina(r.id); n++; };
+        for (const r0 of Stato.esporta()) {
+            const r = r0;
+            if (r.deleted)
+                continue;
+            if (r.type === 'impostazioni' || r.type === 'categoria') {
+                if (r.acc && r.acc !== e && r.type === 'impostazioni') {
+                    const d0 = predefiniti()[0];
+                    Stato.salva({ ...d0 });
+                    n++;
+                }
+                continue;
+            } // mai senza impostazioni
+            if (r.acc && r.acc !== e) {
+                togli(r);
+                continue;
+            }
+            if (r.daSito) {
+                togli(r);
+                continue;
+            }
+            if (r.type === 'pacchetto' && r.contenuto && s.pk.has(r.contenuto.id)) {
+                togli(r);
+                continue;
+            }
+            if (['progresso', 'statq', 'modq', 'propq', 'ripasso', 'spostamento', 'notascheda'].includes(r.type)) {
+                const chiave = String(r.sk || r.id || '').replace(/^(prog|rip|sp|nota|mq|pq|sq)-/, '');
+                if (s.voci.has(chiave) || Array.from(s.voci).some(v => v.length > 4 && chiave.startsWith(v + '-') && /^[CBF]-/.test(v))) {
+                    togli(r);
+                    continue;
+                }
+            }
+            if (r.type === 'spiegazione' && r.quiz && s.titoli.has(norm(String(r.quiz).split(' — ').pop() || ''))) {
+                togli(r);
+                continue;
+            }
+        }
+        return n;
+    }
+    /** Registra/aggiorna questo dispositivo; se è stato scollegato, cancella tutto ed esce. */
+    async function dispositivo(email) {
+        const id = idDispositivo(), d = Stato.rec.get(id);
+        if (d && !d.deleted && d.revocato) {
+            await Stato.svuotaLocale();
+            try {
+                localStorage.removeItem(KLOC);
+            }
+            catch (_) { /* */ }
+            Drive.logout();
+            avviso('Questo dispositivo è stato scollegato dal tuo account: dati locali cancellati.', 10000);
+            return false;
+        }
+        const oggi = new Date().toISOString();
+        if (!d || d.deleted || !d.ultimo || Date.now() - Date.parse(d.ultimo) > 6 * 36e5)
+            Stato.salva({ id, type: 'dispositivo', updatedAt: 0, nome: (d && d.nome) || nomeDispositivo(), ua: navigator.userAgent.slice(0, 160), primo: (d && d.primo) || oggi, ultimo: oggi }, true);
+        void email;
+        return true;
+    }
+    /** Uscita sicura: scollega l'account e (se scelto) cancella tutto da questo dispositivo. */
+    async function esci(cancella) {
+        if (cancella) {
+            try {
+                await Drive.sincronizza(false);
+            }
+            catch (_) { /* */ }
+            await Stato.svuotaLocale();
+            try {
+                localStorage.removeItem(KLOC);
+            }
+            catch (_) { /* */ }
+        }
+        Drive.logout();
+        if (cancella)
+            location.reload();
+    }
+    /** Altro → I miei dati: dispositivi riconosciuti. */
+    function sezione() {
+        const mio = idDispositivo();
+        const lista = Stato.tutti('dispositivo').sort((a, b) => b.ultimo < a.ultimo ? -1 : 1);
+        return scheda('Dispositivi riconosciuti', h('div.tenue.piccolo', null, 'Solo i dispositivi in cui hai fatto l\'accesso con il tuo account Google vedono i tuoi dati. Se ne scolleghi uno, alla prossima apertura cancellerà i dati e uscirà dall\'account.'), ...lista.map(d => h('div.cq-fonte', null, h('span', null, d.id === mio ? '📍' : d.revocato ? '⛔' : '📱'), h('span', null, h('b', null, d.nome + (d.id === mio ? ' (questo)' : '')), h('span.tenue.piccolo', null, ' · ultimo accesso ' + new Date(d.ultimo).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + (d.revocato ? ' · scollegato' : '')), d.id !== mio && !d.revocato ? h('div', null, h('button.btn-testo', { onclick: async () => { if (await chiedi('Scollegare «' + d.nome + '»?', [{ testo: 'Scollega', valore: 'si', pericolo: true }], 'Alla prossima apertura cancellerà i tuoi dati ed uscirà dall\'account.') === 'si') {
+                d.revocato = true;
+                Stato.salva(d);
+                disegna();
+            } } }, 'Scollega questo dispositivo')) : null))), Drive.collegato ? h('div.bottoni', null, h('button.btn.neutro', { onclick: async () => { const s = await chiedi('Uscire dall\'account su questo dispositivo?', [{ testo: 'Esci e cancella i dati da qui', valore: 'via', pericolo: true }, { testo: 'Esci soltanto', valore: 'esci' }], 'I dati restano al sicuro nel tuo Drive.'); if (s)
+                esci(s === 'via'); } }, 'Esci da questo dispositivo')) : null);
+    }
+    return { primaDiUnire, pulisciAltrui, dispositivo, esci, sezione, idDispositivo, accLocale };
+})();
+
+// =====================================================================
 // 06-trova.ts — v0.42 RICERCA UNIVERSALE SUL DRIVE (per chiunque usi l'app)
 // Non dipende da cartelle fisse: cerca in TUTTO il Drive dell'utente (scope drive.readonly) e ordina i
 // risultati con un punteggio, come farebbe una persona che conosce le sue cartelle:
@@ -2560,8 +2783,9 @@ const Trova = (() => {
         }
         catch (_) { /* */ }
         const incr = !completa && Date.now() - ultima < 7 * 864e5 ? " and modifiedTime > '" + new Date(ultima - 36e5).toISOString() + "'" : '';
-        const firma = await query("fullText contains 'pacchetto-studio'" + incr, 300);
-        const json = await query("(mimeType = 'application/json' or name contains '.json')" + incr, 400);
+        // v0.44 privacy: solo file DI PROPRIETÀ dell'account (mai i pacchetti di altri condivisi con lui)
+        const firma = await query("'me' in owners and fullText contains 'pacchetto-studio'" + incr, 300);
+        const json = await query("'me' in owners and (mimeType = 'application/json' or name contains '.json')" + incr, 400);
         if (incr) {
             for (const x of MemoriaIA.migliori('ricerca', 'pacchetto', 60))
                 if (x.v && x.v.id && !firma.some(f => f.id === x.v.id))
@@ -3457,6 +3681,12 @@ async function aiDomande(a, dopo, fuoco) {
         avviso('Scrivi prima qualcosa.');
         return;
     }
+    // v0.44 locale: prima le carte che si ricavano con regole (definizioni, «Termine: …», formule); l'AI solo se ne servono altre
+    const locali = Locale.carteDaTesto(fuoco ? fuoco.testo : a.testo);
+    if (locali.length >= 4 && !aiDomande._forza) {
+        mostraProposte(locali, dopo, () => { aiDomande._forza = true; aiDomande(a, dopo, fuoco).finally(() => { aiDomande._forza = false; }); });
+        return;
+    }
     avviso('✨ Preparo le domande…', 15000);
     let d;
     try {
@@ -3469,13 +3699,16 @@ async function aiDomande(a, dopo, fuoco) {
         avviso(String(e.message || e), 8000);
         return;
     }
-    const lista = (d && d.domande || []).filter((x) => x && x.q && x.r).slice(0, 12);
+    const lista = locali.concat((d && d.domande || []).filter((x) => x && x.q && x.r)).slice(0, 14);
     if (!lista.length) {
         avviso('Nessuna domanda proposta.');
         return;
     }
+    mostraProposte(lista, dopo);
+}
+function mostraProposte(lista, dopo, altreAI) {
     const scelte = lista.map(() => true);
-    foglio({ titolo: '✨ Domande proposte', etichettaSalva: 'Aggiungi le scelte', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Tieni solo quelle utili: diventano righe «domanda :: risposta» in fondo all\'appunto, quindi flashcard. Puoi correggerle dopo.'), lista.map((x, i) => h('label.gen-arg', null, h('input', { type: 'checkbox', checked: true, onchange: (e) => { scelte[i] = e.target.checked; } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.q), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, x.r))))),
+    foglio({ titolo: '✨ Domande proposte', etichettaSalva: 'Aggiungi le scelte', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, (altreAI ? 'Ricavate dal testo senza AI. ' : '') + 'Tieni solo quelle utili: diventano righe «domanda :: risposta» in fondo all\'appunto, quindi flashcard. Puoi correggerle dopo.'), altreAI ? h('button.btn.neutro', { type: 'button', onclick: () => { document.querySelector('.foglio-sfondo')?.remove(); altreAI(); } }, '✨ Altre con l\'AI') : null, lista.map((x, i) => h('label.gen-arg', null, h('input', { type: 'checkbox', checked: true, onchange: (e) => { scelte[i] = e.target.checked; } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.q), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, x.r))))),
         salva: () => { const r = lista.filter((_x, i) => scelte[i]).map(x => '- ' + x.q.replace(/\s::\s/g, ' ') + ' :: ' + x.r.replace(/\n/g, ' ')); if (r.length)
             dopo(r); } });
 }
@@ -3487,8 +3720,11 @@ async function aiRiassunto(a) {
     }
     avviso('✨ Leggo il riassunto…', 15000);
     try {
+        // v0.44 locale: concetti dell'appunto assenti nel riassunto trovati con regole; all'AI solo le frasi pertinenti
+        const mancaLoc = Locale.concettiMancanti(a.testo, a.riassunto || '');
+        const testoAI = a.testo.length > 4000 ? Locale.frasiChiave(a.testo, (a.riassunto || '').split(/\s+/).concat(mancaLoc), 4000) || a.testo.slice(0, 4000) : a.testo;
         const d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor per il semestre filtro di Medicina. Confronti il riassunto dello studente con il suo appunto. NON riscrivere il riassunto. Rispondi in italiano, con il tu, in JSON: {"ok":"cosa va bene (1 frase)","manca":["concetto chiave mancante", ...],"errori":["affermazione imprecisa e correzione", ...]}' },
-            { role: 'user', content: 'Appunto:\n' + a.testo.slice(0, 8000) + '\n\nRiassunto dello studente:\n' + a.riassunto }], 0.2);
+            { role: 'user', content: 'Appunto (parti pertinenti):\n' + testoAI + (mancaLoc.length ? '\n\nConcetti che sembrano mancare (verificali): ' + mancaLoc.join(', ') : '') + '\n\nRiassunto dello studente:\n' + a.riassunto }], 0.2);
         foglio({ titolo: '✨ Riscontro sul riassunto', corpo: h('div.modulo', null, d.ok ? h('div', null, '✅ ' + d.ok) : null, (d.manca || []).length ? h('div', null, h('b', null, 'Manca:'), d.manca.map(x => h('div', null, '• ' + x))) : h('div', null, 'Non manca nulla di importante. 👍'), (d.errori || []).length ? h('div', null, h('b', null, 'Da correggere:'), d.errori.map(x => h('div', null, '• ' + x))) : null) });
     }
     catch (e) {
@@ -3604,6 +3840,8 @@ const MODELLI_APPUNTO = [
 // di una vista, «studia ora», lezione audio, oppure una risposta sull'uso dell'app.
 // Le azioni che creano qualcosa si confermano con un tocco (si possono togliere); aprire/cercare è immediato.
 // =====================================================================
+/** il dialogo di scelta globale (dentro Assistente «chiedi» è la funzione dell'assistente) */
+const scegliTra = (t, o, sotto) => chiedi(t, o, sotto);
 const Assistente = (() => {
     const VISTE = {
         oggi: () => vai('oggi'), calendario: () => vai('cal'), studio: () => { UI.studioVista = 'schede'; vai('studio'); }, piano: () => { UI.studioVista = 'piano'; vai('studio'); },
@@ -3652,7 +3890,7 @@ const Assistente = (() => {
             case 'promemoria': {
                 const g = giorno(a.data) || inizioGiorno(new Date()), o = a.tipo === 'evento' ? ora(a.inizio) : ora(a.ora);
                 const r = { tipo: a.tipo === 'evento' ? 'evento' : 'task', titolo: a.titolo, giorno: g, ora: o, fine: a.tipo === 'evento' ? ora(a.fine) : undefined,
-                    tuttoIlGiorno: a.tipo === 'evento' ? (!!a.tutto_il_giorno || !o) : false, rrule: ricorrenza(a.ripeti), dataEsplicita: !!a.data };
+                    tuttoIlGiorno: a.tipo === 'evento' ? (!!a.tutto_il_giorno || !o) : false, rrule: a._rr || ricorrenza(a.ripeti), dataEsplicita: !!a.data };
                 return creaDaRapido(r);
             }
             case 'appunto': {
@@ -3722,28 +3960,81 @@ const Assistente = (() => {
         const es = MemoriaIA.migliori('assistente', 'esempio', 4, frase);
         const esempi = es.length ? '\nESEMPI DI QUESTO UTENTE (richiesta → azioni che ha confermato; le date erano relative al giorno indicato):\n' + es.map(x => '[' + x.v.data + '] «' + x.k + '» → ' + JSON.stringify({ azioni: x.v.azioni })).join('\n') : '';
         const r = await IA.chiedi([{ role: 'system', content: SISTEMA + MemoriaIA.linee('assistente', 5) + esempi + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
-        return ((r.j && r.j.azioni) || []).filter((a) => a && typeof a.tipo === 'string').slice(0, 6);
+        return normalizza(r.j);
+    }
+    // v0.44: i modelli a volte rispondono con nomi diversi ({"actions":…}, "type", "title", un elenco nudo…):
+    // tutto viene ricondotto ai nostri tipi, così una risposta valida non viene più scartata.
+    const SIN = { event: 'evento', evento: 'evento', appuntamento: 'evento', reminder: 'promemoria', task: 'promemoria', todo: 'promemoria', promemoria: 'promemoria',
+        note: 'appunto', nota: 'appunto', appunto: 'appunto', quiz: 'quiz', crea_quiz: 'quiz', test: 'quiz', flashcard: 'carte', flashcards: 'carte', cards: 'carte', carte: 'carte', card: 'carte',
+        search: 'cerca', cerca: 'cerca', ricerca: 'cerca', open: 'apri', apri: 'apri', vai: 'apri', naviga: 'apri', answer: 'risposta', reply: 'risposta', risposta: 'risposta', messaggio: 'risposta',
+        studia_ora: 'studia_ora', study: 'studia_ora', lezione_audio: 'lezione_audio', audio: 'lezione_audio', pacchetti: 'pacchetti', quiz_creati: 'quiz_creati' };
+    function normalizza(j) {
+        let l = Array.isArray(j) ? j : j ? (j.azioni || j.actions || j.azione || j.action || j.risultato || (j.tipo || j.type ? [j] : [])) : [];
+        if (!Array.isArray(l))
+            l = [l];
+        const out = [];
+        for (let a of l) {
+            if (!a || typeof a !== 'object')
+                continue;
+            if (a.parametri || a.params || a.parameters || a.dati)
+                a = { ...a, ...(a.parametri || a.params || a.parameters || a.dati) };
+            const t = SIN[norm(String(a.tipo || a.type || a.azione || a.action || a.nome || '')).replace(/\s+/g, '_')];
+            if (!t)
+                continue;
+            const x = { tipo: t };
+            x.titolo = a.titolo || a.title || a.nome_evento || a.testo || a.text;
+            x.data = a.data || a.date || a.giorno;
+            x.inizio = a.inizio || a.start || a.ora_inizio || a.ora || a.time;
+            x.fine = a.fine || a.end || a.ora_fine;
+            x.ora = a.ora || a.time || a.inizio;
+            x.tutto_il_giorno = a.tutto_il_giorno || a.allDay || a.all_day;
+            x.ripeti = a.ripeti || a.ricorrenza || a.repeat;
+            x.argomento = a.argomento || a.topic || a.argument || a.testo || a.query || a.titolo;
+            x.materia = a.materia || a.subject;
+            x.cosa = a.cosa || a.tipo_domande;
+            x.parole = a.parole || a.keywords;
+            x.testo = a.testo || a.text || a.query || a.risposta || a.answer || a.messaggio;
+            x.vista = a.vista || a.view || a.schermata || a.pagina;
+            x.modo = a.modo || a.mode;
+            if ((t === 'evento' && x.titolo && x.data) || (t === 'promemoria' && x.titolo) || (t === 'appunto') || (t === 'quiz' && x.argomento) || (t === 'cerca' && x.testo) || (t === 'apri' && x.vista) || (t === 'risposta' && x.testo) || ['carte', 'studia_ora', 'lezione_audio', 'pacchetti', 'quiz_creati'].includes(t)) {
+                if (t === 'appunto' && !x.titolo)
+                    x.titolo = 'Nuovo appunto';
+                out.push(x);
+            }
+        }
+        return out.slice(0, 6);
     }
     /** Mostra le azioni capite e le esegue: subito quelle innocue, con un tocco quelle che creano qualcosa. */
     async function chiedi(frase) {
-        if (!Spiega.attiva && !IA.gemini) {
-            avviso('Per l\'assistente serve la chiave AI gratuita (Altro → Spiegazioni AI). Intanto: scrivi eventi come «domani 15-17 Chimica».', 7000);
-            return;
-        }
         const pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), h('span.audio-stato', null, 'Capisco «' + frase.slice(0, 40) + '»…'));
         document.body.appendChild(pill);
-        let az = [];
-        try {
-            az = await capisci(frase);
-        }
-        catch (e) {
-            pill.remove();
-            avviso(String(e.message || e), 6000);
-            return;
+        let az = [], errore = '';
+        // v0.44: prima gli algoritmi locali (zero token, immediati); l'AI solo per il resto
+        const loc = Locale.capisci(frase);
+        if (loc)
+            az = loc;
+        else if (!Spiega.attiva && !IA.gemini)
+            errore = 'manca la chiave AI gratuita (Altro → Spiegazioni AI)';
+        else {
+            try {
+                az = await capisci(frase);
+            }
+            catch (e) {
+                errore = String(e.message || e);
+            }
         }
         pill.remove();
         if (!az.length) {
-            avviso('Non ho capito: prova a dirlo con altre parole (es. «crea un quiz sulle leve», «domani alle 9 ripasso fisica»).', 6000);
+            // mai un vicolo cieco: propongo le interpretazioni più probabili con un tocco
+            const f = frase.replace(/^(crea(mi)?|fammi|voglio|vorrei)\s+/i, '');
+            const s = await scegliTra(errore ? 'L\'AI non ha risposto (' + errore.slice(0, 80) + '). Cosa vuoi fare?' : 'Cosa vuoi fare con «' + frase.slice(0, 60) + '»?', [{ testo: '✨ Crea un quiz su «' + f.slice(0, 40) + '»', valore: 'quiz' }, { testo: '🔎 Cerca «' + f.slice(0, 40) + '»', valore: 'cerca' }, { testo: '🔔 Promemoria «' + f.slice(0, 40) + '»', valore: 'prom' }, { testo: '📝 Nuovo appunto', valore: 'app' }]);
+            const scelta = s === 'quiz' ? { tipo: 'quiz', argomento: f } : s === 'cerca' ? { tipo: 'cerca', testo: f } : s === 'prom' ? { tipo: 'promemoria', titolo: f } : s === 'app' ? { tipo: 'appunto', titolo: f } : null;
+            if (scelta) {
+                const r = esegui(scelta);
+                MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: [scelta] });
+                if (r)
+                    avviso('✓ Creato: ' + descrivi(scelta));
+            }
             return;
         }
         const innocue = az.every(a => ['apri', 'cerca', 'quiz', 'carte', 'studia_ora', 'quiz_creati', 'pacchetti', 'lezione_audio'].includes(a.tipo)) && az.length === 1;
@@ -3889,6 +4180,7 @@ const Lezioni = (() => {
             throw new Error('non ho sentito parole nell\'audio');
         // correzioni confermate più volte: applicate subito, senza chiedere all'AI (meno token)
         const daMemoria = [];
+        seg.forEach(x => { x.t = Locale.pulisciParlato(x.t); }); // v0.44 locale: intercalari e ripetizioni via (meno token)
         seg.forEach((x, i) => { const c = MemoriaIA.correggi('audio', x.t); if (c.cambi.length) {
             daMemoria.push({ i, prima: x.t, dopo: c.testo, nota: 'dalla memoria: ' + c.cambi.map(z => z.prima + ' → ' + z.dopo).join(', '), ok: true });
             x.t = c.testo;
@@ -3897,8 +4189,22 @@ const Lezioni = (() => {
         // 2) controllo di coerenza (blocchi da ~120 segmenti per restare nei limiti)
         passo('2/3 Controllo la coerenza del testo…');
         const dubbi = new Map(), termini = new Set();
-        for (let a = 0; a < seg.length; a += 120) {
-            const righe = seg.slice(a, a + 120).map((x, k) => (a + k) + (x.lp != null && (x.lp < -.6 || (x.cr || 0) > 2.4) ? ' ⚠' : '') + ' | ' + x.t).join('\n');
+        // v0.44 locale: nelle lezioni lunghe all'AI vanno solo i segmenti dubbi (con il vicino prima e dopo)
+        const glossario = noti.concat(contesto.testo.split(/\W+/).filter(w => w.length > 6)).slice(0, 80);
+        const scelti = new Set();
+        if (seg.length <= 40)
+            seg.forEach((_, i) => scelti.add(i));
+        else
+            seg.forEach((x, i) => { if (Locale.segmentoDubbio(x, glossario)) {
+                scelti.add(i);
+                if (i)
+                    scelti.add(i - 1);
+                if (i + 1 < seg.length)
+                    scelti.add(i + 1);
+            } });
+        const daVedere = Array.from(scelti).sort((p, q) => p - q);
+        for (let a = 0; a < daVedere.length; a += 120) {
+            const righe = daVedere.slice(a, a + 120).map(k => k + (seg[k].lp != null && (seg[k].lp < -.6 || (seg[k].cr || 0) > 2.4) ? ' ⚠' : '') + ' | ' + seg[k].t).join('\n');
             const r = await Spiega.chat([{ role: 'system', content: 'Sei un revisore di trascrizioni automatiche di lezioni universitarie italiane. Rispondi SOLO in JSON.' },
                 { role: 'user', content: 'Argomento: ' + contesto.titolo + (contesto.step ? ' · ' + contesto.step : '') + '\nSegmenti numerati (⚠ = il riconoscitore era poco sicuro):\n' + righe +
                         (daMemoria.length ? '\nCorrezioni già applicate dalla memoria (non segnalarle): ' + daMemoria.map(z => z.nota.replace('dalla memoria: ', '')).join('; ') : '') +
@@ -5144,22 +5450,28 @@ const CreaQuiz = (() => {
                 const L = await caricaPdfJs();
                 passo('Leggo «' + f.name + '»…');
                 const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()) }).promise;
-                const pag = [];
+                const grezze = [];
                 for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
                     if (i % 25 === 0)
                         passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);
                     const tc = await (await doc.getPage(i)).getTextContent();
-                    const t = tc.items.map((x) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/Volume concesso in uso a[^\n]*/gi, '').trim();
-                    if (t.length < 40)
-                        continue;
-                    const tn = n2(t);
-                    let s = 0;
-                    for (const w of chiavi) {
-                        const k = tn.split(w).length - 1;
-                        s += k ? 3 + Math.min(k, 8) : 0;
-                    }
-                    pag.push({ i, t, s: s + (utili.has(i) ? 25 : 0) });
+                    grezze.push({ i, t: tc.items.map((x) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').trim() });
                 }
+                // v0.44 locale: via intestazioni/piè di pagina ripetuti e righe spezzate (meno token), radici e sinonimi per trovare le pagine
+                const pulite = Locale.pulisciPagine(grezze.map(x => x.t)), rad = Locale.espandi(chiavi).map(Locale.radice);
+                const pag = [];
+                grezze.forEach((g0, k) => {
+                    const t = pulite[k];
+                    if (t.length < 40)
+                        return;
+                    const parole = n2(t).split(/[^a-z0-9]+/);
+                    let s = 0;
+                    for (const r of rad) {
+                        const c = parole.filter(w => w.startsWith(r)).length;
+                        s += c ? 3 + Math.min(c, 8) : 0;
+                    }
+                    pag.push({ i: g0.i, t, s: s + (utili.has(g0.i) ? 25 : 0) });
+                });
                 const scelte = pag.filter(x => x.s > 0).sort((a, b) => b.s - a.s);
                 const tieni = [];
                 let tot = 0;
@@ -5220,6 +5532,15 @@ const CreaQuiz = (() => {
         const p = [];
         if (!d || typeof d.q !== 'string' || d.q.trim().length < 15)
             return ['testo mancante'];
+        // v0.44 correzioni locali (zero token) prima di giudicare: corretta accorciata, risposte rese digitabili,
+        // citazioni sostituite con la frase vera della fonte più simile
+        Locale.accorciaCorretta(d);
+        if (d.t === 'fill' && Array.isArray(d.a))
+            d.a = Locale.digitabili(d.a.map(String));
+        if (Array.isArray(d.cit))
+            d.cit = d.cit.map((c) => { if (!c || typeof c.t !== 'string')
+                return c; const ftt = n2(fontiTesto).replace(/[^a-z0-9]/g, ''); if (ftt.includes(n2(c.t).replace(/[^a-z0-9]/g, '')))
+                return c; const v = Locale.citazioneVera(c.t, fontiTesto); return v ? { ...c, t: v } : c; });
         if (!LV.includes(d.lv))
             d.lv = d.t === 'fill' ? 'Completamento' : 'Applicativo';
         if (!Array.isArray(d.e) || d.e.filter((x) => typeof x === 'string' && x.trim()).length < 3)
@@ -6760,6 +7081,284 @@ const IA = (() => {
         return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
     }
     return { chiedi, campoGemini, get gemini() { return !!gemini(); } };
+})();
+
+// =====================================================================
+// 07-locale.ts — v0.44 ALGORITMI LOCALI (zero token): tutto ciò che si può fare senza AI si fa qui.
+// Ogni assistente prova prima questi; chiama l'AI solo per ciò che resta (e le manda meno testo).
+//  A. ASSISTENTE: riconoscitore di intenzioni in italiano (aprire, cercare, quiz, carte, appunti, studia ora,
+//     lezione audio, pacchetti, quiz creati, guida d'uso), più frasi divise in pezzi («… e …», «poi»).
+//  B. TESTI: pulizia delle fonti (intestazioni/piè di pagina ripetuti, numeri di pagina, righe spezzate),
+//     radici delle parole e sinonimi di studio per cercare meglio le pagine, frasi chiave per densità.
+//  C. QUIZ: correzioni automatiche senza rigenerare (corretta troppo lunga → si accorcia; citazione non
+//     verbatim → si sostituisce con la frase vera più simile della fonte; risposte con simboli → digitabili).
+//  D. AUDIO: pulizia del parlato (intercalari, parole ripetute, maiuscole), segmenti dubbi decisi in locale
+//     (solo quelli vanno all'AI), parole quasi uguali a termini noti (distanza di modifica).
+//  E. FLASHCARD: carte estratte dal testo con regole (definizioni «X è…», «Termine: …», grassetti, formule).
+//  F. SPIEGAZIONE BREVE: dalla correzione passo-passo già scritta (Il concetto + In sintesi), senza AI.
+//  G. RIASSUNTO: concetti chiave dell'appunto che mancano nel riassunto (prima del controllo AI).
+// =====================================================================
+const Locale = (() => {
+    const n2 = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+    const STOP = new Set('il lo la i gli le un una uno di da in con su per tra fra del dello della dei degli delle al allo alla ai agli alle dal dallo dalla dai dagli dalle nel nello nella nei negli nelle sul sullo sulla sui sugli sulle e ed o od ma che chi cui non si come piu anche se sono e era essere ha hanno ho questo questa questi queste quello quella quelli quelle mi ti ci vi ne me te lui lei noi voi loro mio mia tuo tua suo sua cosa quale quali quando dove perche molto poco tutto tutti ogni fare fa fanno puo possono deve devono viene vengono stato stata'.split(' '));
+    /** Radice semplice italiana (per confrontare «leve», «leva», «leveraggio» → «lev»). */
+    const radice = (w) => { w = n2(w).replace(/[^a-z0-9]/g, ''); return w.length > 6 ? w.slice(0, w.length - 2) : w.length > 4 ? w.slice(0, w.length - 1) : w; };
+    const SINONIMI = {
+        leva: ['fulcro', 'braccio', 'momento'], momento: ['torcente', 'coppia', 'braccio'], forza: ['newton', 'dinamica'], energia: ['lavoro', 'potenza', 'joule'],
+        entalpia: ['calore', 'termochimica', 'hess'], entropia: ['disordine', 'spontaneita'], equilibrio: ['costante', 'chatelier'], acido: ['base', 'ph', 'protone'],
+        ossidoriduzione: ['redox', 'ossidazione', 'riduzione', 'elettroni'], soluzione: ['concentrazione', 'molarita', 'soluto', 'solvente'], gas: ['pressione', 'volume', 'temperatura'],
+        cellula: ['membrana', 'organelli', 'citoplasma'], mitosi: ['ciclo', 'cromosomi', 'divisione'], meiosi: ['gameti', 'crossing', 'aploide'], dna: ['replicazione', 'nucleotidi', 'elica'],
+        trascrizione: ['rna', 'polimerasi', 'promotore'], traduzione: ['ribosoma', 'codone', 'trna'], enzima: ['substrato', 'catalisi', 'attivazione'], fluido: ['pressione', 'densita', 'bernoulli'],
+        onda: ['frequenza', 'lunghezza', 'suono'], cinematica: ['velocita', 'accelerazione', 'moto'], termodinamica: ['calore', 'lavoro', 'entropia'], elettricita: ['carica', 'corrente', 'potenziale'],
+    };
+    function espandi(parole) {
+        const o = new Set(parole.map(n2));
+        for (const w of parole) {
+            const r = radice(w);
+            for (const k in SINONIMI)
+                if (radice(k) === r)
+                    SINONIMI[k].forEach(x => o.add(x));
+        }
+        return Array.from(o);
+    }
+    // ---------- B. testi ----------
+    /** Toglie da un testo diviso in pagine le righe che si ripetono (intestazioni, piè di pagina, diciture). */
+    function pulisciPagine(pagine) {
+        const conta = new Map();
+        const righe = pagine.map(p => p.split('\n').map(r => r.trim()).filter(Boolean));
+        for (const rr of righe)
+            new Set(rr.map(r => n2(r).replace(/\d+/g, '#'))).forEach(k => conta.set(k, (conta.get(k) || 0) + 1));
+        const soglia = Math.max(3, pagine.length * .3);
+        return righe.map(rr => rr.filter(r => { const k = n2(r).replace(/\d+/g, '#'); return !(conta.get(k) >= soglia && r.length < 120) && !/^(pag(ina)?\.?\s*)?\d{1,4}$/i.test(r) && !/volume concesso in uso/i.test(r); })
+            .join('\n').replace(/(\w)-\n(\w)/g, '$1$2').replace(/([^.:;!?\n])\n(?=[a-zà-ù])/g, '$1 '));
+    }
+    /** Le frasi più dense di parole chiave (per mandare all'AI solo il necessario). */
+    function frasiChiave(testo, chiavi, maxCar) {
+        const rad = new Set(espandi(chiavi).map(radice));
+        const frasi = testo.split(/(?<=[.!?])\s+|\n+/).map((t, i) => ({ t: t.trim(), i, s: t.split(/\s+/).reduce((a, w) => a + (rad.has(radice(w)) ? 1 : 0), 0) })).filter(x => x.t.length > 20);
+        const scelte = [];
+        let tot = 0;
+        for (const f of frasi.slice().sort((a, b) => b.s - a.s)) {
+            if (!f.s || tot + f.t.length > maxCar)
+                continue;
+            scelte.push(f);
+            tot += f.t.length;
+        }
+        return scelte.sort((a, b) => a.i - b.i).map(x => x.t).join(' ');
+    }
+    // ---------- C. quiz ----------
+    /** La corretta è più lunga dei distrattori: prova ad accorciarla togliendo parentesi e incisi finali. */
+    function accorciaCorretta(d) {
+        if (!d || d.t !== 'mcq' || !Array.isArray(d.o) || d.o.length !== 5)
+            return false;
+        const max = Math.max(...d.o.slice(1).map((x) => x.length));
+        if (d.o[0].length <= max)
+            return false;
+        const prove = [(x) => x.replace(/\s*\([^)]*\)/g, ''), (x) => x.replace(/[,;:]\s*(cioè|ovvero|ossia|quindi|perché|poiché|in quanto|dato che)\b.*$/i, ''), (x) => x.replace(/[,;]\s[^,;]*$/, '')];
+        let c = d.o[0];
+        for (const p of prove) {
+            c = p(c).trim();
+            if (c.length <= max && c.length > 2) {
+                d.o[0] = c;
+                return true;
+            }
+        }
+        return false;
+    }
+    /** Citazione non verbatim: la sostituisce con la frase vera della fonte più simile (se lo è abbastanza). */
+    function citazioneVera(c, fonte) {
+        const P = new Set(n2(c).split(/\W+/).filter(w => w.length > 3));
+        if (P.size < 4)
+            return null;
+        let best = '', bs = 0;
+        for (const f of fonte.split(/(?<=[.!?])\s+|\n+/)) {
+            const F = n2(f).split(/\W+/).filter(w => w.length > 3);
+            if (F.length < 4)
+                continue;
+            let x = 0;
+            for (const w of F)
+                if (P.has(w))
+                    x++;
+            const s = x / Math.max(P.size, F.length);
+            if (s > bs) {
+                bs = s;
+                best = f.trim();
+            }
+        }
+        return bs >= .6 && best.length > 20 ? best : null;
+    }
+    // esponenti solo dopo un'unità (m² → m2); dopo un numero (10²) cambierebbe il valore: resta e il controllo la scarta
+    const SIMBOLI = [[/([a-zA-Z])²/g, '$12'], [/([a-zA-Z])³/g, '$13'], [/[·×]/g, '*'], [/÷/g, '/'], [/Δ|δ/g, 'delta'], [/π/g, 'pi'], [/[→←↔]/g, ''], [/µ/g, 'micro'], [/°/g, ' gradi'], [/±/g, '+-'], [/√/g, 'radice di ']];
+    /** Rende digitabili le risposte dei completamenti (aggiunge la variante senza simboli). */
+    function digitabili(a) { const o = new Set(); for (const x of a) {
+        let y = x;
+        for (const [re, s] of SIMBOLI)
+            y = y.replace(re, s);
+        y = y.replace(/\s+/g, ' ').trim();
+        if (y)
+            o.add(y);
+    } return Array.from(o); }
+    // ---------- D. audio ----------
+    const INTERCALARI = /\b(ehm+|eh+|uhm+|mmh+|cioè cioè|diciamo|ok ok|allora allora)\b[,.]?\s*/gi;
+    function pulisciParlato(t) {
+        return t.replace(INTERCALARI, '').replace(/\b(\w+)(\s+\1\b)+/gi, '$1').replace(/\s+([,.;:!?])/g, '$1').replace(/\s{2,}/g, ' ').trim().replace(/^[a-zà-ù]/, c => c.toUpperCase());
+    }
+    function distanza(a, b) {
+        if (Math.abs(a.length - b.length) > 2)
+            return 9;
+        const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+        for (let j = 1; j <= b.length; j++)
+            d[0][j] = j;
+        for (let i = 1; i <= a.length; i++)
+            for (let j = 1; j <= b.length; j++)
+                d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        return d[a.length][b.length];
+    }
+    /** Parole quasi uguali a un termine noto (es. «entalpa» ~ «entalpia»): candidati a errore di ascolto. */
+    function quasiTermini(t, termini) {
+        const T = termini.filter(x => x.length >= 6).map(x => ({ x, n: n2(x) })), o = [];
+        for (const w of t.split(/[^\p{L}]+/u)) {
+            const nw = n2(w);
+            if (nw.length < 5 || STOP.has(nw))
+                continue;
+            for (const k of T) {
+                if (nw === k.n)
+                    break;
+                if (distanza(nw, k.n) <= (k.n.length > 8 ? 2 : 1)) {
+                    o.push({ parola: w, termine: k.x });
+                    break;
+                }
+            }
+        }
+        return o;
+    }
+    /** Segmento dubbio deciso in locale (confidenza del riconoscitore, compressione, termini quasi uguali). */
+    function segmentoDubbio(s, termini) {
+        return (s.lp != null && s.lp < -.6) || (s.cr || 0) > 2.4 || s.t.length < 3 || quasiTermini(s.t, termini).length > 0 || /(\b\w+\b)(?:\s+\1\b){2,}/i.test(s.t);
+    }
+    // ---------- E. flashcard ----------
+    function carteDaTesto(testo, max = 12) {
+        const o = [], visti = new Set();
+        const add = (q, r) => { q = q.trim().replace(/\s+/g, ' '); r = r.trim().replace(/\s+/g, ' ').replace(/[.;]$/, ''); const k = n2(q); if (q.length < 8 || r.length < 2 || r.length > 140 || visti.has(k))
+            return; visti.add(k); o.push({ q, r }); };
+        for (const riga of testo.split('\n')) {
+            const l = riga.replace(/^[-*•\s]+/, '').trim();
+            if (!l || /::/.test(l))
+                continue;
+            let m = /^\*\*(.{2,60})\*\*\s*[:\-–]\s*(.{3,140})$/.exec(l) || /^([A-ZÀ-Ù][^:]{2,50}):\s+(.{3,140})$/.exec(l);
+            if (m) {
+                add('Che cos\'è ' + m[1].replace(/\*/g, '') + '?', m[2]);
+                continue;
+            }
+            m = /^(?:il |lo |la |l'|i |gli |le )?([^,.;:]{3,50}?)\s+(è|sono|si definisce|si chiama|indica|rappresenta)\s+(.{5,140}?)[.;]?$/i.exec(l);
+            if (m && !/^(questo|questa|esso|essa|ciò|che)$/i.test(m[1])) {
+                add(m[2] === 'si chiama' ? 'Come si chiama ' + m[3] + '?' : 'Che cos\'è ' + m[1] + '?', m[2] === 'si chiama' ? m[1] : m[3]);
+                continue;
+            }
+            m = /^([A-Za-zΔρλνμ][\w ]{0,30})\s*=\s*([^=]{2,60})$/.exec(l);
+            if (m && /[a-zA-Z]/.test(m[2]))
+                add('Formula di ' + m[1].trim() + '?', m[1].trim() + ' = ' + m[2].trim());
+            if (o.length >= max)
+                break;
+        }
+        return o.slice(0, max);
+    }
+    // ---------- F. spiegazione breve ----------
+    function spiegazioneBreve(e) {
+        const passi = (Array.isArray(e) ? e : [e]).map(String);
+        const conc = passi.find(x => /^il concetto:/i.test(x)), sint = passi.find(x => /^in sintesi:/i.test(x));
+        if (!conc && !sint)
+            return null;
+        return [conc, sint].filter(Boolean).map(x => x.replace(/^[^:]+:\s*/, '')).join('\n\n');
+    }
+    // ---------- G. riassunto ----------
+    function concettiMancanti(appunto, riassunto, max = 8) {
+        const r = new Set(n2(riassunto).split(/\W+/).map(radice));
+        const cand = new Map();
+        for (const m of appunto.matchAll(/^#+\s*(.+)$|\*\*([^*]{3,40})\*\*|^\s*[-*]?\s*([^:\n]{3,40})\s*::/gm)) {
+            const t = (m[1] || m[2] || m[3] || '').trim();
+            if (t)
+                cand.set(t, (cand.get(t) || 0) + 3);
+        }
+        const freq = new Map();
+        for (const w of n2(appunto).split(/\W+/))
+            if (w.length > 6 && !STOP.has(w))
+                freq.set(w, (freq.get(w) || 0) + 1);
+        freq.forEach((n, w) => { if (n >= 3)
+            cand.set(w, (cand.get(w) || 0) + n); });
+        return Array.from(cand.entries()).filter(([t]) => !n2(t).split(/\W+/).filter(w => w.length > 3).every(w => r.has(radice(w))) ? true : false).sort((a, b) => b[1] - a[1]).map(x => x[0]).slice(0, max);
+    }
+    // ---------- A. assistente ----------
+    const VISTE = [[/statistic/, 'statistiche'], [/\bpiano\b|programma/, 'piano'], [/\b(carte|flashcard|card)\b/, 'carte'], [/errori/, 'errori'], [/esami|appell/, 'esami'], [/syllabus/, 'syllabus'], [/tabell/, 'tabelle'],
+        [/appunt/, 'appunti'], [/calendari|settimana|mese/, 'calendario'], [/\boggi\b|home/, 'oggi'], [/promemoria|cose da fare|to ?do/, 'promemoria'], [/\bnote\b/, 'note'], [/impostazion|preferenz/, 'impostazioni'], [/studio|schede/, 'studio']];
+    const MAT = [[/chimic|mol[ae]|acid|ph\b|redox|entalp|entrop|reazion|legam|atom|orbital|soluzion|gas\b/, 'Chimica'], [/biolog|cellul|dna|rna|protein|mitosi|meiosi|gene|enzim|membran|organell/, 'Biologia'], [/fisic|forz|lev[ae]\b|momento|cinemat|dinamic|energi|onda|fluid|pression|elettr|ottic|termodin/, 'Fisica']];
+    const AIUTO = [
+        [/^(come|dove)\b(?=.*\b(quiz|domande))(?=.*\b(cre|fa|genera))/, 'Studio → Altro ▾ → «Quiz creati in app» → «Crea un quiz»: scrivi l\'argomento, cerca le fonti nel Drive e tocca Crea. Oppure scrivi qui «crea un quiz su …».'],
+        [/^(come|dove)\b(?=.*\b(pacchett|piano))(?=.*\b(caric|aggiorn|import))/, 'Studio → «Aggiorna pacchetti da Drive»: l\'app cerca i pacchetti in tutto il tuo Drive, anche con nomi qualunque.'],
+        [/^(come|dove)\b(?=.*\b(flashcard|carte|card))(?=.*\b(cre|fa))/, 'In un appunto scrivi «domanda :: risposta» oppure {{parola}}: diventa una flashcard. Con ✨ l\'app ne propone altre dal testo.'],
+        [/^(come|dove)\b(?=.*\b(registr|lezion|audio))/, 'Apri un appunto e tocca 🎙: registra (anche in sottofondo mentre scrivi) o carica un file; la trascrizione si corregge da sola.'],
+        [/^(come|dove)\b(?=.*\b(zoom|ingrand))/, 'Nel foglio a mano: pizzica con due dita (puoi anche trascinare mentre zoomi), doppio tocco per 2,5× e di nuovo per il 100%.'],
+        [/^(come|dove)\b(?=.*\b(chiave|groq|gemini))/, 'Altro → Studio e AI → Spiegazioni AI: incolla la chiave Groq (e, se vuoi, quella Gemini).'],
+        [/^(come|dove)\b(?=.*\b(dispositiv|esc|scolleg))/, 'Altro → Dati e backup → Google Drive: «Scollega» per uscire (anche cancellando i dati da qui) e «Dispositivi riconosciuti» per scollegarne altri.'],
+    ];
+    /** Una frase (anche con più richieste) → azioni, oppure null se serve l'AI. */
+    function capisci(frase) {
+        const pezzi = frase.split(/\s*(?:;|\.\s|\be poi\b|\bpoi\b|,\s*e\s+|\s+e\s+(?=(?:crea|fa|apri|vai|mostra|cerca|trova|ricord|aggiung|registr|studia|aggiorna|metti|segna)\w*\b))\s*/i).map(x => x.trim()).filter(Boolean);
+        const out = [];
+        for (const p of pezzi) {
+            const a = uno(p);
+            if (!a)
+                return null;
+            out.push(...a);
+        }
+        return out.length ? out : null;
+    }
+    function uno(p) {
+        const n = n2(p);
+        for (const [re, t] of AIUTO)
+            if (re.test(n))
+                return [{ tipo: 'risposta', testo: t }];
+        if (/quiz creati|quiz dell.?app|miei quiz/.test(n))
+            return [{ tipo: 'quiz_creati' }];
+        let m = /(?:crea(?:mi)?|fa(?:mmi)?|genera(?:mi)?|prepara(?:mi)?|voglio|vorrei|nuovo)?\s*(?:un |dei |delle |degli )?(?:quiz|domande|test|esercizi)\s+(?:su|sul|sulla|sullo|sui|sugli|sulle|di|del|della|dei|delle|riguardo|per)\s+(.+)$/.exec(n);
+        if (m) {
+            const arg = m[1].replace(/\b(per favore|grazie|subito)\b/g, '').trim();
+            if (arg.length < 3)
+                return null;
+            const mat = (MAT.find(([re]) => re.test(arg + ' ' + n)) || [, ''])[1];
+            const cosa = /problem|calcol|esercizi/.test(n) ? 'problemi' : /trabocchett|tranell/.test(n) ? 'trabocchetti' : /teori|definizion/.test(n) ? 'teoria' : 'misto';
+            return [{ tipo: 'quiz', argomento: arg, materia: mat, cosa }];
+        }
+        if (/^(?:crea|fammi|genera|ripassa|apri|mostra|fai)?\s*(?:le |delle |mie )?(?:flashcard|carte|card)\b/.test(n))
+            return [{ tipo: 'carte' }];
+        m = /^(?:cerca|trova|ricerca|dov.?e|dove sono)\s+(.+)$/.exec(n);
+        if (m)
+            return [{ tipo: 'cerca', testo: m[1] }];
+        m = /^(?:crea|nuovo|nuova|scrivi|apri)?\s*(?:un |una )?(?:nuovo |nuova )?(?:appunto|nota|pagina di appunti)\s*(a mano)?\s*(?:su|sul|sulla|di|per|:)?\s*(.*)$/.exec(n);
+        if (m && /appunto|nota|pagina di appunti/.test(n))
+            return [{ tipo: 'appunto', titolo: (m[2] || 'Nuovo appunto').replace(/^\w/, c => c.toUpperCase()), modo: m[1] ? 'mano' : undefined }];
+        if (/(registra|registrare|dett|trascriv).*(lezion|audio)|lezione audio/.test(n))
+            return [{ tipo: 'lezione_audio' }];
+        if (/studia(re)? ora|cosa (devo )?studi|sessione di studio|inizia(mo)? a studiare/.test(n))
+            return [{ tipo: 'studia_ora' }];
+        if (/aggiorna.*(pacchett|piano|quiz).*drive|carica.*pacchett|pacchetti/.test(n))
+            return [{ tipo: 'pacchetti' }];
+        if (/^(apri|aprimi|vai|portami|mostra(mi)?|fammi vedere|voglio vedere|visualizza)\b/.test(n)) {
+            const v = VISTE.find(([re]) => re.test(n));
+            if (v)
+                return [{ tipo: 'apri', vista: v[1] }];
+        }
+        // eventi e promemoria: il riconoscitore del calendario (07-rapido), solo se la frase chiede UNA cosa
+        if (/\b(e|ed|poi|anche)\s+(ricord|crea|fa|apri|cerca|aggiung|metti|segna|registr)\w*/.test(n))
+            return null;
+        const r = interpreta(p);
+        if (r && (r.ora || r.dataEsplicita || r.rrule || r.tipo === 'task'))
+            return [r.tipo === 'task'
+                    ? { tipo: 'promemoria', titolo: r.titolo, data: r.dataEsplicita || r.ora ? ymd(r.giorno) : undefined, ora: r.ora ? pad2(r.ora[0]) + ':' + pad2(r.ora[1]) : undefined }
+                    : { tipo: 'evento', titolo: r.titolo, data: ymd(r.giorno), inizio: r.ora ? pad2(r.ora[0]) + ':' + pad2(r.ora[1]) : undefined, fine: r.fine ? pad2(r.fine[0]) + ':' + pad2(r.fine[1]) : undefined, tutto_il_giorno: r.tuttoIlGiorno, _rr: r.rrule }];
+        return null;
+    }
+    return { radice, espandi, pulisciPagine, frasiChiave, accorciaCorretta, citazioneVera, digitabili, pulisciParlato, quasiTermini, segmentoDubbio, carteDaTesto, spiegazioneBreve, concettiMancanti, capisci, distanza };
 })();
 
 // 07-mano.ts — Scrittura a mano negli appunti (v0.31; v0.39 penne, forme, stabilizzazione: scouting Freenotes/GoodNotes/Notability).
@@ -8861,6 +9460,15 @@ const QuizApp = (() => {
                 x.ai = { l, testo: c.testo, modello: c.modello + ' · salvata' };
                 disegnaQ();
                 return;
+            }
+            // v0.44 locale: la spiegazione breve si ricava dalla correzione passo-passo già scritta (zero token); «rigenera» usa l'AI
+            if (l === 'breve' && !forza) {
+                const t = Locale.spiegazioneBreve(d.e);
+                if (t) {
+                    x.ai = { l, testo: t, modello: 'dalla correzione (senza AI)' };
+                    disegnaQ();
+                    return;
+                }
             }
             // v0.43 memoria: se dopo una spiegazione più corta ne chiede una più lunga, la corta non bastava → lezione
             if (x.ai && x.ai.testo && (l === 'dettagliata' || (l === 'media' && x.ai.l === 'breve')) && x.ai.l !== l)
@@ -11964,8 +12572,9 @@ function vistaAltro() {
     const ds = descrSync();
     const sezDrive = scheda('Google Drive', h('div.sync-riga', null, h('span.sync-pallino.' + ds.cls), h('span', null, ds.testo)), Drive.collegato
         ? [h('div.tenue.piccolo', null, 'Account: ' + Drive.stato.email + '. Dati in "Calendario personale/dati", backup giornaliero in "backup" (ultimi 30). L\'app non elimina mai file: al massimo li sposta in "_cestino app".'),
-            h('div.bottoni', null, h('button.btn', { onclick: () => Drive.stato.sync === 'ok' ? Drive.sincronizza(false) : Drive.login() }, 'Sincronizza ora'), h('button.btn.neutro', { onclick: () => chiedi('Scollegare Google Drive?', [{ testo: 'Scollega', valore: 'si', pericolo: true }], 'I dati restano sia qui sia su Drive.').then(s => { if (s)
-                    Drive.logout(); }) }, 'Scollega'))]
+            h('div.bottoni', null, h('button.btn', { onclick: () => Drive.stato.sync === 'ok' ? Drive.sincronizza(false) : Drive.login() }, 'Sincronizza ora'), h('button.btn.neutro', { onclick: () => chiedi('Uscire dall\'account su questo dispositivo?', [{ testo: 'Esci e cancella i dati da qui', valore: 'via', pericolo: true }, { testo: 'Esci soltanto', valore: 'esci' }], 'I dati restano al sicuro nel tuo Drive.').then(s => { if (s)
+                    Privacy.esci(s === 'via'); }) }, 'Scollega')),
+            Privacy.sezione()]
         : [h('div.tenue.piccolo', null, 'Collega il tuo Google Drive: i dati si salvano in una cartella "Calendario personale" e compaiono identici su iPhone e PC. Solo il tuo account potrà vederli.'),
             h('div.bottoni', null, h('button.btn', { onclick: () => Drive.login() }, 'Accedi con Google'))]);
     const sezDati = scheda('I miei dati', h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'), anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null, h('div.bottoni', null, h('button.btn', { onclick: esporta }, 'Esporta backup'), h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport));
@@ -12243,7 +12852,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.43.0';
+const VERSIONE = '0.44.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
