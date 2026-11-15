@@ -115,3 +115,6 @@ Cache dei tratti decodificati con riquadro verticale; tratti a pressione disegna
 
 ## v0.41.3 — Foglio nero su Android
 Tolta la tela «desynchronized»: su Android (GPU) rende la tela viva opaca e copre il foglio di nero. Tolti anche contain:size e i livelli forzati sulle tele. Il foglio dichiara color-scheme light (niente inversione dal dark mode forzato di Samsung/Chrome). Verifica con emulazione Pixel 7 e Galaxy S9+.
+
+## v0.41.4 — Tablet (Lenovo Tab M11, Android 15)
+Da 700 px in su: barra della penna su più righe (niente strumenti nascosti), bersagli da 44 px, intestazione compatta in orizzontale; passando ad «A mano» il foglio sale in cima. Anteprima della punta con la penna sospesa (hover di Lenovo Tab Pen / S Pen). Pulsante dito: solo icona, con avviso. Testi «Pencil» resi generici (Penna).

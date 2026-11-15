@@ -262,7 +262,9 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   function mostraModo(): void {
     svuota(scambio);
     scambio.append(...([['testo', '⌨️ Testo'], ['mano', '✍️ A mano']] as const).map(([k, t]) => h('button' + (modo === k ? '.attivo' : ''), { onclick: () => {
-      modo = k; const i = imp() as any; i.modoAppunti = k; Stato.salva(i, true); mostraModo(); } }, t)));
+      modo = k; const i = imp() as any; i.modoAppunti = k; Stato.salva(i, true); mostraModo();
+      // v0.41.4 tablet: passando a «A mano» la barra della penna va in cima e il foglio occupa lo schermo
+      if (k === 'mano' && innerWidth >= 700) setTimeout(() => zonaMano.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60); } }, t)));
     zonaMano.hidden = modo !== 'mano';
     if (modo === 'mano' && !pagina) pagina = paginaMano(zonaMano, ap.mano, modifica, sfondoModello, opzMano);
     testo.placeholder = modo === 'mano' ? 'Testo dell\'appunto: scrivilo qui, oppure tocca ✨ nella barra della penna per trascrivere la pagina.' : testo.placeholder;

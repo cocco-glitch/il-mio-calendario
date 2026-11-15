@@ -446,6 +446,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
     mostraVivo(cur); try { Tocco.clic(.7); } catch (_) { /* senza audio */ } if (navigator.vibrate) navigator.vibrate(8);
   }
   vivo.addEventListener('pointerdown', e => {
+    if (sospeso) { pulisciVivo(); sospeso = false; }
     if (e.pointerType === 'pen' && !penna) { penna = true; aggiornaBarra(); }
     if (!scrive(e) || cur || pz) return;
     e.preventDefault(); try { vivo.setPointerCapture(e.pointerId); } catch (_) { /* puntatore sintetico */ } idPuntatore = e.pointerId;
@@ -460,6 +461,15 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
     if (strumento === 'gomma') cancellaVicino(cur[0]);
     if (strumento === 'penna' || strumento === 'evid') { clearTimeout(timerTieni); timerTieni = window.setTimeout(aggancia, 550); }
   });
+  // v0.41.4: anteprima della punta quando la penna è sospesa (Lenovo Tab Pen, S Pen, Apple Pencil su M2+): mostra dove cadrà l'inchiostro
+  let sospeso = false;
+  vivo.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'pen' || e.buttons || cur) return;
+    const r = vivo.getBoundingClientRect(), x = e.clientX - r.left + pag.scrollLeft, y = e.clientY - r.top + pag.scrollTop, rr = Math.max(2, (strumento === 'gomma' ? 14 * PREF_MANO.w : spessore() / 2) * scala);
+    pulisciVivo(); gv.beginPath(); gv.arc(x, y, rr, 0, Math.PI * 2);
+    gv.fillStyle = strumento === 'gomma' ? 'rgba(120,130,160,.25)' : inkV(); gv.globalAlpha = strumento === 'gomma' ? 1 : .45; gv.fill(); gv.globalAlpha = 1; sospeso = true;
+  }, { passive: true });
+  vivo.addEventListener('pointerleave', () => { if (sospeso && !cur) { pulisciVivo(); sospeso = false; } });
   vivo.addEventListener('pointermove', e => {
     if (!cur || e.pointerId !== idPuntatore) return; e.preventDefault();
     const evs = (e as any).getCoalescedEvents ? (e as any).getCoalescedEvents() : [e];
@@ -572,7 +582,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
         APPUNTI_MANO ? { testo: '📋 Incolla', azione: incolla } : null,
       ], 'Foglio: sfondo, righello, pagine, incolla'),
       (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')),
-      ...(penna ? [h('span.tenue.piccolo.mano-nota', null, '✏️ Pencil: il dito scorre')] : [b(dito ? '☝️ scrive' : '☝️ scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito')]),
+      ...(penna ? [h('span.tenue.piccolo.mano-nota', null, '✏️ Penna attiva: il dito scorre')] : [b('☝️', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); aggiornaBarra(); avviso(dito ? 'Il dito scrive' : 'Il dito scorre la pagina', 1200); }, dito ? 'Il dito scrive (tocca per farlo scorrere)' : 'Il dito scorre (tocca per scrivere col dito)')]),
       ...(o.extra ? o.extra().filter(Boolean) as HTMLElement[] : []));
     pannello();
   }

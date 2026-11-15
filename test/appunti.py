@@ -110,7 +110,7 @@ with sync_playwright() as p:
       const ev = (n, x, y) => c.dispatchEvent(new PointerEvent(n, { pointerId: 7, pointerType: tipo, pressure: .6, clientX: r.left + x, clientY: r.top + y, bubbles: true, cancelable: true }));
       ev('pointerdown', 20, 30); for (let i = 1; i < 12; i++) ev('pointermove', 20 + i * 12, 30 + (i % 3) * 6); ev('pointerup', 160, 40); }'''
     pg.evaluate(disegna, 'pen')
-    ok(pg.locator('text=Pencil: il dito scorre').count() == 1, 'Pencil riconosciuta: il dito scorre')
+    ok(pg.locator('text=Penna attiva: il dito scorre').count() == 1, 'Pencil riconosciuta: il dito scorre')
     pg.evaluate(disegna, 'touch')
     pg.screenshot(path='test/appunti-mano.png')
     pg.click('.visore-testa button:has-text("Chiudi")'); pg.wait_for_timeout(300)
