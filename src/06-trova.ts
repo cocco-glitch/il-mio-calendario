@@ -70,8 +70,9 @@ const Trova = (() => {
   async function pacchetti(completa = false): Promise<Trovato[]> {
     let ultima = 0; try { ultima = +(localStorage.getItem('trova-ultima') || 0); } catch (_) { /* */ }
     const incr = !completa && Date.now() - ultima < 7 * 864e5 ? " and modifiedTime > '" + new Date(ultima - 36e5).toISOString() + "'" : '';
-    const firma = await query("fullText contains 'pacchetto-studio'" + incr, 300);
-    const json = await query("(mimeType = 'application/json' or name contains '.json')" + incr, 400);
+    // v0.44 privacy: solo file DI PROPRIETÀ dell'account (mai i pacchetti di altri condivisi con lui)
+    const firma = await query("'me' in owners and fullText contains 'pacchetto-studio'" + incr, 300);
+    const json = await query("'me' in owners and (mimeType = 'application/json' or name contains '.json')" + incr, 400);
     if (incr) { for (const x of MemoriaIA.migliori('ricerca', 'pacchetto', 60)) if (x.v && x.v.id && !firma.some(f => f.id === x.v.id)) firma.push({ ...x.v, noto: true }); }
     else { try { localStorage.setItem('trova-ultima', String(Date.now())); } catch (_) { /* */ } }
     const visti = new Map<string, any>(); for (const f of firma) visti.set(f.id, { f, firma: true }); for (const f of json) if (!visti.has(f.id)) visti.set(f.id, { f, firma: false });

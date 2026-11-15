@@ -114,6 +114,16 @@ interface Preset extends Rec { type: 'preset'; nome: string; valori: Partial<Imp
 interface Occ { ev: Evento; inizio: Date; fine: Date; chiave: string; }
 
 // ---------- Stato ----------
+/** Dati di partenza di un dispositivo nuovo (updatedAt = 1: alla prima sincronizzazione vincono quelli su Drive). */
+function predefiniti(): Rec[] {
+  return [
+    { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi' } as Rec,
+    { id: 'cat-studio', type: 'categoria', updatedAt: 1, nome: 'Studio', colore: '#6c8cff', visibile: true, ordine: 0 } as Rec,
+    { id: 'cat-personale', type: 'categoria', updatedAt: 1, nome: 'Personale', colore: '#2fbf8f', visibile: true, ordine: 1 } as Rec,
+    { id: 'cat-salute', type: 'categoria', updatedAt: 1, nome: 'Salute', colore: '#f0708a', visibile: true, ordine: 2 } as Rec,
+    { id: 'cat-uni', type: 'categoria', updatedAt: 1, nome: 'Uni', colore: '#e9a23b', visibile: true, ordine: 3 } as Rec,
+  ];
+}
 const Stato = (() => {
   const rec = new Map<string, Rec>();
   const TIPI_SERVIZIO = new Set(['notifica']);       // v0.17: lapidi ripulibili dopo 7 giorni
@@ -140,13 +150,7 @@ const Stato = (() => {
       // Primo avvio: categorie e impostazioni di partenza.
       // updatedAt = 1 così, alla prima sincronizzazione, vincono sempre i dati già su Drive.
       if (!rec.has('impostazioni')) {
-        const nuovi: Rec[] = [
-          { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi' },
-          { id: 'cat-studio', type: 'categoria', updatedAt: 1, nome: 'Studio', colore: '#6c8cff', visibile: true, ordine: 0 },
-          { id: 'cat-personale', type: 'categoria', updatedAt: 1, nome: 'Personale', colore: '#2fbf8f', visibile: true, ordine: 1 },
-          { id: 'cat-salute', type: 'categoria', updatedAt: 1, nome: 'Salute', colore: '#f0708a', visibile: true, ordine: 2 },
-          { id: 'cat-uni', type: 'categoria', updatedAt: 1, nome: 'Uni', colore: '#e9a23b', visibile: true, ordine: 3 },
-        ];
+        const nuovi: Rec[] = predefiniti();
         for (const r of nuovi) if (!rec.has(r.id)) rec.set(r.id, r);
         ver++;
         await DB.salva(nuovi);
@@ -181,6 +185,8 @@ const Stato = (() => {
     /** Salva un record aggiornando updatedAt (serve alla sincronizzazione). */
     salva(r: Rec, silenzioso = false): void {
       r.updatedAt = Date.now();
+      // v0.44 privacy: ogni dato porta l'account a cui appartiene (serve a non mescolare mai gli account)
+      try { const em = JSON.parse(localStorage.getItem('imc-email') || '""'); if (em) (r as any).acc = String(em).toLowerCase(); } catch (_) { /* */ }
       rec.set(r.id, r); ver++;
       DB.salva([r]);
       if (!silenzioso) notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
@@ -207,6 +213,10 @@ const Stato = (() => {
       return cambiati.length;
     },
     esporta(): Rec[] { return Array.from(rec.values()); },
+    /** v0.44: cancella TUTTI i dati locali di questo dispositivo (quelli su Drive restano dove sono). */
+    async svuotaLocale(): Promise<void> { const ids = Array.from(rec.keys()); rec.clear(); const p = predefiniti(); for (const r of p) rec.set(r.id, r); ver++; await DB.rimuovi(ids); await DB.salva(p); notifica(); },
+    /** v0.44: rimuove davvero dal dispositivo (senza lapide) i record indicati. */
+    async togliLocale(ids: string[]): Promise<void> { for (const id of ids) rec.delete(id); ver++; await DB.rimuovi(ids); notifica(); },
   };
 })();
 

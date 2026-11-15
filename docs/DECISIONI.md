@@ -150,3 +150,17 @@ tutte le AI con ambiti specifici + linee guida generali:
 - assistente: richieste confermate = esempi (few-shot); azioni tolte = lezioni; richiesta senza date già confermata 2 volte = nessuna chiamata AI.
 - spiegazioni: se dopo la breve chiede la dettagliata, lezione per quella materia.
 Altro → Spiegazioni AI → «Memoria degli assistenti»: vedere e far dimenticare. Test: test/memoria.py (anche sotto sforzo: 5000 voci).
+
+## v0.44 — Algoritmi locali (zero token), assistente riparato, privacy tra account
+- 07-locale.ts: intenzioni dell'assistente in italiano (quiz/materia/tipo, carte, appunti, cerca, apri vista, studia ora,
+  lezione audio, pacchetti, guida d'uso, più richieste in una frase, eventi/promemoria via 07-rapido); pulizia delle fonti
+  (intestazioni ripetute, righe spezzate), radici e sinonimi di studio, frasi chiave; quiz: corretta accorciata, citazione
+  sostituita con la frase vera più simile, risposte rese digitabili; audio: intercalari/ripetizioni, segmenti dubbi in
+  locale (all'AI solo quelli, nelle lezioni lunghe), parole quasi uguali ai termini noti; flashcard per regole (l'AI solo
+  per «altre»); spiegazione breve dalla correzione passo-passo; concetti mancanti nel riassunto + testo ridotto all'AI.
+- Assistente: era la risposta dell'AI scartata se usava nomi diversi (actions/type/title/elenco nudo): ora normalizzata;
+  prima prova gli algoritmi locali (funziona anche senza chiave); se nessuno capisce propone scelte, mai «riscrivi».
+- 06-privacy.ts: «acc» su ogni record; cambio di account sul dispositivo = dati locali cancellati PRIMA dell'unione;
+  record di altri account mai uniti; per i non proprietari pulizia (con lapide) di programma/progressi/statistiche del
+  proprietario; ricerca pacchetti solo su file di proprietà ('me' in owners); dispositivi riconosciuti con «Scollega»
+  remoto (alla riapertura cancella ed esce); «Esci» con cancellazione dei dati dal dispositivo. Identità = account Google.

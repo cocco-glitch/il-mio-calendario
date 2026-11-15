@@ -56,15 +56,18 @@ const CreaQuiz = (() => {
       if (f.mimeType === 'application/pdf') {
         const L = await caricaPdfJs(); passo('Leggo «' + f.name + '»…');
         const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()) }).promise;
-        const pag: { i: number; t: string; s: number }[] = [];
+        const grezze: { i: number; t: string }[] = [];
         for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
           if (i % 25 === 0) passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);
           const tc = await (await doc.getPage(i)).getTextContent();
-          const t = tc.items.map((x: any) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/Volume concesso in uso a[^\n]*/gi, '').trim();
-          if (t.length < 40) continue;
-          const tn = n2(t); let s = 0; for (const w of chiavi) { const k = tn.split(w).length - 1; s += k ? 3 + Math.min(k, 8) : 0; }
-          pag.push({ i, t, s: s + (utili.has(i) ? 25 : 0) });
+          grezze.push({ i, t: tc.items.map((x: any) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').trim() });
         }
+        // v0.44 locale: via intestazioni/piè di pagina ripetuti e righe spezzate (meno token), radici e sinonimi per trovare le pagine
+        const pulite = Locale.pulisciPagine(grezze.map(x => x.t)), rad = Locale.espandi(chiavi).map(Locale.radice);
+        const pag: { i: number; t: string; s: number }[] = [];
+        grezze.forEach((g0, k) => { const t = pulite[k]; if (t.length < 40) return; const parole = n2(t).split(/[^a-z0-9]+/); let s = 0;
+          for (const r of rad) { const c = parole.filter(w => w.startsWith(r)).length; s += c ? 3 + Math.min(c, 8) : 0; }
+          pag.push({ i: g0.i, t, s: s + (utili.has(g0.i) ? 25 : 0) }); });
         const scelte = pag.filter(x => x.s > 0).sort((a, b) => b.s - a.s);
         const tieni: typeof pag = []; let tot = 0;
         for (const p of scelte) { if (tot + p.t.length > budget) break; tieni.push(p); tot += p.t.length; }
@@ -107,6 +110,11 @@ const CreaQuiz = (() => {
   function controlla(d: any, fontiTesto: string, altre: string[]): string[] {
     const p: string[] = [];
     if (!d || typeof d.q !== 'string' || d.q.trim().length < 15) return ['testo mancante'];
+    // v0.44 correzioni locali (zero token) prima di giudicare: corretta accorciata, risposte rese digitabili,
+    // citazioni sostituite con la frase vera della fonte più simile
+    Locale.accorciaCorretta(d);
+    if (d.t === 'fill' && Array.isArray(d.a)) d.a = Locale.digitabili(d.a.map(String));
+    if (Array.isArray(d.cit)) d.cit = d.cit.map((c: any) => { if (!c || typeof c.t !== 'string') return c; const ftt = n2(fontiTesto).replace(/[^a-z0-9]/g, ''); if (ftt.includes(n2(c.t).replace(/[^a-z0-9]/g, ''))) return c; const v = Locale.citazioneVera(c.t, fontiTesto); return v ? { ...c, t: v } : c; });
     if (!LV.includes(d.lv)) d.lv = d.t === 'fill' ? 'Completamento' : 'Applicativo';
     if (!Array.isArray(d.e) || d.e.filter((x: any) => typeof x === 'string' && x.trim()).length < 3) p.push('correzione passo-passo troppo corta');
     if (d.t === 'mcq') {

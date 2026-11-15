@@ -234,6 +234,8 @@ const Drive = (() => {
           token = '';
           throw new Error('Questa app è privata: l\'account ' + email + ' non è autorizzato.');
         }
+        // v0.44 privacy: se su questo dispositivo c'erano i dati di un altro account, si cancellano PRIMA di unire
+        await Privacy.primaDiUnire(email);
         stato.email = email; LS.set('email', stato.email);
         if (typeof Studio !== 'undefined') { if (email.toLowerCase() !== PROPRIETARIO) Studio.togliSito(); else Studio.caricaDalSito(); }
       }
@@ -250,7 +252,12 @@ const Drive = (() => {
         try { const j = JSON.parse(testoRemoto); remoti = Array.isArray(j) ? j : j.records || []; } catch (_) { throw new Error('Il file dati.json su Drive non è leggibile: non lo sovrascrivo.'); }
       }
       // 2. unisco (vince l'updatedAt più alto, per record)
+      // v0.44 privacy: mai unire record di un altro account; dispositivo riconosciuto; pulizia di ciò che non è suo
+      if (Privacy.accLocale() !== stato.email.toLowerCase()) await Privacy.primaDiUnire(stato.email);
+      remoti = remoti.filter(r => !(r as any).acc || (r as any).acc === stato.email.toLowerCase());
       Stato.unisci(remoti);
+      if (!(await Privacy.dispositivo(stato.email))) return;
+      await Privacy.pulisciAltrui(stato.email);
       // 3. se ho qualcosa di più nuovo del remoto, ricarico
       const remotiMap = new Map(remoti.map(r => [r.id, r.updatedAt || 0]));
       const miei = Stato.esporta();

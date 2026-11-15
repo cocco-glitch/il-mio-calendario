@@ -201,6 +201,8 @@ const QuizApp = (() => {
         cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo };
       const id = Spiega.idDi(dd, l), c = Stato.prendi<Spiegazione>(id);
       if (c && !c.deleted && !forza) { x.ai = { l, testo: c.testo, modello: c.modello + ' · salvata' }; disegnaQ(); return; }
+      // v0.44 locale: la spiegazione breve si ricava dalla correzione passo-passo già scritta (zero token); «rigenera» usa l'AI
+      if (l === 'breve' && !forza) { const t = Locale.spiegazioneBreve(d.e); if (t) { x.ai = { l, testo: t, modello: 'dalla correzione (senza AI)' }; disegnaQ(); return; } }
       // v0.43 memoria: se dopo una spiegazione più corta ne chiede una più lunga, la corta non bastava → lezione
       if (x.ai && x.ai.testo && (l === 'dettagliata' || (l === 'media' && x.ai.l === 'breve')) && x.ai.l !== l) MemoriaIA.nota('spiegazioni', 'lezione', 'piu-passaggi-' + norm(mat0(pk, m).nome || m), 'In ' + (mat0(pk, m).nome || m) + ' lo studente chiede spesso più dettagli: anche nelle spiegazioni brevi non saltare i passaggi intermedi.');
       x.ai = { l, attesa: true }; disegnaQ();

@@ -18,6 +18,9 @@ type AzioneA =
   | { tipo: 'studia_ora' } | { tipo: 'lezione_audio'; titolo?: string } | { tipo: 'pacchetti' } | { tipo: 'quiz_creati' }
   | { tipo: 'risposta'; testo: string };
 
+/** il dialogo di scelta globale (dentro Assistente «chiedi» è la funzione dell'assistente) */
+const scegliTra = (t: string, o: { testo: string; valore: string; pericolo?: boolean }[], sotto?: string) => chiedi(t, o, sotto);
+
 const Assistente = (() => {
   const VISTE: Record<string, () => void> = {
     oggi: () => vai('oggi'), calendario: () => vai('cal'), studio: () => { UI.studioVista = 'schede'; vai('studio'); }, piano: () => { UI.studioVista = 'piano'; vai('studio'); },
@@ -59,7 +62,7 @@ const Assistente = (() => {
       case 'evento': case 'promemoria': {
         const g = giorno(a.data) || inizioGiorno(new Date()), o = a.tipo === 'evento' ? ora(a.inizio) : ora(a.ora);
         const r: Rapido = { tipo: a.tipo === 'evento' ? 'evento' : 'task', titolo: a.titolo, giorno: g, ora: o, fine: a.tipo === 'evento' ? ora(a.fine) : undefined,
-          tuttoIlGiorno: a.tipo === 'evento' ? (!!a.tutto_il_giorno || !o) : false, rrule: ricorrenza(a.ripeti), dataEsplicita: !!a.data } as Rapido;
+          tuttoIlGiorno: a.tipo === 'evento' ? (!!a.tutto_il_giorno || !o) : false, rrule: (a as any)._rr || ricorrenza(a.ripeti), dataEsplicita: !!a.data } as Rapido;
         return creaDaRapido(r);
       }
       case 'appunto': { const i = imp() as any; if (a.modo) { i.modoAppunti = a.modo; Stato.salva(i, true); } vai('appunti'); setTimeout(() => apriAppunto(undefined, { titolo: a.titolo, testo: a.testo || '' } as any), 150); return null; }
@@ -97,17 +100,55 @@ const Assistente = (() => {
     const es = MemoriaIA.migliori('assistente', 'esempio', 4, frase);
     const esempi = es.length ? '\nESEMPI DI QUESTO UTENTE (richiesta → azioni che ha confermato; le date erano relative al giorno indicato):\n' + es.map(x => '[' + x.v.data + '] «' + x.k + '» → ' + JSON.stringify({ azioni: x.v.azioni })).join('\n') : '';
     const r = await IA.chiedi([{ role: 'system', content: SISTEMA + MemoriaIA.linee('assistente', 5) + esempi + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
-    return ((r.j && r.j.azioni) || []).filter((a: any) => a && typeof a.tipo === 'string').slice(0, 6);
+    return normalizza(r.j);
+  }
+  // v0.44: i modelli a volte rispondono con nomi diversi ({"actions":…}, "type", "title", un elenco nudo…):
+  // tutto viene ricondotto ai nostri tipi, così una risposta valida non viene più scartata.
+  const SIN: Record<string, string> = { event: 'evento', evento: 'evento', appuntamento: 'evento', reminder: 'promemoria', task: 'promemoria', todo: 'promemoria', promemoria: 'promemoria',
+    note: 'appunto', nota: 'appunto', appunto: 'appunto', quiz: 'quiz', crea_quiz: 'quiz', test: 'quiz', flashcard: 'carte', flashcards: 'carte', cards: 'carte', carte: 'carte', card: 'carte',
+    search: 'cerca', cerca: 'cerca', ricerca: 'cerca', open: 'apri', apri: 'apri', vai: 'apri', naviga: 'apri', answer: 'risposta', reply: 'risposta', risposta: 'risposta', messaggio: 'risposta',
+    studia_ora: 'studia_ora', study: 'studia_ora', lezione_audio: 'lezione_audio', audio: 'lezione_audio', pacchetti: 'pacchetti', quiz_creati: 'quiz_creati' };
+  function normalizza(j: any): AzioneA[] {
+    let l: any[] = Array.isArray(j) ? j : j ? (j.azioni || j.actions || j.azione || j.action || j.risultato || (j.tipo || j.type ? [j] : [])) : [];
+    if (!Array.isArray(l)) l = [l];
+    const out: AzioneA[] = [];
+    for (let a of l) {
+      if (!a || typeof a !== 'object') continue;
+      if (a.parametri || a.params || a.parameters || a.dati) a = { ...a, ...(a.parametri || a.params || a.parameters || a.dati) };
+      const t = SIN[norm(String(a.tipo || a.type || a.azione || a.action || a.nome || '')).replace(/\s+/g, '_')]; if (!t) continue;
+      const x: any = { tipo: t };
+      x.titolo = a.titolo || a.title || a.nome_evento || a.testo || a.text;
+      x.data = a.data || a.date || a.giorno; x.inizio = a.inizio || a.start || a.ora_inizio || a.ora || a.time; x.fine = a.fine || a.end || a.ora_fine; x.ora = a.ora || a.time || a.inizio;
+      x.tutto_il_giorno = a.tutto_il_giorno || a.allDay || a.all_day; x.ripeti = a.ripeti || a.ricorrenza || a.repeat;
+      x.argomento = a.argomento || a.topic || a.argument || a.testo || a.query || a.titolo; x.materia = a.materia || a.subject; x.cosa = a.cosa || a.tipo_domande; x.parole = a.parole || a.keywords;
+      x.testo = a.testo || a.text || a.query || a.risposta || a.answer || a.messaggio; x.vista = a.vista || a.view || a.schermata || a.pagina; x.modo = a.modo || a.mode;
+      if ((t === 'evento' && x.titolo && x.data) || (t === 'promemoria' && x.titolo) || (t === 'appunto') || (t === 'quiz' && x.argomento) || (t === 'cerca' && x.testo) || (t === 'apri' && x.vista) || (t === 'risposta' && x.testo) || ['carte', 'studia_ora', 'lezione_audio', 'pacchetti', 'quiz_creati'].includes(t)) {
+        if (t === 'appunto' && !x.titolo) x.titolo = 'Nuovo appunto';
+        out.push(x);
+      }
+    }
+    return out.slice(0, 6);
   }
   /** Mostra le azioni capite e le esegue: subito quelle innocue, con un tocco quelle che creano qualcosa. */
   async function chiedi(frase: string): Promise<void> {
-    if (!Spiega.attiva && !IA.gemini) { avviso('Per l\'assistente serve la chiave AI gratuita (Altro → Spiegazioni AI). Intanto: scrivi eventi come «domani 15-17 Chimica».', 7000); return; }
     const pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), h('span.audio-stato', null, 'Capisco «' + frase.slice(0, 40) + '»…'));
     document.body.appendChild(pill);
-    let az: AzioneA[] = [];
-    try { az = await capisci(frase); } catch (e: any) { pill.remove(); avviso(String(e.message || e), 6000); return; }
+    let az: AzioneA[] = [], errore = '';
+    // v0.44: prima gli algoritmi locali (zero token, immediati); l'AI solo per il resto
+    const loc = Locale.capisci(frase) as AzioneA[] | null;
+    if (loc) az = loc;
+    else if (!Spiega.attiva && !IA.gemini) errore = 'manca la chiave AI gratuita (Altro → Spiegazioni AI)';
+    else { try { az = await capisci(frase); } catch (e: any) { errore = String(e.message || e); } }
     pill.remove();
-    if (!az.length) { avviso('Non ho capito: prova a dirlo con altre parole (es. «crea un quiz sulle leve», «domani alle 9 ripasso fisica»).', 6000); return; }
+    if (!az.length) {
+      // mai un vicolo cieco: propongo le interpretazioni più probabili con un tocco
+      const f = frase.replace(/^(crea(mi)?|fammi|voglio|vorrei)\s+/i, '');
+      const s = await scegliTra(errore ? 'L\'AI non ha risposto (' + errore.slice(0, 80) + '). Cosa vuoi fare?' : 'Cosa vuoi fare con «' + frase.slice(0, 60) + '»?',
+        [{ testo: '✨ Crea un quiz su «' + f.slice(0, 40) + '»', valore: 'quiz' }, { testo: '🔎 Cerca «' + f.slice(0, 40) + '»', valore: 'cerca' }, { testo: '🔔 Promemoria «' + f.slice(0, 40) + '»', valore: 'prom' }, { testo: '📝 Nuovo appunto', valore: 'app' }]);
+      const scelta: AzioneA | null = s === 'quiz' ? { tipo: 'quiz', argomento: f } : s === 'cerca' ? { tipo: 'cerca', testo: f } : s === 'prom' ? { tipo: 'promemoria', titolo: f } : s === 'app' ? { tipo: 'appunto', titolo: f } : null;
+      if (scelta) { const r = esegui(scelta); MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: [scelta] }); if (r) avviso('✓ Creato: ' + descrivi(scelta)); }
+      return;
+    }
     const innocue = az.every(a => ['apri', 'cerca', 'quiz', 'carte', 'studia_ora', 'quiz_creati', 'pacchetti', 'lezione_audio'].includes(a.tipo)) && az.length === 1;
     if (innocue) { esegui(az[0]); MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: az }); return; }
     const risposte = az.filter(a => a.tipo === 'risposta') as { tipo: 'risposta'; testo: string }[], fare = az.filter(a => a.tipo !== 'risposta');

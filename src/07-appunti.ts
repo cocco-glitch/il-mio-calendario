@@ -376,6 +376,9 @@ function apriCornell(a: Appunto, copri = false): void {
 /** fuoco (v0.37): testo di un PDF/slide appena inserito → carte su QUEL testo, non sull'inizio dell'appunto. */
 async function aiDomande(a: Appunto, dopo: (righe: string[]) => void, fuoco?: { nome: string; testo: string }): Promise<void> {
   if (!a.testo.trim() && !fuoco) { avviso('Scrivi prima qualcosa.'); return; }
+  // v0.44 locale: prima le carte che si ricavano con regole (definizioni, «Termine: …», formule); l'AI solo se ne servono altre
+  const locali = Locale.carteDaTesto(fuoco ? fuoco.testo : a.testo);
+  if (locali.length >= 4 && !(aiDomande as any)._forza) { mostraProposte(locali, dopo, () => { (aiDomande as any)._forza = true; aiDomande(a, dopo, fuoco).finally(() => { (aiDomande as any)._forza = false; }); }); return; }
   avviso('✨ Preparo le domande…', 15000);
   let d: any;
   try {
@@ -384,11 +387,15 @@ async function aiDomande(a: Appunto, dopo: (righe: string[]) => void, fuoco?: { 
         ? { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nTesto delle slide/PDF «' + fuoco.nome + '»:\n' + fuoco.testo.slice(0, 12000) + '\n\nCrea da ' + (fuoco.testo.length > 4000 ? '8 a 12' : '4 a 8') + ' flashcard sui concetti, definizioni e formule più importanti di QUESTO testo; ignora intestazioni ripetute, numeri di pagina e diciture legali.' }
         : { role: 'user', content: 'Titolo: ' + a.titolo + '\n\nAppunto:\n' + a.testo.slice(0, 9000) + '\n\nCrea da 4 a 8 flashcard sui concetti più importanti che NON hanno già una riga «domanda :: risposta».' }], 0.3);
   } catch (e: any) { avviso(String(e.message || e), 8000); return; }
-  const lista: { q: string; r: string }[] = (d && d.domande || []).filter((x: any) => x && x.q && x.r).slice(0, 12);
+  const lista: { q: string; r: string }[] = locali.concat((d && d.domande || []).filter((x: any) => x && x.q && x.r)).slice(0, 14);
   if (!lista.length) { avviso('Nessuna domanda proposta.'); return; }
+  mostraProposte(lista, dopo);
+}
+function mostraProposte(lista: { q: string; r: string }[], dopo: (righe: string[]) => void, altreAI?: () => void): void {
   const scelte = lista.map(() => true);
   foglio({ titolo: '✨ Domande proposte', etichettaSalva: 'Aggiungi le scelte', corpo: h('div.modulo', null,
-    h('div.tenue.piccolo', null, 'Tieni solo quelle utili: diventano righe «domanda :: risposta» in fondo all\'appunto, quindi flashcard. Puoi correggerle dopo.'),
+    h('div.tenue.piccolo', null, (altreAI ? 'Ricavate dal testo senza AI. ' : '') + 'Tieni solo quelle utili: diventano righe «domanda :: risposta» in fondo all\'appunto, quindi flashcard. Puoi correggerle dopo.'),
+    altreAI ? h('button.btn.neutro', { type: 'button', onclick: () => { document.querySelector('.foglio-sfondo')?.remove(); altreAI(); } }, '✨ Altre con l\'AI') : null,
     lista.map((x, i) => h('label.gen-arg', null, h('input', { type: 'checkbox', checked: true, onchange: (e: Event) => { scelte[i] = (e.target as HTMLInputElement).checked; } }),
       h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.q), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, x.r))))),
     salva: () => { const r = lista.filter((_x, i) => scelte[i]).map(x => '- ' + x.q.replace(/\s::\s/g, ' ') + ' :: ' + x.r.replace(/\n/g, ' ')); if (r.length) dopo(r); } });
@@ -398,8 +405,11 @@ async function aiRiassunto(a: Appunto): Promise<void> {
   if (!(a.riassunto || '').trim()) { avviso('Scrivi prima il riassunto: l\'AI ti dice cosa manca, non lo scrive al posto tuo.'); return; }
   avviso('✨ Leggo il riassunto…', 15000);
   try {
+    // v0.44 locale: concetti dell'appunto assenti nel riassunto trovati con regole; all'AI solo le frasi pertinenti
+    const mancaLoc = Locale.concettiMancanti(a.testo, a.riassunto || '');
+    const testoAI = a.testo.length > 4000 ? Locale.frasiChiave(a.testo, (a.riassunto || '').split(/\s+/).concat(mancaLoc), 4000) || a.testo.slice(0, 4000) : a.testo;
     const d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor per il semestre filtro di Medicina. Confronti il riassunto dello studente con il suo appunto. NON riscrivere il riassunto. Rispondi in italiano, con il tu, in JSON: {"ok":"cosa va bene (1 frase)","manca":["concetto chiave mancante", ...],"errori":["affermazione imprecisa e correzione", ...]}' },
-      { role: 'user', content: 'Appunto:\n' + a.testo.slice(0, 8000) + '\n\nRiassunto dello studente:\n' + a.riassunto }], 0.2);
+      { role: 'user', content: 'Appunto (parti pertinenti):\n' + testoAI + (mancaLoc.length ? '\n\nConcetti che sembrano mancare (verificali): ' + mancaLoc.join(', ') : '') + '\n\nRiassunto dello studente:\n' + a.riassunto }], 0.2);
     foglio({ titolo: '✨ Riscontro sul riassunto', corpo: h('div.modulo', null, d.ok ? h('div', null, '✅ ' + d.ok) : null,
       (d.manca || []).length ? h('div', null, h('b', null, 'Manca:'), (d.manca as string[]).map(x => h('div', null, '• ' + x))) : h('div', null, 'Non manca nulla di importante. 👍'),
       (d.errori || []).length ? h('div', null, h('b', null, 'Da correggere:'), (d.errori as string[]).map(x => h('div', null, '• ' + x))) : null) });

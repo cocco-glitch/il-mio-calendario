@@ -65,12 +65,19 @@ const Lezioni = (() => {
     if (!seg.length) throw new Error('non ho sentito parole nell\'audio');
     // correzioni confermate più volte: applicate subito, senza chiedere all'AI (meno token)
     const daMemoria: { i: number; prima: string; dopo: string; nota: string; ok: boolean }[] = [];
+    seg.forEach(x => { x.t = Locale.pulisciParlato(x.t); });   // v0.44 locale: intercalari e ripetizioni via (meno token)
     seg.forEach((x, i) => { const c = MemoriaIA.correggi('audio', x.t); if (c.cambi.length) { daMemoria.push({ i, prima: x.t, dopo: c.testo, nota: 'dalla memoria: ' + c.cambi.map(z => z.prima + ' → ' + z.dopo).join(', '), ok: true }); x.t = c.testo; x.lp = 0; } });
     // 2) controllo di coerenza (blocchi da ~120 segmenti per restare nei limiti)
     passo('2/3 Controllo la coerenza del testo…');
     const dubbi = new Map<number, string>(), termini = new Set<string>();
-    for (let a = 0; a < seg.length; a += 120) {
-      const righe = seg.slice(a, a + 120).map((x, k) => (a + k) + (x.lp != null && (x.lp < -.6 || (x.cr || 0) > 2.4) ? ' ⚠' : '') + ' | ' + x.t).join('\n');
+    // v0.44 locale: nelle lezioni lunghe all'AI vanno solo i segmenti dubbi (con il vicino prima e dopo)
+    const glossario = noti.concat(contesto.testo.split(/\W+/).filter(w => w.length > 6)).slice(0, 80);
+    const scelti = new Set<number>();
+    if (seg.length <= 40) seg.forEach((_, i) => scelti.add(i));
+    else seg.forEach((x, i) => { if (Locale.segmentoDubbio(x, glossario)) { scelti.add(i); if (i) scelti.add(i - 1); if (i + 1 < seg.length) scelti.add(i + 1); } });
+    const daVedere = Array.from(scelti).sort((p, q) => p - q);
+    for (let a = 0; a < daVedere.length; a += 120) {
+      const righe = daVedere.slice(a, a + 120).map(k => k + (seg[k].lp != null && (seg[k].lp! < -.6 || (seg[k].cr || 0) > 2.4) ? ' ⚠' : '') + ' | ' + seg[k].t).join('\n');
       const r = await Spiega.chat([{ role: 'system', content: 'Sei un revisore di trascrizioni automatiche di lezioni universitarie italiane. Rispondi SOLO in JSON.' },
         { role: 'user', content: 'Argomento: ' + contesto.titolo + (contesto.step ? ' · ' + contesto.step : '') + '\nSegmenti numerati (⚠ = il riconoscitore era poco sicuro):\n' + righe +
           (daMemoria.length ? '\nCorrezioni già applicate dalla memoria (non segnalarle): ' + daMemoria.map(z => z.nota.replace('dalla memoria: ', '')).join('; ') : '') +
