@@ -43,6 +43,25 @@ P 3.2.8 1/3 | Teoria degli urti e fattori che influenzano la velocità | 183-198
 P 3.2.8 2/3 | Arrhenius, energia di attivazione e temperatura | 183-198 | UD3.2: slide 45, 49–51
 R 3.2.8 3/3 | Profili energetici: stato di transizione e intermedi | 183-198 | UD3.2: slide 52–58
 P 3.2.9 1/1 | Catalizzatori: omogenei, eterogenei, enzimi | 198-202 | UD3.2: slide 59–65
+@C 3.3 | Equilibrio chimico, Le Chatelier, prodotto di solubilità | Mar 17/11 – giorno 7 di 23 · in coppia con F3.2 | Simulazione 3 Dom 22/11 · Sprint Chimica Sab 05/12 · raffinamento 10/12–10/01
+= 13 4 29 14 29
+P 3.3.1 1/2 | Equilibrio dinamico e reazioni reversibili | 203-205 | UD3.3: slide 2–7
+R 3.3.1 2/2 | Equilibrio e stato stazionario | 212-213 | UD3.3: slide 42–46
+P 3.3.2 1/2 | Scrivere la costante di equilibrio | 205-212 | UD3.3: slide 7–18
+P 3.3.2 2/2 | Cosa dice il valore di K | 205-210 | UD3.3: slide 11–15
+P 3.3.3 1/1 | Problemi su Kp e Kc | 210-212 | UD3.3: slide 19–24
+P 3.3.4 1/2 | Quoziente di reazione e direzione | 219-220 | UD3.3: slide 25–29, 37
+P 3.3.4 2/2 | Problemi con le tabelle iniziale-variazione-equilibrio | 207-208,219-220 | UD3.3: slide 38–41
+P 3.3.5 1/2 | Energia libera, Q e K | 220-222 | UD3.3: slide 30–36
+R 3.3.5 2/2 | Problemi su ΔG° e K | 220-222,229 | UD3.3: slide 33–37; UD3.4: slide 2–3
+P 3.3.6 1/3 | Le Châtelier: concentrazioni | 213-219 | UD3.3: slide 47–51
+P 3.3.6 2/3 | Le Châtelier: volume e pressione | 213-219 | UD3.3: slide 52–53
+R 3.3.6 3/3 | Le Châtelier: temperatura e catalizzatore | 213-219 | UD3.3: slide 54–57
+P 3.3.7 1/2 | Solubilità e prodotto di solubilità | 222-228 | UD3.4: slide 6–14
+P 3.3.7 2/2 | Problemi: s, Kps e precipitazione | 222-228 | UD3.4: slide 15–18
+P 3.3.8 1/2 | Ione comune, complessazione ed equilibri multipli | 228-230 | UD3.4: slide 2–5, 19–20
+R 3.3.8 2/2 | Problemi su ione comune ed equilibri multipli | 228-230 | UD3.4: slide 4–5, 19–20, 33–34
+P 3.3.9 1/1 | Equilibri nei sistemi biologici | 230-231 | UD3.4: slide 21–33
 @B 3.1 | Replicazione del DNA (+ cromosomi, telomeri, genoma umano, trasferimento genico nei batteri) | Sab 14/11 – giorno 4 di 23 · in coppia con C3.1 | Simulazione 3 Dom 22/11 · Sprint Biologia Ven 04/12 · raffinamento 10/12–10/01
 = 13 7 28 18 30
 P 3.1.1 1/2 | Modelli di replicazione ed esperimento di Meselson e Stahl | 144-145 | U3_L1 (tutta la lezione)
