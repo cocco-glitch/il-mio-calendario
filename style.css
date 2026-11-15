@@ -838,3 +838,8 @@ button, a, .chip, [role=tab], .nota-tessera { touch-action: manipulation; }   /*
 .cq-fonti { display: flex; flex-direction: column; gap: 8px; max-height: 42vh; overflow: auto; }
 .cq-fonte { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 10px; border-radius: 10px; background: var(--sup2); }
 .cq-fonte b { word-break: break-word; }
+/* v0.43 memoria degli assistenti */
+.memia { display: flex; flex-direction: column; gap: 6px; }
+.memia-amb summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.memia-voce { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; background: var(--sup2); font-size: 14px; margin: 4px 0; }
+.memia-voce span { min-width: 0; overflow-wrap: anywhere; }

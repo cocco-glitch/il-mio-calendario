@@ -2550,10 +2550,29 @@ const Trova = (() => {
         }
         return { ...f, punti: Math.round(p), perche, cartella: cart };
     }
-    /** PACCHETTI (piani, step, corsi): ovunque nel Drive. */
-    async function pacchetti() {
-        const firma = await query("fullText contains 'pacchetto-studio'", 300);
-        const json = await query("(mimeType = 'application/json' or name contains '.json')", 400);
+    /** PACCHETTI (piani, step, corsi): ovunque nel Drive.
+     *  v0.43 memoria: dopo una ricerca completa, per 7 giorni cerca solo i file MODIFICATI da allora
+     *  e riaggiunge quelli già noti (MemoriaIA, tipo «pacchetto»): molte meno chiamate al Drive. */
+    async function pacchetti(completa = false) {
+        let ultima = 0;
+        try {
+            ultima = +(localStorage.getItem('trova-ultima') || 0);
+        }
+        catch (_) { /* */ }
+        const incr = !completa && Date.now() - ultima < 7 * 864e5 ? " and modifiedTime > '" + new Date(ultima - 36e5).toISOString() + "'" : '';
+        const firma = await query("fullText contains 'pacchetto-studio'" + incr, 300);
+        const json = await query("(mimeType = 'application/json' or name contains '.json')" + incr, 400);
+        if (incr) {
+            for (const x of MemoriaIA.migliori('ricerca', 'pacchetto', 60))
+                if (x.v && x.v.id && !firma.some(f => f.id === x.v.id))
+                    firma.push({ ...x.v, noto: true });
+        }
+        else {
+            try {
+                localStorage.setItem('trova-ultima', String(Date.now()));
+            }
+            catch (_) { /* */ }
+        }
         const visti = new Map();
         for (const f of firma)
             visti.set(f.id, { f, firma: true });
@@ -2570,15 +2589,24 @@ const Trova = (() => {
         }
         return out.sort((a, b) => b.punti - a.punti);
     }
-    /** FILE PER UN ARGOMENTO (fonti di studio: PDF, Documenti, slide, testi). */
+    /** FILE PER UN ARGOMENTO (fonti di studio: PDF, Documenti, slide, testi).
+     *  v0.43 memoria: prima guarda «dove stava cosa» (argomenti simili già cercati e usati con successo):
+     *  se la memoria è buona basta UNA ricerca nel Drive invece di sei. */
     async function fonti(argomento, extraParole = [], max = 12) {
+        const ricordati = MemoriaIA.migliori('ricerca', 'posto', 3, argomento).filter(x => MemoriaIA.simile(argomento, x.k) >= .5);
+        const daMemoria = [];
+        for (const x of ricordati)
+            for (const f of (x.v && x.v.files) || [])
+                if (!daMemoria.some(y => y.id === f.id))
+                    daMemoria.push({ ...f, punti: 40 + Math.round(10 * x.n), perche: ['già usata per «' + x.k + '»'], cartella: f.cartella || '' });
+        const memBuona = daMemoria.length >= 1 && ricordati.some(x => MemoriaIA.simile(argomento, x.k) >= .75);
         const chiavi = Array.from(new Set((argomento + ' ' + extraParole.join(' ')).split(/[\s,;:/()«»"]+/).map(norm2).filter(w => w.length > 3 && !STOP.has(w)))).slice(0, 8);
         if (!chiavi.length)
             return [];
         const tipiQ = "(mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'text/plain' or mimeType = 'text/markdown')";
         const visti = new Map();
         // una ricerca per ogni parola (nel testo) + una con tutte insieme (più precisa)
-        const qs = [chiavi.map(w => "fullText contains '" + esc(w) + "'").join(' and '), ...chiavi.slice(0, 5).map(w => "fullText contains '" + esc(w) + "'")];
+        const qs = [chiavi.map(w => "fullText contains '" + esc(w) + "'").join(' and '), ...(memBuona ? [] : chiavi.slice(0, 5).map(w => "fullText contains '" + esc(w) + "'"))];
         for (let i = 0; i < qs.length; i++)
             for (const f of await query(qs[i] + ' and ' + tipiQ, i ? 40 : 60)) {
                 const v = visti.get(f.id) || { f, colpi: 0 };
@@ -2593,7 +2621,21 @@ const Trova = (() => {
             t.perche.unshift('testo: ' + colpi + ' corrispondenze');
             out.push(t);
         }
+        for (const m of daMemoria) {
+            const o = out.find(y => y.id === m.id);
+            if (o) {
+                o.punti += m.punti;
+                o.perche.unshift(m.perche[0]);
+            }
+            else
+                out.push(m);
+        }
         return out.sort((a, b) => b.punti - a.punti).slice(0, max);
+    }
+    /** Ricorda dove stava cosa: argomento → file usati (con pagine utili). */
+    function ricordaPosto(argomento, files) {
+        if (files.length)
+            MemoriaIA.nota('ricerca', 'posto', argomento, { files: files.map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, cartella: f.cartella || '', modifiedTime: '' })) });
     }
     /** Un file per nome (es. una scheda quiz) quando la cartella indicata dal pacchetto non esiste. */
     async function perNome(parti, tipo) {
@@ -2606,7 +2648,7 @@ const Trova = (() => {
         return t;
     }
     const STOP = new Set(['della', 'delle', 'degli', 'dello', 'nella', 'nelle', 'sulla', 'sulle', 'come', 'cosa', 'quale', 'quali', 'questo', 'questa', 'sono', 'fare', 'crea', 'creami', 'quiz', 'scheda', 'domande', 'voglio', 'vorrei', 'perche', 'anche', 'tutto', 'tutti', 'ogni', 'dove', 'quando', 'with', 'from']);
-    return { pacchetti, fonti, perNome, impara, contesto };
+    return { pacchetti, fonti, perNome, impara, contesto, ricordaPosto };
 })();
 
 // =====================================================================
@@ -3673,7 +3715,13 @@ const Assistente = (() => {
         + '- risposta {testo} = solo per domande su come si usa l\'app o se la richiesta non è un\'azione (rispondi in italiano, breve).\n'
         + 'Regole: date sempre assolute calcolate dal contesto; «stasera» = oggi 20:00 se manca l\'ora; più azioni se la frase ne chiede più di una; titoli brevi in italiano con l\'iniziale maiuscola; non inventare dettagli non detti.';
     async function capisci(frase) {
-        const r = await IA.chiedi([{ role: 'system', content: SISTEMA + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
+        // v0.43 memoria: frase già vista con azioni senza date → la rifaccio senza chiamare l'AI
+        const uguale = MemoriaIA.migliori('assistente', 'esempio', 1, frase).find(x => norm(x.k) === norm(frase) && x.n >= 2 && (x.v.azioni || []).every((a) => !['evento', 'promemoria'].includes(a.tipo)));
+        if (uguale)
+            return uguale.v.azioni;
+        const es = MemoriaIA.migliori('assistente', 'esempio', 4, frase);
+        const esempi = es.length ? '\nESEMPI DI QUESTO UTENTE (richiesta → azioni che ha confermato; le date erano relative al giorno indicato):\n' + es.map(x => '[' + x.v.data + '] «' + x.k + '» → ' + JSON.stringify({ azioni: x.v.azioni })).join('\n') : '';
+        const r = await IA.chiedi([{ role: 'system', content: SISTEMA + MemoriaIA.linee('assistente', 5) + esempi + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
         return ((r.j && r.j.azioni) || []).filter((a) => a && typeof a.tipo === 'string').slice(0, 6);
     }
     /** Mostra le azioni capite e le esegue: subito quelle innocue, con un tocco quelle che creano qualcosa. */
@@ -3701,6 +3749,7 @@ const Assistente = (() => {
         const innocue = az.every(a => ['apri', 'cerca', 'quiz', 'carte', 'studia_ora', 'quiz_creati', 'pacchetti', 'lezione_audio'].includes(a.tipo)) && az.length === 1;
         if (innocue) {
             esegui(az[0]);
+            MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: az });
             return;
         }
         const risposte = az.filter(a => a.tipo === 'risposta'), fare = az.filter(a => a.tipo !== 'risposta');
@@ -3713,6 +3762,12 @@ const Assistente = (() => {
                     if (r)
                         fatti.push(r);
                 } });
+                // v0.43 memoria: le azioni confermate diventano un esempio; quelle tolte, una lezione
+                const conf = fare.filter((_, i) => scelte[i]);
+                if (conf.length)
+                    MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: conf });
+                fare.forEach((a, i) => { if (!scelte[i])
+                    MemoriaIA.nota('assistente', 'lezione', 'no-' + a.tipo + '-' + norm(frase).slice(0, 40), 'Per richieste come «' + frase.slice(0, 80) + '» l\'utente NON voleva: ' + descrivi(a)); });
                 if (fatti.length)
                     avviso('✓ Fatto: ' + fatti.length + (fatti.length === 1 ? ' elemento creato' : ' elementi creati'), 5000, () => { const r = fatti[0]; r.type === 'task' ? apriTask(r) : r.type === 'evento' ? apriEvento(r) : null; });
                 disegna();
@@ -3824,10 +3879,21 @@ const Lezioni = (() => {
     /** Il processo completo. Restituisce i segmenti finali e le correzioni fatte. */
     async function processa(b, contesto, passo) {
         const prompt = 'Lezione universitaria in italiano (semestre filtro di Medicina: chimica, biologia, fisica). Argomento: ' + contesto.titolo + (contesto.step ? ' (' + contesto.step + ')' : '') + '. ' + contesto.testo.replace(/\s+/g, ' ').slice(0, 300);
+        // v0.43 memoria: i termini già incontrati entrano nel «prompt» di Whisper, che li usa durante il
+        // riconoscimento dei suoni (così una parola corretta più volte viene riconosciuta giusta la volta dopo)
+        const noti = MemoriaIA.migliori('audio', 'termine', 40).map(x => x.k);
+        const promptM = prompt + (noti.length ? ' Termini: ' + noti.join(', ') + '.' : '');
         passo('1/3 Trascrivo…');
-        const seg = await trascrivi(b, prompt, 'whisper-large-v3-turbo', t => passo('1/3 Trascrivo ' + t));
+        const seg = await trascrivi(b, promptM, 'whisper-large-v3-turbo', t => passo('1/3 Trascrivo ' + t));
         if (!seg.length)
             throw new Error('non ho sentito parole nell\'audio');
+        // correzioni confermate più volte: applicate subito, senza chiedere all'AI (meno token)
+        const daMemoria = [];
+        seg.forEach((x, i) => { const c = MemoriaIA.correggi('audio', x.t); if (c.cambi.length) {
+            daMemoria.push({ i, prima: x.t, dopo: c.testo, nota: 'dalla memoria: ' + c.cambi.map(z => z.prima + ' → ' + z.dopo).join(', '), ok: true });
+            x.t = c.testo;
+            x.lp = 0;
+        } });
         // 2) controllo di coerenza (blocchi da ~120 segmenti per restare nei limiti)
         passo('2/3 Controllo la coerenza del testo…');
         const dubbi = new Map(), termini = new Set();
@@ -3835,6 +3901,7 @@ const Lezioni = (() => {
             const righe = seg.slice(a, a + 120).map((x, k) => (a + k) + (x.lp != null && (x.lp < -.6 || (x.cr || 0) > 2.4) ? ' ⚠' : '') + ' | ' + x.t).join('\n');
             const r = await Spiega.chat([{ role: 'system', content: 'Sei un revisore di trascrizioni automatiche di lezioni universitarie italiane. Rispondi SOLO in JSON.' },
                 { role: 'user', content: 'Argomento: ' + contesto.titolo + (contesto.step ? ' · ' + contesto.step : '') + '\nSegmenti numerati (⚠ = il riconoscitore era poco sicuro):\n' + righe +
+                        (daMemoria.length ? '\nCorrezioni già applicate dalla memoria (non segnalarle): ' + daMemoria.map(z => z.nota.replace('dalla memoria: ', '')).join('; ') : '') +
                         '\n\nTrova i segmenti con parole probabilmente sentite male (termini tecnici storpiati, frasi senza senso nel contesto, numeri/unità incoerenti). JSON: {"dubbi":[{"i":numero,"motivo":"breve"}],"termini":["termini tecnici corretti dell\'argomento presenti o storpiati"]}. Non segnalare lo stile parlato.' }], .2).catch(() => ({ dubbi: [], termini: [] }));
             for (const d of (r.dubbi || []).slice(0, 40))
                 if (seg[+d.i])
@@ -3845,12 +3912,13 @@ const Lezioni = (() => {
         seg.forEach((x, i) => { if (x.lp != null && x.lp < -1 && !dubbi.has(i))
             dubbi.set(i, 'audio poco chiaro'); });
         if (!dubbi.size)
-            return { seg, corr: [] };
+            return { seg, corr: daMemoria };
         // 3) ritrascrizione accurata con il glossario e scelta, solo sui punti dubbi
         passo('3/3 Riascolto i punti dubbi (' + dubbi.size + ')…');
         let seg2 = [];
+        termini.forEach(t => MemoriaIA.nota('audio', 'termine', t, null, .3));
         try {
-            seg2 = await trascrivi(b, prompt + ' Termini: ' + Array.from(termini).join(', '), 'whisper-large-v3', t => passo('3/3 Riascolto ' + t));
+            seg2 = await trascrivi(b, promptM + ' ' + Array.from(termini).join(', '), 'whisper-large-v3', t => passo('3/3 Riascolto ' + t));
         }
         catch (_) { /* resta la prima versione */ }
         const idx = Array.from(dubbi.keys()), corr = [];
@@ -3868,7 +3936,7 @@ const Lezioni = (() => {
                     corr.push({ i, prima: seg[i].t, dopo: t, nota: String(c.nota || ''), ok: true });
             }
         }
-        return { seg, corr };
+        return { seg, corr: daMemoria.concat(corr.filter(c => !daMemoria.some(z => z.i === c.i))) };
     }
     /** Testo Markdown: paragrafi di circa un minuto con il minuto della lezione. */
     function inMarkdown(seg, titolo) {
@@ -3993,7 +4061,23 @@ async function lezioneAudio(contesto, aggiungi) {
                 catch (e) {
                     avviso('Drive: ' + (e && e.message || e), 6000);
                 } } }, '☁︎ Salva anche l\'audio su Drive')),
-            salva: () => { const seg = r.seg.map((x, i) => { const c = r.corr.find(z => z.i === i && z.ok); return c ? { ...x, t: c.dopo } : x; }); aggiungi(Lezioni.inMarkdown(seg, nome)); setTimeout(() => URL.revokeObjectURL(url), 60000); } });
+            salva: () => {
+                // v0.43 memoria: ogni correzione accettata insegna «come suona → come si scrive»; quelle rifiutate la indeboliscono
+                for (const c of r.corr)
+                    for (const d of MemoriaIA.differenze(c.prima, c.dopo)) {
+                        if (c.ok) {
+                            MemoriaIA.nota('audio', 'correzione', d.prima, d.dopo);
+                            for (const w of d.dopo.split(/\s+/))
+                                if (w.length > 5)
+                                    MemoriaIA.nota('audio', 'termine', w.replace(/[.,;:!?]/g, ''), null, .5);
+                        }
+                        else
+                            MemoriaIA.smentisci('audio', 'correzione', d.prima);
+                    }
+                const seg = r.seg.map((x, i) => { const c = r.corr.find(z => z.i === i && z.ok); return c ? { ...x, t: c.dopo } : x; });
+                aggiungi(Lezioni.inMarkdown(seg, nome));
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } });
         void fs2;
     }
 }
@@ -5021,7 +5105,40 @@ const CreaQuiz = (() => {
         return 0; let c = 0; A.forEach(w => { if (B.has(w))
         c++; }); return c / (A.size + B.size - c); }
     const tutti = () => Stato.tutti('qcreato').filter(r => !r.deleted).sort((a, b) => b.creato < a.creato ? -1 : 1);
-    async function leggi(f, chiavi, budget, passo) {
+    /** Lezioni che la memoria ricava dai problemi trovati (così il generatore non li ripete). */
+    const LEZIONE = [
+        [/corretta è la più lunga/, 'Scrivi l\'opzione corretta breve quanto i distrattori: mai la più lunga né la più dettagliata.'],
+        [/contenuta in un distrattore/, 'Il testo della corretta non deve comparire dentro un distrattore.'],
+        [/citazione non trovata/, 'Copia le citazioni carattere per carattere dalle FONTI (stessa punteggiatura), senza riassumere né unire frasi diverse.'],
+        [/non digitabile/, 'Nei completamenti solo risposte digitabili da tastiera: niente apici, pedici, ², ·, Δ, π, frecce.'],
+        [/4 «perché/, 'Per ogni multipla scrivi esattamente 4 testi in "ew", uno per distrattore, nello stesso ordine.'],
+        [/alla cieca|più risposte difendibili/, 'Ogni multipla deve avere UNA sola risposta difendibile secondo la fonte: distrattori chiaramente sbagliati, niente opzioni parzialmente vere.'],
+        [/ha completato con/, 'Nei completamenti la frase deve ammettere una sola risposta: aggiungi contesto e metti tra le risposte accettate le varianti corrette.'],
+        [/quasi uguale/, 'Varia concetto e formulazione di ogni domanda: niente domande che chiedono la stessa cosa.'],
+        [/manca lo spazio/, 'Nei completamenti scrivi «……» nel punto dove va la risposta.'],
+        [/troppo corta/, 'La correzione deve avere almeno 4 passaggi: Cosa chiede, Il concetto, i Passaggi, In sintesi.'],
+        [/^contenuto:/, 'Controlla ogni affermazione sulla fonte prima di scriverla; niente dati che la fonte non contiene.'],
+        [/^italiano:/, 'Rileggi l\'italiano: accordi, accenti (è/e, perché, più), apostrofi e punteggiatura.'],
+    ];
+    function impara(problemi, materia) {
+        for (const p of problemi)
+            for (const [re, l] of LEZIONE)
+                if (re.test(p)) {
+                    MemoriaIA.nota('quiz', 'lezione', l.slice(0, 60), l);
+                    if (/^italiano:/.test(p))
+                        MemoriaIA.nota('quiz', 'lezione', 'ita-' + p.slice(9, 60), 'Errore già fatto (' + materia + '): ' + p.slice(9, 160));
+                }
+    }
+    async function leggi(f, chiavi, budget, passo, argomento = '') {
+        // v0.43 memoria: pagine che in passato hanno dato citazioni buone per argomenti simili
+        const utili = new Set();
+        for (const x of MemoriaIA.migliori('ricerca', 'pagine', 5, argomento))
+            if (x.k.startsWith(f.id + '|'))
+                for (const p of String(x.v || '').split(','))
+                    if (+p)
+                        utili.add(+p);
+        if (utili.size >= 2)
+            budget = Math.round(budget * .65); // so già dove guardare: mando meno testo all'AI
         try {
             if (f.mimeType === 'application/pdf') {
                 const L = await caricaPdfJs();
@@ -5041,7 +5158,7 @@ const CreaQuiz = (() => {
                         const k = tn.split(w).length - 1;
                         s += k ? 3 + Math.min(k, 8) : 0;
                     }
-                    pag.push({ i, t, s });
+                    pag.push({ i, t, s: s + (utili.has(i) ? 25 : 0) });
                 }
                 const scelte = pag.filter(x => x.s > 0).sort((a, b) => b.s - a.s);
                 const tieni = [];
@@ -5092,7 +5209,7 @@ const CreaQuiz = (() => {
         'Niente domande duplicate o quasi uguali tra loro né con quelle elencate come già presenti.',
     ];
     function msgGenera(o, fonti, nMcq, nFill, gia, feedback = '') {
-        return [{ role: 'system', content: 'Sei un docente esperto che scrive schede di quiz di ' + o.materia + '. Regole obbligatorie:\n- ' + REGOLE.join('\n- ') + '\nRispondi SOLO con JSON valido: {"domande":[{"t","lv","q","o","e","ew","a","show","r","cit":[{"t","f"}]}]}.' },
+        return [{ role: 'system', content: 'Sei un docente esperto che scrive schede di quiz di ' + o.materia + '. Regole obbligatorie:\n- ' + REGOLE.join('\n- ') + MemoriaIA.linee('quiz', 8) + '\nRispondi SOLO con JSON valido: {"domande":[{"t","lv","q","o","e","ew","a","show","r","cit":[{"t","f"}]}]}.' },
             { role: 'user', content: 'ARGOMENTO: ' + o.argomento + '\nCOSA VOGLIO: ' + o.cosa + (o.extra ? '\nINDICAZIONI: ' + o.extra : '') + '\n\nScrivi ' + (nMcq ? nMcq + ' domande a risposta multipla' : '') + (nMcq && nFill ? ' e ' : '') + (nFill ? nFill + ' completamenti' : '') + ' (prima le multiple).'
                     + (gia.length ? '\n\nDOMANDE GIÀ PRESENTI (non ripeterle):\n- ' + gia.slice(0, 40).join('\n- ') : '') + (feedback ? '\n\nCORREGGI QUESTI PROBLEMI:\n' + feedback : '')
                     + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }];
@@ -5182,7 +5299,7 @@ const CreaQuiz = (() => {
         const chiavi = Array.from(new Set((o.argomento + ' ' + o.extra).split(/[\s,;:/()«»"]+/).map(n2).filter(w => w.length > 3))).slice(0, 12);
         const budget = IA.gemini ? 120000 : 22000, fonti = [];
         for (const f of o.fonti) {
-            const x = await leggi(f, chiavi, Math.round(budget / Math.max(1, o.fonti.length)), passo);
+            const x = await leggi(f, chiavi, Math.round(budget / Math.max(1, o.fonti.length)), passo, o.argomento);
             if (x)
                 fonti.push(x);
         }
@@ -5230,6 +5347,7 @@ const CreaQuiz = (() => {
                 }
             }
             buone = buone.concat(candidate.filter(d => !problemi.has(d)));
+            problemi.forEach(p => impara(p, o.materia));
             const ko = candidate.filter(d => problemi.has(d));
             const mancaM = o.nMcq - buone.filter(d => d.t === 'mcq').length, mancaF = o.nFill - buone.filter(d => d.t === 'fill').length;
             if (!ko.length || (mancaM <= 0 && mancaF <= 0)) {
@@ -5255,6 +5373,19 @@ const CreaQuiz = (() => {
         const rec = { id, type: 'qcreato', updatedAt: 0, titolo: o.argomento.charAt(0).toUpperCase() + o.argomento.slice(1), materia: o.materia, argomento: o.argomento, cosa: o.cosa,
             fonti: fonti.map(f => ({ nome: f.nome, id: f.id, pagine: f.pagine })), domande, creato: new Date().toISOString(), modelli: Array.from(modelli), scartate };
         Stato.salva(rec);
+        // v0.43 memoria: dove stava cosa (argomento → file) e quali pagine hanno dato citazioni buone
+        Trova.ricordaPosto(o.argomento, o.fonti.filter(f => fonti.some(x => x.id === f.id)));
+        for (const f of fonti) {
+            const pp = new Set();
+            for (const d of domande)
+                for (const c of d.cit || []) {
+                    const m = /p\.\s*(\d+)/.exec(c.f);
+                    if (m && n2(c.f).includes(n2(f.nome).slice(0, 15)))
+                        pp.add(m[1]);
+                }
+            if (pp.size)
+                MemoriaIA.nota('ricerca', 'pagine', f.id + '|' + o.argomento, Array.from(pp).join(','));
+        }
         return rec;
     }
     function linkFonte(fonti, f) {
@@ -7381,7 +7512,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         avviso('✨ Leggo la selezione…', 15000);
         let t = '';
         try {
-            t = await Spiega.vede('Trascrivi fedelmente il testo scritto a mano (italiano, chimica/biologia/fisica). Restituisci solo il testo, su una riga; formule con simboli corretti.', immagineMano(parte, 800));
+            t = await Spiega.vede('Trascrivi fedelmente il testo scritto a mano (italiano, chimica/biologia/fisica). Restituisci solo il testo, su una riga; formule con simboli corretti.' + suggScrittura('scrittura'), immagineMano(parte, 800));
         }
         catch (e) {
             avviso(String(e.message || e), 8000);
@@ -7443,7 +7574,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         avviso('🧮 Leggo il calcolo…', 8000);
         let letto = '';
         try {
-            letto = await Spiega.vede('Nell\'immagine c\'è un\'espressione matematica scritta a mano che finisce con «=». Trascrivi SOLO l\'espressione a sinistra dell\'uguale, su una riga, in forma calcolabile: * per moltiplicare, / per dividere, ^ per le potenze, sqrt() per la radice, parentesi dove servono; numeri con la virgola come scritti. Niente altro testo.', immagineMano({ ...parte, h: Math.max(parte.h, 80) }, 700));
+            letto = await Spiega.vede('Nell\'immagine c\'è un\'espressione matematica scritta a mano che finisce con «=». Trascrivi SOLO l\'espressione a sinistra dell\'uguale, su una riga, in forma calcolabile: * per moltiplicare, / per dividere, ^ per le potenze, sqrt() per la radice, parentesi dove servono; numeri con la virgola come scritti. Niente altro testo.' + suggScrittura('calcolo'), immagineMano({ ...parte, h: Math.max(parte.h, 80) }, 700));
         }
         catch (e) {
             avviso(String(e.message || e), 5000);
@@ -7462,12 +7593,29 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         campo.addEventListener('input', ricalcola);
         ricalcola();
         foglio({ titolo: '🧮 Calcolo', etichettaSalva: 'Scrivi', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Ho letto così (controlla che ogni cifra sia giusta, correggi se serve):'), campo, esito),
-            salva: () => { let r; try {
-                r = Calcolo.valuta(campo.value);
-            }
-            catch (_) {
-                return false;
-            } scriviRisultato(Calcolo.formatta(r), x1 + 10, yc, Math.max(28, (x1 - x0) * 1.2), tb.c); } });
+            salva: () => {
+                let r;
+                try {
+                    r = Calcolo.valuta(campo.value);
+                }
+                catch (_) {
+                    return false;
+                }
+                // v0.43 memoria: se l'utente ha corretto la lettura, impara quali segni della sua grafia vengono confusi
+                if (campo.value.replace(/\s/g, '') !== letto.replace(/\s/g, '')) {
+                    const a = letto.replace(/\s/g, ''), bb = campo.value.replace(/\s/g, '');
+                    if (a.length === bb.length)
+                        for (let k = 0; k < a.length; k++) {
+                            if (a[k] !== bb[k]) {
+                                MemoriaIA.nota('calcolo', 'correzione', a[k], bb[k]);
+                                MemoriaIA.nota('scrittura', 'correzione', a[k], bb[k], .5);
+                            }
+                        }
+                    else
+                        MemoriaIA.nota('calcolo', 'correzione', a, bb);
+                }
+                scriviRisultato(Calcolo.formatta(r), x1 + 10, yc, Math.max(28, (x1 - x0) * 1.2), tb.c);
+            } });
     }
     function scriviRisultato(t, x, yc, alto, c) {
         const cv2 = document.createElement('canvas'), px = 3, font = 'italic ' + Math.round(alto * px) + 'px "Bradley Hand", "Segoe Print", "Comic Sans MS", "Chalkboard SE", cursive';
@@ -7878,7 +8026,7 @@ async function leggiScrittura(m, dopo) {
     await caricaImmaginiMano(m);
     let t = '';
     try {
-        t = await Spiega.vede('Trascrivi FEDELMENTE il testo scritto a mano in questa pagina di appunti di studio (italiano; chimica, biologia o fisica). Se nella pagina ci sono slide o pagine stampate incollate, trascrivi solo le annotazioni a mano e, tra parentesi quadre, il titolo della slide a cui si riferiscono. '
+        t = await Spiega.vede(suggScrittura('scrittura') + '\nTrascrivi FEDELMENTE il testo scritto a mano in questa pagina di appunti di studio (italiano; chimica, biologia o fisica). Se nella pagina ci sono slide o pagine stampate incollate, trascrivi solo le annotazioni a mano e, tra parentesi quadre, il titolo della slide a cui si riferiscono. '
             + 'Regole: mantieni l\'ordine e gli a capo; titoli sottolineati o grandi → «# titolo»; elenchi → «- punto» (rientro per i sotto-punti); '
             + 'se c\'è una freccia o «::» tra domanda e risposta scrivi «domanda :: risposta»; parole racchiuse tra graffe {{…}} restano così; '
             + 'formule con simboli corretti (es. ΔH, H₂O, →); se una parola è illeggibile scrivi [?]. Non aggiungere nulla, non commentare: restituisci solo il testo in Markdown.', immagineMano(m, 1200));
@@ -7899,6 +8047,12 @@ async function leggiScrittura(m, dopo) {
 // PDF.js (Mozilla) viene caricato solo la prima volta che inserisci un PDF; le pagine diventano immagini
 // JPEG leggere (larghezza 1000 px) da annotare a mano, e il loro testo va nel testo dell'appunto.
 let pdfjsPronto = null;
+/** v0.43 memoria: suggerimenti sulla grafia dell'utente e sui suoi termini tecnici per l'AI che legge la scrittura a mano. */
+function suggScrittura(ambito) {
+    const c = MemoriaIA.migliori(ambito, 'correzione', 8, undefined, 1).map(x => '«' + x.k + '» spesso è «' + x.v + '»');
+    const t = MemoriaIA.migliori('audio', 'termine', 25).concat(MemoriaIA.migliori('scrittura', 'termine', 15)).map(x => x.k);
+    return (c.length ? ' Nella grafia di questo studente: ' + c.join('; ') + '.' : '') + (ambito === 'scrittura' && t.length ? ' Termini che usa spesso: ' + t.join(', ') + '.' : '');
+}
 function caricaPdfJs() {
     if (window.pdfjsLib)
         return Promise.resolve(window.pdfjsLib);
@@ -8185,6 +8339,141 @@ function widgetRipassi() {
         ? r.oggi.length + (r.oggi.length === 1 ? ' sotto-step' : ' sotto-step') + ' · circa ' + r.minuti + ' min. Rifai la scheda proposta (va bene anche «rifai solo gli errori») e scrivi il punteggio: l\'app decide quando riproporre il sotto-step.'
         : '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.'), r.oggi.map(riga), r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null, primo ? h('div.bottoni', null, h('button.btn', { onclick: () => apriScheda(primo.pk, primo.m, primo.micro, primo.s, true) }, '▶ Inizia')) : null);
 }
+
+// =====================================================================
+// 07-memoriaia.ts — v0.43 MEMORIA DEGLI ASSISTENTI AI (miglioramento progressivo)
+// Un unico algoritmo di memoria usato da TUTTE le AI dell'app, con «ambiti» specifici per mansione
+// e una parte generica (linee guida comuni). Ogni voce ha: tipo, chiave, valore, quante volte è stata
+// confermata (n) e quando (t). Punteggio = conferme × recenza: le voci utili salgono, le vecchie e mai
+// riconfermate scendono e, oltre il tetto per ambito, si dimenticano da sole.
+// Tipi di voce:
+//   correzione  «prima → dopo» (es. trascrizione audio: «in talpa» → «entalpia»; calcoli a mano: «7» → «1»)
+//   termine     parola tecnica che l'utente usa davvero (aiuta Whisper e la lettura della scrittura a mano)
+//   lezione     errore già commesso dall'AI e regola per non ripeterlo (es. «la corretta era la più lunga»)
+//   esempio     frase dell'utente → azioni confermate (l'assistente impara il suo modo di chiedere)
+//   posto       dove si trova cosa nel Drive (argomento → file e pagine utili): meno ricerche e meno token
+// Ambiti: ricerca, quiz, audio, scrittura, calcolo, assistente, spiegazioni, generale.
+// I record (type 'memia') si sincronizzano con gli altri dati, quindi la memoria vale su tutti i dispositivi.
+// =====================================================================
+const MemoriaIA = (() => {
+    const TETTO = 300, GIORNO = 864e5;
+    const AMBITI = { ricerca: '🔎 Ricerca nel Drive', quiz: '✨ Creazione quiz', audio: '🎙 Trascrizione audio', scrittura: '✍️ Lettura della scrittura a mano',
+        calcolo: '🧮 Calcoli a mano', assistente: '💬 Assistente della home', spiegazioni: '💡 Spiegazioni AI', generale: '🧠 Linee guida generali' };
+    const n2 = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+    const parole = (s) => new Set(n2(s).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(w => w.length > 2));
+    function simile(a, b) { const A = parole(a), B = parole(b); if (!A.size || !B.size)
+        return 0; let c = 0; A.forEach(w => { if (B.has(w))
+        c++; }); return c / Math.min(A.size, B.size); }
+    const rec = (ambito) => Stato.prendi('memia-' + ambito) || { id: 'memia-' + ambito, type: 'memia', updatedAt: 0, ambito, voci: [] };
+    const punteggio = (x, ora = Date.now()) => x.n * Math.pow(.5, (ora - x.t) / (45 * GIORNO)); // dimezza ogni 45 giorni senza conferme
+    /** Aggiunge o rinforza una voce. «peso» = quanto vale questa conferma (1 di base). */
+    function nota(ambito, tipo, k, v = null, peso = 1) {
+        if (!k || !String(k).trim())
+            return;
+        const r = rec(ambito), kk = n2(k), x = r.voci.find(y => y.tipo === tipo && n2(y.k) === kk);
+        if (x) {
+            x.n += peso;
+            x.t = Date.now();
+            if (v !== null && v !== undefined)
+                x.v = v;
+        }
+        else
+            r.voci.push({ tipo, k: String(k).slice(0, 300), v, n: peso, t: Date.now() });
+        if (r.voci.length > TETTO) {
+            const ora = Date.now();
+            r.voci.sort((a, b) => punteggio(b, ora) - punteggio(a, ora));
+            r.voci.length = TETTO;
+        }
+        Stato.salva(r, true);
+    }
+    /** Indebolisce una voce sbagliata (es. una correzione rifiutata dall'utente). */
+    function smentisci(ambito, tipo, k) {
+        const r = rec(ambito), kk = n2(k), i = r.voci.findIndex(y => y.tipo === tipo && n2(y.k) === kk);
+        if (i < 0)
+            return;
+        r.voci[i].n -= 1;
+        if (r.voci[i].n <= 0)
+            r.voci.splice(i, 1);
+        Stato.salva(r, true);
+    }
+    /** Le voci migliori di un tipo; con «testo» privilegia quelle simili (per esempi e posti). */
+    function migliori(ambito, tipo, max = 10, testo, minN = 1) {
+        const ora = Date.now();
+        return rec(ambito).voci.filter(x => x.tipo === tipo && x.n >= minN)
+            .map(x => ({ x, s: punteggio(x, ora) * (testo ? (simile(testo, x.k) + .05) : 1) })).filter(o => !testo || o.s > .05 * o.x.n)
+            .sort((a, b) => b.s - a.s).slice(0, max).map(o => o.x);
+    }
+    /** Linee guida da mettere nel prompt di un'AI: le sue lezioni + quelle generali. */
+    function linee(ambito, max = 6) {
+        const l = migliori(ambito, 'lezione', max).concat(migliori('generale', 'lezione', 3));
+        return l.length ? '\nLEZIONI DALLE VOLTE PRECEDENTI (rispettale):\n- ' + l.map(x => x.v || x.k).join('\n- ') : '';
+    }
+    /** Applica le correzioni sicure (confermate almeno «minN» volte) a un testo: restituisce testo e cambi. */
+    function correggi(ambito, testo, minN = 2) {
+        const cambi = [];
+        for (const c of migliori(ambito, 'correzione', 80, undefined, minN)) {
+            const prima = c.k, dopo = String(c.v || '');
+            if (!dopo || prima.length < 2)
+                continue;
+            const re = new RegExp('(^|[^\\p{L}])(' + prima.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?=$|[^\\p{L}])', 'giu');
+            if (re.test(testo)) {
+                testo = testo.replace(re, (_m, a) => a + dopo);
+                cambi.push({ prima, dopo });
+            }
+        }
+        return { testo, cambi };
+    }
+    /** Differenze parola per parola tra due versioni (per imparare le correzioni «prima → dopo»). */
+    function differenze(a, b) {
+        const A = a.split(/\s+/).filter(Boolean), B = b.split(/\s+/).filter(Boolean), out = [];
+        let i = 0, j = 0;
+        while (i < A.length && j < B.length) {
+            if (n2(A[i]) === n2(B[j])) {
+                i++;
+                j++;
+                continue;
+            }
+            // cerco il prossimo punto di riallineamento
+            let ii = -1, jj = -1;
+            outer: for (let d = 1; d < 8; d++)
+                for (let x = 0; x <= d; x++) {
+                    const p = i + x, q = j + d - x;
+                    if (p < A.length && q < B.length && n2(A[p]) === n2(B[q]) && n2(A[p]).length > 2) {
+                        ii = p;
+                        jj = q;
+                        break outer;
+                    }
+                }
+            if (ii < 0) {
+                ii = A.length;
+                jj = B.length;
+            }
+            const pr = A.slice(i, ii).join(' ').replace(/[.,;:!?]+$/, ''), dp = B.slice(j, jj).join(' ').replace(/[.,;:!?]+$/, '');
+            if (pr && dp && pr.length < 60 && dp.length < 60)
+                out.push({ prima: pr, dopo: dp });
+            i = ii;
+            j = jj;
+        }
+        return out;
+    }
+    const tutte = () => Stato.tutti('memia').filter(r => !r.deleted);
+    /** Altro → Spiegazioni AI → «Memoria degli assistenti»: vedere e dimenticare. */
+    function sezione() {
+        const box = h('div.memia');
+        const disegnaM = () => {
+            svuota(box);
+            const rs = tutte();
+            const tot = rs.reduce((a, r) => a + r.voci.length, 0);
+            box.append(h('div.tenue.piccolo', null, tot ? 'Gli assistenti hanno imparato ' + tot + ' cose dalle tue correzioni e conferme. Migliorano a ogni uso; qui puoi vederle e farle dimenticare.' : 'Ancora nulla: gli assistenti imparano dalle tue correzioni e conferme mentre usi l\'app.'));
+            for (const r of rs)
+                if (r.voci.length)
+                    box.append(h('details.memia-amb', null, h('summary', null, (AMBITI[r.ambito] || r.ambito) + ' · ' + r.voci.length), ...r.voci.slice().sort((a, b) => punteggio(b) - punteggio(a)).slice(0, 60).map(x => h('div.memia-voce', null, h('span', null, h('b', null, x.tipo), ' ' + (x.tipo === 'correzione' ? '«' + x.k + '» → «' + x.v + '»' : x.tipo === 'posto' ? x.k + ' → ' + ((x.v && x.v.files) || []).map((f) => f.name).join(', ') : x.tipo === 'esempio' ? '«' + x.k + '»' : String(x.v || x.k)) + ' · ×' + Math.round(x.n)), h('button.btn-testo', { type: 'button', onclick: () => { const rr = rec(r.ambito); rr.voci = rr.voci.filter(z => !(z.tipo === x.tipo && z.k === x.k)); Stato.salva(rr, true); disegnaM(); } }, 'Dimentica')))));
+        };
+        disegnaM();
+        return h('div.gruppo', null, h('div.piccolo', null, h('b', null, '🧠 Memoria degli assistenti')), box);
+    }
+    return { nota, smentisci, migliori, linee, correggi, differenze, simile, sezione, tutte, AMBITI };
+})();
 
 // 07-progressi.ts — Punti deboli (v0.12, F6 ridotta). In Studio → Statistiche.
 //
@@ -8573,6 +8862,9 @@ const QuizApp = (() => {
                 disegnaQ();
                 return;
             }
+            // v0.43 memoria: se dopo una spiegazione più corta ne chiede una più lunga, la corta non bastava → lezione
+            if (x.ai && x.ai.testo && (l === 'dettagliata' || (l === 'media' && x.ai.l === 'breve')) && x.ai.l !== l)
+                MemoriaIA.nota('spiegazioni', 'lezione', 'piu-passaggi-' + norm(mat0(pk, m).nome || m), 'In ' + (mat0(pk, m).nome || m) + ' lo studente chiede spesso più dettagli: anche nelle spiegazioni brevi non saltare i passaggi intermedi.');
             x.ai = { l, attesa: true };
             disegnaQ();
             try {
@@ -9571,7 +9863,7 @@ const Spiega = (() => {
     async function chiama(mod, d, l) {
         const sys = 'Sei un tutor di ' + materia(d.titolo) + ' per il semestre filtro di Medicina. Rispondi in italiano corretto e semplice, rivolgendoti allo studente con il tu. '
             + 'Basati sul testo di riferimento del corso e su conoscenze certe; non inventare dati, numeri o citazioni. Se il testo di riferimento non basta, dillo. '
-            + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.';
+            + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.' + MemoriaIA.linee('spiegazioni', 4);
         const u = 'Quiz: ' + d.titolo + '\nDomanda: ' + d.q
             + (d.opts.length ? '\nOpzioni: ' + d.opts.join(' | ') : '')
             + '\nRisposta corretta: ' + d.corretta
@@ -9840,7 +10132,7 @@ const Spiega = (() => {
                 avviso(String(e.message || e), 8000);
             }
         };
-        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'), IA.campoGemini());
+        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'), IA.campoGemini(), MemoriaIA.sezione());
     }
     return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
@@ -10157,10 +10449,15 @@ const Studio = (() => {
         let n = 0;
         const visti = new Set();
         ultimiTrovati = [];
-        const prova = async (id, nome, cartella, par) => {
+        const prova = async (id, nome, cartella, par, mod) => {
             if (visti.has(id))
                 return false;
             visti.add(id);
+            const noto = MemoriaIA.migliori('ricerca', 'pacchetto', 200).find(x => x.v && x.v.id === id);
+            if (noto && mod && noto.v.modifiedTime === mod && noto.v.importato) {
+                ultimiTrovati.push(...(noto.v.titoli || []).map((t) => ({ nome, cartella, tipo: t.tipo, titolo: t.titolo })));
+                return true;
+            } // invariato: non lo riscarico
             let j;
             try {
                 j = JSON.parse((await Drive.scaricaTesto(id)).replace(/^\uFEFF/, ''));
@@ -10177,8 +10474,12 @@ const Studio = (() => {
                         n++;
                     ultimiTrovati.push({ nome, cartella, tipo: c.tipo, titolo: c.titolo || c.id });
                 }
-            if (buoni)
+            if (buoni) {
                 Trova.impara([par]);
+                MemoriaIA.nota('ricerca', 'pacchetto', id, { id, name: nome, mimeType: 'application/json', modifiedTime: mod || '', parents: par ? [par] : [], importato: true, titoli: lista.filter((c) => c && c.formato === 'pacchetto-studio').map((c) => ({ tipo: c.tipo, titolo: c.titolo || c.id })) });
+            }
+            else if (!noto)
+                MemoriaIA.nota('ricerca', 'nonpacchetto', id, null); // JSON che non è un pacchetto: la prossima volta lo salto
             return buoni > 0;
         };
         // 1) la cartella dell'app (veloce)
@@ -10187,12 +10488,13 @@ const Studio = (() => {
                 await prova(f.id, f.name, 'Calendario personale/studio');
         // 2) tutto il Drive, in ordine di probabilità
         avanzamento && avanzamento('Cerco i pacchetti in tutto il Drive…');
-        const cand = (await Trova.pacchetti()).filter(c => c.punti > 5).slice(0, 60);
+        const scarti = new Set(MemoriaIA.migliori('ricerca', 'nonpacchetto', 300).map(x => x.k));
+        const cand = (await Trova.pacchetti()).filter(c => c.punti > 5 && !scarti.has(c.id)).slice(0, 60);
         let i = 0;
         for (const c of cand) {
             i++;
             avanzamento && avanzamento('Controllo ' + i + '/' + cand.length + ': ' + c.name);
-            await prova(c.id, c.name, c.cartella || '', c.parents && c.parents[0]);
+            await prova(c.id, c.name, c.cartella || '', c.parents && c.parents[0], c.modifiedTime);
         }
         return n;
     }
@@ -11941,7 +12243,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.42.0';
+const VERSIONE = '0.43.0';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
