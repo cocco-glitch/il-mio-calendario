@@ -3099,6 +3099,9 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
                 i.modoAppunti = k;
                 Stato.salva(i, true);
                 mostraModo();
+                // v0.41.4 tablet: passando a «A mano» la barra della penna va in cima e il foglio occupa lo schermo
+                if (k === 'mano' && innerWidth >= 700)
+                    setTimeout(() => zonaMano.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
             } }, t)));
         zonaMano.hidden = modo !== 'mano';
         if (modo === 'mano' && !pagina)
@@ -6594,6 +6597,10 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             navigator.vibrate(8);
     }
     vivo.addEventListener('pointerdown', e => {
+        if (sospeso) {
+            pulisciVivo();
+            sospeso = false;
+        }
         if (e.pointerType === 'pen' && !penna) {
             penna = true;
             aggiornaBarra();
@@ -6636,6 +6643,25 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             timerTieni = window.setTimeout(aggancia, 550);
         }
     });
+    // v0.41.4: anteprima della punta quando la penna è sospesa (Lenovo Tab Pen, S Pen, Apple Pencil su M2+): mostra dove cadrà l'inchiostro
+    let sospeso = false;
+    vivo.addEventListener('pointermove', e => {
+        if (e.pointerType !== 'pen' || e.buttons || cur)
+            return;
+        const r = vivo.getBoundingClientRect(), x = e.clientX - r.left + pag.scrollLeft, y = e.clientY - r.top + pag.scrollTop, rr = Math.max(2, (strumento === 'gomma' ? 14 * PREF_MANO.w : spessore() / 2) * scala);
+        pulisciVivo();
+        gv.beginPath();
+        gv.arc(x, y, rr, 0, Math.PI * 2);
+        gv.fillStyle = strumento === 'gomma' ? 'rgba(120,130,160,.25)' : inkV();
+        gv.globalAlpha = strumento === 'gomma' ? 1 : .45;
+        gv.fill();
+        gv.globalAlpha = 1;
+        sospeso = true;
+    }, { passive: true });
+    vivo.addEventListener('pointerleave', () => { if (sospeso && !cur) {
+        pulisciVivo();
+        sospeso = false;
+    } });
     vivo.addEventListener('pointermove', e => {
         if (!cur || e.pointerId !== idPuntatore)
             return;
@@ -6874,7 +6900,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
                 } posRighello(); aggiornaBarra(); } },
             { testo: '📑 Pagine', azione: pagine },
             APPUNTI_MANO ? { testo: '📋 Incolla', azione: incolla } : null,
-        ], 'Foglio: sfondo, righello, pagine, incolla'), (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')), ...(penna ? [h('span.tenue.piccolo.mano-nota', null, '✏️ Pencil: il dito scorre')] : [b(dito ? '☝️ scrive' : '☝️ scorre', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); }, 'Scrivere anche con il dito')]), ...(o.extra ? o.extra().filter(Boolean) : []));
+        ], 'Foglio: sfondo, righello, pagine, incolla'), (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')), ...(penna ? [h('span.tenue.piccolo.mano-nota', null, '✏️ Penna attiva: il dito scorre')] : [b('☝️', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); aggiornaBarra(); avviso(dito ? 'Il dito scrive' : 'Il dito scorre la pagina', 1200); }, dito ? 'Il dito scrive (tocca per farlo scorrere)' : 'Il dito scorre (tocca per scrivere col dito)')]), ...(o.extra ? o.extra().filter(Boolean) : []));
         pannello();
     }
     // v0.39: pannello opzioni (tipo di penna, spessore, stabilizzazione, gomma, forme)
@@ -10911,7 +10937,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.41.3';
+const VERSIONE = '0.41.4';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);

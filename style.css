@@ -818,3 +818,15 @@ button, a, .chip, [role=tab], .nota-tessera { touch-action: manipulation; }   /*
 .foglio-corpo, .tendina-menu, .mano-miniature, .audio-corr { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 .mano-foglio, .mano-foglio canvas { color-scheme: light only; forced-color-adjust: none; }   /* v0.41.3: niente inversione «dark mode forzato» di Samsung/Chrome sul foglio */
+/* v0.41.4 tablet (Lenovo Tab M11 e simili, ≥ 700px): tutti gli strumenti in vista, intestazione compatta in orizzontale */
+@media (min-width: 700px) {
+  .mano-barra:not(.chiusa) { flex-wrap: wrap; overflow: visible; row-gap: 6px; }
+  .mano-barra button, .tendina-btn { min-width: 44px; height: 44px; }   /* bersagli comodi per penna e dita */
+  .mano-barra .mano-colore { width: 34px; height: 34px; }
+  .appunto-barra button { min-width: 46px; height: 46px; }
+}
+@media (min-width: 700px) and (orientation: landscape) and (max-height: 900px) {
+  .appunto .appunto-titolo { font-size: 22px; padding: 8px 12px; }
+  .appunto-modelli { flex-wrap: nowrap; overflow-x: auto; }
+  .visore-testa { min-height: 52px; }
+}
