@@ -113,15 +113,31 @@ const Studio = (() => {
     return n;
   }
   /** Pacchetti nella cartella Drive dell'app (quelli creati da Claude in futuro). */
-  async function caricaDaDrive(): Promise<number> {
+  /** v0.42: cerca i pacchetti in TUTTO il Drive (Trova.pacchetti), non solo nella cartella dell'app.
+   *  Legge prima i candidati migliori; accetta file singoli, elenchi o raccolte {pacchetti:[…]}. */
+  let ultimiTrovati: { nome: string; cartella: string; tipo: string; titolo: string }[] = [];
+  async function caricaDaDrive(avanzamento?: (t: string) => void): Promise<number> {
     await Drive.preparaCartelle();
-    let n = 0;
-    for (const f of await Drive.elencaTutti(Drive.idCartella('studio'))) {
-      if (!/\.json$/i.test(f.name)) continue;
-      try { if (importa(JSON.parse(await Drive.scaricaTesto(f.id)))) n++; } catch (_) { avviso('Pacchetto non leggibile: ' + f.name); }
-    }
+    let n = 0; const visti = new Set<string>(); ultimiTrovati = [];
+    const prova = async (id: string, nome: string, cartella: string, par?: string): Promise<boolean> => {
+      if (visti.has(id)) return false; visti.add(id);
+      let j: any; try { j = JSON.parse((await Drive.scaricaTesto(id)).replace(/^\uFEFF/, '')); } catch (_) { return false; }
+      const lista = Array.isArray(j) ? j : j && Array.isArray(j.pacchetti) ? j.pacchetti : [j];
+      let buoni = 0;
+      for (const c of lista) if (c && c.formato === 'pacchetto-studio') { buoni++; if (importa(c)) n++; ultimiTrovati.push({ nome, cartella, tipo: c.tipo, titolo: c.titolo || c.id }); }
+      if (buoni) Trova.impara([par]);
+      return buoni > 0;
+    };
+    // 1) la cartella dell'app (veloce)
+    for (const f of await Drive.elencaTutti(Drive.idCartella('studio'))) if (/\.json$/i.test(f.name)) await prova(f.id, f.name, 'Calendario personale/studio');
+    // 2) tutto il Drive, in ordine di probabilità
+    avanzamento && avanzamento('Cerco i pacchetti in tutto il Drive…');
+    const cand = (await Trova.pacchetti()).filter(c => c.punti > 5).slice(0, 60);
+    let i = 0;
+    for (const c of cand) { i++; avanzamento && avanzamento('Controllo ' + i + '/' + cand.length + ': ' + c.name); await prova(c.id, c.name, c.cartella || '', c.parents && c.parents[0]); }
     return n;
   }
+  const trovati = () => ultimiTrovati;
 
   function prog(id: string): Progresso | undefined { return Stato.prendi<Progresso>('prog-' + id); }
   function fatta(id: string): boolean { const p = prog(id); return !!(p && p.fatta); }
@@ -208,21 +224,27 @@ const Studio = (() => {
   async function idQuiz(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<string> {
     if (s.quizFileId) return s.quizFileId;
     const coda = '(scheda ' + s.k + ' di ' + s.n + ').html';
-    const f = (await elenco(pk.risorse.quiz[m])).filter(x => x.name.startsWith(micro + ' ') && x.name.endsWith(coda));
+    let f: { id: string; name: string }[] = [];
+    try { f = (await elenco(pk.risorse.quiz[m])).filter(x => x.name.startsWith(micro + ' ') && x.name.endsWith(coda)); } catch (_) { /* cartella di un altro Drive: cerco ovunque */ }
     const esatto = f.find(x => x.name === s.quizFile);
-    if (!f.length) throw new Error('Quiz non trovato su Drive: ' + s.quizFile);
-    return (esatto || f[0]).id;
+    if (esatto || f.length) return (esatto || f[0]).id;
+    // v0.42: la cartella del pacchetto non c'è (es. un altro account): cerco la scheda in tutto il Drive
+    const t = await Trova.perNome([micro + ' ', '(scheda ' + s.k + ' di ' + s.n + ')'], 'text/html') || await Trova.perNome([s.titolo.slice(0, 40)]);
+    if (!t) throw new Error('Quiz non trovato su Drive: ' + s.quizFile + '. Caricalo in qualsiasi cartella del tuo Drive.');
+    s.quizFileId = t.id; return t.id;
   }
   /** Pagina del libro → file PDF diviso + pagina dentro al file. */
   async function pdfPagina(pk: PkStep, m: string, pagLibro: number): Promise<{ id: string; pagina: number; nome: string }> {
     const L = pk.risorse.libri[m], ass = pagLibro + L.offset, primo = Math.floor((ass - 1) / L.blocco) * L.blocco + 1;
     let id = L.file[String(primo)];
     const pref = String(primo).padStart(3, '0');
-    if (!id) { const f = (await elenco(L.cartella)).find(x => x.name.startsWith(pref) && /\.pdf$/i.test(x.name)); if (!f) throw new Error('PDF del libro non trovato (inizio ' + pref + ').'); id = f.id; }
+    if (!id) { let f: { id: string; name: string } | undefined; try { f = (await elenco(L.cartella)).find(x => x.name.startsWith(pref) && /\.pdf$/i.test(x.name)); } catch (_) { /* altro Drive */ }
+      if (!f) { const t = await Trova.perNome([pref], 'application/pdf'); if (t) f = t; }
+      if (!f) throw new Error('PDF del libro non trovato (inizio ' + pref + ').'); id = f.id; }
     return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
   }
 
-  return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+  return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, trovati, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
     dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 
@@ -445,7 +467,7 @@ function vistaStudio(): HTMLElement {
   const vai = (v: typeof UI.studioVista) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
   const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
   const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)),
-    tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+    tendina('Altro ▾', () => (voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })) as VoceTendina[]).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
   if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
   if (UI.studioVista === 'errori') return h('div.pagina', null, seg, vistaErrori());
@@ -462,6 +484,10 @@ function vistaStudio(): HTMLElement {
       vistaPiano(scelto));
   }
   if (UI.studioVista !== 'schede') UI.studioVista = 'schede';
+  if (!pk && Drive.collegato && !(window as any)._pkAuto) {   // v0.42: primo avvio di un nuovo account: cerca da solo i pacchetti nel Drive
+    (window as any)._pkAuto = true;
+    Studio.caricaDaDrive().then(n => { if (n) { avviso('☁︎ Trovati nel tuo Drive ' + n + ' pacchetti di studio.'); disegna(); } }).catch(() => { /* senza accesso */ });
+  }
   if (!pk) return h('div.pagina', null, seg, vuoto('Nessun corso di studio. Crea il tuo corso (qualsiasi materia o esame) oppure aggiorna i pacchetti dal Drive.'), h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio'), bottoneDrive());
 
   const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
@@ -490,7 +516,14 @@ function numero(v: string, eti: string): HTMLElement { return h('div.numero', nu
 function bottoneDrive(): HTMLElement {
   return h('button.btn.neutro', { onclick: async () => {
     if (serveGoogle()) return;
-    try { const n = await Studio.caricaDaDrive(); avviso(n ? 'Pacchetti aggiornati da Drive: ' + n : 'Nessun pacchetto nuovo su Drive.'); } catch (e: any) { avviso(String(e.message || e), 6000); }
+    const stato = h('div.tenue.piccolo', null, 'Collego il Drive…'), fs = foglio({ titolo: '☁︎ Pacchetti dal Drive', corpo: h('div.modulo', null, stato) });
+    try { const n = await Studio.caricaDaDrive(t => { stato.textContent = t; }); const tr = Studio.trovati();
+      svuota(stato); stato.append(h('div', null, n ? '✓ Aggiornati ' + n + ' pacchetti.' : (tr.length ? '✓ Pacchetti già aggiornati.' : 'Nessun pacchetto trovato nel tuo Drive.')),
+        ...tr.map(x => h('div.piccolo', null, (x.tipo === 'piano' ? '📅 ' : '📘 ') + x.titolo + ' — ' + x.nome + (x.cartella ? ' (in «' + x.cartella + '»)' : ''))),
+        ...(tr.length ? [] : [h('div.piccolo', null, 'Suggerimento: carica i file .json in una cartella qualsiasi del Drive; l\'app li riconosce dal contenuto, non dal nome.')]));
+      disegna();
+    } catch (e: any) { stato.textContent = String(e.message || e) === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : String(e.message || e); }
+    void fs;
   } }, 'Aggiorna pacchetti da Drive');
 }
 

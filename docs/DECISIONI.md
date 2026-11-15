@@ -118,3 +118,21 @@ Tolta la tela «desynchronized»: su Android (GPU) rende la tela viva opaca e co
 
 ## v0.41.4 — Tablet (Lenovo Tab M11, Android 15)
 Da 700 px in su: barra della penna su più righe (niente strumenti nascosti), bersagli da 44 px, intestazione compatta in orizzontale; passando ad «A mano» il foglio sale in cima. Anteprima della punta con la penna sospesa (hover di Lenovo Tab Pen / S Pen). Pulsante dito: solo icona, con avviso. Testi «Pencil» resi generici (Penna).
+
+## v0.42 — Gesti come Freenotes, pacchetti ovunque nel Drive, quiz «creati in app», assistente
+- Blocco note: pizzica e trascina INSIEME (il punto sotto le dita resta sotto le dita), ridisegno nitido a ogni frame
+  (con molti tratti: tratto unico durante il gesto, ~4 ms/frame), elastico oltre 100%/1000% con ritorno animato,
+  inerzia al rilascio, doppio tocco = 2,5× ↔ 100% (animato), tocco a 2/3 dita = annulla/ripeti solo se le dita
+  non si muovono. Test: test/gesti.py (tocchi veri via CDP).
+- 06-trova.ts: ricerca universale nel Drive (contenuto «pacchetto-studio», nome, cartella e cartella madre, materie
+  dell'utente, cartelle già usate = apprendimento, recenza). Pacchetti, schede quiz e PDF del libro si trovano anche
+  se le cartelle del pacchetto appartengono a un altro account. Al primo avvio di un account nuovo la ricerca parte da sola.
+- 07-ia.ts: modelli gratuiti per ruolo con ripiego automatico: genera (Gemini 2.5 Flash se c'è la chiave, poi
+  gpt-oss-120b, llama-3.3-70b), revisiona (modello diverso da chi ha generato), veloce (gpt-oss-20b). Chiave Gemini facoltativa.
+- 07-creaquiz.ts: quiz «✨ creati in app» col metodo delle DIRETTIVE (12+6, tipi, passo-passo, ew, citazioni verbatim),
+  fonti trovate nel Drive con il perché, lettura solo delle pagine pertinenti, controlli automatici (corretta mai più
+  lunga, completamenti digitabili, citazioni verificate parola per parola, doppioni), revisione indipendente alla cieca
+  + italiano, rigenerazione (max 2 giri). Studio → Altro ▾ → Quiz creati in app.
+- 07-assistente.ts: il campo della home è anche l'assistente (✨): eventi/promemoria con data restano locali; il resto
+  diventa azioni tipizzate (evento, promemoria, appunto, quiz, carte, cerca, apri vista, studia ora, lezione audio,
+  pacchetti, risposta) confermate con un tocco.

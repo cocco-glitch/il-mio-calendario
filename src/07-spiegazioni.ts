@@ -250,7 +250,8 @@ const Spiega = (() => {
         h('button.btn', { onclick: incolla }, '📋 Incolla chiave'),
         h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'),
         h('button.btn.neutro', { onclick: prova }, 'Prova')),
-      h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'));
+      h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'),
+      IA.campoGemini());
   }
 
   return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };

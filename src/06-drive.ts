@@ -348,7 +348,7 @@ const Drive = (() => {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
-    elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle,
+    elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle, api,
     get collegato() { return !!stato.email; },
     /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
     eProprietario(): boolean { return stato.email ? stato.email.toLowerCase() === PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); },  // v0.26.2: senza account solo in prova locale

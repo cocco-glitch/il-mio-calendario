@@ -120,8 +120,8 @@ const QuizApp = (() => {
   }
 
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
-  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[]): Promise<void> {
-    const v = visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
+  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void }): Promise<void> {
+    const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { /* */ })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
     v.corpo.classList.add('qz');
     v.corpo.appendChild(h('div.vuoto.centro', null, 'Preparo le domande…'));
     let dati: { domande: DomB[]; immagini: Record<string, string>; fonte: string };
@@ -129,7 +129,8 @@ const QuizApp = (() => {
     catch (e: any) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e))); return; }
     if (!dati.domande.length) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, 'Nessuna domanda trovata.')); return; }
     const app = h('div.qz-app'); svuota(v.corpo);
-    v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
+    if (info) v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, info.occh), h('h1.qz-h1', null, info.titolo)));
+    else v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
     v.corpo.appendChild(app);
     let P: Voce[] = [], cur = 0, ripasso = false, apertaX = false, finito = false;
     const nuovo = (idx: number[], rip: boolean) => {

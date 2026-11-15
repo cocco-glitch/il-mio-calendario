@@ -90,7 +90,7 @@ const salvaPrefMano = () => { try { localStorage.setItem('pref-mano', JSON.strin
 
 interface ImgMano { s: string; x: number; y: number; w: number; h: number; r?: 1; }   // r = risultato di un calcolo (senza cornice)
 /** Vista di disegno: la tela copre solo la parte visibile del foglio (ox, oy = scorrimento in pixel). */
-interface VistaMano { ox: number; oy: number; w: number; h: number; passo: number; }
+interface VistaMano { ox: number; oy: number; w: number; h: number; passo: number; veloce?: boolean; }
 const CACHE_IMG = new Map<string, HTMLImageElement>();
 function imgPronta(s: string, poi?: () => void): HTMLImageElement | null {
   let i = CACHE_IMG.get(s);
@@ -156,7 +156,8 @@ function disegnaMano(g: CanvasRenderingContext2D, m: Mano, scala: number, sfondo
   for (const s of m.t) {
     const t = trattoCache(s);
     if (v && (t.y1 < y0 || t.y0 > y1)) continue;   // fuori dalla finestra
-    tracciaTratto(g, scuro ? inchiostroScuro(t) : t, scala);
+    const tv = v && v.veloce && t.k === 'p' ? { ...t, k: 'b' } : t;   // v0.42: durante i gesti tratto unico (più veloce), nitido al rilascio
+    tracciaTratto(g, scuro ? inchiostroScuro(tv) : tv, scala);
   }
   g.restore();
 }
@@ -232,46 +233,115 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
   pag.addEventListener('scroll', () => { if (!rif) rif = requestAnimationFrame(ridisegna); }, { passive: true });
   const pulisciVivo = () => { gv.setTransform(1, 0, 0, 1, 0, 0); gv.clearRect(0, 0, vivo.width, vivo.height); gv.setTransform(d, 0, 0, d, -pag.scrollLeft * d, -pag.scrollTop * d); };
   let zoomEti: HTMLElement | null = null;
+  // ---------- v0.42 GESTI COME FREENOTES/GOODNOTES ----------
+  // Due dita: zoom e trascinamento INSIEME (il punto del foglio sotto le dita resta sotto le dita), ridisegno
+  // nitido a ogni frame (niente anteprima sfocata), elastico oltre i limiti, inerzia al rilascio.
+  // Un dito (quando scorre): scorrimento nativo con inerzia del sistema; doppio tocco = zoom 2,5× ↔ 100%.
+  // Tocco a due dita = annulla, a tre = ripeti (solo se le dita non si sono mosse).
+  const ZMIN = 1;
+  let gst: { f: number[]; d0: number; z0: number; cx: number; cy: number; z: number; sx: number; sy: number; t0: number; mosso: number; v: number[]; tv: number; ultimo: number[] } | null = null;
+  let rafG = 0, inerzia = 0;
+  const centro = (t: TouchList) => [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2];
+  const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const elastico = (z: number) => z < ZMIN ? ZMIN - (ZMIN - z) * .35 : z > ZMAX ? ZMAX + (z - ZMAX) * .2 : z;
+  /** Disegno «virtuale» durante il gesto: scala e scorrimento calcolati, senza toccare il layout (60 fps). */
+  function disegnaVirtuale(z: number, sx: number, sy: number): void {
+    const sc = base * z, W = LARG * sc;
+    const ox = W < vw ? -(vw - W) / 2 : Math.max(0, Math.min(W - vw, sx));
+    const oy = Math.max(-vh * .15, Math.min(m.h * sc - vh * .85, sy));
+    g.setTransform(d, 0, 0, d, 0, 0);
+    disegnaMano(g, m, sc, false, { ox, oy, w: vw, h: vh, passo: 25 * sc, veloce: m.t.length > 600 });
+    pulisciVivo();
+    if (rig.on) righello.style.opacity = '0';
+  }
+  function chiediFrame(): void { if (!rafG) rafG = requestAnimationFrame(() => { rafG = 0; if (gst) disegnaVirtuale(gst.z, gst.sx, gst.sy); }); }
+  function fermaInerzia(): void { if (inerzia) { cancelAnimationFrame(inerzia); inerzia = 0; } }
+  function avviaInerzia(vx: number, vy: number): void {
+    fermaInerzia(); let t = performance.now();
+    const passo = (n: number) => { const dt = Math.min(40, n - t); t = n; vx *= Math.pow(.94, dt / 16); vy *= Math.pow(.94, dt / 16);
+      if (Math.hypot(vx, vy) < .03) { inerzia = 0; return; }
+      pag.scrollLeft -= vx * dt; pag.scrollTop -= vy * dt; inerzia = requestAnimationFrame(passo); };
+    inerzia = requestAnimationFrame(passo);
+  }
+  /** Fissa zoom e scorrimento finali (layout vero), poi ridisegno nitido. */
+  function fissa(z: number, sx: number, sy: number): void {
+    zoom = Math.max(ZMIN, Math.min(ZMAX, z)); dimensiona();
+    pag.scrollLeft = Math.max(0, sx); pag.scrollTop = Math.max(0, sy);
+    righello.style.opacity = ''; ridisegna(); aggiornaBarra();
+  }
+  /** Zoom animato verso z, tenendo fermo il punto (cx, cy) dello schermo. */
+  function zoomAnimato(z1: number, cx: number, cy: number): void {
+    fermaInerzia();
+    const pr = pag.getBoundingClientRect(), mx = cx - pr.left, my = cy - pr.top, z0 = zoom;
+    const fx = (mx + pag.scrollLeft) / scala, fy = (my + pag.scrollTop) / scala, t0 = performance.now(), T = 240;
+    const step = (n: number) => { const k = Math.min(1, (n - t0) / T), e = 1 - Math.pow(1 - k, 3), z = z0 + (z1 - z0) * e, sc = base * z;
+      if (k < 1) { disegnaVirtuale(z, fx * sc - mx, fy * sc - my); requestAnimationFrame(step); }
+      else fissa(z1, fx * base * z1 - mx, fy * base * z1 - my); };
+    requestAnimationFrame(step);
+  }
   function impostaZoom(z: number, cx?: number, cy?: number): void {
-    z = Math.max(1, Math.min(ZMAX, z));
+    z = Math.max(ZMIN, Math.min(ZMAX, z));
     const pr = pag.getBoundingClientRect();
     const mx = (cx != null ? cx : pr.left + pr.width / 2) - pr.left, my = (cy != null ? cy : pr.top + pr.height / 2) - pr.top;
-    const fx = (mx + pag.scrollLeft) / scala, fy = (my + pag.scrollTop) / scala;   // punto del foglio sotto le dita
-    zoom = z; dimensiona();
-    pag.scrollLeft = fx * scala - mx; pag.scrollTop = fy * scala - my;
-    ridisegna(); aggiornaBarra();
+    const fx = (mx + pag.scrollLeft) / scala, fy = (my + pag.scrollTop) / scala;
+    fissa(z, fx * base * z - mx, fy * base * z - my);
   }
-  // pizzico: anteprima con transform (fluida), poi ridisegno nitido al rilascio
-  let pz: { d0: number; z0: number; cx: number; cy: number } | null = null, kz = 1;
-  const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-  let gesto: { n: number; t: number } | null = null;
-  pag.addEventListener('touchstart', e => { if (e.touches.length >= 2) gesto = { n: Math.max(gesto && Date.now() - gesto.t < 300 ? gesto.n : 0, e.touches.length), t: gesto && Date.now() - gesto.t < 300 ? gesto.t : Date.now() }; }, { passive: true, capture: true });
-  pag.addEventListener('touchend', e => {
-    if (!gesto || e.touches.length) return; const g0 = gesto; gesto = null;
-    if (Date.now() - g0.t > 280 || Math.abs(kz - 1) > .03) return;
-    if (g0.n === 2 && storia.length) { futuro.push(foto()); ripristina(storia.pop()!); ridisegna(); cambia(); avviso('↶ Annullato', 900); }
-    else if (g0.n === 3 && futuro.length) { storia.push(foto()); ripristina(futuro.pop()!); ridisegna(); cambia(); avviso('↷ Ripetuto', 900); }
-  }, { capture: true });
+  let gesto: { n: number; t: number; x: number; y: number; mosso: boolean } | null = null;
   pag.addEventListener('touchstart', e => {
+    fermaInerzia();
+    if (e.touches.length >= 2) {
+      const c = e.touches.length === 2 ? centro(e.touches) : [e.touches[0].clientX, e.touches[0].clientY];
+      const vecchio = gesto && Date.now() - gesto.t < 300 ? gesto : null;
+      gesto = { n: Math.max(vecchio ? vecchio.n : 0, e.touches.length), t: vecchio ? vecchio.t : Date.now(), x: c[0], y: c[1], mosso: vecchio ? vecchio.mosso : false };
+    }
     if (e.touches.length !== 2) return;
-    if (cur) { cur = null; idPuntatore = -1; if (storia.length) ripristina(storia.pop()!); pulisciVivo(); ridisegna(); }
-    const r = vista.getBoundingClientRect(), cx = (e.touches[0].clientX + e.touches[1].clientX) / 2, cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-    pz = { d0: dist(e.touches), z0: zoom, cx, cy }; kz = 1;
-    vista.style.transformOrigin = (cx - r.left) + 'px ' + (cy - r.top) + 'px';
+    if (cur) { cur = null; idPuntatore = -1; tenuta = null; clearTimeout(timerTieni); if (storia.length) ripristina(storia.pop()!); pulisciVivo(); ridisegna(); }
+    const pr = pag.getBoundingClientRect(), c = centro(e.touches);
+    gst = { f: [(c[0] - pr.left + pag.scrollLeft) / scala, (c[1] - pr.top + pag.scrollTop) / scala], d0: dist(e.touches), z0: zoom, cx: c[0], cy: c[1], z: zoom, sx: pag.scrollLeft, sy: pag.scrollTop, t0: Date.now(), mosso: 0, v: [0, 0], tv: performance.now(), ultimo: c };
   }, { passive: true, capture: true });
   pag.addEventListener('touchmove', e => {
-    if (!pz || e.touches.length !== 2) return;
+    if (!gst || e.touches.length !== 2) return;
     e.preventDefault();
-    const z = Math.max(1, Math.min(ZMAX, pz.z0 * dist(e.touches) / pz.d0)); kz = z / pz.z0;
-    vista.style.transform = 'scale(' + kz + ')';
+    const pr = pag.getBoundingClientRect(), c = centro(e.touches), zr = gst.z0 * dist(e.touches) / gst.d0, z = elastico(zr), sc = base * z;
+    gst.z = z; gst.sx = gst.f[0] * sc - (c[0] - pr.left); gst.sy = gst.f[1] * sc - (c[1] - pr.top);
+    const n = performance.now(), dt = Math.max(1, n - gst.tv);
+    gst.v = [.7 * ((c[0] - gst.ultimo[0]) / dt) + .3 * gst.v[0], .7 * ((c[1] - gst.ultimo[1]) / dt) + .3 * gst.v[1]]; gst.tv = n; gst.ultimo = c;
+    gst.mosso = Math.max(gst.mosso, Math.hypot(c[0] - gst.cx, c[1] - gst.cy), Math.abs(dist(e.touches) - gst.d0));
+    if (gesto && gst.mosso > 10) gesto.mosso = true;
+    chiediFrame();
   }, { passive: false, capture: true });
-  const finePizzico = (e: TouchEvent) => {
-    if (!pz || e.touches.length >= 2) return;
-    const p0 = pz; pz = null; vista.style.transform = '';
-    if (Math.abs(kz - 1) > .02) impostaZoom(p0.z0 * kz, p0.cx, p0.cy);
+  const fineGesto = (e: TouchEvent) => {
+    if (gst && e.touches.length < 2) {
+      const g0 = gst; gst = null; if (rafG) { cancelAnimationFrame(rafG); rafG = 0; }
+      const zf = Math.max(ZMIN, Math.min(ZMAX, g0.z)), pr = pag.getBoundingClientRect(), c = g0.ultimo;
+      if (g0.mosso < 6) { righello.style.opacity = ''; ridisegna(); }
+      else if (Math.abs(zf - g0.z) > .01) zoomAnimatoDa(g0.z, g0.sx, g0.sy, zf, c[0], c[1]);   // elastico: torna dentro i limiti
+      else { fissa(zf, g0.sx, g0.sy); const v = g0.v; if (performance.now() - g0.tv < 60 && Math.hypot(v[0], v[1]) > .25) avviaInerzia(v[0], v[1]); }
+      void pr;
+    }
+    if (!gesto || e.touches.length) return;
+    const g1 = gesto; gesto = null;
+    if (Date.now() - g1.t > 280 || g1.mosso) return;
+    if (g1.n === 2 && storia.length) { futuro.push(foto()); ripristina(storia.pop()!); ridisegna(); cambia(); avviso('↶ Annullato', 900); }
+    else if (g1.n === 3 && futuro.length) { storia.push(foto()); ripristina(futuro.pop()!); ridisegna(); cambia(); avviso('↷ Ripetuto', 900); }
   };
-  pag.addEventListener('touchend', finePizzico, { capture: true }); pag.addEventListener('touchcancel', finePizzico, { capture: true });
-  // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad)
+  function zoomAnimatoDa(za: number, sxa: number, sya: number, z1: number, cx: number, cy: number): void {
+    const pr = pag.getBoundingClientRect(), mx = cx - pr.left, my = cy - pr.top, sca = base * za;
+    const fx = (sxa + mx) / sca, fy = (sya + my) / sca, t0 = performance.now(), T = 220;
+    const step = (n: number) => { const k = Math.min(1, (n - t0) / T), e = 1 - Math.pow(1 - k, 3), z = za + (z1 - za) * e, sc = base * z;
+      if (k < 1) { disegnaVirtuale(z, fx * sc - mx, fy * sc - my); requestAnimationFrame(step); } else fissa(z1, fx * base * z1 - mx, fy * base * z1 - my); };
+    requestAnimationFrame(step);
+  }
+  pag.addEventListener('touchend', fineGesto, { capture: true }); pag.addEventListener('touchcancel', fineGesto, { capture: true });
+  // doppio tocco con un dito (quando il dito scorre): zoom 2,5× sul punto, di nuovo per tornare al 100%
+  let ultimoTap = { t: 0, x: 0, y: 0 };
+  pag.addEventListener('touchend', e => {
+    if (e.touches.length || e.changedTouches.length !== 1 || (dito && !penna) || gesto) return;
+    const t = e.changedTouches[0], n = Date.now();
+    if (n - ultimoTap.t < 300 && Math.hypot(t.clientX - ultimoTap.x, t.clientY - ultimoTap.y) < 30) { ultimoTap.t = 0; zoomAnimato(zoom > 1.3 ? 1 : 2.5, t.clientX, t.clientY); }
+    else ultimoTap = { t: n, x: t.clientX, y: t.clientY };
+  }, { passive: true });
+  // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad); trackpad a due dita = scorre (nativo)
   pag.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); impostaZoom(zoom * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); }, { passive: false });
   const salvaStoria = () => { storia.push(foto()); if (storia.length > 60) storia.shift(); futuro.length = 0; };
   // --- v0.39.1: righello (trascina per spostarlo, ⟳ per ruotarlo; la penna lungo il bordo traccia dritto) ---
@@ -448,7 +518,7 @@ function paginaMano(contenitore: HTMLElement, iniziale: Mano | undefined, cambia
   vivo.addEventListener('pointerdown', e => {
     if (sospeso) { pulisciVivo(); sospeso = false; }
     if (e.pointerType === 'pen' && !penna) { penna = true; aggiornaBarra(); }
-    if (!scrive(e) || cur || pz) return;
+    if (!scrive(e) || cur || gst) return;
     e.preventDefault(); try { vivo.setPointerCapture(e.pointerId); } catch (_) { /* puntatore sintetico */ } idPuntatore = e.pointerId;
     pulisciVivo();
     if (strumento === 'lazo') {

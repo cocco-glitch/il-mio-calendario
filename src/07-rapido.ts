@@ -123,14 +123,17 @@ function creaDaRapido(r: Rapido): Rec {
 
 /** Campo di aggiunta rapida con anteprima di ciò che verrà creato. */
 function campoRapido(): HTMLElement {
+  // v0.42: lo stesso campo è anche l'ASSISTENTE dell'app (✨): eventi/promemoria con data restano locali e immediati,
+  // tutto il resto (quiz, appunti, carte, ricerca, aprire viste, domande sull'app) passa all'assistente AI.
   const anteprima = h('div.rapido-anteprima');
-  const campo = h('input.rapido', { type: 'text', placeholder: '+ Aggiungi: "domani 15-17 Chimica 3.1"', enterKeyHint: 'done', autocomplete: 'off',
-    oninput: () => { const r = interpreta(campo.value); anteprima.textContent = r && campo.value.trim() ? descriviRapido(r) : ''; },
-    onkeydown: (e: KeyboardEvent) => {
-      if (e.key !== 'Enter') return;
-      const r = interpreta(campo.value); if (!r) return;
-      const rec = creaDaRapido(r);
-      avviso('Creato: ' + descriviRapido(r), 5000, () => rec.type === 'task' ? apriTask(rec as Task) : apriEvento(rec as Evento));
-    } }) as HTMLInputElement;
-  return h('div.rapido-box', null, campo, anteprima);
+  const invia = () => {
+    const f = campo.value.trim(); if (!f) return;
+    if (Assistente.eRapida(f)) { const r = interpreta(f)!; const rec = creaDaRapido(r); campo.value = ''; anteprima.textContent = ''; avviso('Creato: ' + descriviRapido(r), 5000, () => rec.type === 'task' ? apriTask(rec as Task) : apriEvento(rec as Evento)); return; }
+    campo.value = ''; anteprima.textContent = ''; Assistente.chiedi(f);
+  };
+  const campo = h('input.rapido', { type: 'text', placeholder: 'Chiedi o aggiungi… (es. «crea un quiz sulle leve»)', enterKeyHint: 'go', autocomplete: 'off',
+    oninput: () => { const f = campo.value.trim(); const r = f ? interpreta(f) : null; anteprima.textContent = !f ? '' : Assistente.eRapida(f) && r ? descriviRapido(r) : '✨ Assistente: Invio per chiedere'; },
+    onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); invia(); } } }) as HTMLInputElement;
+  const bottone = h('button.rapido-ai', { type: 'button', 'aria-label': 'Chiedi all\'assistente', title: 'Assistente', onclick: invia }, '✨');
+  return h('div.rapido-box', null, h('div.rapido-riga', null, campo, bottone), anteprima);
 }
