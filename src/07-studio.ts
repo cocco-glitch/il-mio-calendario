@@ -520,7 +520,7 @@ function numero(v: string, eti: string): HTMLElement { return h('div.numero', nu
 function bottoneDrive(): HTMLElement {
   return h('button.btn.neutro', { onclick: async () => {
     if (serveGoogle()) return;
-    const stato = h('div.tenue.piccolo', null, 'Collego il Drive…'), fs = foglio({ titolo: '☁︎ Pacchetti dal Drive', corpo: h('div.modulo', null, stato) });
+    const stato = h('div.tenue.piccolo', null, 'Collego il Drive…'), fs = foglio({ titolo: '☁︎ Pacchetti dal Drive', etichettaSalva: 'Fatto', salva: () => { disegna(); }, corpo: h('div.modulo', null, stato) });
     try { const n = await Studio.caricaDaDrive(t => { stato.textContent = t; }); const tr = Studio.trovati();
       svuota(stato); stato.append(h('div', null, n ? '✓ Aggiornati ' + n + ' pacchetti.' : (tr.length ? '✓ Pacchetti già aggiornati.' : 'Nessun pacchetto trovato nel tuo Drive.')),
         ...tr.map(x => h('div.piccolo', null, (x.tipo === 'piano' ? '📅 ' : '📘 ') + x.titolo + ' — ' + x.nome + (x.cartella ? ' (in «' + x.cartella + '»)' : ''))),

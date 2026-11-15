@@ -56,7 +56,7 @@ with sync_playwright() as p:
       await Studio.caricaDaDrive(); return [g1, scaricati, Studio.trovati().length]; }''')
     ok(k[0] == 2 and k[1] == 0 and k[2] == 1, 'pacchetti: primo giro %d download, secondo %d (invariati e JSON estranei saltati), trovati %d' % (k[0], k[1], k[2]))
     # 6) assistente: la stessa richiesta confermata due volte non chiama più l'AI
-    c = pg.evaluate('''async () => { let chiamate = 0; window.fetch = async () => { chiamate++; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ azioni: [{ tipo: 'apri', vista: 'statistiche' }] }) } }] })); };
+    c = pg.evaluate('''async () => { let chiamate = 0; window.fetch = async (u) => { if (String(u).endsWith('/models')) return new Response('{"data":[]}'); chiamate++; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ azioni: [{ tipo: 'apri', vista: 'statistiche' }] }) } }] })); };
       await Assistente.chiedi('mostrami come sto andando'); await Assistente.chiedi('mostrami come sto andando'); const a = chiamate; await Assistente.chiedi('mostrami come sto andando'); return [a, chiamate]; }''')
     ok(c == [2, 2], 'assistente: dalla terza volta la richiesta ricordata non usa token (%s)' % c)
     # 7) quiz: un problema trovato diventa lezione nel prompt del generatore

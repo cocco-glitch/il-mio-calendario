@@ -97,7 +97,7 @@ const Spiega = (() => {
   /** Q5: chiamata generica (messaggi liberi, risposta JSON) con lo stesso modello di riserva. */
   async function chat(msgs: { role: string; content: string }[], temperatura = 0.4): Promise<any> {
     await pronta();
-    if (!chiave()) throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
+    if (!chiave()) { if (IA.gemini) return (await IA.chiedi(msgs, 'genera', { temp: temperatura })).j; throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.'); }
     const modelli = [modello()]; if (modelli[0] !== RISERVA) modelli.push(RISERVA);
     let ultimo: any = null;
     for (const mod of modelli) {
@@ -112,8 +112,10 @@ const Spiega = (() => {
         return JSON.parse(t.replace(/^```(json)?|```$/g, ''));
       } catch (e: any) { ultimo = e; if (e.stato === 401) break; }
     }
+    // v0.44.1: modello ritirato o senza accesso → scelta automatica tra quelli che la chiave può davvero usare (anche Gemini)
+    if (!(ultimo && ultimo.stato === 401) || IA.gemini) { try { return (await IA.chiedi(msgs, 'genera', { temp: temperatura })).j; } catch (e2: any) { ultimo = e2; } }
     if (ultimo && ultimo.stato === 401) throw new Error('Chiave Groq non valida: controllala in Altro → Spiegazioni AI.');
-    if (ultimo && ultimo.stato === 429) throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
+    if (ultimo && ultimo.stato === 429) throw new Error('Limite gratuito raggiunto. Riprova più tardi.');
     throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
   }
 

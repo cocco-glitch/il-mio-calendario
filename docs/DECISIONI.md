@@ -164,3 +164,6 @@ Altro → Spiegazioni AI → «Memoria degli assistenti»: vedere e far dimentic
   record di altri account mai uniti; per i non proprietari pulizia (con lapide) di programma/progressi/statistiche del
   proprietario; ricerca pacchetti solo su file di proprietà ('me' in owners); dispositivi riconosciuti con «Scollega»
   remoto (alla riapertura cancella ed esce); «Esci» con cancellazione dei dati dal dispositivo. Identità = account Google.
+
+## v0.44.1 — Chiavi AI e modelli disponibili
+Chiavi Gemini nuove «AQ.» accettate (Bearer → x-goog-api-key → ?key=). I modelli non sono più fissi: GET /models di Groq e Gemini (ricordato 12 h) e per ogni ruolo il migliore che la chiave può usare; modelli ritirati o senza accesso saltati; anche Spiega.chat ripiega sui disponibili. Finestra «Pacchetti dal Drive» con tasto Fatto.
