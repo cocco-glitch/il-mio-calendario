@@ -7066,6 +7066,9 @@ const Generatori = (() => {
 // intestazioni x-ratelimit-*, pause dopo 429 / 5xx, chiave rifiutata (401/403) non più riprovata finché non
 // cambia, massimo 2 richieste in volo per fornitore. Fornitori facoltativi: Mistral, Cohere, OpenRouter, Requesty
 // (chiavi solo in 'imc-ai-keys').
+// v0.51 (BP1 §11): PROVIDER_FREE_QUOTAS con soglia di guardia all'85% e contatori locali a finestra mobile
+// ('imc-ai-uso'), perché via CORS le intestazioni x-ratelimit-* spesso non arrivano. Gemini parte da flash-lite.
+// Opzioni in 'imc-ai-opzioni': strictPrivacy (salta Mistral), openrouterHasCredits10Usd.
 // =====================================================================
 const IA = (() => {
     const PROVS = ['groq', 'gemini', 'mistral', 'cohere', 'openrouter', 'requesty'];
@@ -7146,7 +7149,8 @@ const IA = (() => {
     // ---- Discovery per pattern (BP1 §4.3) ----
     const PATTERN = {
         groq: { genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
-        gemini: { genera: [/gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/gemini-\d.*flash(?!-lite)/, /pro/], visione: [/gemini-\d.*flash(?!-lite)/, /flash/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
+        // v0.51: flash-lite di base (500 richieste/giorno gratis contro le 20 di flash); flash resta come riserva
+        gemini: { genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
         mistral: { genera: [/mistral-(large|medium)/, /mistral-small/], revisiona: [/mistral-(large|medium)/], veloce: [/mistral-small/, /ministral/], lungo: [/mistral-(large|medium)/] },
         cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
         openrouter: { genera: [/:free$/], veloce: [/:free$/] },
@@ -7155,7 +7159,7 @@ const IA = (() => {
     /** Usati solo se /models non risponde e non c'è nulla in memoria. */
     const RISERVA = {
         groq: { genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
-        gemini: { genera: ['gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.8-flash'], visione: ['gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
+        gemini: { genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
         mistral: { genera: ['mistral-large-latest', 'mistral-small-latest'], revisiona: ['mistral-large-latest'], veloce: ['mistral-small-latest'], lungo: ['mistral-large-latest'] },
         cohere: {}, openrouter: {}, requesty: {},
     };
@@ -7234,7 +7238,8 @@ const IA = (() => {
         return r;
     }
     async function catena(r, evita) {
-        const provs = CATENA[r].filter(p => chiave(p));
+        const priv = !!opzioni().strictPrivacy; // v0.51: con Strict Privacy si saltano i fornitori che addestrano sui dati gratuiti
+        const provs = CATENA[r].filter(p => chiave(p) && !(priv && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier));
         const liste = await Promise.all(provs.map(p => disponibili(p)));
         const out = [];
         provs.forEach((p, i) => { for (const m of scegli(p, r, liste[i]))
@@ -7329,6 +7334,100 @@ const IA = (() => {
     };
     /** Token di risposta attesi per ruolo: contano solo nel budget (non si inviano: i token di ragionamento li consumerebbero). */
     const USCITA = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000 };
+    /** Limiti gratuiti noti. `perModello`: la quota è di ogni modello (Gemini, Groq), altrimenti dell'intero account.
+     *  Il router si ferma a `SOGLIA` (85%) e passa al fornitore seguente; il resto si usa solo se non c'è alternativa. */
+    const PROVIDER_FREE_QUOTAS = {
+        gemini: { perModello: true, base: { rpm: 5, rpd: 20, tpm: 250000 }, modelli: [
+                { re: /flash-lite/, q: { rpm: 12, rpd: 500, tpm: 250000 } }, { re: /flash/, q: { rpm: 5, rpd: 20, tpm: 250000 } }
+            ] },
+        mistral: { base: { rpm: 30, rpd: 2000 }, trainsOnFreeTier: true },
+        cohere: { base: { rpm: 20, rpd: 33 } },
+        openrouter: { base: { rpm: 20, rpd: 50 }, conCrediti: { rpm: 20, rpd: 1000 } },
+        requesty: { base: { rpm: 20, rpd: 200 } },
+        groq: { perModello: true, base: { rpm: 30, rpd: 1000 }, modelli: [
+                { re: /8b-instant/, q: { rpm: 30, rpd: 14400 } }, { re: /70b-versatile/, q: { rpm: 30, rpd: 1000 } }, { re: /whisper/, q: { rpm: 20, rpd: 2000 } }
+            ] },
+    };
+    const SOGLIA = 0.85;
+    const KO = 'imc-ai-opzioni', KU = 'imc-ai-uso';
+    function opzioni() { try {
+        const j = JSON.parse(ls(KO) || '{}');
+        return j && typeof j === 'object' ? j : {};
+    }
+    catch (_) {
+        return {};
+    } }
+    function impostaOpzione(n, v) {
+        const o = opzioni();
+        if (v)
+            o[n] = true;
+        else
+            delete o[n];
+        lsScrivi(KO, Object.keys(o).length ? JSON.stringify(o) : '');
+    }
+    /** Quota e chiave dei contatori per «fornitore:modello» (o solo «fornitore» se la quota è dell'account). */
+    function quota(p, m) {
+        const Q = PROVIDER_FREE_QUOTAS[p], x = Q.modelli && Q.modelli.find(e => e.re.test(m));
+        const q = p === 'openrouter' && Q.conCrediti && opzioni().openrouterHasCredits10Usd ? Q.conCrediti : x ? x.q : Q.base;
+        return { id: Q.perModello ? p + ':' + m : p, q };
+    }
+    const giorno = (t) => { const d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+    const mezzanotte = () => { const d = new Date(Date.now()); d.setHours(24, 0, 0, 0); return d.getTime(); };
+    function tuttoUso() { try {
+        const j = JSON.parse(ls(KU) || '{}');
+        return j && typeof j === 'object' ? j : {};
+    }
+    catch (_) {
+        return {};
+    } }
+    function contatori(id) {
+        const ora = Date.now(), u = tuttoUso()[id], w = u && Array.isArray(u.w) ? u.w.filter(x => ora - x[0] < 6e4) : [];
+        return { rpm60s: w.length, tpm60s: w.reduce((s, x) => s + (x[1] || 0), 0), rpdToday: u && u.g === giorno(ora) ? u.n || 0 : 0, finoA: u && u.q && u.q > ora ? u.q : 0 };
+    }
+    function aggiornaUso(id, f) {
+        const tutto = tuttoUso(), ora = Date.now(), g = giorno(ora), v = tutto[id];
+        const u = v && v.g === g ? { ...v, w: (Array.isArray(v.w) ? v.w : []).filter(x => ora - x[0] < 6e4) } : { g, n: 0, w: [] };
+        if (v && v.q && v.q > ora)
+            u.q = v.q;
+        else
+            delete u.q;
+        f(u);
+        tutto[id] = u;
+        for (const k of Object.keys(tutto)) {
+            const x = tutto[k];
+            if (x.g !== g && !(x.q && x.q > ora))
+                delete tutto[k];
+        } // via i giorni passati
+        lsScrivi(KU, JSON.stringify(tutto));
+    }
+    /** Vero se la prossima richiesta porterebbe un contatore oltre `lim` (0,85 = soglia di guardia; 1 = limite vero). */
+    function quotaPiena(p, m, tok, lim = SOGLIA) {
+        const { id, q } = quota(p, m), c = contatori(id);
+        return c.rpm60s + 1 > q.rpm * lim || c.rpdToday + 1 > q.rpd * lim || (!!q.tpm && c.tpm60s + tok > q.tpm * lim);
+    }
+    /** Intestazioni di limite lette solo se esistono (`get(...) !== null`): via CORS molti fornitori non le espongono
+     *  e allora valgono i contatori locali. Durate in millisecondi. */
+    function parseRateLimitInfo(res) {
+        const g = (n) => { try {
+            return res.headers.get(n);
+        }
+        catch (_) {
+            return null;
+        } };
+        const num = (n) => { const v = g(n); if (v === null)
+            return undefined; const x = parseInt(v, 10); return isNaN(x) ? undefined : x; };
+        const tempo = (n) => { const v = g(n); return v === null ? undefined : dur(v); };
+        return { remainingRequests: num('x-ratelimit-remaining-requests'), remainingTokens: num('x-ratelimit-remaining-tokens'), limitTokens: num('x-ratelimit-limit-tokens'),
+            resetRequests: tempo('x-ratelimit-reset-requests'), resetTokens: tempo('x-ratelimit-reset-tokens'), retryAfter: tempo('retry-after') };
+    }
+    /** `retryDelay` nel corpo di un 429 di Gemini (error.details[].retryDelay, es. «37s»); anche nella forma ad array. */
+    function ritardoCorpo(j) {
+        const e = Array.isArray(j) ? j[0] && j[0].error : j && j.error, d = e && Array.isArray(e.details) ? e.details : [];
+        for (const x of d)
+            if (x && x.retryDelay)
+                return dur(String(x.retryDelay));
+        return 0;
+    }
     let RM = {}; // per «fornitore:modello»
     let RP = {}; // pausa dell'intero fornitore
     let NO = {}; // impronta della chiave rifiutata
@@ -7339,13 +7438,23 @@ const IA = (() => {
             RM = {};
             RP = {};
             NO = {};
+            lsScrivi(KU, '');
             return;
-        }
+        } // azzeramento completo: anche i contatori
         delete RP[p];
         delete NO[p];
         for (const k of Object.keys(RM))
             if (k.startsWith(p + ':'))
                 delete RM[k];
+        const t = tuttoUso();
+        let c = false; // chiave nuova: via le pause salvate (i conteggi restano)
+        for (const k of Object.keys(t))
+            if ((k === p || k.startsWith(p + ':')) && t[k].q) {
+                delete t[k].q;
+                c = true;
+            }
+        if (c)
+            lsScrivi(KU, JSON.stringify(t));
     }
     /** Stima: 3,5 caratteri per token; delle immagini conta solo il testo. */
     const stimaTok = (msgs) => Math.ceil(msgs.reduce((s, x) => s + (typeof x.content === 'string' ? x.content.length
@@ -7362,6 +7471,10 @@ const IA = (() => {
             return 'in pausa';
         if (s.rest && s.rest.finoA > ora && s.rest.tok < serve)
             return 'in pausa';
+        if (contatori(quota(p, m).id).finoA > ora)
+            return 'in pausa';
+        if (quotaPiena(p, m, serve))
+            return 'quota'; // oltre l'85%: si preferisce un altro fornitore
         return '';
     }
     /** Durate delle intestazioni: «7.66s», «2m59.56s», «120ms», «1h2m», «30» (secondi) o data HTTP → millisecondi. */
@@ -7384,24 +7497,39 @@ const IA = (() => {
         return t;
     }
     /** Legge le intestazioni e aggiorna lo stato dopo ogni risposta. */
-    function esito(p, m, res, tok, k) {
-        const hd = (n) => res.headers.get(n), s = sm(p, m), ora = Date.now();
-        const lim = parseInt(hd('x-ratelimit-limit-tokens') || '', 10);
-        if (lim > 0)
-            s.tpm = lim;
-        const rim = parseInt(hd('x-ratelimit-remaining-tokens') || '', 10);
-        if (!isNaN(rim))
-            s.rest = { tok: rim, finoA: ora + (dur(hd('x-ratelimit-reset-tokens')) || 6e4) };
+    async function esito(p, m, res, tok, k) {
+        const ri = parseRateLimitInfo(res), s = sm(p, m), ora = Date.now(), { id, q } = quota(p, m);
+        if (ri.limitTokens && ri.limitTokens > 0)
+            s.tpm = ri.limitTokens;
+        if (ri.remainingTokens !== undefined)
+            s.rest = { tok: ri.remainingTokens, finoA: ora + (ri.resetTokens || 6e4) };
+        if (ri.remainingRequests === 0)
+            s.finoA = Math.max(s.finoA, ora + Math.min(ri.resetRequests || 6e4, 6 * 36e5));
+        if (res.status !== 429)
+            aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); }); // il 429 non consuma quota
         if (res.ok) {
             s.k = 0;
             return;
         }
         if (res.status === 429) {
-            const att = dur(hd('retry-after')) || Math.max(dur(hd('x-ratelimit-reset-tokens')), dur(hd('x-ratelimit-reset-requests'))) || Math.min(6e5, 15e3 * Math.pow(2, s.k));
-            s.finoA = ora + Math.min(att, 6 * 36e5);
+            // retry-after → retryDelay nel corpo (Gemini) → reset delle intestazioni → 65 s, o fino a mezzanotte se la quota del giorno è quasi finita
+            let att = ri.retryAfter || 0;
+            if (!att)
+                att = ritardoCorpo(await res.clone().json().catch(() => null));
+            if (!att)
+                att = Math.max(ri.resetTokens || 0, ri.resetRequests || 0);
+            const fino = att ? ora + Math.min(att, 6 * 36e5) : contatori(id).rpdToday < q.rpd * SOGLIA ? ora + 65e3 : mezzanotte();
+            s.finoA = fino;
             s.k++;
+            aggiornaUso(id, u => { u.q = Math.max(u.q || 0, fino); });
+            return;
         }
-        else if (res.status === 413) {
+        if (p === 'requesty' && (res.status === 404 || res.status === 410 || (res.status === 400
+            && /expired|deprecat|not.?found|no longer|retired/i.test(JSON.stringify(await res.clone().json().catch(() => '')))))) {
+            s.finoA = ora + 24 * 36e5;
+            return; // modello sparito o scaduto su Requesty: si passa subito al seguente
+        }
+        if (res.status === 413) {
             if (tok)
                 s.tpm = Math.min(s.tpm, Math.floor(tok * 0.9));
         }
@@ -7437,7 +7565,7 @@ const IA = (() => {
         finally {
             libera(p);
         }
-        esito(p, m, res, tok, k);
+        await esito(p, m, res, tok, k);
         return res;
     }
     const ora2 = (t) => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
@@ -7454,8 +7582,17 @@ const IA = (() => {
                 out[p] = { ok: false, motivo: 'chiave non valida' };
                 continue;
             }
+            if (opzioni().strictPrivacy && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier) {
+                out[p] = { ok: false, motivo: 'privacy' };
+                continue;
+            }
             if (P && P.finoA > ora) {
                 out[p] = { ok: false, finoA: P.finoA, motivo: P.motivo };
+                continue;
+            }
+            const c = contatori(p);
+            if (c.finoA > ora) {
+                out[p] = { ok: false, finoA: c.finoA, motivo: 'limite gratuito' };
                 continue;
             }
             const ms = Object.keys(RM).filter(x => x.startsWith(p + ':')).map(x => RM[x]);
@@ -7478,7 +7615,7 @@ const IA = (() => {
         if (comeJson)
             corpo.response_format = { type: 'json_object' };
         let res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
-        if (res.status === 400 && corpo.response_format) {
+        if (res.status === 400 && corpo.response_format && !(f.prov === 'requesty' && sm(f.prov, f.modello).finoA > Date.now())) {
             delete corpo.response_format;
             res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
         } // modello senza modalità JSON
@@ -7512,7 +7649,7 @@ const IA = (() => {
         if (!forn.length)
             throw new Error('Manca la chiave AI gratuita: inseriscila in Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
         const out = o.maxOut || USCITA[r], tok = stimaTok(msgs);
-        const errori = [], grandi = [], saltati = [];
+        const errori = [], grandi = [], quasiPieni = [], saltati = [];
         let ultimo = null, solo401 = true, provati = 0;
         const prova = async (f, m2, t) => {
             provati++;
@@ -7531,6 +7668,8 @@ const IA = (() => {
             const b = bloccato(f.prov, f.modello, tok + out, chiave(f.prov));
             if (b) {
                 saltati.push(b);
+                if (b === 'quota')
+                    quasiPieni.push(f);
                 continue;
             }
             if (tok > budget(f.prov, f.modello, out)) {
@@ -7550,12 +7689,20 @@ const IA = (() => {
                 if (x)
                     return x;
             }
+        // ultimo giro: nessun altro ha risposto → si usa il 15% di quota tenuto da parte
+        for (const f of quasiPieni) {
+            if (quotaPiena(f.prov, f.modello, tok + out, 1) || tok > budget(f.prov, f.modello, out))
+                continue;
+            const x = await prova(f, msgs, tok);
+            if (x)
+                return x;
+        }
         if (!provati) {
             if (saltati.length && saltati.every(s => s === 'chiave non valida'))
                 throw new Error('Chiave AI non valida: controllala in Altro → Spiegazioni AI.');
             if (!saltati.length)
                 throw new Error('Il testo è troppo lungo per i modelli disponibili: accorcialo, oppure aggiungi la chiave Gemini.');
-            const fino = forn.map(f => Math.max(sm(f.prov, f.modello).finoA, (RP[f.prov] || { finoA: 0 }).finoA)).filter(t => t > Date.now());
+            const fino = forn.map(f => Math.max(sm(f.prov, f.modello).finoA, (RP[f.prov] || { finoA: 0 }).finoA, contatori(quota(f.prov, f.modello).id).finoA)).filter(t => t > Date.now());
             throw new Error('Tutti i modelli AI sono in pausa per i limiti gratuiti' + (fino.length ? ': riprova verso le ' + ora2(Math.min(...fino)) : '') + '.');
         }
         if (solo401 && ultimo)
@@ -7580,8 +7727,8 @@ const IA = (() => {
         const mod = o.modello || 'whisper-large-v3-turbo', b0 = bloccato('groq', mod, 0, k);
         if (b0 === 'chiave non valida')
             throw new Error('Chiave Groq non valida.');
-        if (b0)
-            throw new Error('Limite gratuito di Groq raggiunto (audio): riprova verso le ' + ora2(Math.max(sm('groq', mod).finoA, (RP.groq || { finoA: 0 }).finoA)) + '.');
+        if (b0 === 'quota' ? quotaPiena('groq', mod, 0, 1) : b0)
+            throw new Error('Limite gratuito di Groq raggiunto (audio): riprova verso le ' + ora2(Math.max(sm('groq', mod).finoA, (RP.groq || { finoA: 0 }).finoA, contatori(quota('groq', mod).id).finoA, Date.now() + 6e4)) + '.');
         const f = new FormData();
         f.append('file', b, o.nome || 'audio.webm');
         f.append('model', mod);
@@ -7626,7 +7773,8 @@ const IA = (() => {
             for (const p of PROVS) {
                 const x = st[p];
                 const d = x.ok ? '✅ pronto' : x.motivo === 'senza chiave' ? '—' : x.motivo === 'chiave non valida' ? '❌ chiave non valida'
-                    : '⏳ in pausa fino alle ' + ora2(x.finoA || Date.now()) + (x.motivo === 'non raggiungibile' ? ' (non raggiungibile)' : '');
+                    : x.motivo === 'privacy' ? '🔒 escluso (Strict Privacy)'
+                        : '⏳ in pausa fino alle ' + ora2(x.finoA || Date.now()) + (x.motivo === 'non raggiungibile' ? ' (non raggiungibile)' : '');
                 elenco.appendChild(h('div', null, NOMI[p] + ': ' + d));
             }
         };
@@ -7641,11 +7789,18 @@ const IA = (() => {
             };
             return h('div.riga', null, h('span', null, NOMI[p]), inp, h('button.btn.neutro', { onclick: salva }, 'Salva'));
         });
+        const spunta = (n, testo) => {
+            const cb = h('input', { type: 'checkbox' });
+            cb.checked = !!opzioni()[n];
+            cb.onchange = () => { impostaOpzione(n, cb.checked); aggiorna(); };
+            return h('label.riga', null, cb, h('span', null, testo));
+        };
         aggiorna();
-        return h('div.gruppo', null, h('details', null, h('summary', null, 'Altri fornitori AI (facoltativi)'), h('div.tenue.piccolo', null, 'Usati solo se Groq e Gemini sono in pausa o mancano. Chiavi salvate solo su questo dispositivo.'), ...righe), h('div.piccolo', null, 'Stato dei fornitori'), elenco, h('div.bottoni', null, h('button.btn.neutro', { onclick: aggiorna }, 'Aggiorna stato')));
+        return h('div.gruppo', null, h('details', null, h('summary', null, 'Altri fornitori AI (facoltativi)'), h('div.tenue.piccolo', null, 'Usati solo se Groq e Gemini sono in pausa o mancano. Chiavi salvate solo su questo dispositivo.'), ...righe, spunta('strictPrivacy', 'Strict Privacy: non usare fornitori che addestrano i modelli sui dati del piano gratuito (Mistral)'), spunta('openrouterHasCredits10Usd', 'Ho almeno 10 $ di crediti su OpenRouter (1000 richieste al giorno invece di 50)')), h('div.piccolo', null, 'Stato dei fornitori'), elenco, h('div.bottoni', null, h('button.btn.neutro', { onclick: aggiorna }, 'Aggiorna stato')));
     }
     return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, scegli, accorcia, parseJsonSicuro,
-        chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, _r: { stimaTok, budget, dur, get RM() { return RM; } },
+        chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
+        _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, get RM() { return RM; } },
         get gemini() { return !!chiave('gemini'); } };
 })();
 
@@ -13452,7 +13607,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.50';
+const VERSIONE = '0.51';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
