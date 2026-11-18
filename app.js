@@ -7084,18 +7084,61 @@ const IA = (() => {
                     out.push({ nome: 'Groq ' + m, url: GROQ, chiave: () => Spiega.chiaveAI(), modello: m });
         return out;
     }
-    function json(t) {
-        t = t.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    // v0.45 (BP1 §4.6): lettura robusta del JSON restituito dai modelli.
+    const LATEX = new Set(('frac dfrac tfrac sqrt text textrm mathrm mathbf mathit operatorname times cdot div pm mp neq ne leq le geq ge approx sim propto infty partial nabla int sum prod lim log ln exp sin cos tan to rightarrow leftarrow Rightarrow rightleftharpoons leftrightarrow left right bar vec hat dot overline underline ' +
+        'alpha beta gamma Gamma delta Delta epsilon varepsilon zeta eta theta Theta iota kappa lambda Lambda mu nu xi Xi pi Pi rho sigma Sigma tau upsilon phi Phi varphi chi psi Psi omega Omega degree circ ce pu quad qquad newline not in notin cup cap subset forall exists rm bf it').split(' '));
+    /** Raddoppia i backslash del LaTeX SOLO dentro le stringhe JSON: `\\` già doppi, `\uXXXX` e i veri escape (\n, \t, \" …) restano. */
+    function riparaLatex(t) {
+        return t.replace(/"(?:[^"\\]|\\.)*"/gs, s => s.replace(/\\(\\|u[0-9a-fA-F]{4}|[a-zA-Z]+|[\s\S])/g, (m, x) => {
+            if (x === '\\' || /^u[0-9a-fA-F]{4}$/.test(x))
+                return m; // già escapato · unicode valido
+            if (!/^[a-zA-Z]/.test(x))
+                return '"/'.includes(x) ? m : '\\\\' + x; // \" \/ validi; \( \, \[ … sono LaTeX
+            if (LATEX.has(x))
+                return '\\\\' + x; // comando LaTeX intero (limite noto: \nu \tau \theta …)
+            if (/^[bfnrt]/.test(x))
+                return m; // vero escape JSON seguito da testo (es. \nnuovo)
+            return '\\\\' + x; // \l \s \c… invalidi in JSON → LaTeX
+        }));
+    }
+    /** Toglie <think>, fence ``` e testo intorno; estrae il PRIMO JSON bilanciato (fuori dalle stringhe), ripara il LaTeX, poi JSON.parse. */
+    function parseJsonSicuro(raw) {
+        let t = String(raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').replace(/```(?:json)?/gi, '');
+        const i = t.search(/[{[]/);
+        if (i < 0)
+            throw new Error('risposta non in JSON');
+        let d = 0, s = false, e = false, j = i;
+        for (; j < t.length; j++) {
+            const c = t[j];
+            if (s) {
+                if (e)
+                    e = false;
+                else if (c === '\\')
+                    e = true;
+                else if (c === '"')
+                    s = false;
+                continue;
+            }
+            if (c === '"')
+                s = true;
+            else if (c === '{' || c === '[')
+                d++;
+            else if (c === '}' || c === ']') {
+                d--;
+                if (!d)
+                    break;
+            }
+        }
+        t = t.slice(i, j + 1);
+        // sempre riparare prima: «\frac» è JSON valido (\f = form feed) ma va letto come LaTeX
         try {
-            return JSON.parse(t);
+            return JSON.parse(riparaLatex(t));
         }
         catch (_) {
-            const a = t.indexOf('{'), b = t.lastIndexOf('}');
-            if (a >= 0 && b > a)
-                return JSON.parse(t.slice(a, b + 1));
-            throw new Error('risposta non in JSON');
+            throw new Error('risposta non in JSON valido');
         }
     }
+    const json = parseJsonSicuro;
     /** v0.44.2: Groq free = 8.000 token/minuto (input + output). 16.000 caratteri ≈ 4.600 token lasciano spazio alla risposta;
      *  prima erano 60.000 (≈17.000 token) e le richieste grandi tornavano 413 «Request too large». */
     const GROQ_CAR = 16000;
@@ -7145,7 +7188,19 @@ const IA = (() => {
                     throw e;
                 }
                 const t = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '';
-                return { j: json(t), modello: f.modello };
+                try {
+                    return { j: json(t), modello: f.modello };
+                }
+                catch (_) { /* una sola riprova, sotto */ }
+                // v0.45: JSON illeggibile → una riprova con lo stesso modello chiedendo solo JSON valido
+                corpo.messages = [...m2, { role: 'assistant', content: String(t).slice(0, 2000) }, { role: 'user', content: 'Rispondi solo con JSON valido, senza testo prima o dopo. Nelle stringhe scrivi i backslash del LaTeX doppi (\\\\frac).' }];
+                const res2 = await richiesta(!!f.gem, '/chat/completions', f.chiave(), corpo), j2 = await res2.json().catch(() => ({}));
+                if (!res2.ok) {
+                    const e = new Error((j2 && j2.error && j2.error.message) || 'errore ' + res2.status);
+                    e.stato = res2.status;
+                    throw e;
+                }
+                return { j: json(j2.choices && j2.choices[0] && j2.choices[0].message && j2.choices[0].message.content || ''), modello: f.modello };
             }
             catch (e) {
                 ultimo = e;
@@ -7176,7 +7231,7 @@ const IA = (() => {
         } };
         return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
     }
-    return { chiedi, campoGemini, disponibili, catena, accorcia, GROQ_CAR, get gemini() { return !!gemini(); } };
+    return { chiedi, campoGemini, disponibili, catena, accorcia, GROQ_CAR, parseJsonSicuro, get gemini() { return !!gemini(); } };
 })();
 
 // =====================================================================
@@ -10637,7 +10692,7 @@ const Spiega = (() => {
                     throw e;
                 }
                 const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
-                return JSON.parse(t.replace(/^```(json)?|```$/g, ''));
+                return IA.parseJsonSicuro(t); // v0.45: think, fence, testo intorno, LaTeX nelle stringhe
             }
             catch (e) {
                 ultimo = e;
@@ -12960,7 +13015,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.44.2';
+const VERSIONE = '0.45';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
