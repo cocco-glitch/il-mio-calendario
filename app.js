@@ -4089,25 +4089,7 @@ const Assistente = (() => {
 const Lezioni = (() => {
     const MAX = 24 * 1024 * 1024;
     async function whisper(b, nome, modello, prompt) {
-        const k = Spiega.chiaveAI();
-        if (!k)
-            throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
-        const f = new FormData();
-        f.append('file', b, nome);
-        f.append('model', modello);
-        f.append('language', 'it');
-        f.append('response_format', 'verbose_json');
-        f.append('temperature', '0');
-        if (prompt)
-            f.append('prompt', prompt.slice(0, 800));
-        const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + k }, body: f });
-        const j = await r.json().catch(() => ({}));
-        if (r.status === 401)
-            throw new Error('Chiave Groq non valida.');
-        if (r.status === 429)
-            throw new Error('Limite gratuito di Groq raggiunto (audio): riprova tra un po\'.');
-        if (!r.ok)
-            throw new Error((j && j.error && j.error.message) || 'errore ' + r.status);
+        const j = await IA.trascrivi(b, { nome, modello, prompt }); // v0.46: dal gateway IA
         return (j.segments || [{ start: 0, end: j.duration || 0, text: j.text || '' }]).map((x) => ({ s: x.start, e: x.end, t: String(x.text || '').trim(), lp: x.avg_logprob, cr: x.compression_ratio }));
     }
     /** File troppo grandi: decodifica, porta a 16 kHz mono e divide in pezzi WAV da 10 minuti (< 25 MB). */
@@ -6994,40 +6976,118 @@ const Generatori = (() => {
 })();
 
 // =====================================================================
-// 07-ia.ts — v0.42 SCELTA DEI MODELLI AI (tutti gratuiti, senza carta)
-// Scouting (15/11): Groq = gratis senza carta, molto veloce (gpt-oss-120b, llama-3.3-70b, gpt-oss-20b);
-// Google AI Studio (Gemini 2.5 Flash / Flash-Lite) = gratis senza carta, contesto da 1M token, ottimo
-// per leggere PDF lunghi, ma con pochi messaggi al giorno. Ogni compito usa il modello più adatto e,
-// se uno manca o è al limite, passa da solo al successivo:
-//   «genera»     quiz e testi lunghi: Gemini 2.5 Flash (fonti lunghe) → gpt-oss-120b → llama-3.3-70b
-//   «revisiona»  controllo indipendente: un modello DIVERSO da chi ha generato (llama-3.3-70b ↔ gpt-oss-120b)
-//   «veloce»     assistente e comandi: gpt-oss-20b → gpt-oss-120b → llama-3.3-70b
-// La chiave Gemini è facoltativa (Altro → Spiegazioni AI).
+// 07-ia.ts — GATEWAY AI UNICO (v0.46, BP1 §4)
+// Tutte le chiamate ai fornitori AI passano da qui: chat JSON (`chiedi`/`json`), testo libero e visione
+// (`testo`), trascrizione audio (`trascrivi`). Nessun altro file chiama direttamente i domini dei fornitori.
+// Chiavi: localStorage['imc-ai-keys'] = { v:2, chiavi:{ groq, gemini } }. In 0.46 restano rispecchiate anche
+// nelle vecchie voci 'imc-groq-chiave' / 'imc-gemini-chiave' (rollback a 0.44 funzionante).
+// Modelli: nessun ID fisso. GET /models (ricordato 12 ore) e scelta per PATTERN di ruolo; a parità vince la
+// versione più alta, le «preview/exp» solo se non c'è alternativa stabile. Senza elenco: modelli di riserva.
+//   «veloce»    assistente e comandi        groq → gemini
+//   «genera»    quiz, testi, spiegazioni    gemini → groq
+//   «revisiona» controllo indipendente      groq → gemini (con `evita` = modello che ha generato)
+//   «lungo»     fonti lunghe                gemini
+//   «visione»   scrittura a mano, immagini  gemini → groq
 // =====================================================================
 const IA = (() => {
-    const KG = 'imc-gemini-chiave';
-    const gemini = () => { try {
-        return localStorage.getItem(KG) || '';
+    const PROVS = ['groq', 'gemini'];
+    const BASE = { groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai' };
+    // ---- Chiavi (BP1 §4.1) ----
+    const KK = 'imc-ai-keys', LEG = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
+    const ls = (k) => { try {
+        return localStorage.getItem(k);
     }
     catch (_) {
-        return '';
+        return null;
     } };
-    const GROQ = 'https://api.groq.com/openai/v1', GEM = 'https://generativelanguage.googleapis.com/v1beta/openai';
-    // v0.44.1: i modelli non sono più fissi. L'app chiede a Groq e a Gemini QUALI modelli la chiave può usare
-    // (GET /models, risultato ricordato 12 ore) e sceglie per ogni ruolo il migliore disponibile: se un modello
-    // viene ritirato o la chiave non ha accesso, si passa da soli al successivo.
-    const PREF = {
-        genera: ['gemini-2.5-flash', 'openai/gpt-oss-120b', 'gemini-2.5-flash-lite', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct', 'qwen/qwen3-32b', 'gemini-2.0-flash', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'openai/gpt-oss-20b', 'llama-3.1-8b-instant'],
-        revisiona: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'qwen/qwen3-32b', 'moonshotai/kimi-k2-instruct', 'gemini-2.5-flash', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'gemini-2.5-flash-lite', 'openai/gpt-oss-20b'],
-        veloce: ['openai/gpt-oss-20b', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'gemini-2.5-flash-lite', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'gemini-2.5-flash'],
+    const lsScrivi = (k, v) => { try {
+        if (v)
+            localStorage.setItem(k, v);
+        else
+            localStorage.removeItem(k);
+    }
+    catch (_) { /* */ } };
+    function archivio() {
+        try {
+            const j = JSON.parse(ls(KK) || 'null');
+            return j && j.v === 2 && j.chiavi ? j : null;
+        }
+        catch (_) {
+            return null;
+        }
+    }
+    /** Allinea 'imc-ai-keys' alle vecchie voci (che in 0.46 restano la copia di riferimento per groq/gemini).
+     *  La prima volta è la migrazione: crea 'imc-ai-keys' dalle chiavi già salvate. Idempotente. */
+    function allinea() {
+        const a = archivio(), ch = { ...(a ? a.chiavi : {}) };
+        let cambiato = !a;
+        for (const p of PROVS) {
+            const v = ls(LEG[p]) || '';
+            if (v !== (ch[p] || '')) {
+                if (v)
+                    ch[p] = v;
+                else
+                    delete ch[p];
+                cambiato = true;
+            }
+        }
+        if (cambiato && (a || Object.keys(ch).length))
+            lsScrivi(KK, JSON.stringify({ v: 2, chiavi: ch }));
+        return ch;
+    }
+    const chiave = (p) => allinea()[p] || '';
+    function impostaChiave(p, v) {
+        v = String(v || '').replace(/\s+/g, '');
+        lsScrivi(LEG[p], v);
+        allinea();
+        for (const k in disp)
+            if (k.startsWith(p + ':'))
+                delete disp[k];
+    }
+    const tutteChiavi = () => ({ ...allinea() });
+    /** Avviso (non blocco) sul formato della chiave. */
+    const formatoOk = (p, v) => !v || (p === 'groq' ? /^gsk_/.test(v) : /^(AIza|AQ\.)/.test(v));
+    // ---- Discovery per pattern (BP1 §4.3) ----
+    const PATTERN = {
+        groq: { genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
+        gemini: { genera: [/gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/gemini-\d.*flash(?!-lite)/, /pro/], visione: [/gemini-\d.*flash(?!-lite)/, /flash/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
     };
+    /** Usati solo se /models non risponde e non c'è nulla in memoria. */
+    const RISERVA = {
+        groq: { genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
+        gemini: { genera: ['gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.8-flash'], visione: ['gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
+    };
+    const CATENA = { veloce: ['groq', 'gemini'], genera: ['gemini', 'groq'], revisiona: ['groq', 'gemini'], lungo: ['gemini'], visione: ['gemini', 'groq'] };
+    const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound/i;
+    const versione = (id) => { const m = /(\d+(?:\.\d+)?)/.exec(id.replace(/^.*\//, '')); return m ? parseFloat(m[1]) : 0; };
+    const instabile = (id) => /preview|exp/i.test(id);
+    /** Sceglie fino a 3 modelli per il ruolo, nell'ordine dei pattern; a parità la versione più alta. */
+    function scegli(p, r, lista) {
+        const pat = PATTERN[p][r];
+        if (!pat)
+            return [];
+        if (!lista || !lista.length)
+            return (RISERVA[p][r] || []).slice();
+        const out = [];
+        for (const re of pat) {
+            let c = lista.filter(m => re.test(m) && !ESCLUSI.test(m) && !out.includes(m));
+            if (!(p === 'groq' && r === 'visione') && c.some(m => !instabile(m)))
+                c = c.filter(m => !instabile(m));
+            c.sort((a, b) => versione(b) - versione(a) || a.length - b.length);
+            out.push(...c);
+        }
+        return out.slice(0, 3);
+    }
     const disp = {};
-    async function disponibili(gem) {
-        const k = gem ? gemini() : Spiega.chiaveAI();
+    async function disponibili(p) {
+        if (typeof p === 'boolean')
+            p = p ? 'gemini' : 'groq';
+        const k = chiave(p);
         if (!k)
             return [];
-        const ch = (gem ? 'g:' : 'q:') + k.slice(-6), c = disp[ch] || (() => { try {
-            return JSON.parse(localStorage.getItem('imc-modelli-' + ch) || 'null');
+        const ch = p + ':' + k.slice(-6), cl = (p === 'gemini' ? 'g:' : 'q:') + k.slice(-6);
+        const c = disp[ch] || (() => { try {
+            return JSON.parse(ls('imc-modelli-' + cl) || 'null');
         }
         catch (_) {
             return null;
@@ -7035,15 +7095,15 @@ const IA = (() => {
         if (c && Date.now() - c.t < 12 * 36e5)
             return c.m;
         try {
-            const r = await richiesta(gem, '/models', k, undefined);
+            const r = await richiesta(p, '/models', k, undefined);
             if (!r.ok)
-                return c ? c.m : null;
+                return c ? c.m : null; // anche scaduto: meglio di niente
             const j = await r.json();
             const m = (j.data || j.models || []).map(x => String(x.id || x.name || '').replace(/^models\//, '')).filter(Boolean);
             const v = { t: Date.now(), m };
             disp[ch] = v;
             try {
-                localStorage.setItem('imc-modelli-' + ch, JSON.stringify(v));
+                localStorage.setItem('imc-modelli-' + cl, JSON.stringify(v));
             }
             catch (_) { /* */ }
             return m;
@@ -7053,35 +7113,28 @@ const IA = (() => {
         }
     }
     /** Le chiavi Gemini nuove (prefisso «AQ.», oltre alle vecchie «AIza») si accettano tutte: provo Bearer e, se rifiutato, l'intestazione x-goog-api-key. */
-    async function richiesta(gem, perc, k, corpo) {
-        const base = gem ? GEM : GROQ, op = { method: corpo ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + k, ...(corpo ? { 'Content-Type': 'application/json' } : {}) }, body: corpo ? JSON.stringify(corpo) : undefined };
+    async function richiesta(p, perc, k, corpo) {
+        const gem = p === 'gemini', base = BASE[p], form = typeof FormData !== 'undefined' && corpo instanceof FormData;
+        const tipo = corpo && !form ? { 'Content-Type': 'application/json' } : {};
+        const op = { method: corpo ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + k, ...tipo }, body: corpo ? (form ? corpo : JSON.stringify(corpo)) : undefined };
         let r = await fetch(base + perc, op);
         if (gem && (r.status === 401 || r.status === 403 || r.status === 400)) {
-            const r2 = await fetch(base + perc, { ...op, headers: { 'x-goog-api-key': k, ...(corpo ? { 'Content-Type': 'application/json' } : {}) } });
+            const r2 = await fetch(base + perc, { ...op, headers: { 'x-goog-api-key': k, ...tipo } });
             if (r2.ok || r2.status === 429)
                 return r2;
-            const r3 = await fetch(base + perc + (perc.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k), { ...op, headers: corpo ? { 'Content-Type': 'application/json' } : {} });
+            const r3 = await fetch(base + perc + (perc.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k), { ...op, headers: tipo });
             if (r3.ok || r3.status === 429)
                 return r3;
         }
         return r;
     }
     async function catena(r, evita) {
-        const [dq, dg] = await Promise.all([disponibili(false), disponibili(true)]);
+        const provs = CATENA[r].filter(p => chiave(p));
+        const liste = await Promise.all(provs.map(p => disponibili(p)));
         const out = [];
-        for (const m of PREF[r]) {
-            const gem = m.startsWith('gemini'), lista = gem ? dg : dq;
-            if (m === evita || !(gem ? gemini() : Spiega.chiaveAI()))
-                continue;
-            if (lista && lista.length && !lista.includes(m))
-                continue; // la chiave non ha questo modello
-            out.push({ nome: (gem ? 'Gemini ' : 'Groq ') + m.replace(/^.*\//, ''), url: gem ? GEM : GROQ, chiave: gem ? gemini : () => Spiega.chiaveAI(), modello: m, gem });
-        }
-        // modelli nuovi non in elenco: in coda, se la chiave li offre (es. un modello Groq appena uscito)
-        if (dq)
-            for (const m of dq)
-                if (!out.some(f => f.modello === m) && /gpt-oss|llama-3\.3|qwen3|kimi/.test(m) && !/guard|whisper|tts/.test(m))
-                    out.push({ nome: 'Groq ' + m, url: GROQ, chiave: () => Spiega.chiaveAI(), modello: m });
+        provs.forEach((p, i) => { for (const m of scegli(p, r, liste[i]))
+            if (m !== evita)
+                out.push({ nome: (p === 'gemini' ? 'Gemini ' : 'Groq ') + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' }); });
         return out;
     }
     // v0.45 (BP1 §4.6): lettura robusta del JSON restituito dai modelli.
@@ -7142,9 +7195,10 @@ const IA = (() => {
     /** v0.44.2: Groq free = 8.000 token/minuto (input + output). 16.000 caratteri ≈ 4.600 token lasciano spazio alla risposta;
      *  prima erano 60.000 (≈17.000 token) e le richieste grandi tornavano 413 «Request too large». */
     const GROQ_CAR = 16000;
-    /** Accorcia i messaggi più lunghi finché il totale sta sotto `lim` caratteri (i brevi, es. istruzioni di sistema, restano interi). */
+    /** Accorcia i messaggi di testo più lunghi finché il totale sta sotto `lim` caratteri (i brevi restano interi; immagini intatte). */
     function accorcia(msgs, lim) {
-        const tot = msgs.reduce((s, x) => s + x.content.length, 0);
+        const len = (x) => typeof x.content === 'string' ? x.content.length : 0;
+        const tot = msgs.reduce((s, x) => s + len(x), 0);
         if (tot <= lim)
             return msgs;
         const out = msgs.slice();
@@ -7152,9 +7206,12 @@ const IA = (() => {
         while (eccesso > 0) {
             let i = 0;
             for (let k = 1; k < out.length; k++)
-                if (out[k].content.length > out[i].content.length)
+                if (len(out[k]) > len(out[i]))
                     i = k;
-            const c = out[i].content, taglio = Math.min(eccesso, c.length - 200);
+            const c = out[i].content;
+            if (typeof c !== 'string')
+                break;
+            const taglio = Math.min(eccesso, c.length - 200);
             if (taglio <= 0)
                 break;
             out[i] = { ...out[i], content: c.slice(0, c.length - taglio) + '\n[…testo accorciato…]' };
@@ -7162,65 +7219,101 @@ const IA = (() => {
         }
         return out;
     }
-    /** Chiede JSON al primo modello disponibile del ruolo. Restituisce anche chi ha risposto. */
-    async function chiedi(msgs, r, o = {}) {
+    const errore = (j, stato) => { const e = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + stato); e.stato = stato; return e; };
+    const contenuto = (j) => String(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '');
+    /** Cuore del gateway: prova i modelli della catena del ruolo finché uno risponde. Con `comeJson` legge il JSON (una riprova se illeggibile). */
+    async function invia(msgs, r, o, comeJson) {
         await Spiega.pronta();
         const forn = await catena(r, o.evita);
         if (!forn.length)
-            throw new Error('Serve una chiave AI gratuita: Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
+            throw new Error('Manca la chiave AI gratuita: inseriscila in Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
         const errori = [];
-        let ultimo = null;
+        let ultimo = null, solo401 = true;
         for (const f of forn) {
-            const m2 = accorcia(msgs, f.gem ? 600000 : GROQ_CAR);
+            const m2 = accorcia(msgs, f.gem ? 600000 : GROQ_CAR), k = chiave(f.prov);
             try {
                 const corpo = { model: f.modello, temperature: o.temp == null ? .3 : o.temp, messages: m2 };
-                if (!/llama-3\.1-8b/.test(f.modello))
+                if (o.maxOut)
+                    corpo[f.gem ? 'max_tokens' : 'max_completion_tokens'] = o.maxOut;
+                if (comeJson)
                     corpo.response_format = { type: 'json_object' };
-                let res = await richiesta(!!f.gem, '/chat/completions', f.chiave(), corpo);
+                let res = await richiesta(f.prov, '/chat/completions', k, corpo);
                 if (res.status === 400 && corpo.response_format) {
                     delete corpo.response_format;
-                    res = await richiesta(!!f.gem, '/chat/completions', f.chiave(), corpo);
+                    res = await richiesta(f.prov, '/chat/completions', k, corpo);
                 } // modello senza modalità JSON
                 const j = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    const e = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + res.status);
-                    e.stato = res.status;
-                    throw e;
+                if (!res.ok)
+                    throw errore(j, res.status);
+                const t = contenuto(j);
+                if (!comeJson) {
+                    const s = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').trim();
+                    if (!s)
+                        throw new Error('risposta vuota');
+                    return { testo: s, prov: f.prov, modello: f.modello };
                 }
-                const t = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '';
                 try {
-                    return { j: json(t), modello: f.modello };
+                    return { testo: t, j: json(t), prov: f.prov, modello: f.modello };
                 }
                 catch (_) { /* una sola riprova, sotto */ }
                 // v0.45: JSON illeggibile → una riprova con lo stesso modello chiedendo solo JSON valido
                 corpo.messages = [...m2, { role: 'assistant', content: String(t).slice(0, 2000) }, { role: 'user', content: 'Rispondi solo con JSON valido, senza testo prima o dopo. Nelle stringhe scrivi i backslash del LaTeX doppi (\\\\frac).' }];
-                const res2 = await richiesta(!!f.gem, '/chat/completions', f.chiave(), corpo), j2 = await res2.json().catch(() => ({}));
-                if (!res2.ok) {
-                    const e = new Error((j2 && j2.error && j2.error.message) || 'errore ' + res2.status);
-                    e.stato = res2.status;
-                    throw e;
-                }
-                return { j: json(j2.choices && j2.choices[0] && j2.choices[0].message && j2.choices[0].message.content || ''), modello: f.modello };
+                const res2 = await richiesta(f.prov, '/chat/completions', k, corpo), j2 = await res2.json().catch(() => ({}));
+                if (!res2.ok)
+                    throw errore(j2, res2.status);
+                const t2 = contenuto(j2);
+                return { testo: t2, j: json(t2), prov: f.prov, modello: f.modello };
             }
             catch (e) {
                 ultimo = e;
+                if (e.stato !== 401 && e.stato !== 403)
+                    solo401 = false;
                 errori.push(f.nome + ': ' + String(e.message || e).slice(0, 80));
             }
         }
+        if (solo401 && ultimo)
+            throw new Error('Chiave AI non valida: controllala in Altro → Spiegazioni AI.');
         if (ultimo && ultimo.stato === 429)
             throw new Error('Limite gratuito raggiunto su tutti i modelli: riprova tra qualche minuto.');
         throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Nessun modello ha risposto. ' + errori.slice(0, 3).join(' · '));
     }
+    /** Chiede JSON al primo modello disponibile del ruolo. Restituisce anche chi ha risposto. */
+    async function chiedi(msgs, r, o = {}) {
+        const x = await invia(msgs, r, o, true);
+        return { j: x.j, modello: x.modello, prov: x.prov };
+    }
+    /** Testo libero (spiegazioni) o visione (content con image_url). */
+    const testo = (msgs, r, o = {}) => invia(msgs, r, o, false);
+    /** Trascrizione audio con Whisper di Groq. Restituisce la risposta grezza (verbose_json: segments, duration…). */
+    async function trascrivi(b, o = {}) {
+        await Spiega.pronta();
+        const k = chiave('groq');
+        if (!k)
+            throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
+        const f = new FormData();
+        f.append('file', b, o.nome || 'audio.webm');
+        f.append('model', o.modello || 'whisper-large-v3-turbo');
+        f.append('language', o.lingua || 'it');
+        f.append('response_format', 'verbose_json');
+        f.append('temperature', '0');
+        if (o.prompt)
+            f.append('prompt', o.prompt.slice(0, 800));
+        const r = await richiesta('groq', '/audio/transcriptions', k, f);
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 401)
+            throw new Error('Chiave Groq non valida.');
+        if (r.status === 429)
+            throw new Error('Limite gratuito di Groq raggiunto (audio): riprova tra un po\'.');
+        if (!r.ok)
+            throw errore(j, r.status);
+        return j;
+    }
     /** Campo per la chiave Gemini (facoltativa) dentro Altro → Spiegazioni AI. */
     function campoGemini() {
-        const inp = h('input', { type: 'text', placeholder: 'AQ.… oppure AIza… (facoltativa)', value: gemini(), autocomplete: 'off', autocapitalize: 'none', spellcheck: false, style: { fontFamily: 'monospace' } });
-        const salva = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; try {
-            v ? localStorage.setItem(KG, v) : localStorage.removeItem(KG);
-        }
-        catch (_) { /* */ } for (const k in disp)
-            delete disp[k]; avviso(v ? 'Chiave Gemini salvata su questo dispositivo (vanno bene sia le nuove «AQ.» sia le vecchie «AIza»).' : 'Chiave Gemini rimossa.', 5000); };
+        const inp = h('input', { type: 'text', placeholder: 'AQ.… oppure AIza… (facoltativa)', value: chiave('gemini'), autocomplete: 'off', autocapitalize: 'none', spellcheck: false, style: { fontFamily: 'monospace' } });
+        const salva = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; impostaChiave('gemini', v); avviso(v ? (formatoOk('gemini', v) ? 'Chiave Gemini salvata su questo dispositivo (vanno bene sia le nuove «AQ.» sia le vecchie «AIza»).' : 'Salvata, ma non sembra una chiave Gemini (inizia con AQ. o AIza).') : 'Chiave Gemini rimossa.', 5000); };
         const prova = async () => { salva(); try {
-            const g = await disponibili(true);
+            const g = await disponibili('gemini');
             if (g === null || (g && !g.length))
                 throw new Error('Google non accetta questa chiave: controlla di averla copiata intera da aistudio.google.com (API key).');
             const r = await chiedi([{ role: 'user', content: 'Rispondi in JSON: {"ok":true}' }], 'genera');
@@ -7231,7 +7324,8 @@ const IA = (() => {
         } };
         return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
     }
-    return { chiedi, campoGemini, disponibili, catena, accorcia, GROQ_CAR, parseJsonSicuro, get gemini() { return !!gemini(); } };
+    return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, disponibili, catena, scegli, accorcia, GROQ_CAR, parseJsonSicuro,
+        chiave, impostaChiave, tutteChiavi, formatoOk, get gemini() { return !!chiave('gemini'); } };
 })();
 
 // =====================================================================
@@ -10542,8 +10636,8 @@ function sezioneSimulazioni() {
 // si sincronizza su Drive con gli altri dati, così non si rigenera mai due volte e resta offline.
 // Modello principale openai/gpt-oss-120b; se finisce il limite si passa alla riserva.
 const Spiega = (() => {
-    const KC = 'imc-groq-chiave', KM = 'imc-groq-modello';
-    const PRINCIPALE = 'openai/gpt-oss-120b', RISERVA = 'llama-3.3-70b-versatile';
+    // v0.46: chiavi e chiamate passano da IA (gateway unico); qui resta solo la logica delle spiegazioni.
+    const KM = 'imc-groq-modello'; // solo per compatibilità: i client 0.44 lo leggono da chiave-ai.json
     const LIV = {
         breve: 'in 2-3 frasi, andando dritto al punto',
         media: 'in un paragrafo di 5-7 frasi, con il ragionamento passo passo',
@@ -10562,7 +10656,7 @@ const Spiega = (() => {
             localStorage.removeItem(k);
     }
     catch (_) { /* niente */ } };
-    const chiave = () => leggi(KC);
+    const chiave = () => IA.chiave('groq');
     // v0.29: la chiave può viaggiare tra i TUOI dispositivi (iPhone dall'icona Home, Safari, iPad, PC hanno
     // memorie separate) tramite un file privato sul tuo Drive, «dati/chiave-ai.json» — solo dopo conferma.
     const FILE_K = 'chiave-ai.json';
@@ -10575,12 +10669,18 @@ const Spiega = (() => {
             if (!f)
                 return false;
             const d = JSON.parse(await Drive.scaricaTesto(f.id));
-            if (!d || !/^gsk_/.test(d.groq || ''))
+            if (!d)
                 return false;
-            scrivi(KC, d.groq);
+            // v0.46: { groq, modello, v:2, chiavi:{groq, gemini} } — se c'è `chiavi` vale quello, altrimenti il vecchio { groq }
+            const ch = d.v === 2 && d.chiavi ? d.chiavi : { groq: d.groq };
+            if (!/^gsk_/.test(ch.groq || ''))
+                return false;
+            IA.impostaChiave('groq', ch.groq);
+            if (ch.gemini && !IA.gemini)
+                IA.impostaChiave('gemini', ch.gemini);
             if (d.modello)
                 scrivi(KM, d.modello);
-            avviso('✨ AI pronta: chiave Groq recuperata dal tuo Drive.');
+            avviso('✨ AI pronta: ' + (ch.gemini ? 'chiavi AI recuperate' : 'chiave Groq recuperata') + ' dal tuo Drive.');
             return true;
         }
         catch (_) {
@@ -10590,13 +10690,13 @@ const Spiega = (() => {
     async function salvaSuDrive() {
         if (!Drive.collegato || !chiave())
             return;
-        const s = await chiedi('Salvare la chiave Groq anche sul tuo Drive?', [{ testo: '☁︎ Sì, per gli altri miei dispositivi', valore: 'si' }], 'File privato «Calendario personale/dati/chiave-ai.json»: l\'app sull\'icona Home, su iPad e PC la recupera da sola. Puoi cancellare il file quando vuoi.');
+        const s = await chiedi('Salvare le chiavi AI anche sul tuo Drive?', [{ testo: '☁︎ Sì, per gli altri miei dispositivi', valore: 'si' }], 'File privato «Calendario personale/dati/chiave-ai.json»: l\'app sull\'icona Home, su iPad e PC la recupera da sola. Puoi cancellare il file quando vuoi.');
         if (s !== 'si' || serveGoogle())
             return;
         try {
             await Drive.preparaCartelle();
             const dir = Drive.idCartella('dati'), f = await Drive.trovaFile(FILE_K, dir);
-            await Drive.carica(FILE_K, dir, JSON.stringify({ groq: chiave(), modello: modello() }), 'application/json', f ? f.id : undefined);
+            await Drive.carica(FILE_K, dir, JSON.stringify({ groq: chiave(), modello: leggi(KM), v: 2, chiavi: IA.tutteChiavi() }), 'application/json', f ? f.id : undefined);
             avviso('☁︎ Chiave salvata sul Drive.');
         }
         catch (e) {
@@ -10605,7 +10705,6 @@ const Spiega = (() => {
     }
     /** Garantisce la chiave: locale, oppure dal Drive. */
     async function pronta() { return !!chiave() || await recuperaDaDrive(); }
-    const modello = () => leggi(KM) || PRINCIPALE;
     function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++)
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
     const norm = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -10619,7 +10718,7 @@ const Spiega = (() => {
             return 'Chimica';
         return 'Chimica, Biologia o Fisica';
     }
-    async function chiama(mod, d, l) {
+    async function chiama(d, l) {
         const sys = 'Sei un tutor di ' + materia(d.titolo) + ' per il semestre filtro di Medicina. Rispondi in italiano corretto e semplice, rivolgendoti allo studente con il tu. '
             + 'Basati sul testo di riferimento del corso e su conoscenze certe; non inventare dati, numeri o citazioni. Se il testo di riferimento non basta, dillo. '
             + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.' + MemoriaIA.linee('spiegazioni', 4);
@@ -10630,116 +10729,24 @@ const Spiega = (() => {
             + (d.cit ? '\nTesto di riferimento (dal corso): ' + d.cit : '')
             + (d.passi ? '\nCorrezione già mostrata: ' + d.passi : '')
             + '\n\nSpiega perché la risposta corretta è giusta ' + LIV[l] + '.';
-        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: mod, temperature: 0.3, messages: [{ role: 'system', content: sys }, { role: 'user', content: u }] }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) {
-            const e = new Error((j && j.error && j.error.message) || 'errore ' + r.status);
-            e.stato = r.status;
-            throw e;
-        }
-        const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
-        if (!t)
-            throw new Error('risposta vuota');
-        return t.replace(/\*\*/g, '').replace(/^#+\s*/gm, '');
+        const r = await IA.testo([{ role: 'system', content: sys }, { role: 'user', content: u }], 'genera', { temp: 0.3 });
+        return { testo: r.testo.replace(/\*\*/g, '').replace(/^#+\s*/gm, ''), modello: r.modello };
     }
     async function genera(d, l) {
         await pronta();
-        const modelli = [modello()];
-        if (modelli[0] !== RISERVA)
-            modelli.push(RISERVA);
-        let ultimo = null;
-        for (const m of modelli) {
-            try {
-                return { testo: await chiama(m, d, l), modello: m };
-            }
-            catch (e) {
-                ultimo = e;
-                if (e.stato === 401)
-                    break;
-            }
-        }
-        if (ultimo && ultimo.stato === 401)
-            throw new Error('Chiave Groq non valida: controllala in Altro → Spiegazioni AI.');
-        if (ultimo && ultimo.stato === 429)
-            throw new Error('Limite gratuito di oggi raggiunto. Riprova più tardi.');
-        throw new Error(navigator.onLine === false ? 'Sei offline: le spiegazioni già generate restano disponibili.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
+        return chiama(d, l);
     }
-    /** Q5: chiamata generica (messaggi liberi, risposta JSON) con lo stesso modello di riserva. */
+    /** Q5: chiamata generica (messaggi liberi, risposta JSON). v0.46: firma invariata, passa dal gateway IA. */
     async function chat(msgs, temperatura = 0.4) {
-        await pronta();
-        if (!chiave()) {
-            if (IA.gemini)
-                return (await IA.chiedi(msgs, 'genera', { temp: temperatura })).j;
-            throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
-        }
-        const modelli = [modello()];
-        if (modelli[0] !== RISERVA)
-            modelli.push(RISERVA);
-        let ultimo = null;
-        for (const mod of modelli) {
-            try {
-                const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                    method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: IA.accorcia(msgs, IA.GROQ_CAR) }),
-                });
-                const j = await r.json().catch(() => ({}));
-                if (!r.ok) {
-                    const e = new Error((j && j.error && j.error.message) || 'errore ' + r.status);
-                    e.stato = r.status;
-                    throw e;
-                }
-                const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
-                return IA.parseJsonSicuro(t); // v0.45: think, fence, testo intorno, LaTeX nelle stringhe
-            }
-            catch (e) {
-                ultimo = e;
-                if (e.stato === 401)
-                    break;
-            }
-        }
-        // v0.44.1: modello ritirato o senza accesso → scelta automatica tra quelli che la chiave può davvero usare (anche Gemini)
-        if (!(ultimo && ultimo.stato === 401) || IA.gemini) {
-            try {
-                return (await IA.chiedi(msgs, 'genera', { temp: temperatura })).j;
-            }
-            catch (e2) {
-                ultimo = e2;
-            }
-        }
-        if (ultimo && ultimo.stato === 401)
-            throw new Error('Chiave Groq non valida: controllala in Altro → Spiegazioni AI.');
-        if (ultimo && ultimo.stato === 429)
-            throw new Error('Limite gratuito raggiunto. Riprova più tardi.');
-        throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
+        return IA.json(msgs, 'genera', { temp: temperatura });
     }
-    /** v0.31: legge un'immagine (scrittura a mano) con il modello visivo di Groq; restituisce testo. */
+    /** v0.31: legge un'immagine (scrittura a mano) con un modello visivo; restituisce testo. */
     async function vede(istruzioni, immagine) {
-        if (!await pronta())
-            throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
-        // v0.44.2: Llama 4 Scout ritirato da Groq; l'unico modello visivo è Qwen 3.8 27B (preview, immagini fino a 20 MB).
-        const VISIVI = ['qwen/qwen3.8-27b'];
-        let r = null, j = {};
-        for (const mod of VISIVI) {
-            r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: mod, temperature: 0.1, max_completion_tokens: 4096,
-                    messages: [{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }] }),
-            });
-            j = await r.json().catch(() => ({}));
-            const msg = (j && j.error && j.error.message) || '';
-            if (r.ok || r.status === 401 || r.status === 429 || !/not exist|not found|decommission|does not support|model/i.test(msg))
-                break;
-        }
-        if (r.status === 401)
-            throw new Error('Chiave Groq non valida.');
-        if (r.status === 429)
-            throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
-        if (!r.ok)
-            throw new Error((j && j.error && j.error.message) || 'errore ' + r.status);
-        return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        if (!await pronta() && !IA.gemini)
+            throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
+        // v0.46: modello visivo scelto dal gateway (Gemini Flash, poi Qwen visivo di Groq)
+        const r = await IA.testo([{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }], 'visione', { temp: 0.1, maxOut: 4096 });
+        return r.testo;
     }
     // ---- Lato genitore: risponde alle richieste dei quiz aperti nell'app ----
     async function ricevi(e) {
@@ -10760,8 +10767,8 @@ const Spiega = (() => {
             rispondi({ testo: c.testo, modello: c.modello, salvata: true });
             return;
         }
-        if (!await pronta()) {
-            rispondi({ errore: 'Manca la chiave Groq: incollala in Altro → Spiegazioni AI.' });
+        if (!await pronta() && !IA.gemini) {
+            rispondi({ errore: 'Manca la chiave AI: incollala in Altro → Spiegazioni AI.' });
             return;
         }
         try {
@@ -10869,7 +10876,7 @@ const Spiega = (() => {
     // ---- Altro → Spiegazioni AI ----
     function sezione() {
         const inp = h('input', { type: 'text', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: false, style: { fontFamily: 'monospace' } });
-        const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); if (/^gsk_/.test(v))
+        const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; IA.impostaChiave('groq', v); if (/^gsk_/.test(v))
             setTimeout(salvaSuDrive, 600); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
         const incolla = async () => {
             try {
@@ -10886,8 +10893,6 @@ const Spiega = (() => {
                 avviso('Tieni premuto nel campo e scegli «Incolla».', 6000);
             }
         };
-        const sel = h('select', null, [PRINCIPALE, RISERVA].map(m => h('option', { value: m, selected: m === modello() }, m)));
-        sel.onchange = () => { scrivi(KM, sel.value === PRINCIPALE ? '' : sel.value); avviso('Modello: ' + sel.value); };
         const n = Stato.tutti('spiegazione').length;
         const prova = async () => {
             if (!chiave()) {
@@ -10903,7 +10908,7 @@ const Spiega = (() => {
                 avviso(String(e.message || e), 8000);
             }
         };
-        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'), IA.campoGemini(), MemoriaIA.sezione());
+        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq (e Gemini, se aggiungi la chiave), gratuiti; i modelli migliori disponibili sono scelti da soli. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'), IA.campoGemini(), MemoriaIA.sezione());
     }
     return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
@@ -13015,7 +13020,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.45';
+const VERSIONE = '0.46';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
