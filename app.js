@@ -9277,6 +9277,84 @@ function fotoInImmagine(f) {
     });
 }
 
+// ============================================================
+// 07-mediastore.ts — v0.50 (BP1 §7, minimo utile): compressione delle immagini prima dell'invio.
+// - comprimiImmagine: lato lungo ≤ maxLato, WebP 0.82; se il browser restituisce altro (Safari può
+//   dare PNG in silenzio) si rifà in JPEG 0.85.
+// - Limite visione: Groq 20 MB, Gemini inline ~20 MB → oltre, errore chiaro e nessun invio.
+// ============================================================
+const MediaStore = (() => {
+    const LIMITE_VISIONE = 20 * 1024 * 1024;
+    function tela(c, tipo, q) {
+        return new Promise(ok => { try {
+            c.toBlob(b => ok(b), tipo, q);
+        }
+        catch (_) {
+            ok(null);
+        } });
+    }
+    async function carica(file) {
+        if (typeof createImageBitmap === 'function') {
+            try {
+                const b = await createImageBitmap(file);
+                return { img: b, w: b.width, h: b.height, chiudi: () => b.close() };
+            }
+            catch (_) { /* provo con <img> */ }
+        }
+        const u = URL.createObjectURL(file);
+        try {
+            const i = await new Promise((ok, ko) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => ko(new Error('Immagine non leggibile.')); im.src = u; });
+            return { img: i, w: i.naturalWidth, h: i.naturalHeight, chiudi: () => URL.revokeObjectURL(u) };
+        }
+        catch (e) {
+            URL.revokeObjectURL(u);
+            throw e;
+        }
+    }
+    /** Riduce e ricomprime un'immagine. Restituisce WebP, o JPEG se il browser non sa fare WebP. */
+    async function comprimiImmagine(file, maxLato = 1600) {
+        const s = await carica(file);
+        try {
+            const k = Math.min(1, maxLato / Math.max(s.w, s.h, 1));
+            const c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round(s.w * k));
+            c.height = Math.max(1, Math.round(s.h * k));
+            const g = c.getContext('2d');
+            g.fillStyle = '#fff';
+            g.fillRect(0, 0, c.width, c.height);
+            g.drawImage(s.img, 0, 0, c.width, c.height);
+            const w = await tela(c, 'image/webp', 0.82);
+            if (w && w.type === 'image/webp')
+                return w;
+            const j = await tela(c, 'image/jpeg', 0.85);
+            if (!j)
+                throw new Error('Non riesco a comprimere l\'immagine.');
+            return j;
+        }
+        finally {
+            s.chiudi();
+        }
+    }
+    function aDataUrl(b) {
+        return new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => ko(r.error); r.readAsDataURL(b); });
+    }
+    /** Byte reali di un data URL base64 (o di un URL qualsiasi: lunghezza). */
+    function byteDataUrl(u) {
+        const i = u.indexOf(';base64,');
+        if (i < 0)
+            return u.length;
+        const b64 = u.length - i - 8;
+        return Math.floor(b64 * 3 / 4) - (u.endsWith('==') ? 2 : u.endsWith('=') ? 1 : 0);
+    }
+    /** Errore chiaro se l'immagine supera il limite dei modelli visivi: nessun invio. */
+    function controllaVisione(u) {
+        const n = byteDataUrl(u);
+        if (n > LIMITE_VISIONE)
+            throw new Error('Immagine troppo grande per la lettura AI (' + (n / 1048576).toFixed(1) + ' MB, massimo 20 MB): riducila e riprova.');
+    }
+    return { comprimiImmagine, aDataUrl, byteDataUrl, controllaVisione, LIMITE_VISIONE };
+})();
+
 // 07-memoria.ts — Motore dei ripassi (F2): ripetizione spaziata con FSRS.
 //
 // Ogni scheda fatta ha un record 'memoria' (id 'mem-<idScheda>') con difficoltà D (1–10), stabilità S
@@ -11097,6 +11175,7 @@ const Spiega = (() => {
     async function vede(istruzioni, immagine) {
         if (!await pronta() && !Object.keys(IA.tutteChiavi()).length)
             throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
+        MediaStore.controllaVisione(immagine); // v0.50: oltre 20 MB nessun invio
         // v0.46: modello visivo scelto dal gateway (Gemini Flash, poi Qwen visivo di Groq)
         const r = await IA.testo([{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }], 'visione', { temp: 0.1, maxOut: 4096 });
         return r.testo;
@@ -13373,7 +13452,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.49';
+const VERSIONE = '0.50';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -13648,7 +13727,7 @@ async function avvia() {
     });
     // Service worker: cache dell'app per l'uso offline (solo sul sito vero, non nell'anteprima).
     if ('serviceWorker' in navigator && location.protocol === 'https:' && document.querySelector('link[rel="manifest"]')) {
-        navigator.serviceWorker.register('sw.js').catch(() => { });
+        navigator.serviceWorker.register('sw.js').then(reg => Aggiornamento.collega(reg, navigator.serviceWorker)).catch(() => { });
     }
     // Chiedo al browser di non cancellare i dati locali quando lo spazio scarseggia.
     try {
@@ -13657,6 +13736,36 @@ async function avvia() {
     }
     catch (_) { /* niente */ }
 }
+/**
+ * v0.50: nuova versione del service worker pronta → banner «Nuova versione pronta · Aggiorna».
+ * Il tocco manda 'salta' al worker in attesa; al cambio di controller si ricarica (una volta sola).
+ * Prima installazione (nessun controller): nessun banner.
+ */
+const Aggiornamento = (() => {
+    let mostrato = false, ricaricato = false;
+    function banner(reg) {
+        if (mostrato || !reg.waiting)
+            return;
+        mostrato = true;
+        avviso('Nuova versione pronta · tocca per aggiornare', 0, () => { if (reg.waiting)
+            reg.waiting.postMessage('salta'); });
+    }
+    function collega(reg, sw, ricarica = () => location.reload()) {
+        if (!sw.controller)
+            return;
+        sw.addEventListener('controllerchange', () => { if (ricaricato)
+            return; ricaricato = true; ricarica(); });
+        if (reg.waiting)
+            banner(reg);
+        reg.addEventListener('updatefound', () => {
+            const nuovo = reg.installing;
+            if (nuovo)
+                nuovo.addEventListener('statechange', () => { if (nuovo.state === 'installed')
+                    banner(reg); });
+        });
+    }
+    return { collega };
+})();
 avvia().catch(err => {
     document.getElementById('app').textContent = 'Errore di avvio: ' + (err && err.message || err);
 });
