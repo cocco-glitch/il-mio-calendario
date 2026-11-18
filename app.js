@@ -1660,6 +1660,14 @@ const Drive = (() => {
             await cestinaApp(f.id, dir);
     }
     // ---------- Sincronizzazione ----------
+    /** v0.49: schema dei dati che questa app sa scrivere (nell'involucro di dati.json, accanto a versione:1). */
+    const SCHEMA = 2;
+    let avvisatoVersione = false;
+    /** Firma del file su Drive: cambia a ogni scrittura, di qualunque dispositivo. */
+    async function firmaDati(id) {
+        const m = await api('files/' + id, { query: { fields: 'version,modifiedTime' } });
+        return String(m.version || '') + '|' + String(m.modifiedTime || '');
+    }
     async function sincronizza(forzaLogin = false) {
         if (inCorso)
             return;
@@ -1694,8 +1702,6 @@ const Drive = (() => {
                 }
             }
             await preparaCartelle();
-            // 1. scarico il file remoto
-            let remoti = [];
             if (!idDati) {
                 const f = await trovaFile('dati.json', idCartella('dati'));
                 if (f) {
@@ -1703,52 +1709,78 @@ const Drive = (() => {
                     LS.set('idDati', idDati);
                 }
             }
-            let testoRemoto = '';
-            if (idDati) {
-                try {
-                    testoRemoto = await scaricaTesto(idDati);
-                }
-                catch (e) {
-                    if (String(e.message).includes('404')) {
-                        idDati = '';
-                        LS.set('idDati', '');
+            let solaLettura = false;
+            // v0.49: scarica → unisci → (prima di caricare) ricontrollo che il file non sia cambiato nel frattempo, max 3 giri
+            for (let giro = 0;; giro++) {
+                // 1. scarico il file remoto, con la sua «firma» (version + modifiedTime di Drive)
+                let remoti = [];
+                let testoRemoto = '', firma = '';
+                if (idDati) {
+                    try {
+                        firma = await firmaDati(idDati);
+                        testoRemoto = await scaricaTesto(idDati);
                     }
-                    else
-                        throw e;
+                    catch (e) {
+                        if (String(e.message).includes('404')) {
+                            idDati = '';
+                            LS.set('idDati', '');
+                            firma = '';
+                        }
+                        else
+                            throw e;
+                    }
                 }
-            }
-            if (testoRemoto) {
-                try {
-                    const j = JSON.parse(testoRemoto);
+                if (testoRemoto) {
+                    let j;
+                    try {
+                        j = JSON.parse(testoRemoto);
+                    }
+                    catch (_) {
+                        throw new Error('Il file dati.json su Drive non è leggibile: non lo sovrascrivo.');
+                    }
                     remoti = Array.isArray(j) ? j : j.records || [];
+                    // file scritto da un'app più nuova: lo leggo ma non lo sovrascrivo mai
+                    if (!Array.isArray(j) && Number(j.schemaVersion) > SCHEMA)
+                        solaLettura = true;
                 }
-                catch (_) {
-                    throw new Error('Il file dati.json su Drive non è leggibile: non lo sovrascrivo.');
-                }
-            }
-            // 2. unisco (vince l'updatedAt più alto, per record)
-            // v0.44 privacy: mai unire record di un altro account; dispositivo riconosciuto; pulizia di ciò che non è suo
-            if (Privacy.accLocale() !== stato.email.toLowerCase())
-                await Privacy.primaDiUnire(stato.email);
-            remoti = remoti.filter(r => !r.acc || r.acc === stato.email.toLowerCase());
-            Stato.unisci(remoti);
-            if (!(await Privacy.dispositivo(stato.email)))
-                return;
-            await Privacy.pulisciAltrui(stato.email);
-            // 3. se ho qualcosa di più nuovo del remoto, ricarico
-            const remotiMap = new Map(remoti.map(r => [r.id, r.updatedAt || 0]));
-            const miei = Stato.esporta();
-            const daSpedire = miei.some(r => (r.updatedAt || 0) > (remotiMap.get(r.id) || 0));
-            if (daSpedire || !idDati) {
+                // 2. unisco (vince l'updatedAt più alto, per record)
+                // v0.44 privacy: mai unire record di un altro account; dispositivo riconosciuto; pulizia di ciò che non è suo
+                if (Privacy.accLocale() !== stato.email.toLowerCase())
+                    await Privacy.primaDiUnire(stato.email);
+                remoti = remoti.filter(r => !r.acc || r.acc === stato.email.toLowerCase());
+                Stato.unisci(remoti);
+                if (!(await Privacy.dispositivo(stato.email)))
+                    return;
+                await Privacy.pulisciAltrui(stato.email);
+                if (solaLettura)
+                    break;
+                // 3. se ho qualcosa di più nuovo del remoto, ricarico
+                const remotiMap = new Map(remoti.map(r => [r.id, r.updatedAt || 0]));
+                const miei = Stato.esporta();
+                const daSpedire = miei.some(r => (r.updatedAt || 0) > (remotiMap.get(r.id) || 0));
+                if (!daSpedire && idDati)
+                    break;
+                // un altro dispositivo ha scritto dopo il mio download? riscarico e riunisco invece di sovrascriverlo
+                if (idDati && firma && giro < 3 && await firmaDati(idDati) !== firma)
+                    continue;
                 if (testoRemoto)
                     await backupSeServe(testoRemoto);
-                const testo = JSON.stringify({ formato: 'il-mio-calendario', versione: 1, salvatoIl: new Date().toISOString(), records: miei });
+                const testo = JSON.stringify({ formato: 'il-mio-calendario', versione: 1, schemaVersion: SCHEMA, salvatoIl: new Date().toISOString(), records: miei });
                 idDati = await carica('dati.json', idCartella('dati'), testo, 'application/json', idDati || undefined);
                 LS.set('idDati', idDati);
+                break;
+            }
+            applicaTema();
+            if (solaLettura) {
+                cambia('errore', "Aggiorna l'app: i dati su Drive sono di una versione più nuova. Le modifiche di qui restano su questo dispositivo finché non aggiorni.");
+                if (!avvisatoVersione) {
+                    avvisatoVersione = true;
+                    avviso("Aggiorna l'app: i dati su Drive vengono da una versione più nuova. Tocca per ricaricare.", 0, () => location.reload());
+                }
+                return;
             }
             stato.ultimoSync = Date.now();
             LS.set('ultimoSync', stato.ultimoSync);
-            applicaTema();
             cambia('ok');
             if (typeof GCal !== 'undefined' && GCal.attivo())
                 GCal.allinea().catch(e => { if (String(e.message).includes('403') || String(e.message) === 'NOLOGIN')
@@ -13051,7 +13083,7 @@ function vistaAltro() {
             avviso("Nell'anteprima l'esportazione non è disponibile: funziona nell'app installata.");
             return;
         }
-        const blob = new Blob([JSON.stringify({ formato: 'il-mio-calendario', versione: 1, esportatoIl: new Date().toISOString(), records: Stato.esporta() })], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify({ formato: 'il-mio-calendario', versione: 1, schemaVersion: 2, esportatoIl: new Date().toISOString(), records: Stato.esporta() })], { type: 'application/json' });
         const a = h('a', { href: URL.createObjectURL(blob), download: 'calendario-backup-' + ymd(new Date()) + '.json' });
         document.body.appendChild(a);
         a.click();
@@ -13341,7 +13373,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.48';
+const VERSIONE = '0.49';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
