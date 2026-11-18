@@ -43,7 +43,7 @@ with sync_playwright() as p:
     # --- discovery per pattern ---
     S = lambda prov, ruolo, lista: pg.evaluate("([p, r, l]) => IA.scegli(p, r, l)", [prov, ruolo, lista])
     GEM = ['gemini-3-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-3.9-flash-preview', 'gemini-4-hydrogen', 'gemini-3.8-flash-image', 'text-embedding-004']
-    ok(S('gemini', 'genera', GEM) == ['gemini-3.8-flash', 'gemini-3-flash'], 'gemini genera: versione più alta, niente preview/lite/image: %s' % S('gemini', 'genera', GEM))
+    ok(S('gemini', 'genera', GEM) == ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-3-flash'], 'gemini genera (v0.51): flash-lite prima, poi flash per versione, niente preview/image: %s' % S('gemini', 'genera', GEM))
     ok(S('gemini', 'veloce', GEM)[0] == 'gemini-3.1-flash-lite', 'gemini veloce: flash-lite prima')
     ok(S('gemini', 'revisiona', GEM)[0] == 'gemini-4-hydrogen', 'gemini revisiona: hydrogen prima')
     GQ = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'openai/gpt-oss-safeguard-20b', 'qwen/qwen3-32b', 'qwen/qwen3.8-27b', 'whisper-large-v3-turbo', 'llama-3.3-70b-versatile']

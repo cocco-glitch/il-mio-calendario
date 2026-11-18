@@ -33,7 +33,7 @@ with sync_playwright() as p:
       const cat = (await IA.catena('revisiona')).map(f => f.modello);
       const sp = await Spiega.chat([{ role: 'user', content: 'json' }]);
       return { g: g.modello, rv: rv.modello, cat, sp, log: log.slice(0, 8) }; }''')
-    ok(r['g'] == 'gemini-2.5-flash', 'chiave Gemini «AQ.» funziona (genera con %s)' % r['g'])
+    ok(r['g'] == 'gemini-2.5-flash-lite', 'chiave Gemini «AQ.» funziona (genera con %s)' % r['g'])
     ok(any(x.startswith('X ') for x in r['log']), 'per le chiavi nuove usa l\'intestazione x-goog-api-key')
     ok('llama-3.3-70b-versatile' not in r['cat'] and r['rv'] in ('openai/gpt-oss-120b', 'gemini-2.5-flash'), 'modello senza accesso saltato: revisore = %s, catena %s' % (r['rv'], r['cat']))
     ok(r['sp'] is not None, 'spiegazioni: se il modello fisso fallisce passa ai modelli disponibili (%s)' % r['sp'])

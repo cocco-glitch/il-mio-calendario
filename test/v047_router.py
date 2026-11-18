@@ -54,13 +54,12 @@ with sync_playwright() as p:
     ok(19 <= r['p'] <= 20, '429 con retry-after 20 → pausa 20 s (%s)' % r['p'])
     ok(r['log'] == ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'openai/gpt-oss-20b'], 'modello in pausa non riprovato: %s' % r['log'])
 
-    # --- 429 senza intestazioni: attesa crescente 15 s, 30 s; con reset-tokens: quello ---
+    # --- 429 senza intestazioni: quarantena 65 s (v0.51); con reset-tokens: quello ---
     r = E("""async (Q) => { prepara(Q, (h, c) => c.model === 'openai/gpt-oss-120b' ? { status: 429 } : null);
-      await chiedi('a'); const p1 = pausa('groq', 'openai/gpt-oss-120b'); IA._r.RM['groq:openai/gpt-oss-120b'].finoA = 0;
-      await chiedi('a'); const p2 = pausa('groq', 'openai/gpt-oss-120b');
+      await chiedi('a'); const p1 = pausa('groq', 'openai/gpt-oss-120b');
       prepara(Q, (h, c) => c.model === 'openai/gpt-oss-120b' ? { status: 429, headers: { 'x-ratelimit-reset-tokens': '7.5s', 'x-ratelimit-reset-requests': '2s' } } : null);
-      await chiedi('a'); return [p1, p2, pausa('groq', 'openai/gpt-oss-120b')]; }""", Q)
-    ok(14 <= r[0] <= 15 and 29 <= r[1] <= 30 and 7 <= r[2] <= 8, '429: attesa 15 s → 30 s; reset-tokens 7.5 s usato %s' % r)
+      await chiedi('a'); return [p1, pausa('groq', 'openai/gpt-oss-120b')]; }""", Q)
+    ok(64 <= r[0] <= 65 and 7 <= r[1] <= 8, '429: quarantena 65 s; reset-tokens 7.5 s usato %s' % r)
 
     # --- tutti in pausa: messaggio chiaro, nessuna chiamata ---
     r = E("""async (Q) => { prepara(Q, () => ({ status: 429, headers: { 'retry-after': '120' } }));
