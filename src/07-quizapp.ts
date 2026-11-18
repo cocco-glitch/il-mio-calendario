@@ -15,7 +15,7 @@ interface CitB { t: string; f: string; l?: string; }
 interface DomB { id: string; sk: string; t: 'mcq' | 'fill'; lv: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[]; }
 interface BancaFile { step: number; schede: Record<string, { titolo: string; materia: string; microstep: string; k: number; n: number; fonti?: string; focus?: string }>; immagini: Record<string, string>; domande: DomB[]; }
 interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Partial<DomB>; nascosta?: boolean; nuova?: boolean; originale?: Partial<DomB>; }
-interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; }
+interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; c?: Record<string, ContoQ>; }
 
 const Banca = (() => {
   const file = new Map<string, Promise<BancaFile | null>>();
@@ -102,12 +102,21 @@ const QuizApp = (() => {
 
   interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; avv?: string; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string }; }
 
-  function registraStat(v: Voce): void {
-    const id = 'sq-' + v.d.id, p = Stato.prendi<StatQ>(id);
-    const r: StatQ = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false };
-    r.n++; if (v.ok) r.ok++; r.ultima = ymd(new Date()); r.esito = !!v.ok;
-    if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
+  /** Registra la risposta (v0.48: nel contatore di questo dispositivo) e restituisce la funzione per annullarla. */
+  function registraStat(v: Voce): () => void {
+    const id = 'sq-' + v.d.id, p = Stato.prendi<StatQ>(id), dev = Privacy.idDispositivo(), giusta = !!v.ok;
+    const r: StatQ = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false, c: {} };
+    const x = StatQC.mio(r, dev); x.n++; if (giusta) x.ok++; StatQC.ricalcola(r);
+    r.ultima = ymd(new Date()); r.esito = giusta;
+    let scelta = '';
+    if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; scelta = o; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
     Stato.salva(r, true);
+    const annulla = () => {
+      const q = Stato.prendi<StatQ>(id); if (!q) return;
+      const y = StatQC.mio(q, dev); y.xn++; if (giusta) y.xok++; StatQC.ricalcola(q);
+      if (scelta && q.scelte && q.scelte[scelta]) { q.scelte = Object.assign({}, q.scelte); q.scelte[scelta]--; if (!q.scelte[scelta]) delete q.scelte[scelta]; }
+      Stato.salva(q, true);
+    };
     // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {
       const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi];
@@ -117,7 +126,9 @@ const QuizApp = (() => {
         if (n.length) avviso('🪤 Stessa trappola per la seconda volta: aggiunta alle flashcard degli errori.', 5000);
       }
     }
+    return annulla;
   }
+  let toastAnnulla: Element | null = null;
 
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
   async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void }): Promise<void> {
@@ -189,7 +200,11 @@ const QuizApp = (() => {
       const x = P[cur]; if (fatta(x)) return;
       if (typeof val === 'number') { x.picked = val; x.ok = x.ord[val] === 0; }
       else { if (!normR(val)) { avviso('Scrivi una risposta.'); return; } x.picked = val.trim(); x.ok = giusta(val, x.d.a || []); }
-      registraStat(x);
+      const annulla = registraStat(x);
+      // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
+      if (toastAnnulla) toastAnnulla.remove();
+      avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+      toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
       if (!x.ok) { const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null; x.avv = Regole.avvisoRisposta(x.d, dk); }
       disegnaQ();
       const w = app.querySelector('#qz-why'); if (w) w.scrollIntoView({ block: 'nearest' });

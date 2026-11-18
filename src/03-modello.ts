@@ -207,6 +207,9 @@ const Stato = (() => {
         if (!e || !e.id || !e.type) continue;
         if (e.deleted && lapideScaduta(e) && !rec.has(e.id)) continue;   // v0.17: lapidi vecchie già ripulite
         const mio = rec.get(e.id);
+        // v0.48: statistiche per domanda = contatore per dispositivo (si sommano, non vince l'ultimo)
+        const m = mio && e.type === 'statq' && mio.type === 'statq' ? StatQC.unisci(mio, e) : null;
+        if (m) { if (!StatQC.uguali(m, mio!)) { rec.set(e.id, m); cambiati.push(m); ver++; } continue; }
         if (!mio || (e.updatedAt || 0) > (mio.updatedAt || 0)) { rec.set(e.id, e); cambiati.push(e); ver++; }
       }
       if (cambiati.length) { DB.salva(cambiati); notifica(); }
@@ -219,6 +222,35 @@ const Stato = (() => {
     async togliLocale(ids: string[]): Promise<void> { for (const id of ids) rec.delete(id); ver++; await DB.rimuovi(ids); notifica(); },
   };
 })();
+
+// ---------- v0.48 (BP1 §5.1): StatQ come PN-counter ----------
+// c[dispositivo] = { n, ok, xn, xok }: risposte e giuste date su quel dispositivo; xn/xok = quelle annullate.
+// Unione: per dispositivo e per campo il massimo (commutativa, associativa, idempotente); n/ok si ricalcolano come somma
+// e restano nel record per i client 0.44. Un record senza `c` (scritto da 0.44) si unisce come prima (vince il più recente)
+// e al primo tocco riparte da c = { legacy: { n, ok } }.
+type ContoQ = { n: number; ok: number; xn: number; xok: number };
+const StatQC = {
+  conti(r: any): Record<string, ContoQ> { if (!r.c) r.c = { legacy: { n: r.n || 0, ok: r.ok || 0, xn: 0, xok: 0 } }; return r.c; },
+  mio(r: any, dev: string): ContoQ { const c = StatQC.conti(r); return c[dev] || (c[dev] = { n: 0, ok: 0, xn: 0, xok: 0 }); },
+  ricalcola(r: any): void {
+    let n = 0, ok = 0; for (const k in r.c || {}) { const x = r.c[k]; n += (x.n || 0) - (x.xn || 0); ok += (x.ok || 0) - (x.xok || 0); }
+    r.n = Math.max(0, n); r.ok = Math.max(0, Math.min(ok, r.n));
+  },
+  canon(x: any): any { return x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o: any, k) => { o[k] = StatQC.canon(x[k]); return o; }, {}) : x; },
+  uguali(a: any, b: any): boolean { return JSON.stringify(StatQC.canon(a)) === JSON.stringify(StatQC.canon(b)); },
+  /** null = unione classica (manca `c` da una parte, o lapide). */
+  unisci(a: any, b: any): any {
+    if (!a.c || !b.c || a.deleted || b.deleted) return null;
+    const chiave = (r: any) => JSON.stringify(StatQC.canon([r.ultima || '', !!r.esito, r.scelte || null, r.sk || '']));
+    const vince = (a.updatedAt || 0) !== (b.updatedAt || 0) ? ((a.updatedAt || 0) > (b.updatedAt || 0) ? a : b) : (chiave(a) >= chiave(b) ? a : b);
+    const c: Record<string, ContoQ> = {};
+    for (const k of Array.from(new Set(Object.keys(a.c).concat(Object.keys(b.c)))).sort()) {
+      const x = a.c[k] || {}, y = b.c[k] || {}, m = (f: string) => Math.max(x[f] || 0, y[f] || 0);
+      c[k] = { n: m('n'), ok: m('ok'), xn: m('xn'), xok: m('xok') };
+    }
+    const r = { ...vince, c, updatedAt: Math.max(a.updatedAt || 0, b.updatedAt || 0) }; StatQC.ricalcola(r); return r;
+  },
+};
 
 function imp(): Impostazioni { return Stato.rec.get('impostazioni') as Impostazioni; }
 function categorie(): Categoria[] { return Stato.tutti<Categoria>('categoria').sort((a, b) => a.ordine - b.ordine); }
