@@ -15,8 +15,8 @@ interface Spiegazione extends Rec {
 interface DatiDomanda { q: string; opts: string[]; corretta: string; scelta: string; cit: string; passi: string; titolo: string; }
 
 const Spiega = (() => {
-  const KC = 'imc-groq-chiave', KM = 'imc-groq-modello';
-  const PRINCIPALE = 'openai/gpt-oss-120b', RISERVA = 'llama-3.3-70b-versatile';
+  // v0.46: chiavi e chiamate passano da IA (gateway unico); qui resta solo la logica delle spiegazioni.
+  const KM = 'imc-groq-modello';   // solo per compatibilità: i client 0.44 lo leggono da chiave-ai.json
   const LIV: Record<string, string> = {
     breve: 'in 2-3 frasi, andando dritto al punto',
     media: 'in un paragrafo di 5-7 frasi, con il ragionamento passo passo',
@@ -24,7 +24,7 @@ const Spiega = (() => {
   };
   const leggi = (k: string) => { try { return localStorage.getItem(k) || ''; } catch (_) { return ''; } };
   const scrivi = (k: string, v: string) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (_) { /* niente */ } };
-  const chiave = () => leggi(KC);
+  const chiave = () => IA.chiave('groq');
   // v0.29: la chiave può viaggiare tra i TUOI dispositivi (iPhone dall'icona Home, Safari, iPad, PC hanno
   // memorie separate) tramite un file privato sul tuo Drive, «dati/chiave-ai.json» — solo dopo conferma.
   const FILE_K = 'chiave-ai.json';
@@ -32,22 +32,25 @@ const Spiega = (() => {
     if (chiave() || !Drive.pronto) return false;
     try {
       await Drive.preparaCartelle(); const f = await Drive.trovaFile(FILE_K, Drive.idCartella('dati')); if (!f) return false;
-      const d = JSON.parse(await Drive.scaricaTesto(f.id)); if (!d || !/^gsk_/.test(d.groq || '')) return false;
-      scrivi(KC, d.groq); if (d.modello) scrivi(KM, d.modello); avviso('✨ AI pronta: chiave Groq recuperata dal tuo Drive.'); return true;
+      const d = JSON.parse(await Drive.scaricaTesto(f.id)); if (!d) return false;
+      // v0.46: { groq, modello, v:2, chiavi:{groq, gemini} } — se c'è `chiavi` vale quello, altrimenti il vecchio { groq }
+      const ch: Record<string, string> = d.v === 2 && d.chiavi ? d.chiavi : { groq: d.groq };
+      if (!/^gsk_/.test(ch.groq || '')) return false;
+      IA.impostaChiave('groq', ch.groq); if (ch.gemini && !IA.gemini) IA.impostaChiave('gemini', ch.gemini);
+      if (d.modello) scrivi(KM, d.modello); avviso('✨ AI pronta: ' + (ch.gemini ? 'chiavi AI recuperate' : 'chiave Groq recuperata') + ' dal tuo Drive.'); return true;
     } catch (_) { return false; }
   }
   async function salvaSuDrive(): Promise<void> {
     if (!Drive.collegato || !chiave()) return;
-    const s = await chiedi('Salvare la chiave Groq anche sul tuo Drive?', [{ testo: '☁︎ Sì, per gli altri miei dispositivi', valore: 'si' }],
+    const s = await chiedi('Salvare le chiavi AI anche sul tuo Drive?', [{ testo: '☁︎ Sì, per gli altri miei dispositivi', valore: 'si' }],
       'File privato «Calendario personale/dati/chiave-ai.json»: l\'app sull\'icona Home, su iPad e PC la recupera da sola. Puoi cancellare il file quando vuoi.');
     if (s !== 'si' || serveGoogle()) return;
     try { await Drive.preparaCartelle(); const dir = Drive.idCartella('dati'), f = await Drive.trovaFile(FILE_K, dir);
-      await Drive.carica(FILE_K, dir, JSON.stringify({ groq: chiave(), modello: modello() }), 'application/json', f ? f.id : undefined); avviso('☁︎ Chiave salvata sul Drive.'); }
+      await Drive.carica(FILE_K, dir, JSON.stringify({ groq: chiave(), modello: leggi(KM), v: 2, chiavi: IA.tutteChiavi() }), 'application/json', f ? f.id : undefined); avviso('☁︎ Chiave salvata sul Drive.'); }
     catch (e: any) { avviso('Drive: ' + (e.message || e), 6000); }
   }
   /** Garantisce la chiave: locale, oppure dal Drive. */
   async function pronta(): Promise<boolean> { return !!chiave() || await recuperaDaDrive(); }
-  const modello = () => leggi(KM) || PRINCIPALE;
   function hash(s: string): string { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
   const idDi = (d: DatiDomanda, l: string) => 'sp-' + hash(norm(d.q) + '|' + norm(d.corretta)) + '-' + l;
@@ -59,7 +62,7 @@ const Spiega = (() => {
     return 'Chimica, Biologia o Fisica';
   }
 
-  async function chiama(mod: string, d: DatiDomanda, l: string): Promise<string> {
+  async function chiama(d: DatiDomanda, l: string): Promise<{ testo: string; modello: string }> {
     const sys = 'Sei un tutor di ' + materia(d.titolo) + ' per il semestre filtro di Medicina. Rispondi in italiano corretto e semplice, rivolgendoti allo studente con il tu. '
       + 'Basati sul testo di riferimento del corso e su conoscenze certe; non inventare dati, numeri o citazioni. Se il testo di riferimento non basta, dillo. '
       + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.' + MemoriaIA.linee('spiegazioni', 4);
@@ -70,75 +73,26 @@ const Spiega = (() => {
       + (d.cit ? '\nTesto di riferimento (dal corso): ' + d.cit : '')
       + (d.passi ? '\nCorrezione già mostrata: ' + d.passi : '')
       + '\n\nSpiega perché la risposta corretta è giusta ' + LIV[l] + '.';
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: mod, temperature: 0.3, messages: [{ role: 'system', content: sys }, { role: 'user', content: u }] }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { const e: any = new Error((j && j.error && j.error.message) || 'errore ' + r.status); e.stato = r.status; throw e; }
-    const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
-    if (!t) throw new Error('risposta vuota');
-    return t.replace(/\*\*/g, '').replace(/^#+\s*/gm, '');
+    const r = await IA.testo([{ role: 'system', content: sys }, { role: 'user', content: u }], 'genera', { temp: 0.3 });
+    return { testo: r.testo.replace(/\*\*/g, '').replace(/^#+\s*/gm, ''), modello: r.modello };
   }
 
   async function genera(d: DatiDomanda, l: string): Promise<{ testo: string; modello: string }> {
     await pronta();
-    const modelli = [modello()]; if (modelli[0] !== RISERVA) modelli.push(RISERVA);
-    let ultimo: any = null;
-    for (const m of modelli) {
-      try { return { testo: await chiama(m, d, l), modello: m }; }
-      catch (e: any) { ultimo = e; if (e.stato === 401) break; }
-    }
-    if (ultimo && ultimo.stato === 401) throw new Error('Chiave Groq non valida: controllala in Altro → Spiegazioni AI.');
-    if (ultimo && ultimo.stato === 429) throw new Error('Limite gratuito di oggi raggiunto. Riprova più tardi.');
-    throw new Error(navigator.onLine === false ? 'Sei offline: le spiegazioni già generate restano disponibili.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
+    return chiama(d, l);
   }
 
-  /** Q5: chiamata generica (messaggi liberi, risposta JSON) con lo stesso modello di riserva. */
+  /** Q5: chiamata generica (messaggi liberi, risposta JSON). v0.46: firma invariata, passa dal gateway IA. */
   async function chat(msgs: { role: string; content: string }[], temperatura = 0.4): Promise<any> {
-    await pronta();
-    if (!chiave()) { if (IA.gemini) return (await IA.chiedi(msgs, 'genera', { temp: temperatura })).j; throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.'); }
-    const modelli = [modello()]; if (modelli[0] !== RISERVA) modelli.push(RISERVA);
-    let ultimo: any = null;
-    for (const mod of modelli) {
-      try {
-        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: IA.accorcia(msgs, IA.GROQ_CAR) }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) { const e: any = new Error((j && j.error && j.error.message) || 'errore ' + r.status); e.stato = r.status; throw e; }
-        const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
-        return IA.parseJsonSicuro(t);   // v0.45: think, fence, testo intorno, LaTeX nelle stringhe
-      } catch (e: any) { ultimo = e; if (e.stato === 401) break; }
-    }
-    // v0.44.1: modello ritirato o senza accesso → scelta automatica tra quelli che la chiave può davvero usare (anche Gemini)
-    if (!(ultimo && ultimo.stato === 401) || IA.gemini) { try { return (await IA.chiedi(msgs, 'genera', { temp: temperatura })).j; } catch (e2: any) { ultimo = e2; } }
-    if (ultimo && ultimo.stato === 401) throw new Error('Chiave Groq non valida: controllala in Altro → Spiegazioni AI.');
-    if (ultimo && ultimo.stato === 429) throw new Error('Limite gratuito raggiunto. Riprova più tardi.');
-    throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Non riuscito: ' + (ultimo && ultimo.message || 'errore'));
+    return IA.json(msgs, 'genera', { temp: temperatura });
   }
 
-  /** v0.31: legge un'immagine (scrittura a mano) con il modello visivo di Groq; restituisce testo. */
+  /** v0.31: legge un'immagine (scrittura a mano) con un modello visivo; restituisce testo. */
   async function vede(istruzioni: string, immagine: string): Promise<string> {
-    if (!await pronta()) throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
-    // v0.44.2: Llama 4 Scout ritirato da Groq; l'unico modello visivo è Qwen 3.8 27B (preview, immagini fino a 20 MB).
-    const VISIVI = ['qwen/qwen3.8-27b'];
-    let r: Response = null as any, j: any = {};
-    for (const mod of VISIVI) {
-      r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: mod, temperature: 0.1, max_completion_tokens: 4096,
-          messages: [{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }] }),
-      });
-      j = await r.json().catch(() => ({}));
-      const msg = (j && j.error && j.error.message) || '';
-      if (r.ok || r.status === 401 || r.status === 429 || !/not exist|not found|decommission|does not support|model/i.test(msg)) break;
-    }
-    if (r.status === 401) throw new Error('Chiave Groq non valida.');
-    if (r.status === 429) throw new Error('Limite gratuito di Groq raggiunto. Riprova più tardi.');
-    if (!r.ok) throw new Error((j && j.error && j.error.message) || 'errore ' + r.status);
-    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    if (!await pronta() && !IA.gemini) throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
+    // v0.46: modello visivo scelto dal gateway (Gemini Flash, poi Qwen visivo di Groq)
+    const r = await IA.testo([{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }], 'visione', { temp: 0.1, maxOut: 4096 });
+    return r.testo;
   }
 
   // ---- Lato genitore: risponde alle richieste dei quiz aperti nell'app ----
@@ -152,7 +106,7 @@ const Spiega = (() => {
     if (!d || !d.q || !d.corretta || !LIV[l]) { rispondi({ errore: 'Non riesco a leggere la domanda.' }); return; }
     const id = idDi(d, l), c = Stato.prendi<Spiegazione>(id);
     if (c && !c.deleted && !m.forza) { rispondi({ testo: c.testo, modello: c.modello, salvata: true }); return; }
-    if (!await pronta()) { rispondi({ errore: 'Manca la chiave Groq: incollala in Altro → Spiegazioni AI.' }); return; }
+    if (!await pronta() && !IA.gemini) { rispondi({ errore: 'Manca la chiave AI: incollala in Altro → Spiegazioni AI.' }); return; }
     try {
       const g = await genera(d, l);
       Stato.salva({ id, type: 'spiegazione', updatedAt: 0, q: d.q, giusta: d.corretta, livello: l, testo: g.testo, modello: g.modello, quiz: d.titolo } as Spiegazione, true);
@@ -231,13 +185,11 @@ const Spiega = (() => {
   // ---- Altro → Spiegazioni AI ----
   function sezione(): HTMLElement {
     const inp = h('input', { type: 'text', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: false, style: { fontFamily: 'monospace' } }) as HTMLInputElement;
-    const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; scrivi(KC, v); if (/^gsk_/.test(v)) setTimeout(salvaSuDrive, 600); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
+    const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; IA.impostaChiave('groq', v); if (/^gsk_/.test(v)) setTimeout(salvaSuDrive, 600); avviso(v ? (/^gsk_/.test(v) ? 'Chiave salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave Groq (inizia con gsk_).') : 'Chiave rimossa.', 5000); };
     const incolla = async () => {
       try { const t = await navigator.clipboard.readText(); if (!t) { avviso('Gli appunti sono vuoti.'); return; } inp.value = t; salvaChiave(); }
       catch (_) { inp.focus(); avviso('Tieni premuto nel campo e scegli «Incolla».', 6000); }
     };
-    const sel = h('select', null, [PRINCIPALE, RISERVA].map(m => h('option', { value: m, selected: m === modello() }, m))) as HTMLSelectElement;
-    sel.onchange = () => { scrivi(KM, sel.value === PRINCIPALE ? '' : sel.value); avviso('Modello: ' + sel.value); };
     const n = Stato.tutti<Spiegazione>('spiegazione').length;
     const prova = async () => {
       if (!chiave()) { avviso('Prima salva la chiave.'); return; }
@@ -246,8 +198,8 @@ const Spiega = (() => {
       catch (e: any) { avviso(String(e.message || e), 8000); }
     };
     return scheda('Spiegazioni AI',
-      h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq, gratuito. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'),
-      h('div.gruppo', null, riga('Chiave Groq', inp), riga('Modello', sel)),
+      h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq (e Gemini, se aggiungi la chiave), gratuiti; i modelli migliori disponibili sono scelti da soli. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'),
+      h('div.gruppo', null, riga('Chiave Groq', inp)),
       h('div.bottoni', null,
         h('button.btn', { onclick: incolla }, '📋 Incolla chiave'),
         h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'),

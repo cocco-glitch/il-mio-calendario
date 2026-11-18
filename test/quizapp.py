@@ -10,6 +10,8 @@ for _ in range(100):
     time.sleep(.1)
 errori, chiamate = [], []
 def groq(route):
+    if route.request.method == 'GET':   # v0.46: elenco modelli (GET /models) → vuoto, si usano i modelli di riserva
+        route.fulfill(status=200, body='{"data":[]}', headers={'content-type': 'application/json', 'access-control-allow-origin': '*'}); return
     chiamate.append(json.loads(route.request.post_data))
     route.fulfill(status=200, body=json.dumps({'choices': [{'message': {'content': 'Spiegazione AI di prova'}}]}), headers={'content-type': 'application/json', 'access-control-allow-origin': '*'})
 try:

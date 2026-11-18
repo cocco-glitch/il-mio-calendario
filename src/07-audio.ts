@@ -13,15 +13,7 @@ type Segmento = { s: number; e: number; t: string; lp?: number; cr?: number };
 const Lezioni = (() => {
   const MAX = 24 * 1024 * 1024;
   async function whisper(b: Blob, nome: string, modello: string, prompt: string): Promise<Segmento[]> {
-    const k = Spiega.chiaveAI(); if (!k) throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
-    const f = new FormData();
-    f.append('file', b, nome); f.append('model', modello); f.append('language', 'it'); f.append('response_format', 'verbose_json'); f.append('temperature', '0');
-    if (prompt) f.append('prompt', prompt.slice(0, 800));
-    const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + k }, body: f });
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 401) throw new Error('Chiave Groq non valida.');
-    if (r.status === 429) throw new Error('Limite gratuito di Groq raggiunto (audio): riprova tra un po\'.');
-    if (!r.ok) throw new Error((j && j.error && j.error.message) || 'errore ' + r.status);
+    const j = await IA.trascrivi(b, { nome, modello, prompt });   // v0.46: dal gateway IA
     return (j.segments || [{ start: 0, end: j.duration || 0, text: j.text || '' }]).map((x: any) => ({ s: x.start, e: x.end, t: String(x.text || '').trim(), lp: x.avg_logprob, cr: x.compression_ratio }));
   }
   /** File troppo grandi: decodifica, porta a 16 kHz mono e divide in pezzi WAV da 10 minuti (< 25 MB). */

@@ -11,6 +11,8 @@ chiamate = []
 errori = []
 
 def groq(route):
+    if route.request.method == 'GET':   # v0.46: elenco modelli (GET /models) → vuoto, si usano i modelli di riserva
+        route.fulfill(status=200, body='{"data":[]}', headers={'content-type': 'application/json', 'access-control-allow-origin': '*'}); return
     body = json.loads(route.request.post_data or '{}')
     chiamate.append(body)
     if body['model'] == 'openai/gpt-oss-120b' and len(chiamate) == 3:

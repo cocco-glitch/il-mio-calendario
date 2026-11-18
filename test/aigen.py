@@ -19,6 +19,8 @@ GEN = {"domande": [
     dom(4, "Questa domanda viene sbagliata dal controllo alla cieca apposta nel test?", ["Resta costante", "Cresce sempre", "Cala sempre", "Si annulla", "Raddoppia"]),
 ]}
 def rispondi(route):
+    if route.request.method == 'GET':   # v0.46: elenco modelli (GET /models) → vuoto, si usano i modelli di riserva
+        route.fulfill(status=200, body='{"data":[]}', headers={'content-type': 'application/json', 'access-control-allow-origin': '*'}); return
     body = json.loads(route.request.post_data)
     u = body['messages'][-1]['content']
     if 'Risolvi ogni domanda' in u:
