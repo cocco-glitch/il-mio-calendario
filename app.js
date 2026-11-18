@@ -5781,7 +5781,7 @@ const CreaQuiz = (() => {
     function elenco() {
         const v = visore('✨ Quiz creati in app', () => { });
         const lista = tutti();
-        v.corpo.append(h('div.pagina', null, h('div.tenue.piccolo', null, 'Creati dall\'app con il metodo delle schede di Claude (stesse regole, fonti dal tuo Drive, doppio controllo). Le schede di Claude restano a parte.'), h('button.btn', { onclick: () => { v.chiudi(); nuovo(); } }, '＋ Crea un quiz'), lista.length ? h('div.lista', null, ...lista.map(r => {
+        v.corpo.append(h('div.pagina', null, h('div.tenue.piccolo', null, 'Creati dall\'app con il metodo delle schede di Claude (stesse regole, fonti dal tuo Drive, doppio controllo). Le schede di Claude restano a parte.'), h('div.bottoni', null, h('button.btn', { onclick: () => { v.chiudi(); nuovo(); } }, '＋ Crea un quiz'), h('button.btn.neutro', { onclick: () => { v.chiudi(); leggero(); } }, '⚡ Creaquiz Leggero')), lista.length ? h('div.chips', null, h('span.piccolo', null, 'Esporta:'), ...[['errori', 'Errori'], ['illusione', 'Illusioni'], ['bloom3', 'Bloom ≥ 3']].map(([fx, n]) => h('button.chip', { onclick: () => QuizApp.esporta(lista.flatMap(r => r.domande), fx, 'Quiz creati in app', Dominio.archetipoMateria(lista[0] ? lista[0].materia : '')) }, n))) : null, lista.length ? h('div.lista', null, ...lista.map(r => {
             const st = QuizApp.stat(r.id);
             const ultima = st.length ? st[0] : null;
             return h('button.voce-lista', { onclick: () => { v.chiudi(); apri(r); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, '✨ ' + r.titolo), h('span.voce-sotto', null, r.materia + ' · ' + r.domande.length + ' domande · ' + new Date(r.creato).toLocaleDateString('it-IT') + (ultima ? ' · ultima: ' + ultima.ok + '/' + ultima.n : '') + ' · fonti: ' + r.fonti.map(f => f.nome + (f.pagine ? ' p. ' + f.pagine.split(',').slice(0, 4).join(',') + (f.pagine.split(',').length > 4 ? '…' : '') : '')).join('; '))));
@@ -5851,7 +5851,141 @@ const CreaQuiz = (() => {
             pill.append(h('button', { type: 'button', 'aria-label': 'Chiudi', onclick: () => pill.remove() }, '✕'));
         }
     }
-    return { nuovo, elenco, apri, tutti, controlla, crea };
+    // ---------- v0.54 (BP3 §3): Creaquiz Leggero — 3 click, zero attrito, zero token per import/cloze/dedup ----------
+    /** Tutte le domande già in archivio (quiz creati in app), per la deduplicazione. */
+    const archivio = () => tutti().flatMap(r => r.domande || []);
+    const statoPipe = (stepId) => {
+        const r = Stato.prendi('ps-' + stepId);
+        return r && !r.deleted ? r : { id: 'ps-' + stepId, type: 'pipestep', updatedAt: 0, stepId, schedaProlissa: 'bozza', schedaCondensata: 'bozza' };
+    };
+    const ICONA_PIPE = { bozza: '✏️ bozza', pronta: '✅ pronta', verificata: '🔒 verificata' };
+    /** BP3 §3.2: indicatori della pipeline di uno step (scheda prolissa → condensata → quiz bank con copertura Bloom). */
+    function pannelloPipeline(stepId) {
+        const box = h('div.gruppo.cq-pipe');
+        const disegna = () => {
+            svuota(box);
+            if (!stepId) {
+                box.append(h('div.tenue.piccolo', null, 'Scrivi lo step (es. «C-3.2») per vedere la pipeline di studio.'));
+                return;
+            }
+            const p = statoPipe(stepId), dom = archivio().filter(d => Neuro.stepDi(d) === stepId || d.sk === stepId || d.subtopic === stepId), cop = Neuro.copertura(dom);
+            const giro = (k) => { const r = statoPipe(stepId); r[k] = Neuro.prossimoStato(r[k]); Stato.salva(r, true); disegna(); };
+            box.append(h('div.gruppo-titolo', null, 'Pipeline di studio · ' + stepId), h('div.chips', null, h('button.chip', { type: 'button', title: 'Tocca per cambiare stato', onclick: () => giro('schedaProlissa') }, '📚 Scheda prolissa: ' + ICONA_PIPE[p.schedaProlissa]), h('button.chip', { type: 'button', title: 'Tocca per cambiare stato', onclick: () => giro('schedaCondensata') }, '⚡ Scheda condensata: ' + ICONA_PIPE[p.schedaCondensata])), h('div.piccolo', null, '🧩 Quiz bank: ' + cop.quizBankCount + ' domande · Bloom ' + [1, 2, 3, 4].map(b => b + ':' + cop.bloom[b]).join(' ') + ' · copertura ' + cop.pct + '%'
+                + (cop.mancanti.length && cop.quizBankCount ? ' (mancano i livelli ' + cop.mancanti.join(', ') + ')' : '')));
+        };
+        disegna();
+        return box;
+    }
+    function leggiFile(accetta) {
+        return new Promise(ok => {
+            const i = h('input', { type: 'file', accept: accetta, style: { display: 'none' } });
+            i.onchange = () => { const f = i.files && i.files[0]; i.remove(); if (!f) {
+                ok(null);
+                return;
+            } f.text().then(ok, () => ok(null)); };
+            document.body.appendChild(i);
+            i.click();
+        });
+    }
+    function leggero(pre = {}) {
+        const v = visore('⚡ Creaquiz Leggero', () => { });
+        const titolo = h('input.campo', { type: 'text', value: pre.titolo || '', placeholder: 'Titolo del quiz (es. «Enzimi — ripasso lampo»)' });
+        const materia = h('input.campo', { type: 'text', value: pre.materia || '', placeholder: 'Materia (es. Biologia)' });
+        const step = h('input.campo', { type: 'text', value: pre.stepId || '', placeholder: 'Step / micro-argomento (facoltativo, es. B-2.1)' });
+        const testo = h('textarea.campo', { rows: 8, placeholder: 'Incolla qui il JSON delle domande (anche «sporco»: blocchi ```json, virgole finali, chiavi question/options/answer) oppure appunti e testo breve per i completamenti automatici.' });
+        const app = Appunti.tutti().slice(0, 60);
+        const selApp = h('select.campo', null, h('option', { value: '' }, '— oppure prendi i punti chiave da un appunto —'), ...app.map(a => h('option', { value: a.id }, a.titolo || '(senza titolo)')));
+        const badge = h('div.cq-badge'), anteprima = h('div.tenue.piccolo');
+        const pipe = h('div');
+        let pronte = [];
+        const idQuiz = 'qc-' + uid();
+        const mostra = (dom, extra) => {
+            const d = Neuro.deduplica(dom, archivio().concat(pronte));
+            pronte = pronte.concat(d.nuove.map(x => ({ ...x, sk: idQuiz, gen: true })));
+            badge.textContent = d.badge;
+            anteprima.textContent = extra.filter(Boolean).join(' · ') + (pronte.length ? (extra.some(Boolean) ? ' · ' : '') + 'Pronte da salvare: ' + pronte.length : '');
+        };
+        const daTesto = (t) => {
+            if (!t.trim()) {
+                avviso('Incolla prima qualcosa.');
+                return;
+            }
+            if (!/[[{]/.test(t)) {
+                avviso('Non vedo JSON: uso il testo per i completamenti automatici.');
+                return daCloze(t);
+            }
+            const r = Neuro.importa(t, idQuiz);
+            if (r.errore && !r.domande.length) {
+                avviso('⚠️ ' + r.errore, 6000);
+                return;
+            }
+            mostra(r.domande, [r.riparazioni.length ? '🔧 ' + r.riparazioni.join(', ') : '', r.scartate ? r.scartate + ' scartate (incomplete)' : '']);
+        };
+        const daCloze = (t) => {
+            const c = Neuro.cloze(t, { sk: idQuiz, stepId: step.value.trim() || undefined, max: 12 });
+            if (!c.length) {
+                avviso('Non ho trovato frasi chiave adatte (servono frasi complete; **grassetto** sui termini aiuta).', 6000);
+                return;
+            }
+            mostra(c, ['✂️ ' + c.length + ' completamenti dalle frasi chiave (senza AI)']);
+        };
+        // Livello 3 (circuit breaker): oltre 15 domande niente chiamate multiple dall'app → prompt per Gemini e incolla
+        const nAI = h('input.campo', { type: 'number', min: 1, max: 60, value: 10, style: { width: '6em' } });
+        const breaker = h('div');
+        const generaAI = async () => {
+            const n = Math.max(1, Math.min(60, parseInt(nAI.value, 10) || 10)), arg = titolo.value.trim() || step.value.trim() || 'il testo incollato';
+            const prompt = Neuro.promptGemini({ argomento: arg, materia: materia.value.trim() || undefined, archetipo: Dominio.archetipoMateria(materia.value.trim()), n, testo: testo.value.trim() || undefined, stepId: step.value.trim() || undefined });
+            svuota(breaker);
+            if (Neuro.serveBreaker(n) || Dominio.senzaAI() || (!Spiega.attiva && !IA.gemini)) {
+                breaker.append(h('div.qz-neuro', null, h('b', null, Neuro.serveBreaker(n) ? '🛑 Più di ' + Neuro.BREAKER + ' domande: le genera Gemini sul web, non l\'app' : '🛑 AI dell\'app non disponibile: usa Gemini sul web'), h('p.piccolo', null, '1) Copia il prompt · 2) incollalo in Gemini · 3) incolla qui sopra il JSON che ti restituisce e premi «Leggi JSON».'), h('button.btn', { type: 'button', onclick: async () => { try {
+                        await navigator.clipboard.writeText(prompt);
+                        avviso('Prompt copiato: incollalo in Gemini.');
+                    }
+                    catch (_) {
+                        testo.value = prompt;
+                        avviso('Appunti non disponibili: il prompt è nel riquadro, copialo da lì.', 6000);
+                    } } }, '📋 Copia Prompt Ottimizzato per Gemini')));
+                return;
+            }
+            breaker.append(h('div.tenue.piccolo', null, 'Genero ' + n + ' domande con una sola chiamata…'));
+            try {
+                const g = await IA.testo([{ role: 'user', content: prompt }], 'genera', { temp: 0.5, archetipo: Dominio.archetipoMateria(materia.value.trim()) });
+                svuota(breaker);
+                daTesto(g.testo);
+                breaker.append(h('div.tenue.piccolo', null, 'Generate con ' + g.modello + '. Controllale prima di salvarle.'));
+            }
+            catch (e) {
+                svuota(breaker);
+                breaker.append(h('div.tenue.piccolo', null, '⚠️ ' + (e.message || e)));
+            }
+        };
+        const salva = () => {
+            if (!pronte.length) {
+                avviso('Nessuna domanda nuova da salvare.');
+                return;
+            }
+            const t = titolo.value.trim() || 'Quiz leggero ' + new Date().toLocaleDateString('it-IT'), st = step.value.trim();
+            const domande = pronte.map(d => { const x = { ...d, sk: idQuiz }; if (st && !Neuro.stepDi(x))
+                x.stepId = st; return x; });
+            const rec = { id: idQuiz, type: 'qcreato', updatedAt: 0, titolo: t, materia: materia.value.trim() || 'Studio', argomento: st || t, cosa: 'leggero', fonti: [], domande, creato: new Date().toISOString(), modelli: [], scartate: 0 };
+            Stato.salva(rec);
+            avviso('✓ Salvato: ' + domande.length + ' domande.');
+            v.chiudi();
+            apri(rec);
+        };
+        const aggiornaPipe = () => { svuota(pipe); pipe.append(pannelloPipeline(step.value.trim())); };
+        step.addEventListener('change', aggiornaPipe);
+        v.corpo.append(h('div.pagina.modulo', null, h('div.tenue.piccolo', null, 'Import, riparazione, completamenti e deduplicazione avvengono sul dispositivo, senza AI. Le domande già presenti vengono saltate.'), h('label', null, 'Titolo', titolo), h('label', null, 'Materia', materia), h('label', null, 'Step', step), testo, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => daTesto(testo.value) }, '📥 Leggi JSON'), h('button.chip', { type: 'button', onclick: async () => { const t = await leggiFile('.json,.imcpack,application/json'); if (t != null)
+                daTesto(t); } }, '📂 Carica .json / .imcpack'), h('button.chip', { type: 'button', onclick: () => daCloze(testo.value) }, '✂️ Completamenti dal testo')), h('div.chips', null, selApp, h('button.chip', { type: 'button', onclick: () => { const a = app.find(x => x.id === selApp.value); if (!a) {
+                avviso('Scegli un appunto.');
+                return;
+            } if (!step.value.trim() && (a.micro || a.sub)) {
+                step.value = String(a.micro || a.sub);
+                aggiornaPipe();
+            } daCloze(a.testo); } }, '✂️ Dai punti chiave')), badge, anteprima, h('div.chips', null, h('span.piccolo', null, 'Oppure con l\'AI:'), nAI, h('button.chip', { type: 'button', onclick: generaAI }, '✨ Genera domande')), breaker, h('div.bottoni', null, h('button.btn', { type: 'button', onclick: salva }, '💾 Salva e apri il quiz'), h('button.btn.neutro', { type: 'button', onclick: () => { pronte = []; badge.textContent = ''; anteprima.textContent = 'Svuotato.'; } }, 'Svuota')), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Esporta dall\'archivio (appunti + .imcpack)'), h('div.chips', null, ...[['errori', 'Solo errori'], ['illusione', 'Illusioni di competenza'], ['bloom3', 'Bloom ≥ 3']].map(([f, n]) => h('button.chip', { type: 'button', onclick: () => QuizApp.esporta(archivio(), f, 'Quiz creati in app', Dominio.archetipoMateria(materia.value.trim())) }, n)))), pipe));
+        aggiornaPipe();
+    }
+    return { nuovo, elenco, apri, tutti, controlla, crea, leggero };
 })();
 
 // 07-domande.ts — Errori ricorrenti, domanda per domanda (v0.16).
@@ -7618,15 +7752,17 @@ const Generatori = (() => {
 // Gemini e Groq in ogni catena. Chiavi/opzioni/contatori salvati che li citano ancora vengono ignorati e ripuliti.
 // =====================================================================
 const IA = (() => {
-    const PROVS = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty'];
-    const ALTRI = ['xkiro', 'cohere', 'requesty'];
-    const NOMI = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty' };
+    const PROVS = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
+    const ALTRI = ['xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
+    const NOMI = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty', cerebras: 'Cerebras', sambanova: 'SambaNova' };
     /** Fornitori tolti (v0.53): le loro chiavi, opzioni e contatori salvati si ignorano e si ripuliscono in silenzio. */
     const RITIRATI = ['mistral', 'openrouter'];
     const eProv = (p) => PROVS.includes(p);
     const BASE = {
         groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', xkiro: 'https://api.xkiro.com/v1',
-        cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1'
+        cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1',
+        // v0.54 (BP3): due fornitori veloci in coda a ogni catena (OpenAI-compatibili, Bearer)
+        cerebras: 'https://api.cerebras.ai/v1', sambanova: 'https://api.sambanova.ai/v1'
     };
     // ---- Chiavi (BP1 §4.1) ----
     const KK = 'imc-ai-keys', LEG = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
@@ -7705,27 +7841,33 @@ const IA = (() => {
     const formatoOk = (p, v) => { const re = FORMATO[p]; return !v || !re || re.test(v); };
     // ---- Discovery per pattern (BP1 §4.3) ----
     const PATTERN = {
-        groq: { genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
+        groq: { micro: [/gpt-oss-20b/, /gpt-oss/, /8b-instant/], genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
         // v0.51: flash-lite di base (500 richieste/giorno gratis contro le 20 di flash); flash resta come riserva
-        gemini: { genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
+        gemini: { micro: [/flash-lite/], genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
         // xkiro: solo ID con prefisso vendor («vendor/modello»), vedi `scegli`
-        xkiro: { genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
+        xkiro: { micro: [/nemotron/, /deepseek/], genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
         cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
         requesty: { genera: [/gemini.*flash(?!-lite)/, /gpt-.*mini/, /llama/], veloce: [/flash-lite|mini|small/] },
+        cerebras: { genera: [/gpt-oss-120b/, /qwen-3.*(235b|480b)/, /llama/], revisiona: [/gpt-oss-120b/, /qwen-3/], veloce: [/llama.*8b|gpt-oss/, /qwen-3/], lungo: [/gpt-oss-120b/, /qwen-3/] },
+        sambanova: { genera: [/gpt-oss-120b/, /deepseek-v3/i, /llama-3.3/i], revisiona: [/deepseek/i, /gpt-oss/], veloce: [/llama.*8b/i, /gpt-oss/], lungo: [/deepseek/i, /llama-3.3/i], visione: [/llama-4|vision/i] },
     };
     /** Modelli gratuiti consigliati su xkiro (ID sempre con prefisso vendor obbligatorio). */
     const XKIRO_FREE = ['deepseek/deepseek-v4-pro-0813', 'moonshotai/kimi-k3-agent', 'nvidia/nemotron-3.5-super-vl'];
     /** Usati solo se /models non risponde e non c'è nulla in memoria. */
     const RISERVA = {
-        groq: { genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
-        gemini: { genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
-        xkiro: { genera: [...XKIRO_FREE], revisiona: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], veloce: ['nvidia/nemotron-3.5-super-vl', 'deepseek/deepseek-v4-pro-0813'],
+        groq: { micro: ['openai/gpt-oss-20b', 'llama-3.1-8b-instant'], genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
+        gemini: { micro: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'], genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
+        xkiro: { micro: ['nvidia/nemotron-3.5-super-vl'], genera: [...XKIRO_FREE], revisiona: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], veloce: ['nvidia/nemotron-3.5-super-vl', 'deepseek/deepseek-v4-pro-0813'],
             lungo: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], visione: ['nvidia/nemotron-3.5-super-vl'] },
         cohere: {}, requesty: {},
+        cerebras: { genera: ['gpt-oss-120b', 'qwen-3-235b-a22b-instruct-2507'], revisiona: ['gpt-oss-120b'], veloce: ['llama3.1-8b', 'gpt-oss-120b'], lungo: ['gpt-oss-120b'] },
+        sambanova: { genera: ['gpt-oss-120b', 'DeepSeek-V3.1', 'Meta-Llama-3.3-70B-Instruct'], revisiona: ['DeepSeek-V3.1'], veloce: ['Meta-Llama-3.1-8B-Instruct'], lungo: ['DeepSeek-V3.1'] },
     };
     const CATENA = {
-        veloce: ['groq', 'gemini', 'xkiro', 'requesty'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty'],
-        revisiona: ['groq', 'gemini', 'xkiro', 'cohere'], lungo: ['gemini', 'xkiro'], visione: ['gemini', 'groq', 'xkiro']
+        veloce: ['groq', 'gemini', 'xkiro', 'requesty', 'cerebras', 'sambanova'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'],
+        revisiona: ['groq', 'gemini', 'xkiro', 'cohere', 'cerebras', 'sambanova'], lungo: ['gemini', 'xkiro', 'cerebras', 'sambanova'], visione: ['gemini', 'groq', 'xkiro', 'sambanova'],
+        // v0.54 (BP3 §2, imbuto livello 2): micro-spiegazione ≤350 token, solo fascia veloce
+        micro: ['gemini', 'groq', 'xkiro']
     };
     const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound|moderation|ocr|rerank/i;
     const versione = (id) => { const m = /(\d+(?:\.\d+)?)/.exec(id.replace(/^.*\//, '')); return m ? parseFloat(m[1]) : 0; };
@@ -7901,10 +8043,10 @@ const IA = (() => {
     /** Limiti di partenza (token/minuto e contesto); `tpm` si aggiorna dalle intestazioni x-ratelimit-limit-tokens e dopo un 413. */
     const LIMITI = {
         groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, xkiro: { tpm: 100000, ctx: 128000 },
-        cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 }
+        cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 }, cerebras: { tpm: 60000, ctx: 65536 }, sambanova: { tpm: 20000, ctx: 32768 }
     };
     /** Token di risposta attesi per ruolo: contano solo nel budget (non si inviano: i token di ragionamento li consumerebbero). */
-    const USCITA = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000 };
+    const USCITA = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000, micro: 350 };
     /** Limiti gratuiti noti. `perModello`: la quota è di ogni modello (Gemini, Groq), altrimenti dell'intero account.
      *  Il router si ferma a `SOGLIA` (85%) e passa al fornitore seguente; il resto si usa solo se non c'è alternativa. */
     const PROVIDER_FREE_QUOTAS = {
@@ -7914,6 +8056,9 @@ const IA = (() => {
         xkiro: { base: { rpm: 20, tpd: 500000 }, potenziata: { opz: 'xkiroTelegramVerified', q: { rpm: 20, tpd: 1000000 } } },
         cohere: { base: { rpm: 20, rpd: 33 } },
         requesty: { base: { rpm: 20, rpd: 200 } },
+        // v0.54: quote gratuite prudenti (da verificare dal vivo)
+        cerebras: { base: { rpm: 30, rpd: 14400, tpd: 1000000 } },
+        sambanova: { base: { rpm: 20, rpd: 1000 } },
         groq: { perModello: true, base: { rpm: 30, rpd: 1000 }, modelli: [
                 { re: /8b-instant/, q: { rpm: 30, rpd: 14400 } }, { re: /70b-versatile/, q: { rpm: 30, rpd: 1000 } }, { re: /whisper/, q: { rpm: 20, rpd: 2000 } }
             ] },
@@ -8344,7 +8489,7 @@ const IA = (() => {
     }
     /** Altri fornitori facoltativi + stato di tutti i fornitori (Altro → Spiegazioni AI). */
     function campoAltri() {
-        const DOVE = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai' };
+        const DOVE = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai', cerebras: 'cloud.cerebras.ai (chiave gratuita)', sambanova: 'cloud.sambanova.ai (chiave gratuita)' };
         const elenco = h('div.tenue.piccolo', null);
         const aggiorna = () => {
             const st = stato();
@@ -8405,7 +8550,7 @@ const IA = (() => {
     })();
     return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro,
         chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
-        _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, get RM() { return RM; } },
+        _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, CATENA, get RM() { return RM; } },
         get gemini() { return !!chiave('gemini'); } };
 })();
 
@@ -10695,6 +10840,625 @@ const MemoriaIA = (() => {
     return { nota, smentisci, migliori, linee, correggi, differenze, simile, sezione, tutte, AMBITI };
 })();
 
+// 07-neuro.ts — v0.54 (BP3): motore neuroscientifico dei quiz, PURO (nessun effetto all'avvio, niente DOM,
+// niente rete): lo usano 07-quizapp (certezza, interleaving, fatica, imbuto AI) e 07-creaquiz (Creaquiz Leggero).
+//
+// 1. Metadati per domanda (tutti facoltativi, con ripiego sicuro → i quiz v0.51–v0.53 restano validi):
+//    bloomLevel 1–4, distractorTypes {indiceOpzione: tipo}, confidenceLog (ultimi tentativi), sourceRef.
+// 2. Matrice certezza × correttezza (1 = tiro a indovinare, 2 = abbastanza sicuro, 3 = certo):
+//    certo+sbagliata → illusione di competenza (0,5 giorni, ease −0,30, feedback contrastivo obbligatorio);
+//    incerto+giusta → risposta fortunata (max 1 giorno, ease fermo, «da consolidare»);
+//    certo+giusta → padronanza (intervallo ×1,25); incerto+sbagliata → lacuna nota (1 giorno + rimando alla teoria).
+// 3. Interleaving: mai più di 2 domande di fila dello stesso micro-argomento; alternanza Bloom 1–2 / 3–4.
+// 4. Fatica attentiva (zero token): media mobile degli ultimi 5 tempi contro la base della sessione.
+// 5. Imbuto AI a 4 livelli: 0 locale → 1 spiegazioni già pronte/cache → 2 micro-chiamata (≤120 parole,
+//    ≤350 token) → 3 circuit breaker oltre 15 domande (prompt per Gemini web + incolla il JSON).
+// 6. Creaquiz Leggero: template {{var:min:max:step}}, cloze, parser JSON tollerante, deduplicazione, export.
+// 7. Pipeline di studio per step: scheda prolissa → scheda condensata → quiz bank (copertura Bloom).
+const Neuro = (() => {
+    const TIPI_DISTR = ['misconception', 'inversione_causa', 'confusione_termine', 'caso_limite', 'plausibile_generico'];
+    const MAX_LOG = 10, EASE0 = 2.5, EASE_MIN = 1.3, BREAKER = 15, MAX_PAROLE_MICRO = 120, MAX_TOKEN_MICRO = 350;
+    const STATI_PIPE = ['bozza', 'pronta', 'verificata'];
+    const str = (x) => typeof x === 'string' ? x : typeof x === 'number' ? String(x) : '';
+    // ---------- 1. metadati ----------
+    /** Livello di Bloom: quello scritto, altrimenti stimato dal livello/tipo della domanda (mai undefined). */
+    function bloom(d) {
+        const b = Number(d && d.bloomLevel);
+        if (b >= 1 && b <= 4 && Math.floor(b) === b)
+            return b;
+        const lv = String(d && d.lv || ''), t = String(d && d.t || '');
+        if (t === 'risposta_aperta_rubrica')
+            return 4;
+        if (/problema|applicativ/i.test(lv))
+            return 3;
+        if (/trabocchetto/i.test(lv) || t === 'sequenza' || t === 'abbinamento')
+            return 2;
+        return 1;
+    }
+    function pulisciLog(x, max = MAX_LOG) {
+        if (!Array.isArray(x))
+            return [];
+        return x.filter(t => t && typeof t === 'object').map(t => ({ ts: str(t.ts) || '', corretto: !!t.corretto,
+            livelloCertezza: ([1, 2, 3].includes(Number(t.livelloCertezza)) ? Number(t.livelloCertezza) : 2),
+            tempoRispostaMs: Math.max(0, Number(t.tempoRispostaMs) || 0) })).slice(-max);
+    }
+    /** Copia della domanda con i metadati neuro ripuliti (campi non validi tolti, mai inventati). */
+    function normalizza(d) {
+        const o = { ...d };
+        const b = Number(o.bloomLevel);
+        if (!(b >= 1 && b <= 4 && Math.floor(b) === b))
+            delete o.bloomLevel;
+        else
+            o.bloomLevel = b;
+        if (o.distractorTypes && typeof o.distractorTypes === 'object') {
+            const m = {};
+            let n = 0;
+            for (const k of Object.keys(o.distractorTypes)) {
+                const v = o.distractorTypes[k];
+                if (/^\d+$/.test(k) && TIPI_DISTR.includes(v)) {
+                    m[+k] = v;
+                    n++;
+                }
+            }
+            if (n)
+                o.distractorTypes = m;
+            else
+                delete o.distractorTypes;
+        }
+        else
+            delete o.distractorTypes;
+        if (o.confidenceLog !== undefined) {
+            const l = pulisciLog(o.confidenceLog);
+            if (l.length)
+                o.confidenceLog = l;
+            else
+                delete o.confidenceLog;
+        }
+        if (o.sourceRef && typeof o.sourceRef === 'object') {
+            const s = {};
+            for (const k of ['libro', 'capitolo', 'pagina', 'stepId'])
+                if (str(o.sourceRef[k]))
+                    s[k] = str(o.sourceRef[k]);
+            if (Object.keys(s).length)
+                o.sourceRef = s;
+            else
+                delete o.sourceRef;
+        }
+        else
+            delete o.sourceRef;
+        for (const k of ['subtopic', 'stepId', 'spiegazione'])
+            if (o[k] !== undefined && !str(o[k]))
+                delete o[k];
+        if (o.spiegazioneDistrattori !== undefined && !(o.spiegazioneDistrattori && typeof o.spiegazioneDistrattori === 'object'))
+            delete o.spiegazioneDistrattori;
+        return o;
+    }
+    function aggiungiTentativo(log, t, max = MAX_LOG) { return pulisciLog((Array.isArray(log) ? log : []).concat([t]), max); }
+    const stepDi = (d) => str(d && d.stepId) || str(d && d.sourceRef && d.sourceRef.stepId) || '';
+    const argomentoDi = (d) => stepDi(d) || str(d && d.subtopic) || str(d && d.sk) || '';
+    const tipoDistrattore = (d, oi) => d && d.distractorTypes && TIPI_DISTR.includes(d.distractorTypes[oi]) ? d.distractorTypes[oi] : null;
+    const NOMI_DISTR = { misconception: 'idea sbagliata diffusa', inversione_causa: 'causa ed effetto invertiti', confusione_termine: 'termine scambiato con un altro', caso_limite: 'caso limite', plausibile_generico: 'risposta plausibile ma generica' };
+    // ---------- 2. matrice certezza × correttezza ----------
+    function caso(certezza, corretto) {
+        if (certezza === 3)
+            return corretto ? 'padronanza' : 'illusione_competenza';
+        if (certezza === 1)
+            return corretto ? 'lucky_guess' : 'lacuna_nota';
+        return 'standard';
+    }
+    const piuGiorni = (oggi, n) => { const d = new Date(oggi + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+    /** Nuovo stato di ripasso della domanda (SM-2 semplificato + correzione metacognitiva della BP3). */
+    function pianifica(prev, certezza, corretto, oggi) {
+        const p = prev && typeof prev === 'object' ? prev : null;
+        const ease0 = p && p.ease > 0 ? p.ease : EASE0, iv0 = p && p.iv > 0 ? p.iv : 0, reps0 = p && p.reps > 0 ? p.reps : 0;
+        // standard
+        let iv = corretto ? (iv0 < 1 ? 1 : iv0 < 3 ? 3 : Math.round(iv0 * ease0)) : 1;
+        let ease = corretto ? ease0 + 0.1 : Math.max(EASE_MIN, ease0 - 0.2);
+        const c = caso(certezza, corretto);
+        let tag = (p && p.tag ? p.tag.slice() : []).filter(t => t !== 'illusione_competenza' || !corretto);
+        let daConsolidare = false, contrastivo = false, rimando = false;
+        if (c === 'illusione_competenza') {
+            iv = 0.5;
+            ease = Math.max(EASE_MIN, ease0 - 0.30);
+            contrastivo = true;
+            if (!tag.includes('illusione_competenza'))
+                tag.push('illusione_competenza');
+        }
+        else if (c === 'lucky_guess') {
+            iv = Math.min(iv, 1);
+            ease = ease0;
+            daConsolidare = true;
+        }
+        else if (c === 'padronanza')
+            iv = Math.round(iv * 1.25 * 10) / 10;
+        else if (c === 'lacuna_nota') {
+            iv = 1;
+            rimando = true;
+        }
+        const r = { iv, ease: Math.round(ease * 100) / 100, due: piuGiorni(oggi, iv < 1 ? 0 : Math.round(iv)), reps: corretto ? reps0 + 1 : 0, contrastivo, rimando, ultimoCaso: c };
+        if (tag.length)
+            r.tag = tag;
+        if (daConsolidare)
+            r.daConsolidare = true;
+        return r;
+    }
+    // ---------- 3. interleaving ----------
+    const banda = (b) => b <= 2 ? 'b' : 'a';
+    /** Riordina (indici) con al massimo `maxFila` domande di fila dello stesso argomento e, se `alterna`,
+     *  preferendo l'alternanza Bloom 1–2 ↔ 3–4. Parte dall'ordine dato e lo cambia il meno possibile. */
+    function interleave(items, ordine, o = {}) {
+        const chiave = o.chiave || argomentoDi, bl = o.bloom || bloom, maxFila = o.maxFila || 2;
+        const rest = (ordine || items.map((_, i) => i)).slice(), out = [];
+        const conta = new Map();
+        for (const i of rest) {
+            const k = chiave(items[i]);
+            conta.set(k, (conta.get(k) || 0) + 1);
+        }
+        let ultima = '', fila = 0, ultimaBanda = '';
+        const fattibile = (k) => {
+            const tot = rest.length - 1, nuovaFila = k === ultima ? fila + 1 : 1;
+            for (const [kk, c0] of conta) {
+                const c = kk === k ? c0 - 1 : c0;
+                if (!c)
+                    continue;
+                const cap = maxFila * (tot - c + 1) - (kk === k ? nuovaFila : 0);
+                if (c > cap)
+                    return false;
+            }
+            return true;
+        };
+        while (rest.length) {
+            const ammessi = rest.map((i, pos) => ({ i, pos, k: chiave(items[i]) })).filter(x => !(x.k === ultima && fila >= maxFila));
+            let cand = ammessi.filter(x => fattibile(x.k));
+            if (!cand.length)
+                cand = ammessi.length ? ammessi : rest.map((i, pos) => ({ i, pos, k: chiave(items[i]) }));
+            let sc = cand[0];
+            if (o.alterna && ultimaBanda) {
+                const alt = cand.slice(0, 4).find(x => banda(bl(items[x.i])) !== ultimaBanda);
+                if (alt)
+                    sc = alt;
+            }
+            rest.splice(sc.pos, 1);
+            out.push(sc.i);
+            conta.set(sc.k, (conta.get(sc.k) || 1) - 1);
+            fila = sc.k === ultima ? fila + 1 : 1;
+            ultima = sc.k;
+            ultimaBanda = banda(bl(items[sc.i]));
+        }
+        return out;
+    }
+    /** La fila più lunga di domande consecutive con la stessa chiave (per i test e per i controlli). */
+    function filaMax(items, chiave = argomentoDi) {
+        let m = 0, f = 0, u = null;
+        for (const d of items) {
+            const k = chiave(d);
+            f = k === u ? f + 1 : 1;
+            u = k;
+            if (f > m)
+                m = f;
+        }
+        return m;
+    }
+    // ---------- 4. fatica attentiva ----------
+    const media = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+    const mediana = (a) => { if (!a.length)
+        return 0; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+    /** tempi e esiti in ordine cronologico. Base = mediana dei tempi prima degli ultimi 5 (o di tutti se pochi). */
+    function fatica(tempi, esiti) {
+        const t = tempi.filter(x => x > 0), rollingAvgMs = Math.round(media(t.slice(-5)));
+        const prima = t.length > 8 ? t.slice(0, -5) : t.slice(0, Math.max(1, t.length - 1));
+        const baselineMs = Math.round(mediana(prima));
+        const r = { allarme: false, motivo: '', rollingAvgMs, baselineMs };
+        if (t.length < 5 || !baselineMs)
+            return r;
+        const ult = t[t.length - 1];
+        if (ult < 0.35 * baselineMs && rollingAvgMs < 0.6 * baselineMs) {
+            r.allarme = true;
+            r.motivo = 'impulsive';
+            return r;
+        }
+        const e = esiti.slice(-3), u3 = t.slice(-3);
+        if (e.length === 3 && e.every(x => !x) && u3[0] <= u3[1] && u3[1] <= u3[2] && u3[2] > 1.8 * baselineMs) {
+            r.allarme = true;
+            r.motivo = 'errori_lenti';
+        }
+        return r;
+    }
+    const TESTO_FATICA = 'Calo attentivo rilevato: pausa consigliata di 3 minuti o chiusura sessione';
+    // ---------- 5. imbuto AI ----------
+    /** Livello 1: spiegazione già pronta nel JSON (spiegazione + spiegazioneDistrattori[opzione] o ew). oi = indice nell'array o (0 = corretta). */
+    function prontaL1(d, oi) {
+        const parti = [];
+        if (oi != null && oi > 0) {
+            const sd = d && d.spiegazioneDistrattori, x = sd && (Array.isArray(sd) ? sd[oi - 1] : sd[oi]);
+            const ew = d && Array.isArray(d.ew) ? d.ew[oi - 1] : '';
+            const t = str(x) || str(ew);
+            if (t) {
+                const tipo = tipoDistrattore(d, oi);
+                parti.push((tipo ? '(' + NOMI_DISTR[tipo] + ') ' : '') + t);
+            }
+        }
+        if (str(d && d.spiegazione))
+            parti.push(str(d.spiegazione));
+        return parti.length ? parti.join('\n\n') : null;
+    }
+    /** Attraversa l'imbuto dal livello 0 al 2: la rete (micro) si usa solo se i livelli 0 e 1 non hanno nulla. */
+    async function imbuto(d, oi, dip) {
+        if (!dip.forza) {
+            const l0 = dip.locale ? dip.locale() : null;
+            if (l0)
+                return { livello: 0, testo: l0, modello: 'locale (senza AI)' };
+            const l1 = prontaL1(d, oi);
+            if (l1)
+                return { livello: 1, testo: l1, modello: 'spiegazione già pronta (senza AI)' };
+            const c = dip.cache ? dip.cache() : null;
+            if (c)
+                return { livello: 1, testo: c, modello: 'salvata (senza AI)' };
+        }
+        if (dip.senzaAI || !dip.micro)
+            return null;
+        const r = await dip.micro();
+        return { livello: 2, testo: r.testo, modello: r.modello };
+    }
+    const parole = (s) => String(s).split(/\s+/).filter(Boolean).length;
+    const taglia = (s, n) => { const w = String(s).split(/\s+/).filter(Boolean); return w.length > n ? w.slice(0, n).join(' ') + '…' : w.join(' '); };
+    const TONI = { semplice_esempi: 'parole semplici e un esempio concreto', didattico_chiaro: 'tono didattico chiaro', tecnico_accademico: 'lessico tecnico preciso' };
+    const LENTI = { stem_quantitativo: 'controlla unità, formule e passaggi numerici', biomedico_clinico: 'collega meccanismo e conseguenza clinica', umanistico_storico: 'contesto, cause e date', giuridico_normativo: 'norma, requisito ed eccezione', lingue_letteratura: 'regola grammaticale o lessicale', informatico_tecnico: 'comportamento del codice o del sistema' };
+    /** Livello 2: prompt ultra-compatto (≤120 parole) per «Spiegami perché ho sbagliato questa opzione». */
+    function promptMicro(o) {
+        const testa = 'Studente ha sbagliato. In max 80 parole, italiano, ' + (TONI[o.tono || ''] || TONI.didattico_chiaro) + ': perché la sua scelta è sbagliata e perché la corretta è giusta' + (LENTI[o.archetipo || ''] ? ' (' + LENTI[o.archetipo] + ')' : '') + '. Niente preamboli.';
+        const corpo = ' Domanda: ' + taglia(o.q, 40) + ' | Scelta: ' + taglia(o.scelta, 15) + ' | Corretta: ' + taglia(o.corretta, 15) + (o.tipoDistr ? ' | Errore tipo: ' + NOMI_DISTR[o.tipoDistr] : '');
+        const p = testa + corpo;
+        return parole(p) > MAX_PAROLE_MICRO ? taglia(p, MAX_PAROLE_MICRO) : p;
+    }
+    /** Livello 3 (circuit breaker): più di 15 domande → niente chiamate multiple dall'app. */
+    const serveBreaker = (n) => n > BREAKER;
+    function promptGemini(o) {
+        return [
+            'Sei un autore di quiz didattici. Genera ' + o.n + ' domande su: ' + o.argomento + (o.materia ? ' (materia: ' + o.materia + ')' : '') + '.',
+            o.archetipo && LENTI[o.archetipo] ? 'Taglio disciplinare: ' + LENTI[o.archetipo] + '.' : '',
+            'Rispondi SOLO con un array JSON valido (niente markdown, niente commenti, niente virgole finali). Ogni elemento:',
+            '{"t":"mcq","lv":"Sbarramento|Applicativo|Trabocchetto|Problema","q":"testo","o":["CORRETTA","distrattore1","distrattore2","distrattore3","distrattore4"],',
+            ' "e":["Cosa chiede: …","Il concetto: …","Passaggi: …","In sintesi: …"],"ew":["perché distrattore1 è sbagliato", "…x4"],',
+            ' "bloomLevel":1-4,"distractorTypes":{"1":"misconception|inversione_causa|confusione_termine|caso_limite|plausibile_generico", "2":"…","3":"…","4":"…"},',
+            ' "spiegazione":"max 60 parole","subtopic":"micro-argomento","sourceRef":{"libro":"' + (o.libro || '') + '","capitolo":"","pagina":"","stepId":"' + (o.stepId || '') + '"}}',
+            'Per i completamenti: {"t":"fill","q":"frase con …… al posto della risposta","a":["risposte accettate"],"show":"risposta","e":[…],"bloomLevel":1-2,"subtopic":"…"}.',
+            'Regole: la corretta è SEMPRE o[0] e NON è la più lunga; 5 opzioni distinte; bloomLevel 1=richiamo, 2=comprensione, 3=applicazione/calcolo, 4=analisi; distribuisci i livelli (almeno un terzo a 3–4); non più di 2 domande di fila sullo stesso subtopic; italiano corretto.',
+            o.testo ? 'Testo di partenza:\n"""\n' + o.testo.slice(0, 60000) + '\n"""' : '',
+        ].filter(Boolean).join('\n');
+    }
+    // ---------- 6a. template parametrici e cloze ----------
+    /** Valuta un'espressione aritmetica (+ − × ÷ ^ parentesi, variabili) senza eval. */
+    function calcola(espr, v) {
+        const s = espr.replace(/\s+/g, '');
+        let i = 0;
+        const num = () => {
+            if (s[i] === '(') {
+                i++;
+                const x = somma();
+                i++;
+                return x;
+            }
+            if (s[i] === '-') {
+                i++;
+                return -num();
+            }
+            const m = /^(\d+(?:[.,]\d+)?|[a-zA-Z_]\w*)/.exec(s.slice(i));
+            if (!m)
+                throw new Error('espressione');
+            i += m[0].length;
+            if (/^\d/.test(m[0]))
+                return parseFloat(m[0].replace(',', '.'));
+            if (!(m[0] in v))
+                throw new Error('variabile ' + m[0]);
+            return v[m[0]];
+        };
+        const pot = () => { const b = num(); if (s[i] === '^') {
+            i++;
+            return Math.pow(b, pot());
+        } return b; };
+        const prod = () => { let x = pot(); while (s[i] === '*' || s[i] === '/') {
+            const op = s[i++];
+            const y = pot();
+            x = op === '*' ? x * y : x / y;
+        } return x; };
+        const somma = () => { let x = prod(); while (s[i] === '+' || s[i] === '-') {
+            const op = s[i++];
+            const y = prod();
+            x = op === '+' ? x + y : x - y;
+        } return x; };
+        const r = somma();
+        if (i < s.length)
+            throw new Error('espressione');
+        return r;
+    }
+    const arrot = (x) => Math.round(x * 1e6) / 1e6;
+    /** {{nome:min:max:step}} → valore casuale; {{=espressione}} → risultato. Stesso `v` per domanda e risposta. */
+    function espandiTemplate(testo, v = {}, rnd = Math.random) {
+        let t = String(testo).replace(/\{\{\s*([a-zA-Z_]\w*)\s*:\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*(?::\s*([\d.]+))?\s*\}\}/g, (_, n, a, b, st) => {
+            if (!(n in v)) {
+                const lo = +a, hi = +b, p = +(st || 1) || 1, k = Math.floor((hi - lo) / p + 1e-9) + 1;
+                v[n] = arrot(lo + Math.floor(rnd() * Math.max(1, k)) * p);
+            }
+            return String(v[n]).replace('.', ',');
+        });
+        t = t.replace(/\{\{\s*([a-zA-Z_]\w*)\s*\}\}/g, (m0, n) => n in v ? String(v[n]).replace('.', ',') : m0);
+        t = t.replace(/\{\{=\s*([^}]+)\}\}/g, (m0, e) => { try {
+            return String(arrot(calcola(e, v))).replace('.', ',');
+        }
+        catch (_) {
+            return m0;
+        } });
+        return { testo: t, v };
+    }
+    const haTemplate = (s) => /\{\{\s*[a-zA-Z_]\w*\s*:/.test(String(s || ''));
+    /** n varianti numeriche di una domanda-modello (zero token). */
+    function varianti(d, n, rnd = Math.random) {
+        const out = [], visti = new Set();
+        for (let t = 0; out.length < n && t < n * 6; t++) {
+            const v = {}, q = espandiTemplate(d.q, v, rnd).testo;
+            if (visti.has(q))
+                continue;
+            visti.add(q);
+            const x = { ...d, q, gen: true, id: (d.id || 'q-t') + '-v' + out.length };
+            if (Array.isArray(d.o))
+                x.o = d.o.map((o) => espandiTemplate(o, v, rnd).testo);
+            if (Array.isArray(d.a))
+                x.a = d.a.map((o) => espandiTemplate(o, v, rnd).testo);
+            if (d.show)
+                x.show = espandiTemplate(d.show, v, rnd).testo;
+            x.e = Array.isArray(d.e) ? d.e.map((o) => espandiTemplate(o, v, rnd).testo) : espandiTemplate(String(d.e || ''), v, rnd).testo;
+            if (Array.isArray(x.o) && new Set(x.o).size !== x.o.length)
+                continue; // due opzioni uguali con questi numeri
+            out.push(x);
+        }
+        return out;
+    }
+    const STOP = new Set('della delle degli dello dalla dalle dagli nella nelle negli sulla sulle questo questa quello quella perché quando mentre anche ancora sempre molto essere hanno viene sono stato stata tutti tutte altri altre loro come dove però quindi infatti'.split(' '));
+    /** Cloze dalle frasi chiave: **termine** se c'è, altrimenti la parola lunga più rara della frase. */
+    function cloze(testo, o = {}) {
+        const frasi = String(testo || '').replace(/\r/g, '').split(/(?<=[.!?])\s+|\n+/).map(x => x.trim().replace(/^[-*•]\s*/, '')).filter(x => x.length >= 30 && x.length <= 260);
+        const freq = new Map();
+        for (const w of String(testo).toLowerCase().match(/[a-zà-ù]{7,}/g) || [])
+            freq.set(w, (freq.get(w) || 0) + 1);
+        const out = [], visti = new Set();
+        for (const f of frasi) {
+            if (out.length >= (o.max || 8))
+                break;
+            let term = (/\*\*([^*]{2,40})\*\*/.exec(f) || [])[1] || '';
+            if (!term) {
+                const cand = (f.match(/[A-Za-zÀ-ù]{7,}/g) || []).filter(w => !STOP.has(w.toLowerCase()));
+                cand.sort((a, b) => (freq.get(a.toLowerCase()) || 0) - (freq.get(b.toLowerCase()) || 0) || b.length - a.length);
+                term = cand[0] || '';
+            }
+            if (!term || visti.has(term.toLowerCase()))
+                continue;
+            visti.add(term.toLowerCase());
+            const pulita = f.replace(/\*\*/g, ''), q = pulita.replace(term, '……');
+            if (q === pulita)
+                continue;
+            const d = { id: 'q-cz-' + hashTesto(q), sk: o.sk || '', t: 'fill', lv: 'Completamento', q, a: [term], show: term, e: ['In sintesi: ' + pulita], bloomLevel: 1, gen: true };
+            if (o.stepId)
+                d.stepId = o.stepId;
+            out.push(d);
+        }
+        return out;
+    }
+    // ---------- 6b. parser JSON tollerante + alias ----------
+    function riparaJson(t) {
+        let s = String(t || '').replace(/^﻿/, '').replace(/```(?:json|javascript|js)?/gi, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+        s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+        const a = s.search(/[\[{]/);
+        if (a < 0)
+            return s.trim();
+        const chiusa = s[a] === '[' ? ']' : '}', b = s.lastIndexOf(chiusa);
+        s = s.slice(a, b >= a ? b + 1 : undefined);
+        s = s.replace(/,\s*([}\]])/g, '$1');
+        return s;
+    }
+    function parseTollerante(t) {
+        const rip = [], raw = String(t || '');
+        try {
+            return { ok: true, dati: JSON.parse(raw), riparazioni: rip };
+        }
+        catch (_) { /* si ripara */ }
+        if (/```/.test(raw))
+            rip.push('blocco markdown rimosso');
+        const s = riparaJson(raw);
+        if (/,\s*[}\]]/.test(raw))
+            rip.push('virgole finali rimosse');
+        try {
+            return { ok: true, dati: JSON.parse(s), riparazioni: rip.concat(rip.length ? [] : ['caratteri spuri rimossi']) };
+        }
+        catch (_) { /* ultima prova: un oggetto per riga */ }
+        const righe = s.split('\n').map(x => x.trim().replace(/,$/, '')).filter(x => /^\{.*\}$/.test(x));
+        const v = [];
+        for (const r of righe) {
+            try {
+                v.push(JSON.parse(r));
+            }
+            catch (_) { /* scarta */ }
+        }
+        if (v.length)
+            return { ok: true, dati: v, riparazioni: rip.concat(['letto riga per riga']) };
+        return { ok: false, dati: null, riparazioni: rip };
+    }
+    const prendi = (x, ...k) => { for (const n of k)
+        if (x[n] !== undefined && x[n] !== null && x[n] !== '')
+            return x[n]; return undefined; };
+    /** Una domanda in formato qualsiasi (alias it/en) → DomB; null se inutilizzabile. */
+    function daAlias(x, sk) {
+        if (!x || typeof x !== 'object')
+            return null;
+        const q = str(prendi(x, 'q', 'domanda', 'question', 'testo', 'text', 'prompt')).trim();
+        if (!q)
+            return null;
+        let o = prendi(x, 'o', 'opzioni', 'options', 'scelte', 'choices', 'risposte');
+        if (o && !Array.isArray(o) && typeof o === 'object')
+            o = Object.keys(o).sort().map(k => o[k]);
+        const ans = prendi(x, 'corretta', 'answer', 'correct', 'risposta', 'risposta_corretta', 'c', 'correctIndex');
+        const e = prendi(x, 'e', 'spiegazione_passi', 'explanation', 'spiegazione', 'solution') || '';
+        const d = { id: '', sk, t: 'mcq', lv: str(prendi(x, 'lv', 'livello', 'level')) || 'Applicativo', q, e: Array.isArray(e) ? e.map(str) : str(e) };
+        if (Array.isArray(o) && o.length >= 2) {
+            const ops = o.map((v) => str(typeof v === 'object' && v ? prendi(v, 'text', 'testo', 't') : v).trim());
+            let c = 0;
+            if (typeof ans === 'number' && ans >= 0 && ans < ops.length)
+                c = ans;
+            else if (typeof ans === 'string' && /^[A-Ea-e]$/.test(ans.trim()))
+                c = ans.trim().toUpperCase().charCodeAt(0) - 65;
+            else if (typeof ans === 'string' && /^\d$/.test(ans.trim()) && +ans < ops.length && !ops.includes(ans.trim()))
+                c = +ans;
+            else if (typeof ans === 'string') {
+                const k = ops.findIndex((v) => v.toLowerCase() === ans.trim().toLowerCase());
+                if (k >= 0)
+                    c = k;
+            }
+            else if (Array.isArray(o) && o.some((v) => v && v.correct))
+                c = o.findIndex((v) => v && v.correct);
+            const ew0 = prendi(x, 'ew', 'perche', 'why', 'spiegazioneDistrattori');
+            d.o = [ops[c]].concat(ops.filter((_, k) => k !== c));
+            if (Array.isArray(ew0))
+                d.ew = ew0.map(str);
+            else if (ew0 && typeof ew0 === 'object') {
+                d.spiegazioneDistrattori = ew0;
+            }
+            if (x.distractorTypes && c) {
+                const m = {};
+                for (const k of Object.keys(x.distractorTypes)) {
+                    const i = +k;
+                    if (i === c)
+                        continue;
+                    m[i < c ? i + 1 : i] = x.distractorTypes[k];
+                }
+                d.distractorTypes = m;
+            }
+            else if (x.distractorTypes)
+                d.distractorTypes = x.distractorTypes;
+        }
+        else {
+            const a = prendi(x, 'a', 'accettate', 'answers') || ans;
+            if (a === undefined)
+                return null;
+            d.t = 'fill';
+            d.lv = d.lv === 'Applicativo' ? 'Completamento' : d.lv;
+            d.a = (Array.isArray(a) ? a : [a]).map(str).filter(Boolean);
+            d.show = str(prendi(x, 'show', 'mostra')) || d.a[0];
+            if (!d.a.length)
+                return null;
+            if (!/…|\.\.\.\./.test(d.q))
+                d.q = d.q.replace(/_{3,}/, '……');
+            if (Array.isArray(x.ew))
+                d.ew = x.ew.map(str);
+        }
+        for (const k of ['bloomLevel', 'confidenceLog', 'sourceRef', 'subtopic', 'stepId', 'archetipo', 'r'])
+            if (x[k] !== undefined)
+                d[k] = x[k];
+        if (x.bloom !== undefined && d.bloomLevel === undefined)
+            d.bloomLevel = x.bloom;
+        if (str(x.spiegazione) && Array.isArray(e))
+            d.spiegazione = str(x.spiegazione);
+        if (x.spiegazioneDistrattori && !d.spiegazioneDistrattori && !Array.isArray(x.spiegazioneDistrattori))
+            d.spiegazioneDistrattori = x.spiegazioneDistrattori;
+        const n = normalizza(d);
+        n.id = 'q-l-' + hashTesto(q);
+        if (n.t === 'mcq' && (n.o.some((v) => !v) || new Set(n.o.map((v) => v.toLowerCase())).size !== n.o.length))
+            return null;
+        return n;
+    }
+    /** Testo incollato (JSON sporco, pacchetto .imcpack o {domande|questions:[…]}) → domande pulite. */
+    function importa(t, sk) {
+        const p = parseTollerante(t);
+        if (!p.ok)
+            return { domande: [], scartate: 0, riparazioni: p.riparazioni, errore: 'JSON non leggibile nemmeno dopo la riparazione.' };
+        let a = p.dati;
+        if (a && !Array.isArray(a))
+            a = a.domande || a.questions || a.quiz || (a.banca && a.banca.domande) || (a.q || a.domanda || a.question ? [a] : []);
+        if (!Array.isArray(a))
+            a = [];
+        const domande = [];
+        let scartate = 0;
+        const ids = new Set();
+        for (const x of a) {
+            const d = daAlias(x, sk);
+            if (!d) {
+                scartate++;
+                continue;
+            }
+            if (ids.has(d.id))
+                d.id += '-' + domande.length;
+            ids.add(d.id);
+            domande.push(d);
+        }
+        return { domande, scartate, riparazioni: p.riparazioni };
+    }
+    // ---------- 6c. deduplicazione ----------
+    function normTesto(s) { let t = String(s || '').toLowerCase(); if (t.normalize)
+        t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); return t.replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim(); }
+    function hashTesto(s) { const n = normTesto(s); let h = 5381; for (let i = 0; i < n.length; i++)
+        h = ((h << 5) + h + n.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+    function deduplica(nuove, esistenti) {
+        const visti = new Set(esistenti.map(d => hashTesto(d.q))), out = [];
+        let saltate = 0;
+        for (const d of nuove) {
+            const k = hashTesto(d.q);
+            if (visti.has(k)) {
+                saltate++;
+                continue;
+            }
+            visti.add(k);
+            out.push(d);
+        }
+        return { nuove: out, saltate, badge: 'Nuove: ' + out.length + ' | Già presenti saltate: ' + saltate };
+    }
+    /** stat: per id domanda → { esito, neuro } (dal record 'statq'). */
+    function daEsportare(domande, stat, f) {
+        return domande.filter(d => {
+            const s = stat[d.id];
+            if (f === 'errori')
+                return !!s && !!s.n && s.esito === false;
+            if (f === 'illusione')
+                return !!s && !!s.neuro && !!s.neuro.tag && s.neuro.tag.includes('illusione_competenza');
+            if (f === 'bloom3')
+                return bloom(d) >= 3;
+            return true;
+        });
+    }
+    /** Formato compatto per il ripasso esterno: «D: … / R: … / Perché: …». */
+    function compatto(domande) {
+        return domande.map((d, i) => (i + 1) + '. ' + d.q.replace(/\s+/g, ' ') + '\n   R: ' + (d.t === 'mcq' ? d.o[0] : (d.show || (d.a || [''])[0])) + (bloom(d) ? '  [Bloom ' + bloom(d) + ']' : '')
+            + ((d.spiegazione || (Array.isArray(d.e) ? d.e[d.e.length - 1] : d.e)) ? '\n   Perché: ' + String(d.spiegazione || (Array.isArray(d.e) ? d.e[d.e.length - 1] : d.e)).replace(/^[^:]{2,20}:\s*/, '').slice(0, 240) : '')).join('\n');
+    }
+    // ---------- 7. pipeline di studio ----------
+    const statoPipe = (x) => STATI_PIPE.includes(x) ? x : 'bozza';
+    function copertura(domande) {
+        const b = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        for (const d of domande)
+            b[bloom(d)]++;
+        const mancanti = [1, 2, 3, 4].filter(k => !b[k]);
+        return { quizBankCount: domande.length, bloom: b, mancanti, pct: Math.round((4 - mancanti.length) * 25) };
+    }
+    const prossimoStato = (s) => STATI_PIPE[(STATI_PIPE.indexOf(statoPipe(s)) + 1) % 3];
+    /** Pacchetto .imcpack-v1 con le sole domande (niente statistiche, SRS, chiavi o account: confidenceLog tolto). */
+    function pacchetto(domande, o) {
+        const per = {};
+        for (const d of domande) {
+            const c = { ...d };
+            delete c.confidenceLog;
+            delete c.mod;
+            delete c.nuova;
+            delete c.gen;
+            (per[c.sk || 'senza-scheda'] = per[c.sk || 'senza-scheda'] || []).push(c);
+        }
+        return { formato: 'imcpack-v1', titolo: o.titolo, descrizione: 'Esportato da Il mio calendario (' + domande.length + ' domande)', archetipo: o.archetipo, livelloConsigliato: o.modalita, dataCreazione: o.oggi,
+            programma: [{ codiceStep: 'export', titolo: o.titolo, sottostep: Object.keys(per).map(sk => ({ sk, titolo: sk })) }], domande: per, flashcard: [] };
+    }
+    return { TIPI_DISTR, MAX_LOG, BREAKER, MAX_PAROLE_MICRO, MAX_TOKEN_MICRO, TESTO_FATICA, NOMI_DISTR,
+        bloom, normalizza, aggiungiTentativo, stepDi, argomentoDi, tipoDistrattore, caso, pianifica, piuGiorni,
+        interleave, filaMax, fatica, prontaL1, imbuto, promptMicro, parole, serveBreaker, promptGemini,
+        calcola, espandiTemplate, haTemplate, varianti, cloze, riparaJson, parseTollerante, daAlias, importa,
+        normTesto, hashTesto, deduplica, daEsportare, compatto, pacchetto, statoPipe, copertura, prossimoStato };
+})();
+
 // 07-progressi.ts — Punti deboli (v0.12, F6 ridotta). In Studio → Statistiche.
 //
 // 1) Per tipo di domanda (Sbarramento, Applicativo, Trabocchetto, Problema, Completamento…), per materia,
@@ -10917,6 +11681,20 @@ const QuizApp = (() => {
         StatQC.ricalcola(r);
         r.ultima = ymd(new Date());
         r.esito = giusta;
+        // v0.54 (BP3 §1.2): calibrazione metacognitiva (solo se lo studente ha dichiarato la certezza)
+        const neuroPrima = r.neuro ? { ...r.neuro } : undefined, logPrima = r.confidenceLog ? r.confidenceLog.slice() : undefined;
+        if (v.cert) {
+            const t = { ts: new Date().toISOString(), corretto: giusta, livelloCertezza: v.cert, tempoRispostaMs: Math.max(0, Math.round(v.ms || 0)) };
+            r.confidenceLog = Neuro.aggiungiTentativo(r.confidenceLog, t);
+            const p = Neuro.pianifica(r.neuro, v.cert, giusta, r.ultima);
+            v.srs = p;
+            v.caso = p.ultimoCaso;
+            r.neuro = { iv: p.iv, ease: p.ease, due: p.due, reps: p.reps, ultimoCaso: p.ultimoCaso };
+            if (p.tag && p.tag.length)
+                r.neuro.tag = p.tag;
+            if (p.daConsolidare)
+                r.neuro.daConsolidare = true;
+        }
         let scelta = '';
         if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') {
             const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o[oi];
@@ -10934,6 +11712,16 @@ const QuizApp = (() => {
             if (giusta)
                 y.xok++;
             StatQC.ricalcola(q);
+            if (v.cert) {
+                if (neuroPrima)
+                    q.neuro = neuroPrima;
+                else
+                    delete q.neuro;
+                if (logPrima)
+                    q.confidenceLog = logPrima;
+                else
+                    delete q.confidenceLog;
+            }
             if (scelta && q.scelte && q.scelte[scelta]) {
                 q.scelte = Object.assign({}, q.scelte);
                 q.scelte[scelta]--;
@@ -10955,6 +11743,45 @@ const QuizApp = (() => {
         return annulla;
     }
     let toastAnnulla = null;
+    const K_MODO = 'imc-quiz-modo';
+    /** Predefinita secondo il profilo cognitivo (hypercorrection attiva → neuro); la scelta dell'utente resta. */
+    function modo() {
+        try {
+            const v = localStorage.getItem(K_MODO);
+            if (v === 'neuro' || v === 'esame')
+                return v;
+        }
+        catch (_) { /* niente */ }
+        return Dominio.profilo().attivaHypercorrection === false ? 'esame' : 'neuro';
+    }
+    const impostaModo = (m) => { try {
+        localStorage.setItem(K_MODO, m);
+    }
+    catch (_) { /* niente */ } };
+    const NOMI_CERT = { 1: 'Tiro a indovinare', 2: 'Abbastanza sicuro', 3: 'Certo al 100%' };
+    const statPer = (domande) => { const o = {}; for (const d of domande) {
+        const s = Stato.prendi('sq-' + d.id);
+        o[d.id] = s && !s.deleted ? s : undefined;
+    } return o; };
+    /** Export 1 click (BP3 §3.1): testo compatto negli appunti + file .imcpack.json. */
+    async function esporta(domande, f, titolo, archetipo) {
+        const sel = Neuro.daEsportare(domande, statPer(domande), f);
+        if (!sel.length) {
+            avviso(f === 'illusione' ? 'Nessuna illusione di competenza registrata.' : f === 'errori' ? 'Nessun errore da esportare.' : 'Nessuna domanda da esportare.');
+            return 0;
+        }
+        try {
+            await navigator.clipboard.writeText(Neuro.compatto(sel));
+        }
+        catch (_) { /* appunti non disponibili: resta il file */ }
+        const j = Neuro.pacchetto(sel, { titolo: titolo + ' · ' + { errori: 'errori', illusione: 'illusioni', bloom3: 'Bloom 3-4', tutti: 'tutte' }[f], archetipo, modalita: Dominio.profilo().modalita, oggi: ymd(new Date()) });
+        const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(j, null, 1)], { type: 'application/json' })), download: (titolo || 'quiz').replace(/[\\/:*?"<>|]+/g, '_') + '-' + f + '.imcpack.json' });
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        avviso(sel.length + ' domande: testo compatto copiato e pacchetto .imcpack scaricato.', 5000);
+        return sel.length;
+    }
     /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
     async function apri(pk, m, micro, s, gen, info) {
         const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
@@ -10982,6 +11809,9 @@ const QuizApp = (() => {
             v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
         v.corpo.appendChild(app);
         let P = [], cur = 0, ripasso = false, apertaX = false, finito = false;
+        // v0.54 (BP3): certezza prima della risposta (modo neuro), tempi per la fatica attentiva (zero token)
+        let mq = modo(), storia = [], faticaOn = false, faticaZitta = 0;
+        const archM = Dominio.archetipoMateria(m);
         // v0.52 (BP2): sequenza (ordine da ricostruire), abbinamento (coppie) e risposta aperta valutata con una rubrica locale
         const NOMI_TIPO = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
         const nuovoTipo = (d) => d.t === 'sequenza' || d.t === 'abbinamento' || d.t === 'risposta_aperta_rubrica';
@@ -11024,7 +11854,10 @@ const QuizApp = (() => {
                 + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI.</p>') + '</form>';
         }
         const nuovo = (idx, rip) => {
-            P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [] }; });
+            P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
+            storia = [];
+            faticaOn = false;
+            faticaZitta = 0;
             cur = 0;
             ripasso = rip;
             apertaX = false;
@@ -11041,7 +11874,7 @@ const QuizApp = (() => {
             + (d.cl ? '<div class="qz-mia"><b>Spiegazione di Claude</b> ' + esc(d.cl) + '</div>' : '') + (!d.cit && !d.cl ? '<p>' + fmt(Array.isArray(d.e) ? d.e.join(' ') : d.e) + '</p>' : '') + '</div>';
         function correzione(x) {
             const d = x.d, ew = d.ew || [], mc = d.t === 'mcq';
-            let s2 = (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
+            let s2 = bannerCaso(x) + (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
                 + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passi(d.e);
             if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1])
                 s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o[x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
@@ -11054,6 +11887,27 @@ const QuizApp = (() => {
                 s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => '<p><b>«' + fmt(d.o[k + 1]) + '»</b> — ' + fmt(t) + '</p>').join('') + '</details>';
             return s2 + '</div>';
         }
+        /** v0.54 (BP3 §1.2): esito della matrice certezza × correttezza; per l'illusione il confronto è obbligatorio. */
+        function bannerCaso(x) {
+            if (!x.caso || x.caso === 'standard')
+                return '';
+            const d = x.d, mc = d.t === 'mcq', oi = mc && typeof x.picked === 'number' ? x.ord[x.picked] : null;
+            const giustaT = mc ? d.o[0] : String(d.show || (d.a || [''])[0]), tuaT = oi != null ? d.o[oi] : String(x.picked || '');
+            const rif = d.sourceRef ? [d.sourceRef.libro, d.sourceRef.capitolo && 'cap. ' + d.sourceRef.capitolo, d.sourceRef.pagina && 'p. ' + d.sourceRef.pagina].filter(Boolean).join(', ') : '';
+            const dove = rif || d.r || Neuro.stepDi(d) || '';
+            if (x.caso === 'illusione_competenza') {
+                const l1 = Neuro.prontaL1(d, oi), tipo = oi != null ? Neuro.tipoDistrattore(d, oi) : null;
+                return '<div class="qz-neuro ko"><b>⚠️ Illusione di competenza</b> — eri certo, ma la risposta è sbagliata. La rivedrai già oggi.'
+                    + '<div class="qz-contrasto"><p><span class="qz-tag">La tua</span> ' + fmt(tuaT) + '</p><p><span class="qz-tag">Corretta</span> ' + fmt(giustaT) + '</p>'
+                    + (tipo ? '<p class="tenue piccolo">Tipo di trappola: ' + esc(Neuro.NOMI_DISTR[tipo]) + '</p>' : '')
+                    + (l1 ? '<p>' + fmt(l1) + '</p>' : '<p class="tenue piccolo">Confronta i due enunciati: cosa cambia? Poi chiedi «🎯 Perché ho sbagliato».</p>') + '</div></div>';
+            }
+            if (x.caso === 'lucky_guess')
+                return '<div class="qz-neuro">🍀 <b>Risposta fortunata</b> — giusta ma tirata a indovinare: non la considero imparata, torna entro domani.</div>';
+            if (x.caso === 'padronanza')
+                return '<div class="qz-neuro ok">🎯 <b>Padronanza</b> — certa e corretta: il prossimo ripasso si allontana (×1,25).</div>';
+            return '<div class="qz-neuro">📌 <b>Lacuna nota</b> — sapevi di non saperlo: ripasso domani' + (dove ? '. Torna alla teoria: <b>' + esc(dove) + '</b>' : ' e rileggi la scheda di teoria') + '.</div>';
+        }
         function riquadroAI(x) {
             const nessunaAI = Dominio.senzaAI(); // v0.52: modalità «100% senza AI» → solo la spiegazione breve locale (se c'è)
             if (nessunaAI && !Locale.spiegazioneBreve(x.d.e))
@@ -11063,7 +11917,7 @@ const QuizApp = (() => {
             if (a)
                 o = a.attesa ? '<p class="tenue">Genero la spiegazione…</p>' : a.errore ? '<p class="tenue">⚠️ ' + esc(a.errore) + '</p>'
                     : '<div class="qz-ai-testo">' + esc(a.testo) + '</div><div class="qz-ai-piede"><span>' + esc(a.modello || '') + '</span><button type="button" class="chip" data-ai="' + a.l + '" data-forza="1">↻ Rigenera</button></div>';
-            return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + b('breve', 'Breve') + (nessunaAI ? '' : b('media', 'Media') + b('dettagliata', 'Dettagliata')) + '</div>' + (nessunaAI ? o.replace(/<button[^>]*data-forza[^>]*>[^<]*<\/button>/, '') : o) + '</div>';
+            return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + (!x.ok && x.picked !== null ? b('perche', '🎯 Perché ho sbagliato') : '') + b('breve', 'Breve') + (nessunaAI ? '' : b('media', 'Media') + b('dettagliata', 'Dettagliata')) + '</div>' + (nessunaAI ? o.replace(/<button[^>]*data-forza[^>]*>[^<]*<\/button>/, '') : o) + '</div>';
         }
         function disegnaQ() {
             if (finito) {
@@ -11071,8 +11925,12 @@ const QuizApp = (() => {
                 return;
             }
             const x = P[cur], d = x.d, a = fatta(x), mc = d.t === 'mcq';
-            let s2 = '<div class="qz-metro" style="--n:' + P.length + '">' + P.map((y, k) => '<span class="' + (y.ok === null ? (k === cur ? 'ora' : '') : y.ok ? 'ok' : 'ko') + '"></span>').join('') + '</div>'
-                + '<div class="qz-stat"><span>Domanda <b>' + (cur + 1) + '</b> di ' + P.length + (ripasso ? ' · ripasso errori' : '') + '</span><span>Punteggio <b>' + punti() + '</b></span></div>'
+            if (!a && !x.t0)
+                x.t0 = Date.now();
+            const neuroQ = mq === 'neuro';
+            let s2 = (faticaOn ? '<div class="qz-neuro qz-fatica" role="status">😮‍💨 ' + esc(Neuro.TESTO_FATICA) + '<div class="chips"><button type="button" class="chip" data-az="pausa">⏸ Pausa 3 minuti</button><button type="button" class="chip" data-az="continua">Continua</button><button type="button" class="chip" data-az="chiudisess">Chiudi la sessione</button></div></div>' : '')
+                + '<div class="qz-metro" style="--n:' + P.length + '">' + P.map((y, k) => '<span class="' + (y.ok === null ? (k === cur ? 'ora' : '') : y.ok ? 'ok' : 'ko') + '"></span>').join('') + '</div>'
+                + '<div class="qz-stat"><span>Domanda <b>' + (cur + 1) + '</b> di ' + P.length + (ripasso ? ' · ripasso errori' : '') + '</span><span><button type="button" class="chip piccolo" data-az="modo" title="Cambia modalità">' + (neuroQ ? '🧠 Allenamento neuro' : '📝 Simulazione esame') + '</button> Punteggio <b>' + punti() + '</b></span></div>'
                 + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (NOMI_TIPO[d.t] || NOMI_TIPO.fill) + '</span></div>';
             for (const g of d.img || [])
                 if (dati.immagini[g.i])
@@ -11085,6 +11943,9 @@ const QuizApp = (() => {
             s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen || nuovoTipo(d) ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
             if (apertaX)
                 s2 += spiegFonti(d);
+            if (neuroQ && !a)
+                s2 += '<div class="qz-cert" role="group" aria-label="Quanto sei sicuro?"><span class="tenue piccolo">Quanto sei sicuro? (tasti 1–3)</span><div class="chips">'
+                    + [1, 2, 3].map(c => '<button type="button" class="chip' + (x.cert === c ? ' on' : '') + '" data-cert="' + c + '">' + c + ' · ' + NOMI_CERT[c] + '</button>').join('') + '</div></div>';
             if (mc) {
                 s2 += '<div class="qz-opz">' + x.ord.map((oi, k) => {
                     let c = 'qz-opz-b', tag = '';
@@ -11125,6 +11986,16 @@ const QuizApp = (() => {
             const x = P[cur];
             if (fatta(x))
                 return;
+            if (mq === 'neuro' && !x.cert) {
+                avviso('Prima dimmi quanto sei sicuro (1, 2 o 3).');
+                const c = app.querySelector('.qz-cert');
+                if (c)
+                    c.scrollIntoView({ block: 'nearest' });
+                return;
+            }
+            if (mq !== 'neuro')
+                x.cert = null;
+            x.ms = x.t0 ? Date.now() - x.t0 : 0;
             if (typeof val === 'number') {
                 x.picked = val;
                 x.ok = x.ord[val] === 0;
@@ -11153,10 +12024,18 @@ const QuizApp = (() => {
                     x.ok = giusta(val, d.a || []);
             }
             const annulla = registraStat(x);
+            // v0.54 (BP3 §1.3): fatica attentiva — banner non bloccante, al massimo una volta ogni 5 risposte
+            storia.push({ ms: x.ms || 0, ok: !!x.ok });
+            if (faticaZitta > 0)
+                faticaZitta--;
+            else if (Neuro.fatica(storia.map(z => z.ms), storia.map(z => z.ok)).allarme) {
+                faticaOn = true;
+                faticaZitta = 5;
+            }
             // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
             if (toastAnnulla)
                 toastAnnulla.remove();
-            avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+            avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
             toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
             if (!x.ok) {
                 const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null;
@@ -11181,19 +12060,37 @@ const QuizApp = (() => {
                 cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo,
                 archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: MATERIE_BASE[m] ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
             const id = Spiega.idDi(dd, l), c = Stato.prendi(id);
+            // v0.54 (BP3 §2): imbuto AI — livello 0 locale → livello 1 spiegazione già pronta / salvata → livello 2 micro-chiamata (≤350 token)
+            if (l === 'perche' || l === 'breve') {
+                const oi = mc && typeof x.picked === 'number' ? x.ord[x.picked] : null;
+                x.ai = { l, attesa: true };
+                disegnaQ();
+                try {
+                    const r = await Neuro.imbuto(d, l === 'perche' ? oi : null, {
+                        forza, senzaAI: Dominio.senzaAI(),
+                        locale: () => l === 'breve' ? Locale.spiegazioneBreve(d.e) : null,
+                        cache: () => c && !c.deleted ? c.testo : null,
+                        micro: async () => {
+                            const tipo = oi != null ? Neuro.tipoDistrattore(d, oi) : null;
+                            const p = Neuro.promptMicro({ q: testoPiano(d.q), corretta: testoPiano(dd.corretta), scelta: testoPiano(dd.scelta || ''), archetipo: dd.archetipo, tono: Dominio.profilo().tonoSpiegazioneAI, tipoDistr: tipo });
+                            const g = await IA.testo([{ role: 'user', content: p }], 'micro', { maxOut: Neuro.MAX_TOKEN_MICRO, temp: 0.3, archetipo: dd.archetipo });
+                            Stato.salva({ id, type: 'spiegazione', updatedAt: 0, q: dd.q, giusta: dd.corretta, livello: l, testo: g.testo, modello: g.modello, quiz: dd.titolo }, true);
+                            return { testo: g.testo, modello: g.modello };
+                        },
+                    });
+                    x.ai = r ? { l, testo: r.testo, modello: r.modello + (r.livello < 2 ? '' : ' · micro') } : { l, errore: 'Nessuna spiegazione pronta e AI disattivata.' };
+                }
+                catch (e) {
+                    x.ai = { l, errore: String(e.message || e) };
+                }
+                if (P[cur] === x)
+                    disegnaQ();
+                return;
+            }
             if (c && !c.deleted && !forza) {
                 x.ai = { l, testo: c.testo, modello: c.modello + ' · salvata' };
                 disegnaQ();
                 return;
-            }
-            // v0.44 locale: la spiegazione breve si ricava dalla correzione passo-passo già scritta (zero token); «rigenera» usa l'AI
-            if (l === 'breve' && !forza) {
-                const t = Locale.spiegazioneBreve(d.e);
-                if (t) {
-                    x.ai = { l, testo: t, modello: 'dalla correzione (senza AI)' };
-                    disegnaQ();
-                    return;
-                }
             }
             // v0.43 memoria: se dopo una spiegazione più corta ne chiede una più lunga, la corta non bastava → lezione
             if (x.ai && x.ai.testo && (l === 'dettagliata' || (l === 'media' && x.ai.l === 'breve')) && x.ai.l !== l)
@@ -11224,8 +12121,15 @@ const QuizApp = (() => {
             let s2 = '<section class="qz-carta"><div class="qz-punti">' + ok + '<small> / ' + tot + '</small></div><div class="tenue">' + pct + '% di risposte corrette</div>'
                 + '<div class="qz-livelli">' + liv.map(z => '<div class="qz-lvriga"><span>' + z[0] + '</span><span class="qz-barra"><span style="width:' + Math.round(z[1] * 100 / z[2]) + '%"></span></span><span>' + z[1] + '/' + z[2] + '</span></div>').join('') + '</div>'
                 + (deb ? '<p><b>Punto debole:</b> ' + deb[0] + '</p>' : '<p><b>Nessun punto debole.</b></p>');
+            // v0.54 (BP3 §1.2): illusioni di competenza della sessione, in testa
+            const ill = P.filter(x => x.caso === 'illusione_competenza'), fort = P.filter(x => x.caso === 'lucky_guess').length;
+            if (ill.length)
+                s2 += '<div class="qz-neuro ko"><b>⚠️ Illusioni di competenza: ' + ill.length + '</b> — eri certo ma era sbagliato. Tornano già oggi in cima al ripasso.<ul>' + ill.map(x => '<li>' + fmt(testoPiano(x.d.q).slice(0, 140)) + '</li>').join('') + '</ul></div>';
+            if (fort)
+                s2 += '<p class="tenue piccolo">🍀 ' + fort + (fort === 1 ? ' risposta fortunata' : ' risposte fortunate') + ': da consolidare entro domani.</p>';
             if (sb.length)
                 s2 += '<h3>Da rivedere (' + sb.length + ')</h3>' + sb.map(x => '<details class="qz-altre"><summary>' + fmt(x.d.q) + '</summary><p><b>Risposta corretta:</b> ' + fmt(x.d.t === 'mcq' ? x.d.o[0] : x.d.show) + '</p>' + passi(x.d.e) + (x.d.r ? '<p class="tenue piccolo">Ripassa: ' + esc(x.d.r) + '</p>' : '') + '</details>').join('');
+            s2 += '<div class="chips qz-export"><span class="tenue piccolo">Esporta (appunti + .imcpack):</span><button type="button" class="chip" data-exp="errori">Errori</button><button type="button" class="chip" data-exp="illusione">Illusioni</button><button type="button" class="chip" data-exp="bloom3">Bloom ≥ 3</button></div>';
             s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
                 + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
             app.innerHTML = s2;
@@ -11262,6 +12166,18 @@ const QuizApp = (() => {
                 chiediAI(b.dataset.ai, !!b.dataset.forza);
                 return;
             }
+            if (b.dataset.cert) {
+                const x = P[cur];
+                if (!fatta(x)) {
+                    x.cert = +b.dataset.cert;
+                    disegnaQ();
+                }
+                return;
+            }
+            if (b.dataset.exp) {
+                esporta(dati.domande, b.dataset.exp, info ? info.titolo : s.titolo, archM);
+                return;
+            }
             const az = b.dataset.az, x = P[cur];
             if (az === 'aiuto') {
                 const lib = x.ord.map((oi, k) => oi !== 0 && !x.hid.includes(k) ? k : -1).filter(k => k >= 0);
@@ -11271,6 +12187,26 @@ const QuizApp = (() => {
             }
             else if (az === 'fonti') {
                 apertaX = !apertaX;
+                disegnaQ();
+            }
+            else if (az === 'modo') {
+                mq = mq === 'neuro' ? 'esame' : 'neuro';
+                impostaModo(mq);
+                avviso(mq === 'neuro' ? '🧠 Allenamento neuro: prima di rispondere dici quanto sei sicuro.' : '📝 Simulazione esame: niente certezza, come all\'esame.');
+                disegnaQ();
+            }
+            else if (az === 'continua') {
+                faticaOn = false;
+                disegnaQ();
+            }
+            else if (az === 'pausa') {
+                faticaOn = false;
+                disegnaQ();
+                avviso('⏸ Pausa: alzati, bevi un bicchiere d\'acqua, guarda lontano. Riprendi tra 3 minuti.', 8000);
+            }
+            else if (az === 'chiudisess') {
+                faticaOn = false;
+                finito = true;
                 disegnaQ();
             }
             else if (az === 'seqreset') {
@@ -11375,9 +12311,15 @@ const QuizApp = (() => {
             const x = P[cur];
             if (!x)
                 return;
+            // v0.54: in modo neuro 1–3 = certezza e a–e = risposta; in simulazione esame resta 1–5 / a–e
+            if (mq === 'neuro' && !fatta(x) && /^[1-3]$/.test(e.key)) {
+                x.cert = +e.key;
+                disegnaQ();
+                return;
+            }
             if (x.d.t === 'mcq' && !fatta(x)) {
                 let k = 'abcde'.indexOf(e.key.toLowerCase());
-                if (k < 0 && /^[1-5]$/.test(e.key))
+                if (k < 0 && mq !== 'neuro' && /^[1-5]$/.test(e.key))
                     k = +e.key - 1;
                 if (k >= 0 && !x.hid.includes(k)) {
                     rispondi(k);
@@ -11390,11 +12332,12 @@ const QuizApp = (() => {
                 app.querySelector('[data-az=prec]').click();
         };
         document.addEventListener('keydown', tasti);
-        nuovo(gen ? dati.domande.map((_, k) => k) : Regole.ordina(dati.domande), false);
+        // v0.54 (BP3 §1.3): interleaving — mai più di 2 di fila sullo stesso micro-argomento; Bloom alternato tranne alle medie/biennio
+        nuovo(gen ? dati.domande.map((_, k) => k) : Neuro.interleave(dati.domande, Regole.ordina(dati.domande), { alterna: Dominio.profilo().modalita !== 'medie_biennio' }), false);
     }
     /** Statistiche per domanda (per Q4 e per la vista Errori). */
     function stat(sk) { return Stato.tutti('statq').filter(r => !sk || r.sk === sk); }
-    return { apri, stat };
+    return { apri, stat, esporta, modo };
 })();
 /** Q2: editor di una domanda (modifica, nascondi, ripristina l'originale, nuova). */
 const Editor = (() => {
@@ -11851,10 +12794,14 @@ const Regole = (() => {
     /** Ordine delle domande del quiz nativo secondo la regola. */
     function ordina(domande) {
         const idx = domande.map((_, k) => k);
-        if (get().ordineQuiz !== 'deboli-prima')
-            return idx;
-        const err = (d) => { const s = Stato.prendi('sq-' + d.id); return s && !s.deleted ? s.n - s.ok : 0; };
-        return idx.sort((a, b) => err(domande[b]) - err(domande[a]));
+        // v0.54 (BP3 §1.2): prima le domande con ripasso neuro scaduto (illusioni di competenza in testa); ordine stabile
+        const oggi = ymd(new Date());
+        const sq = (d) => { const s = Stato.prendi('sq-' + d.id); return s && !s.deleted ? s : null; };
+        const urg = (d) => { const s = sq(d), n = s && s.neuro; if (!n || !n.due || n.due > oggi)
+            return 0; return n.tag && n.tag.includes('illusione_competenza') ? 2 : 1; };
+        const err = (d) => { const s = sq(d); return s ? s.n - s.ok : 0; };
+        const deboli = get().ordineQuiz === 'deboli-prima';
+        return idx.sort((a, b) => (urg(domande[b]) - urg(domande[a])) || (deboli ? err(domande[b]) - err(domande[a]) : 0) || a - b);
     }
     // ---- Studio → Errori: errori tipici ----
     function sezioneTipici() {
@@ -14533,7 +15480,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.53';
+const VERSIONE = '0.54';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
