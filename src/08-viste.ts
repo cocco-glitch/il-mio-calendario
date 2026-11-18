@@ -447,7 +447,7 @@ function vistaAltro(): HTMLElement {
   const anteprima = !document.querySelector('link[rel="manifest"]'); // versione di prova a file unico
   const esporta = () => {
     if (anteprima) { avviso("Nell'anteprima l'esportazione non è disponibile: funziona nell'app installata."); return; }
-    const blob = new Blob([JSON.stringify({ formato: 'il-mio-calendario', versione: 1, esportatoIl: new Date().toISOString(), records: Stato.esporta() })], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ formato: 'il-mio-calendario', versione: 1, schemaVersion: 2, esportatoIl: new Date().toISOString(), records: Stato.esporta() })], { type: 'application/json' });
     const a = h('a', { href: URL.createObjectURL(blob), download: 'calendario-backup-' + ymd(new Date()) + '.json' }) as HTMLAnchorElement;
     document.body.appendChild(a); a.click(); a.remove();
   };
