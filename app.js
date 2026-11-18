@@ -7096,6 +7096,29 @@ const IA = (() => {
             throw new Error('risposta non in JSON');
         }
     }
+    /** v0.44.2: Groq free = 8.000 token/minuto (input + output). 16.000 caratteri ≈ 4.600 token lasciano spazio alla risposta;
+     *  prima erano 60.000 (≈17.000 token) e le richieste grandi tornavano 413 «Request too large». */
+    const GROQ_CAR = 16000;
+    /** Accorcia i messaggi più lunghi finché il totale sta sotto `lim` caratteri (i brevi, es. istruzioni di sistema, restano interi). */
+    function accorcia(msgs, lim) {
+        const tot = msgs.reduce((s, x) => s + x.content.length, 0);
+        if (tot <= lim)
+            return msgs;
+        const out = msgs.slice();
+        let eccesso = tot - lim + 30;
+        while (eccesso > 0) {
+            let i = 0;
+            for (let k = 1; k < out.length; k++)
+                if (out[k].content.length > out[i].content.length)
+                    i = k;
+            const c = out[i].content, taglio = Math.min(eccesso, c.length - 200);
+            if (taglio <= 0)
+                break;
+            out[i] = { ...out[i], content: c.slice(0, c.length - taglio) + '\n[…testo accorciato…]' };
+            eccesso -= taglio;
+        }
+        return out;
+    }
     /** Chiede JSON al primo modello disponibile del ruolo. Restituisce anche chi ha risposto. */
     async function chiedi(msgs, r, o = {}) {
         await Spiega.pronta();
@@ -7105,8 +7128,7 @@ const IA = (() => {
         const errori = [];
         let ultimo = null;
         for (const f of forn) {
-            const lim = f.gem ? 600000 : 60000;
-            const m2 = msgs.map(x => x.content.length > lim ? { ...x, content: x.content.slice(0, lim) + '\n[…testo accorciato…]' } : x);
+            const m2 = accorcia(msgs, f.gem ? 600000 : GROQ_CAR);
             try {
                 const corpo = { model: f.modello, temperature: o.temp == null ? .3 : o.temp, messages: m2 };
                 if (!/llama-3\.1-8b/.test(f.modello))
@@ -7154,7 +7176,7 @@ const IA = (() => {
         } };
         return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
     }
-    return { chiedi, campoGemini, disponibili, catena, get gemini() { return !!gemini(); } };
+    return { chiedi, campoGemini, disponibili, catena, accorcia, GROQ_CAR, get gemini() { return !!gemini(); } };
 })();
 
 // =====================================================================
@@ -10606,7 +10628,7 @@ const Spiega = (() => {
             try {
                 const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: msgs }),
+                    body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: IA.accorcia(msgs, IA.GROQ_CAR) }),
                 });
                 const j = await r.json().catch(() => ({}));
                 if (!r.ok) {
@@ -10642,8 +10664,8 @@ const Spiega = (() => {
     async function vede(istruzioni, immagine) {
         if (!await pronta())
             throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
-        // v0.31.1: Groq ha ritirato Llama 4 Scout; oggi il modello visivo pubblico è Qwen 3.8 27B. Si provano in ordine.
-        const VISIVI = ['qwen/qwen3.8-27b', 'meta-llama/llama-4-scout-17b-16e-instruct'];
+        // v0.44.2: Llama 4 Scout ritirato da Groq; l'unico modello visivo è Qwen 3.8 27B (preview, immagini fino a 20 MB).
+        const VISIVI = ['qwen/qwen3.8-27b'];
         let r = null, j = {};
         for (const mod of VISIVI) {
             r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -12938,7 +12960,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.44.1';
+const VERSIONE = '0.44.2';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
