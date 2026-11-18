@@ -2,7 +2,12 @@
 import json, os, re, subprocess, sys, tempfile, time
 from playwright.sync_api import sync_playwright
 srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8771', '-d', 'dist', '--protocol', 'HTTP/1.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-time.sleep(1); errori = []
+import socket   # aspetta che il server sia in ascolto (time.sleep(1) a volte non basta su Windows)
+for _ in range(100):
+    with socket.socket() as _s:
+        if _s.connect_ex(('127.0.0.1', 8771)) == 0: break
+    time.sleep(.1)
+errori = []
 GIUSTE = ['Aumenta di dieci volte', 'Il legame ionico', 'Diminuisce la pressione', 'Resta costante']
 def dom(i, q, o, d=None):
     return {"lv": "Applicativo", "q": q, "o": o, "ew": ["a", "b", "c", "d"], "e": ["Cosa chiede", "Concetto", "In sintesi"], "cit": "frase"}

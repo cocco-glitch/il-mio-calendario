@@ -109,7 +109,7 @@ const Spiega = (() => {
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { const e: any = new Error((j && j.error && j.error.message) || 'errore ' + r.status); e.stato = r.status; throw e; }
         const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
-        return JSON.parse(t.replace(/^```(json)?|```$/g, ''));
+        return IA.parseJsonSicuro(t);   // v0.45: think, fence, testo intorno, LaTeX nelle stringhe
       } catch (e: any) { ultimo = e; if (e.stato === 401) break; }
     }
     // v0.44.1: modello ritirato o senza accesso → scelta automatica tra quelli che la chiave può davvero usare (anche Gemini)

@@ -3,7 +3,11 @@ import json, os, subprocess, sys, time, glob
 from playwright.sync_api import sync_playwright
 
 srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8765', '-d', 'dist', '--protocol', 'HTTP/1.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-time.sleep(1)
+import socket   # aspetta che il server sia in ascolto (time.sleep(1) a volte non basta su Windows)
+for _ in range(100):
+    with socket.socket() as _s:
+        if _s.connect_ex(('127.0.0.1', 8765)) == 0: break
+    time.sleep(.1)
 errori, chiamate = [], []
 def groq(route):
     chiamate.append(json.loads(route.request.post_data))

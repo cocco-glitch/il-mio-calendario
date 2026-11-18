@@ -2,7 +2,12 @@
 import subprocess, sys, time
 from playwright.sync_api import sync_playwright
 srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8770', '-d', 'dist', '--protocol', 'HTTP/1.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-time.sleep(1); errori = []
+import socket   # aspetta che il server sia in ascolto (time.sleep(1) a volte non basta su Windows)
+for _ in range(100):
+    with socket.socket() as _s:
+        if _s.connect_ex(('127.0.0.1', 8770)) == 0: break
+    time.sleep(.1)
+errori = []
 try:
     with sync_playwright() as p:
         b = p.chromium.launch(); pg = b.new_page()
