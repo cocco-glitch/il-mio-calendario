@@ -408,6 +408,16 @@ const Stato = (() => {
                 if (e.deleted && lapideScaduta(e) && !rec.has(e.id))
                     continue; // v0.17: lapidi vecchie già ripulite
                 const mio = rec.get(e.id);
+                // v0.48: statistiche per domanda = contatore per dispositivo (si sommano, non vince l'ultimo)
+                const m = mio && e.type === 'statq' && mio.type === 'statq' ? StatQC.unisci(mio, e) : null;
+                if (m) {
+                    if (!StatQC.uguali(m, mio)) {
+                        rec.set(e.id, m);
+                        cambiati.push(m);
+                        ver++;
+                    }
+                    continue;
+                }
                 if (!mio || (e.updatedAt || 0) > (mio.updatedAt || 0)) {
                     rec.set(e.id, e);
                     cambiati.push(e);
@@ -429,6 +439,38 @@ const Stato = (() => {
             rec.delete(id); ver++; await DB.rimuovi(ids); notifica(); },
     };
 })();
+const StatQC = {
+    conti(r) { if (!r.c)
+        r.c = { legacy: { n: r.n || 0, ok: r.ok || 0, xn: 0, xok: 0 } }; return r.c; },
+    mio(r, dev) { const c = StatQC.conti(r); return c[dev] || (c[dev] = { n: 0, ok: 0, xn: 0, xok: 0 }); },
+    ricalcola(r) {
+        let n = 0, ok = 0;
+        for (const k in r.c || {}) {
+            const x = r.c[k];
+            n += (x.n || 0) - (x.xn || 0);
+            ok += (x.ok || 0) - (x.xok || 0);
+        }
+        r.n = Math.max(0, n);
+        r.ok = Math.max(0, Math.min(ok, r.n));
+    },
+    canon(x) { return x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, k) => { o[k] = StatQC.canon(x[k]); return o; }, {}) : x; },
+    uguali(a, b) { return JSON.stringify(StatQC.canon(a)) === JSON.stringify(StatQC.canon(b)); },
+    /** null = unione classica (manca `c` da una parte, o lapide). */
+    unisci(a, b) {
+        if (!a.c || !b.c || a.deleted || b.deleted)
+            return null;
+        const chiave = (r) => JSON.stringify(StatQC.canon([r.ultima || '', !!r.esito, r.scelte || null, r.sk || '']));
+        const vince = (a.updatedAt || 0) !== (b.updatedAt || 0) ? ((a.updatedAt || 0) > (b.updatedAt || 0) ? a : b) : (chiave(a) >= chiave(b) ? a : b);
+        const c = {};
+        for (const k of Array.from(new Set(Object.keys(a.c).concat(Object.keys(b.c)))).sort()) {
+            const x = a.c[k] || {}, y = b.c[k] || {}, m = (f) => Math.max(x[f] || 0, y[f] || 0);
+            c[k] = { n: m('n'), ok: m('ok'), xn: m('xn'), xok: m('xok') };
+        }
+        const r = { ...vince, c, updatedAt: Math.max(a.updatedAt || 0, b.updatedAt || 0) };
+        StatQC.ricalcola(r);
+        return r;
+    },
+};
 function imp() { return Stato.rec.get('impostazioni'); }
 function categorie() { return Stato.tutti('categoria').sort((a, b) => a.ordine - b.ordine); }
 function coloreEvento(e) {
@@ -9774,20 +9816,42 @@ const QuizApp = (() => {
         const j = Math.floor(Math.random() * (i + 1));
         [a[i], a[j]] = [a[j], a[i]];
     } return a; };
+    /** Registra la risposta (v0.48: nel contatore di questo dispositivo) e restituisce la funzione per annullarla. */
     function registraStat(v) {
-        const id = 'sq-' + v.d.id, p = Stato.prendi(id);
-        const r = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false };
-        r.n++;
-        if (v.ok)
-            r.ok++;
+        const id = 'sq-' + v.d.id, p = Stato.prendi(id), dev = Privacy.idDispositivo(), giusta = !!v.ok;
+        const r = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false, c: {} };
+        const x = StatQC.mio(r, dev);
+        x.n++;
+        if (giusta)
+            x.ok++;
+        StatQC.ricalcola(r);
         r.ultima = ymd(new Date());
-        r.esito = !!v.ok;
+        r.esito = giusta;
+        let scelta = '';
         if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') {
             const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o[oi];
+            scelta = o;
             r.scelte = Object.assign({}, r.scelte);
             r.scelte[o] = (r.scelte[o] || 0) + 1;
         }
         Stato.salva(r, true);
+        const annulla = () => {
+            const q = Stato.prendi(id);
+            if (!q)
+                return;
+            const y = StatQC.mio(q, dev);
+            y.xn++;
+            if (giusta)
+                y.xok++;
+            StatQC.ricalcola(q);
+            if (scelta && q.scelte && q.scelte[scelta]) {
+                q.scelte = Object.assign({}, q.scelte);
+                q.scelte[scelta]--;
+                if (!q.scelte[scelta])
+                    delete q.scelte[scelta];
+            }
+            Stato.salva(q, true);
+        };
         // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
         if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {
             const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o[oi];
@@ -9798,7 +9862,9 @@ const QuizApp = (() => {
                     avviso('🪤 Stessa trappola per la seconda volta: aggiunta alle flashcard degli errori.', 5000);
             }
         }
+        return annulla;
     }
+    let toastAnnulla = null;
     /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
     async function apri(pk, m, micro, s, gen, info) {
         const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
@@ -9932,7 +9998,12 @@ const QuizApp = (() => {
                 x.picked = val.trim();
                 x.ok = giusta(val, x.d.a || []);
             }
-            registraStat(x);
+            const annulla = registraStat(x);
+            // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
+            if (toastAnnulla)
+                toastAnnulla.remove();
+            avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+            toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
             if (!x.ok) {
                 const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null;
                 x.avv = Regole.avvisoRisposta(x.d, dk);
@@ -13270,7 +13341,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.47';
+const VERSIONE = '0.48';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
