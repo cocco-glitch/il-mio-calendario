@@ -5929,6 +5929,551 @@ function sezioneDomande() {
             avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null, elenco.length ? elenco.slice(0, 60).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'));
 }
 
+// 07-dominio.ts — BP2 (v0.52): architettura multidominio universale e profili utente.
+//
+// 1. Profili cognitivi: 'owner' (il proprietario, Medicina → universita_concorsi) oppure 'ospite' (qualsiasi
+//    altro account: cartella Drive pulita + Wizard di benvenuto). La modalità scelta è il record 'profilo'
+//    (id fisso, porta `acc` come ogni record → mai unito tra account diversi; LWW tra dispositivi).
+// 2. Sei archetipi disciplinari: ogni materia ne ha uno (record 'materia'.archetipo, oppure dedotto dal nome,
+//    oppure la mappa storica F/C/B). Guidano catena AI, tono del tutor e diagnostica locale a zero token.
+// 3. Pacchetti di scambio `.imcpack.json` (formato 'imcpack-v1'): programma + domande + flashcard, senza
+//    alcun dato personale (niente statistiche, FSRS, chiavi, account). Le domande importate diventano
+//    record 'bancaimc' (id 'bq-<id scheda>') letti da Banca.scheda; o[0] resta sempre la risposta giusta.
+// 4. CreaPianoUniversale: indice del libro (testo, PDF o foto) + data d'esame → corso proprio con i
+//    sotto-step distribuiti sui giorni entro il tetto giornaliero.
+// 5. «100% senza AI»: senza alcuna chiave si nascondono solo i pulsanti AI; il resto funziona offline.
+// Tutto additivo: nessun cambio di SCHEMA (record e campi nuovi facoltativi).
+const PRESET_COGNITIVI = {
+    medie_biennio: { modalita: 'medie_biennio', ritenzioneTarget: 0.85, dimensioneMicroLotto: 5, mostraMetricheFSRS: false, attivaHypercorrection: false, tonoSpiegazioneAI: 'semplice_esempi' },
+    superiori_maturita: { modalita: 'superiori_maturita', ritenzioneTarget: 0.88, dimensioneMicroLotto: 6, mostraMetricheFSRS: true, attivaHypercorrection: true, tonoSpiegazioneAI: 'didattico_chiaro' },
+    universita_concorsi: { modalita: 'universita_concorsi', ritenzioneTarget: 0.90, dimensioneMicroLotto: 8, mostraMetricheFSRS: true, attivaHypercorrection: true, tonoSpiegazioneAI: 'tecnico_accademico' },
+    lifelong_pro: { modalita: 'lifelong_pro', ritenzioneTarget: 0.86, dimensioneMicroLotto: 4, mostraMetricheFSRS: true, attivaHypercorrection: false, tonoSpiegazioneAI: 'didattico_chiaro' },
+};
+const NOMI_MODALITA = {
+    medie_biennio: '🎒 Medie / biennio (11-15 anni)', superiori_maturita: '📚 Superiori / maturità (16-19 anni)',
+    universita_concorsi: '🎓 Università / concorsi', lifelong_pro: '💼 Adulti / professionisti',
+};
+const ARCHETIPI_DISCIPLINARI = {
+    stem_calcolo: { id: 'stem_calcolo', etichetta: 'STEM, Fisica & Calcolo', catenaProviderPreferita: ['groq', 'sambanova', 'nvidia', 'gemini', 'cerebras'],
+        modelliConsigliati: ['openai/gpt-oss-120b', 'qwen/qwen3-32b', 'DeepSeek-R1-Distill-Llama-70B'], modalitaDomandaAbilitate: ['mcq', 'fill', 'sequenza'], pluginLocaleId: 'diagnosticaStemDimensionale' },
+    scienze_sperimentali: { id: 'scienze_sperimentali', etichetta: 'Scienze Sperimentali & Mediche', catenaProviderPreferita: ['gemini', 'groq', 'cohere', 'sambanova', 'github'],
+        modelliConsigliati: ['gemini-2.5-flash', 'qwen/qwen3-32b', 'command-a-03-2025'], modalitaDomandaAbilitate: ['mcq', 'fill', 'abbinamento', 'sequenza'], pluginLocaleId: 'diagnosticaScienzeCompartimenti' },
+    umanistico_storico: { id: 'umanistico_storico', etichetta: 'Storia, Filosofia & Scienze Umane', catenaProviderPreferita: ['cohere', 'gemini', 'github', 'groq', 'xkiro'],
+        modelliConsigliati: ['command-a-03-2025', 'gemini-2.5-flash', 'gpt-4o'], modalitaDomandaAbilitate: ['mcq', 'sequenza', 'abbinamento', 'risposta_aperta_rubrica'], pluginLocaleId: 'diagnosticaCronologiaCausalita' },
+    giuridico_economico: { id: 'giuridico_economico', etichetta: 'Diritto, Economia & Concorsi', catenaProviderPreferita: ['gemini', 'groq', 'xkiro', 'cohere', 'github'],
+        modelliConsigliati: ['gemini-2.5-flash', 'moonshotai/kimi-k3-agent', 'command-a-03-2025'], modalitaDomandaAbilitate: ['mcq', 'fill', 'abbinamento'], pluginLocaleId: 'diagnosticaNormativaEccezioni' },
+    lingue_letteratura: { id: 'lingue_letteratura', etichetta: 'Lingue Straniere & Letteratura', catenaProviderPreferita: ['groq', 'gemini', 'xkiro', 'cohere', 'cerebras'],
+        modelliConsigliati: ['moonshotai/kimi-k3-agent', 'llama-3.3-70b-versatile', 'gemini-2.5-flash'], modalitaDomandaAbilitate: ['fill', 'mcq', 'abbinamento', 'risposta_aperta_rubrica'], pluginLocaleId: 'diagnosticaMorfologiaLevenshtein' },
+    informatica_coding: { id: 'informatica_coding', etichetta: 'Informatica, Coding & Sistemi', catenaProviderPreferita: ['groq', 'cerebras', 'github', 'gemini', 'sambanova'],
+        modelliConsigliati: ['qwen/qwen3-32b', 'gpt-4o', 'gemini-2.5-flash'], modalitaDomandaAbilitate: ['mcq', 'fill', 'sequenza'], pluginLocaleId: 'diagnosticaSintassiAST' },
+};
+const ICONE_ARCHETIPO = { stem_calcolo: '📐', scienze_sperimentali: '🧪', umanistico_storico: '🏛', giuridico_economico: '⚖️', lingue_letteratura: '🗣', informatica_coding: '💻' };
+const eArchetipo = (x) => typeof x === 'string' && Object.prototype.hasOwnProperty.call(ARCHETIPI_DISCIPLINARI, x);
+/** Regola di risoluzione: esplicito > mappa storica (F/C/B) > scienze_sperimentali. */
+function risolviArchetipoMateria(codiceMateria, archetipoEsplicito) {
+    if (archetipoEsplicito && eArchetipo(archetipoEsplicito))
+        return archetipoEsplicito;
+    const mapStorica = { F: 'stem_calcolo', C: 'scienze_sperimentali', B: 'scienze_sperimentali' };
+    return mapStorica[String(codiceMateria || '').toUpperCase()] || 'scienze_sperimentali';
+}
+const Dominio = (() => {
+    const ID_PROFILO = 'profilo';
+    const TIPI = ['mcq', 'fill', 'sequenza', 'abbinamento', 'risposta_aperta_rubrica'];
+    const hash = (s) => { let x = 5381; for (let i = 0; i < s.length; i++)
+        x = ((x << 5) + x + s.charCodeAt(i)) | 0; return (x >>> 0).toString(36); };
+    // ---------- §1 Ruolo e profilo cognitivo ----------
+    const ruolo = () => Drive.eProprietario() ? 'owner' : 'ospite';
+    /** Profilo attivo: preset della modalità scelta (record 'profilo'); senza scelta, owner → universita_concorsi. */
+    function profilo(r = ruolo()) {
+        const rec = Stato.prendi(ID_PROFILO);
+        const mod = rec && PRESET_COGNITIVI[rec.modalita] ? rec.modalita : r === 'owner' ? 'universita_concorsi' : 'superiori_maturita';
+        return { ruolo: r, ...PRESET_COGNITIVI[mod] };
+    }
+    function impostaModalita(m) {
+        if (!PRESET_COGNITIVI[m])
+            return;
+        const r = Stato.prendi(ID_PROFILO);
+        Stato.salva({ ...(r || { id: ID_PROFILO, type: 'profilo', updatedAt: 0 }), modalita: m, benvenuto: true });
+    }
+    /** Ritenzione FSRS desiderata: quella scelta a mano nelle impostazioni, altrimenti quella del profilo. */
+    const ritenzioneProfilo = () => profilo().ritenzioneTarget;
+    // ---------- §2 Archetipi ----------
+    const REGOLE = [
+        ['informatica_coding', /informat|programm|coding|javascript|typescript|python|\bjava\b|\bsql\b|database|basi di dati|sistemi operativi|algoritm|software|reti di calc|sviluppo web/],
+        ['lingue_letteratura', /ingles|frances|spagnol|tedesc|latin|grec[oa]|letteratur|italiano|lingu|grammatic|russo|cinese|giappones|portoghes|english|deutsch|espanol/],
+        ['giuridico_economico', /diritt|legge|leggi|giurisp|economi|ragioner|aziend|contabil|finanz|concors|marketing|costituz|tribut|amministrativ/],
+        ['umanistico_storico', /stori|filosof|pedagog|psicolog|sociolog|\barte\b|antropolog|geograf|religion|epica|musica/],
+        ['stem_calcolo', /fisic|matemat|analisi|calcolo|geometr|algebra|statist|ingegner|meccanic|elettro|termodin|trigonom/],
+        ['scienze_sperimentali', /chimic|biolog|anatom|fisiolog|biochim|genetic|medic|farmac|scienz|microbio|istolog|patolog|botanic|ecolog|infermier/],
+    ];
+    /** Deduce l'archetipo dal nome della materia (null se non si capisce). */
+    function indovinaArchetipo(nome) {
+        const t = norm(nome || '');
+        for (const [a, re] of REGOLE)
+            if (re.test(t))
+                return a;
+        return null;
+    }
+    /** Archetipo di una materia: scelto (record 'materia'), storico (C/B/F), dedotto dal nome, predefinito. */
+    function archetipoMateria(codice) {
+        const r = Stato.prendi('mat-' + codice);
+        if (r && eArchetipo(r.archetipo))
+            return r.archetipo;
+        if (MATERIE_BASE[codice])
+            return risolviArchetipoMateria(codice);
+        const ind = indovinaArchetipo(r ? r.nome : nomeMateria(codice));
+        return risolviArchetipoMateria(codice, ind || undefined);
+    }
+    function impostaArchetipo(codice, a) {
+        const r = Stato.prendi('mat-' + codice), inf = infoMateria(codice);
+        Stato.salva({ ...(r || { id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome: inf.nome, colore: inf.colore }), archetipo: a });
+    }
+    /** Ordine dei fornitori preferito dall'archetipo (solo nomi; il gateway tiene quelli che conosce). */
+    const catenaPreferita = (a) => eArchetipo(a) ? ARCHETIPI_DISCIPLINARI[a].catenaProviderPreferita : [];
+    const TONI = {
+        semplice_esempi: 'Usa parole semplici, frasi brevi ed esempi della vita quotidiana, come per uno studente di 12-15 anni.',
+        didattico_chiaro: 'Spiega in modo chiaro e ordinato, passo dopo passo, come un buon insegnante.',
+        tecnico_accademico: 'Usa il lessico tecnico della disciplina con rigore accademico.',
+    };
+    const STILE_ARCH = {
+        stem_calcolo: 'Mostra i passaggi di calcolo con le unità di misura e controlla l\'ordine di grandezza.',
+        scienze_sperimentali: 'Collega i concetti ai meccanismi (strutture, compartimenti, reazioni).',
+        umanistico_storico: 'Contestualizza nel tempo (date, cause, conseguenze) e collega autori e correnti.',
+        giuridico_economico: 'Cita la norma o il principio e segnala eccezioni e termini (salvo che, entro N giorni).',
+        lingue_letteratura: 'Spiega la regola grammaticale o lessicale e dai un esempio d\'uso corretto.',
+        informatica_coding: 'Ragiona sul codice riga per riga; segnala casi limite e errori off-by-one.',
+    };
+    /** Prompt del tutor: per il proprietario (Medicina) resta identico a prima; per gli altri dipende da archetipo e tono. */
+    function promptTutor(materia, archetipo) {
+        const p = profilo(), a = eArchetipo(archetipo) ? archetipo : null;
+        if (p.ruolo === 'owner' && p.modalita === 'universita_concorsi' && (!a || a === 'stem_calcolo' || a === 'scienze_sperimentali'))
+            return 'Sei un tutor di ' + materia + ' per il semestre filtro di Medicina. Rispondi in italiano corretto e semplice, rivolgendoti allo studente con il tu. ';
+        return 'Sei un tutor di ' + materia + (a ? ' (' + ARCHETIPI_DISCIPLINARI[a].etichetta + ')' : '') + '. Rispondi in italiano corretto, rivolgendoti allo studente con il tu. '
+            + TONI[p.tonoSpiegazioneAI] + ' ' + (a ? STILE_ARCH[a] + ' ' : '');
+    }
+    // ---------- §5 «100% senza AI» ----------
+    function senzaAI() {
+        try {
+            const k = IA.tutteChiavi();
+            return !Object.keys(k).some(p => !!k[p]);
+        }
+        catch (_) {
+            return true;
+        }
+    }
+    // ---------- §4 Pacchetti .imcpack.json ----------
+    const LV_DIFF = { Base: 'Sbarramento', Trabocchetto: 'Trabocchetto', Problema: 'Problema' };
+    const DIFF_LV = { Sbarramento: 'Base', Trabocchetto: 'Trabocchetto', Problema: 'Problema' };
+    const str = (x) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
+    const lista = (x) => Array.isArray(x) ? x.map(str).filter(Boolean) : [];
+    /** Converte una domanda del pacchetto (schema universale o DomB dell'app) in DomB; null se non è valida. */
+    function normalizzaDomanda(x, sk, arch, i = 0) {
+        if (!x || typeof x !== 'object')
+            return null;
+        const tipoT = TIPI.includes(x.t) ? x.t : null;
+        const testo = str(x.q != null ? x.q : tipoT ? '' : x.t);
+        let tipo = TIPI.includes(x.tipoDomanda) ? x.tipoDomanda : tipoT || (Array.isArray(x.a) && x.a.length ? 'fill' : Array.isArray(x.sequenzaOk) ? 'sequenza' : Array.isArray(x.coppieOk) ? 'abbinamento' : Array.isArray(x.rubricaPunti) ? 'risposta_aperta_rubrica' : 'mcq');
+        if (!testo)
+            return null;
+        const d = { id: str(x.id) ? 'q-imc-' + hash(sk + '|' + str(x.id)) : 'q-imc-' + hash(sk + '|' + testo + '|' + i), sk, t: tipo, lv: LV_DIFF[x.diff] || str(x.lv) || 'Applicativo', q: testo,
+            e: Array.isArray(x.e) ? lista(x.e) : str(x.e), archetipo: eArchetipo(x.archetipo) ? x.archetipo : arch };
+        let o = lista(x.o);
+        if (tipo === 'mcq') {
+            // invariante: o[0] è la risposta corretta (se il pacchetto indica `c` = indice giusto, la sposto in testa)
+            const c = Number.isInteger(x.c) && x.c > 0 && x.c < o.length ? x.c : 0;
+            if (c)
+                o = [o[c]].concat(o.filter((_, k) => k !== c));
+            if (o.length < 2)
+                return null;
+            d.o = o;
+            const ew = lista(x.ew);
+            if (ew.length)
+                d.ew = ew;
+        }
+        else if (tipo === 'fill') {
+            const a = lista(x.a).length ? lista(x.a) : o.slice(0, 1);
+            if (!a.length)
+                return null;
+            d.a = a;
+            d.show = str(x.show) || a[0];
+            const ew = lista(x.ew);
+            if (ew.length)
+                d.ew = ew;
+        }
+        else if (tipo === 'sequenza') {
+            const s = lista(x.sequenzaOk).length ? lista(x.sequenzaOk) : o;
+            if (s.length < 2)
+                return null;
+            d.sequenzaOk = s;
+            d.show = s.join(' → ');
+        }
+        else if (tipo === 'abbinamento') {
+            const cp = (Array.isArray(x.coppieOk) ? x.coppieOk : []).filter((p) => Array.isArray(p) && str(p[0]) && str(p[1])).map((p) => [str(p[0]), str(p[1])]);
+            if (cp.length < 2)
+                return null;
+            d.coppieOk = cp;
+            d.show = cp.map((p) => p[0] + ' → ' + p[1]).join('; ');
+        }
+        else {
+            const rp = lista(x.rubricaPunti);
+            if (!rp.length)
+                return null;
+            d.rubricaPunti = rp;
+            d.show = o[0] || 'Punti chiave: ' + rp.join(', ');
+        }
+        if (str(x.cl))
+            d.cl = str(x.cl);
+        if (typeof x.cit === 'string' && x.cit.trim())
+            d.r = x.cit.trim();
+        else if (Array.isArray(x.cit))
+            d.cit = x.cit.filter((c) => c && c.t).map((c) => ({ t: str(c.t), f: str(c.f), l: c.l ? str(c.l) : undefined }));
+        if (str(x.r))
+            d.r = str(x.r);
+        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(str(x.linguaCodice)))
+            d.linguaCodice = str(x.linguaCodice);
+        return d;
+    }
+    /** Controlla il formato; restituisce '' se va bene, altrimenti il motivo. */
+    function valida(j) {
+        if (!j || typeof j !== 'object')
+            return 'File non valido.';
+        if (j.formato !== 'imcpack-v1')
+            return 'Non è un pacchetto .imcpack (formato atteso: imcpack-v1).';
+        if (!str(j.titolo))
+            return 'Il pacchetto non ha un titolo.';
+        if (!j.domande || typeof j.domande !== 'object')
+            return 'Il pacchetto non contiene domande.';
+        if (j.programma != null && !Array.isArray(j.programma))
+            return 'Programma non valido.';
+        return '';
+    }
+    /** Importa un pacchetto: corso proprio (materia con archetipo) + domande + flashcard. */
+    function importa(j) {
+        const err = valida(j);
+        if (err)
+            throw new Error(err);
+        const titolo = str(j.titolo), arch = eArchetipo(j.archetipo) ? j.archetipo : indovinaArchetipo(titolo) || 'scienze_sperimentali';
+        const idPk = 'imc-' + hash(norm(titolo));
+        const vecchio = Studio.pkStep().find(p => p.id === idPk);
+        const codice = vecchio && vecchio.materie[0] ? vecchio.materie[0].m : nuovoCodice(titolo);
+        if (!Stato.prendi('mat-' + codice))
+            Stato.salva({ id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome: titolo, colore: coloreMateria(codice), archetipo: arch }, true);
+        // programma: dal pacchetto; le domande con sk fuori programma finiscono in un gruppo «Altro»
+        const prog = (Array.isArray(j.programma) ? j.programma : []).map((g) => ({ titolo: str(g && g.titolo) || 'Parte', sottostep: (g && Array.isArray(g.sottostep) ? g.sottostep : []).filter((s) => s && str(s.sk)).map((s) => ({ sk: str(s.sk), titolo: str(s.titolo) || str(s.sk) })) }));
+        const noti = new Set(prog.flatMap(g => g.sottostep.map(s => s.sk)));
+        const extra = Object.keys(j.domande).filter(sk => !noti.has(sk));
+        if (extra.length)
+            prog.push({ titolo: 'Altro', sottostep: extra.map(sk => ({ sk, titolo: sk })) });
+        const mat = { m: codice, nome: titolo, libro: '', sottostep: [] };
+        let nd = 0, scart = 0;
+        const nuoveSchede = new Set();
+        prog.forEach((g, i) => g.sottostep.forEach((s, k) => {
+            const n = (i + 1) + '.' + (k + 1), micro = n + '.1', id = codice + '-' + micro + '-1';
+            const vecchioSub = vecchio ? vecchio.materie[0] && vecchio.materie[0].sottostep.find(x => x.k === codice + n) : undefined;
+            mat.sottostep.push({ k: codice + n, n, titolo: (g.titolo !== 'Altro' && g.sottostep.length > 1 ? g.titolo + ' · ' : '') + s.titolo, posizione: '', data: vecchioSub ? vecchioSub.data : undefined, svolto: vecchioSub ? vecchioSub.svolto : undefined,
+                microstep: [{ n: micro, schede: [{ id, k: 1, n: 1, titolo: s.titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' }] }] });
+            const grezze = Array.isArray(j.domande[s.sk]) ? j.domande[s.sk] : [];
+            const dom = grezze.map((x, q) => normalizzaDomanda(x, id, arch, q)).filter(Boolean);
+            scart += grezze.length - dom.length;
+            if (dom.length) {
+                Stato.salva({ id: 'bq-' + id, type: 'bancaimc', updatedAt: 0, sk: id, pk: idPk, domande: dom }, true);
+                nd += dom.length;
+                nuoveSchede.add(id);
+            }
+        }));
+        // banche di una versione precedente del pacchetto non più presenti
+        for (const r of Stato.tutti('bancaimc'))
+            if (r.pk === idPk && !nuoveSchede.has(r.sk))
+                Stato.elimina(r.id);
+        const pk = { tipo: 'step', id: idPk, step: vecchio ? vecchio.step : 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo, aggiornato: ymd(new Date()), proprio: true,
+            descrizione: str(j.descrizione) || undefined, risorse: { libri: {}, quiz: {} }, materie: [mat] };
+        pk.imc = { archetipo: arch, livello: PRESET_COGNITIVI[j.livelloConsigliato] ? j.livelloConsigliato : undefined };
+        salvaPacchetto(pk);
+        // flashcard → un mazzo col nome del pacchetto (reimportare aggiorna le stesse carte, i ripassi restano)
+        let nc = 0;
+        const fc = (Array.isArray(j.flashcard) ? j.flashcard : []).filter((c) => c && str(c.fronte) && str(c.retro));
+        if (fc.length) {
+            const mz = Carte.mazzi().find(m => m.nome === titolo && !m.padre) || Carte.nuovoMazzo(titolo);
+            nc = Carte.riempi(mz.id, fc.map((c) => ({ f: str(c.fronte), r: str(c.retro), tag: Array.isArray(c.tag) ? lista(c.tag).join(' ') : undefined })));
+        }
+        Stato.notifica();
+        return { pk, domande: nd, scartate: scart, carte: nc };
+    }
+    /** Esporta un corso proprio come .imcpack: SOLO contenuti didattici (niente statistiche, FSRS, chiavi, account). */
+    function esporta(pk) {
+        const arch = (pk.imc && eArchetipo(pk.imc.archetipo)) ? pk.imc.archetipo : archetipoMateria(pk.materie[0] ? pk.materie[0].m : '');
+        const out = { formato: 'imcpack-v1', titolo: pk.titolo, descrizione: pk.descrizione || '', archetipo: arch, livelloConsigliato: profilo().modalita, dataCreazione: ymd(new Date()), programma: [], domande: {}, flashcard: [] };
+        for (const m of pk.materie) {
+            const gruppi = new Map();
+            for (const s of m.sottostep) {
+                const g = s.n.split('.')[0] || '1';
+                if (!gruppi.has(g))
+                    gruppi.set(g, []);
+                for (const mi of s.microstep)
+                    for (const sc of mi.schede) {
+                        gruppi.get(g).push({ sk: sc.id, titolo: sc.titolo || s.titolo });
+                        const dom = domandeDi(sc.id);
+                        if (dom && dom.length)
+                            out.domande[sc.id] = dom.map(universale);
+                    }
+            }
+            for (const [g, ss] of gruppi)
+                out.programma.push({ codiceStep: (pk.materie.length > 1 ? m.m : '') + g, titolo: m.nome + ' · ' + g, sottostep: ss });
+        }
+        const mz = Carte.mazzi().find(x => x.nome === pk.titolo && !x.padre);
+        if (mz)
+            out.flashcard = Carte.carteDi(mz.id).map(c => ({ sk: '', fronte: c.f, retro: c.r, tag: c.tag ? c.tag.split(/\s+/) : undefined }));
+        return out;
+    }
+    /** DomB dell'app → schema universale (o[0] corretta; per fill o[0] = risposta). */
+    function universale(d) {
+        const tipo = (d.t || 'mcq');
+        const u = { id: d.id, t: d.q, o: tipo === 'mcq' ? (d.o || []).slice() : tipo === 'fill' ? (d.a || []).slice() : tipo === 'sequenza' ? (d.sequenzaOk || []).slice() : [], tipoDomanda: tipo };
+        if (d.ew)
+            u.ew = d.ew.slice();
+        if (d.cl)
+            u.cl = d.cl;
+        const e = Array.isArray(d.e) ? d.e : d.e ? [d.e] : [];
+        if (e.length)
+            u.e = e;
+        if (d.r)
+            u.cit = d.r;
+        if (DIFF_LV[d.lv])
+            u.diff = DIFF_LV[d.lv];
+        if (d.archetipo && eArchetipo(d.archetipo))
+            u.archetipo = d.archetipo;
+        if (d.sequenzaOk)
+            u.sequenzaOk = d.sequenzaOk.slice();
+        if (d.coppieOk)
+            u.coppieOk = d.coppieOk.map(p => [p[0], p[1]]);
+        if (d.rubricaPunti)
+            u.rubricaPunti = d.rubricaPunti.slice();
+        if (d.linguaCodice)
+            u.linguaCodice = d.linguaCodice;
+        return u;
+    }
+    /** Domande importate di una scheda (null se non ce ne sono). */
+    function domandeDi(sk) { const r = Stato.prendi('bq-' + sk); return r && Array.isArray(r.domande) && r.domande.length ? r.domande : null; }
+    const haDomande = (sk) => !!domandeDi(sk);
+    function scegliFile(accetta) {
+        return new Promise(ok => {
+            const i = h('input', { type: 'file', accept: accetta, style: { display: 'none' } });
+            i.onchange = () => { ok(i.files && i.files[0] ? i.files[0] : null); i.remove(); };
+            document.body.appendChild(i);
+            i.click();
+        });
+    }
+    async function importaDaFile() {
+        const f = await scegliFile('.json,.imcpack,application/json');
+        if (!f)
+            return;
+        try {
+            const r = importa(JSON.parse(await f.text()));
+            avviso('📦 «' + r.pk.titolo + '» importato: ' + r.domande + ' domande' + (r.carte ? ', ' + r.carte + ' flashcard' : '') + (r.scartate ? ' (' + r.scartate + ' scartate perché incomplete)' : '') + '. Lo trovi in Studio.', 7000);
+        }
+        catch (e) {
+            avviso('Pacchetto: ' + (e.message || e), 6000);
+        }
+    }
+    function scaricaPacchetto(pk) {
+        const j = esporta(pk);
+        const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(j, null, 1)], { type: 'application/json' })), download: (pk.titolo || 'pacchetto').replace(/[\\/:*?"<>|]+/g, '_') + '.imcpack.json' });
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }
+    /** Estrae i capitoli da un indice (righe «1.2 Titolo ..... 34», «Capitolo 3 – Titolo 51», «Titolo 12»). */
+    function estraiCapitoli(testo) {
+        const out = [];
+        for (const r0 of String(testo || '').split(/\r?\n/)) {
+            const r = r0.replace(/\s+/g, ' ').trim();
+            if (r.length < 3 || r.length > 160)
+                continue;
+            if (/^(indice|sommario|contents|index)$/i.test(r))
+                continue;
+            const m = /^(?:(?:cap(?:itolo)?|chapter|unit[àa]|modulo|lezione|parte)\.?\s*)?(\d{1,2}(?:\.\d{1,2}){0,2}|[IVXLC]{1,6})[.)]?\s*[-–—:]?\s+(.+?)(?:\s*\.{2,}\s*|\s+)?(\d{1,4})?$/i.exec(r);
+            if (m && m[2] && /[a-zà-ü]/i.test(m[2])) {
+                out.push({ num: m[1], titolo: m[2].replace(/[\s.·…_-]+$/, '').trim(), pagina: m[3] ? parseInt(m[3], 10) : undefined, ore: 0 });
+                continue;
+            }
+            const p = /^([A-Za-zÀ-ÿ][^\d]{2,}?)(?:\s*\.{2,}\s*|\s+)(\d{1,4})$/.exec(r);
+            if (p)
+                out.push({ num: String(out.length + 1), titolo: p[1].replace(/[\s.·…_-]+$/, '').trim(), pagina: parseInt(p[2], 10), ore: 0 });
+        }
+        // solo il livello più fine se ci sono sia capitoli che paragrafi (1, 1.1, 1.2 → 1.1, 1.2)
+        const foglie = out.filter((c, i) => !(out[i + 1] && out[i + 1].num.startsWith(c.num + '.')));
+        // ore stimate dalle pagine (circa 8 pagine all'ora, tra 0,5 e 6 ore), altrimenti 1,5 ore
+        foglie.forEach((c, i) => {
+            const succ = foglie.slice(i + 1).find(x => x.pagina != null), pp = c.pagina != null && succ && succ.pagina > c.pagina ? succ.pagina - c.pagina : 0;
+            c.ore = pp ? Math.max(0.5, Math.min(6, Math.round(pp / 8 * 2) / 2)) : 1.5;
+        });
+        return foglie;
+    }
+    /** Distribuisce i capitoli da `inizio` al giorno prima dell'esame (lasciando gli ultimi giorni al ripasso),
+     *  senza superare `oreGiorno` ore né il tetto di argomenti al giorno (come il generatore di piani: max 4). */
+    function distribuisci(cap, inizio, esame, oreGiorno, maxArg = 4) {
+        const avvisi = [];
+        const g0 = daYmd(inizio), gE = daYmd(esame);
+        const giorni = Math.round((gE.getTime() - g0.getTime()) / 864e5);
+        if (giorni < 1)
+            return { capitoli: cap, avvisi: ['La data dell\'esame deve essere dopo oggi.'] };
+        const ripasso = giorni >= 7 ? Math.max(1, Math.floor(giorni * 0.15)) : 0, utili = Math.max(1, giorni - ripasso);
+        const tot = cap.reduce((s, c) => s + c.ore, 0), capienza = utili * oreGiorno;
+        const fatt = tot > capienza ? capienza / tot : 1;
+        if (fatt < 1)
+            avvisi.push('Il programma (' + Math.round(tot) + ' h) supera il tempo disponibile (' + Math.round(capienza) + ' h): ritmo compresso, valuta più ore al giorno.');
+        let g = 0, usate = 0, n = 0;
+        for (const c of cap) {
+            const o = c.ore * fatt;
+            if (n && (usate + o > oreGiorno + 1e-9 || n >= maxArg) && g < utili - 1) {
+                g++;
+                usate = 0;
+                n = 0;
+            }
+            c.data = ymd(piuGiorni(g0, g));
+            usate += o;
+            n++;
+            if (usate >= oreGiorno - 1e-9 && g < utili - 1) {
+                g++;
+                usate = 0;
+                n = 0;
+            }
+        }
+        if (ripasso)
+            avvisi.push('Ultimi ' + ripasso + (ripasso === 1 ? ' giorno lasciato' : ' giorni lasciati') + ' al ripasso.');
+        return { capitoli: cap, avvisi };
+    }
+    /** Crea il corso proprio con i sotto-step datati (compaiono nel calendario, in Oggi e nei ritardi) e l'esame. */
+    function creaPiano(o) {
+        const cap = estraiCapitoli(o.testo);
+        if (!cap.length)
+            throw new Error('Non trovo capitoli nell\'indice: una riga per capitolo, es. «1.2 Titolo .... 34».');
+        const d = distribuisci(cap, o.inizio || ymd(new Date()), o.esame, Math.max(0.5, o.oreGiorno || 2));
+        const nome = o.nome.trim() || 'Nuova materia', codice = nuovoCodice(nome);
+        const arch = o.archetipo || indovinaArchetipo(nome) || 'scienze_sperimentali';
+        Stato.salva({ id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome, colore: coloreMateria(codice), archetipo: arch }, true);
+        const mat = { m: codice, nome, libro: '', sottostep: d.capitoli.map((c, i) => {
+                const n = '1.' + (i + 1);
+                return { k: codice + n, n, titolo: c.titolo, posizione: c.pagina != null ? 'p. ' + c.pagina : '', data: c.data, microstep: [{ n: n + '.1', schede: [] }] };
+            }) };
+        const pk = { tipo: 'step', id: 'corso-' + uid().slice(0, 8), step: 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo: nome, aggiornato: ymd(new Date()), proprio: true,
+            descrizione: 'Piano creato dall\'indice del libro (' + d.capitoli.length + ' argomenti, esame il ' + o.esame + ').', risorse: { libri: {}, quiz: {} }, materie: [mat] };
+        pk.imc = { archetipo: arch };
+        salvaPacchetto(pk);
+        Stato.salva({ id: 'esame-' + uid().slice(0, 8), type: 'esame', updatedAt: 0, nome: 'Esame di ' + nome, data: o.esame });
+        return { pk, capitoli: d.capitoli, avvisi: d.avvisi };
+    }
+    async function testoDaPdf(f) {
+        const L = await caricaPdfJs();
+        const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise, righe = [];
+        for (let p = 1; p <= Math.min(doc.numPages, 12); p++) {
+            const c = await (await doc.getPage(p)).getTextContent();
+            let y = null, r = '';
+            for (const it of c.items) {
+                const yy = Math.round(it.transform[5]);
+                if (y !== null && Math.abs(yy - y) > 2) {
+                    righe.push(r);
+                    r = '';
+                }
+                r += (r && !r.endsWith(' ') ? ' ' : '') + it.str;
+                y = yy;
+            }
+            if (r)
+                righe.push(r);
+        }
+        return righe.join('\n');
+    }
+    const leggiImmagine = (f) => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => ko(new Error('immagine illeggibile')); r.readAsDataURL(f); });
+    function wizardPiano(nomeIniziale = '') {
+        const nome = h('input', { type: 'text', placeholder: 'Es. Storia contemporanea, Diritto privato…', value: nomeIniziale });
+        const arch = selettore([['', '✨ Deduci dal nome']].concat(Object.values(ARCHETIPI_DISCIPLINARI).map(a => [a.id, ICONE_ARCHETIPO[a.id] + ' ' + a.etichetta])), '');
+        const esame = h('input', { type: 'date', value: ymd(piuGiorni(new Date(), 30)) });
+        const ore = h('input', { type: 'number', min: '0.5', max: '10', step: '0.5', value: '2', inputMode: 'decimal' });
+        const indice = h('textarea', { rows: 8, placeholder: 'Incolla l\'indice del libro, una riga per capitolo:\n1 Introduzione ..... 1\n2 La cellula ..... 15\n2.1 Membrane ..... 18' });
+        const anteprima = h('div.tenue.piccolo');
+        const aggiorna = () => { const c = estraiCapitoli(indice.value); anteprima.textContent = c.length ? c.length + ' argomenti trovati · circa ' + c.reduce((s, x) => s + x.ore, 0) + ' h di studio' : 'Nessun capitolo riconosciuto per ora.'; };
+        indice.addEventListener('input', aggiorna);
+        const daPdf = h('button.btn.neutro', { onclick: async () => {
+                const f = await scegliFile('application/pdf');
+                if (!f)
+                    return;
+                try {
+                    indice.value = await testoDaPdf(f);
+                    aggiorna();
+                }
+                catch (e) {
+                    avviso('PDF: ' + (e.message || e), 6000);
+                }
+            } }, '📄 Indice da PDF');
+        const daFoto = senzaAI() ? null : h('button.btn.neutro', { onclick: async () => {
+                const f = await scegliFile('image/*');
+                if (!f)
+                    return;
+                avviso('Leggo la foto dell\'indice…');
+                try {
+                    indice.value = await Spiega.vede('Trascrivi l\'indice del libro in questa foto: una riga per voce, nel formato «numero titolo pagina». Solo il testo, niente commenti.', await leggiImmagine(f));
+                    aggiorna();
+                }
+                catch (e) {
+                    avviso('Foto: ' + (e.message || e), 6000);
+                }
+            } }, '📷 Indice da foto (AI)');
+        foglio({ titolo: '🗓 Crea piano dal libro', etichettaSalva: 'Crea',
+            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Materia', nome), riga('Tipo', arch), riga('Data esame', esame), riga('Ore al giorno', ore)), h('div.bottoni', null, daPdf, daFoto), indice, anteprima, h('div.tenue.piccolo', null, 'Gli argomenti vengono distribuiti fino al giorno prima dell\'esame (gli ultimi giorni restano per il ripasso), senza superare le ore al giorno né 4 argomenti al giorno.')),
+            salva: () => {
+                try {
+                    const r = creaPiano({ nome: nome.value, testo: indice.value, esame: esame.value, oreGiorno: parseFloat(ore.value) || 2, archetipo: eArchetipo(arch.value) ? arch.value : undefined });
+                    avviso('🗓 Piano «' + r.pk.titolo + '» creato: ' + r.capitoli.length + ' argomenti fino al ' + dataLunga(daYmd(esame.value)) + '. ' + r.avvisi.join(' '), 8000);
+                }
+                catch (e) {
+                    avviso(String(e.message || e), 6000);
+                    return false;
+                }
+            } });
+    }
+    // ---------- §1 Wizard di benvenuto (solo ospiti, una volta) ----------
+    let wizardAperto = false;
+    function serveBenvenuto() {
+        if (navigator.webdriver || wizardAperto || ruolo() !== 'ospite' || !Drive.collegato)
+            return false;
+        const r = Stato.prendi(ID_PROFILO);
+        return !(r && r.benvenuto);
+    }
+    async function benvenuto(forza = false) {
+        if (!forza && !serveBenvenuto())
+            return;
+        wizardAperto = true;
+        try {
+            const m = await chiedi('👋 Benvenuto!', Object.keys(NOMI_MODALITA).map(k => ({ testo: NOMI_MODALITA[k], valore: k })), 'Per chi è l\'app? Adatta ripassi, dimensione dei gruppi di domande e tono delle spiegazioni. Puoi cambiarlo in Altro → Studio.');
+            impostaModalita((m && PRESET_COGNITIVI[m] ? m : 'superiori_maturita'));
+            const s = await chiedi('La tua prima materia', [{ testo: '🗓 Crea il piano dall\'indice del libro', valore: 'piano' }, { testo: '📦 Importa un pacchetto .imcpack', valore: 'pack' }, { testo: 'Più tardi', valore: 'no' }], 'Puoi partire dall\'indice del tuo libro e dalla data dell\'esame, oppure importare un pacchetto pronto (domande e flashcard).');
+            if (s === 'piano')
+                wizardPiano();
+            else if (s === 'pack')
+                importaDaFile();
+        }
+        finally {
+            wizardAperto = false;
+        }
+    }
+    // ---------- Impostazioni (Altro → Studio) ----------
+    function codiciMaterie() {
+        const s = new Set([...Object.keys(MATERIE_BASE).filter(() => ruolo() === 'owner'), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
+        return Array.from(s).filter(Boolean);
+    }
+    function sezione() {
+        const p = profilo();
+        const mod = selettore(Object.keys(NOMI_MODALITA).map(k => [k, NOMI_MODALITA[k]]), p.modalita, function () { impostaModalita(this.value); avviso('Profilo aggiornato.'); });
+        const opzArch = Object.values(ARCHETIPI_DISCIPLINARI).map(a => [a.id, ICONE_ARCHETIPO[a.id] + ' ' + a.etichetta]);
+        const materie = codiciMaterie().map(c => riga(nomeMateria(c), selettore(opzArch, archetipoMateria(c), function () { impostaArchetipo(c, this.value); })));
+        const propri = Studio.pkStep().filter(x => x.proprio);
+        return scheda('Profilo e materie', h('div.tenue.piccolo', null, p.ruolo === 'owner' ? '👑 Account proprietario: programma di Medicina e cartelle Chimica, Biologia, Fisica.' : '👤 Account personale: dati e cartella Drive separati.'), riga('Profilo di studio', mod), h('div.tenue.piccolo', null, 'Ritenzione FSRS ' + Math.round(p.ritenzioneTarget * 100) + '% · gruppi da ' + p.dimensioneMicroLotto + ' domande · spiegazioni ' + p.tonoSpiegazioneAI.replace('_', ' ')), materie.length ? h('div.gruppo', null, h('div.gruppo-titolo', null, 'Tipo di materia (guida AI e controlli senza AI)'), ...materie) : null, h('div.bottoni', null, h('button.btn.neutro', { onclick: () => wizardPiano() }, '🗓 Crea piano dal libro'), h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack')), propri.length ? h('div.chips', null, ...propri.map(x => h('button.chip', { onclick: () => scaricaPacchetto(x) }, '⬇ ' + x.titolo))) : null, senzaAI() ? h('div.tenue.piccolo', null, '🔌 Modalità 100% senza AI: calendario, ripassi FSRS, flashcard, pacchetti e controlli delle risposte funzionano senza chiavi.') : null);
+    }
+    return { ruolo, profilo, impostaModalita, ritenzioneProfilo, indovinaArchetipo, archetipoMateria, impostaArchetipo, catenaPreferita, promptTutor, senzaAI,
+        normalizzaDomanda, valida, importa, esporta, universale, domandeDi, haDomande, importaDaFile, scaricaPacchetto,
+        estraiCapitoli, distribuisci, creaPiano, wizardPiano, serveBenvenuto, benvenuto, sezione, NOMI_MODALITA };
+})();
+
 // ============================================================
 // 07-extra.ts — Studio "versatile":
 // - corsi di studio creati dall'utente (qualsiasi materia, esame, certificazione…)
@@ -7064,19 +7609,24 @@ const Generatori = (() => {
 //   «visione»   scrittura a mano, immagini  gemini → groq
 // v0.47 (BP1 §4.4–4.5): router con controllo preventivo (token stimati vs limite del modello), lettura delle
 // intestazioni x-ratelimit-*, pause dopo 429 / 5xx, chiave rifiutata (401/403) non più riprovata finché non
-// cambia, massimo 2 richieste in volo per fornitore. Fornitori facoltativi: Mistral, Cohere, OpenRouter, Requesty
+// cambia, massimo 2 richieste in volo per fornitore. Fornitori facoltativi: xkiro, Cohere, Requesty
 // (chiavi solo in 'imc-ai-keys').
 // v0.51 (BP1 §11): PROVIDER_FREE_QUOTAS con soglia di guardia all'85% e contatori locali a finestra mobile
 // ('imc-ai-uso'), perché via CORS le intestazioni x-ratelimit-* spesso non arrivano. Gemini parte da flash-lite.
-// Opzioni in 'imc-ai-opzioni': strictPrivacy (salta Mistral), openrouterHasCredits10Usd.
+// Opzioni in 'imc-ai-opzioni': strictPrivacy (salta i fornitori con trainsOnFreeTier), xkiroTelegramVerified.
+// v0.53: tolti Mistral e OpenRouter; nuovo fornitore nativo xkiro (OpenAI Chat Completions, Bearer), subito dopo
+// Gemini e Groq in ogni catena. Chiavi/opzioni/contatori salvati che li citano ancora vengono ignorati e ripuliti.
 // =====================================================================
 const IA = (() => {
-    const PROVS = ['groq', 'gemini', 'mistral', 'cohere', 'openrouter', 'requesty'];
-    const ALTRI = ['mistral', 'cohere', 'openrouter', 'requesty'];
-    const NOMI = { groq: 'Groq', gemini: 'Gemini', mistral: 'Mistral', cohere: 'Cohere', openrouter: 'OpenRouter', requesty: 'Requesty' };
+    const PROVS = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty'];
+    const ALTRI = ['xkiro', 'cohere', 'requesty'];
+    const NOMI = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty' };
+    /** Fornitori tolti (v0.53): le loro chiavi, opzioni e contatori salvati si ignorano e si ripuliscono in silenzio. */
+    const RITIRATI = ['mistral', 'openrouter'];
+    const eProv = (p) => PROVS.includes(p);
     const BASE = {
-        groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', mistral: 'https://api.mistral.ai/v1',
-        cohere: 'https://api.cohere.ai/compatibility/v1', openrouter: 'https://openrouter.ai/api/v1', requesty: 'https://router.requesty.ai/v1'
+        groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', xkiro: 'https://api.xkiro.com/v1',
+        cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1'
     };
     // ---- Chiavi (BP1 §4.1) ----
     const KK = 'imc-ai-keys', LEG = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
@@ -7107,6 +7657,11 @@ const IA = (() => {
     function allinea() {
         const a = archivio(), ch = { ...(a ? a.chiavi : {}) };
         let cambiato = !a;
+        for (const p of Object.keys(ch))
+            if (!eProv(p)) {
+                delete ch[p];
+                cambiato = true;
+            } // v0.53: fornitori ritirati
         for (const p of ['groq', 'gemini']) {
             const v = ls(LEG[p]) || '';
             if (v !== (ch[p] || '')) {
@@ -7123,6 +7678,8 @@ const IA = (() => {
     }
     const chiave = (p) => allinea()[p] || '';
     function impostaChiave(p, v) {
+        if (!eProv(p))
+            return; // v0.53: fornitore ritirato (es. chiave Mistral recuperata da Drive) → ignorato
         v = String(v || '').replace(/\s+/g, '');
         const leg = LEG[p];
         if (leg)
@@ -7144,28 +7701,31 @@ const IA = (() => {
     }
     const tutteChiavi = () => ({ ...allinea() });
     /** Avviso (non blocco) sul formato della chiave. */
-    const FORMATO = { groq: /^gsk_/, gemini: /^(AIza|AQ\.)/, openrouter: /^sk-or-/ };
+    const FORMATO = { groq: /^gsk_/, gemini: /^(AIza|AQ\.)/ };
     const formatoOk = (p, v) => { const re = FORMATO[p]; return !v || !re || re.test(v); };
     // ---- Discovery per pattern (BP1 §4.3) ----
     const PATTERN = {
         groq: { genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
         // v0.51: flash-lite di base (500 richieste/giorno gratis contro le 20 di flash); flash resta come riserva
         gemini: { genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
-        mistral: { genera: [/mistral-(large|medium)/, /mistral-small/], revisiona: [/mistral-(large|medium)/], veloce: [/mistral-small/, /ministral/], lungo: [/mistral-(large|medium)/] },
+        // xkiro: solo ID con prefisso vendor («vendor/modello»), vedi `scegli`
+        xkiro: { genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
         cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
-        openrouter: { genera: [/:free$/], veloce: [/:free$/] },
         requesty: { genera: [/gemini.*flash(?!-lite)/, /gpt-.*mini/, /llama/], veloce: [/flash-lite|mini|small/] },
     };
+    /** Modelli gratuiti consigliati su xkiro (ID sempre con prefisso vendor obbligatorio). */
+    const XKIRO_FREE = ['deepseek/deepseek-v4-pro-0813', 'moonshotai/kimi-k3-agent', 'nvidia/nemotron-3.5-super-vl'];
     /** Usati solo se /models non risponde e non c'è nulla in memoria. */
     const RISERVA = {
         groq: { genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
         gemini: { genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
-        mistral: { genera: ['mistral-large-latest', 'mistral-small-latest'], revisiona: ['mistral-large-latest'], veloce: ['mistral-small-latest'], lungo: ['mistral-large-latest'] },
-        cohere: {}, openrouter: {}, requesty: {},
+        xkiro: { genera: [...XKIRO_FREE], revisiona: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], veloce: ['nvidia/nemotron-3.5-super-vl', 'deepseek/deepseek-v4-pro-0813'],
+            lungo: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], visione: ['nvidia/nemotron-3.5-super-vl'] },
+        cohere: {}, requesty: {},
     };
     const CATENA = {
-        veloce: ['groq', 'gemini', 'mistral', 'openrouter', 'requesty'], genera: ['gemini', 'groq', 'mistral', 'cohere', 'openrouter', 'requesty'],
-        revisiona: ['groq', 'gemini', 'mistral', 'cohere'], lungo: ['gemini', 'mistral'], visione: ['gemini', 'groq']
+        veloce: ['groq', 'gemini', 'xkiro', 'requesty'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty'],
+        revisiona: ['groq', 'gemini', 'xkiro', 'cohere'], lungo: ['gemini', 'xkiro'], visione: ['gemini', 'groq', 'xkiro']
     };
     const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound|moderation|ocr|rerank/i;
     const versione = (id) => { const m = /(\d+(?:\.\d+)?)/.exec(id.replace(/^.*\//, '')); return m ? parseFloat(m[1]) : 0; };
@@ -7175,6 +7735,8 @@ const IA = (() => {
         const pat = PATTERN[p][r];
         if (!pat)
             return [];
+        if (p === 'xkiro' && lista)
+            lista = lista.filter(m => m.includes('/')); // prefisso vendor obbligatorio
         if (!lista || !lista.length)
             return (RISERVA[p][r] || []).slice();
         const out = [];
@@ -7237,9 +7799,18 @@ const IA = (() => {
         }
         return r;
     }
-    async function catena(r, evita) {
+    /** v0.52 (BP2 §2): con un archetipo disciplinare i fornitori del ruolo si riordinano secondo la sua catena preferita
+     *  (solo quelli che il gateway conosce; gli altri restano dopo, nell'ordine di sempre). Senza archetipo nulla cambia. */
+    function ordinePerArchetipo(lista, archetipo) {
+        const pref = archetipo ? Dominio.catenaPreferita(archetipo) : [];
+        if (!pref.length)
+            return lista;
+        const pos = (p) => { const i = pref.indexOf(p); return i < 0 ? pref.length : i; };
+        return lista.map((p, i) => ({ p, i })).sort((x, y) => pos(x.p) - pos(y.p) || x.i - y.i).map(x => x.p);
+    }
+    async function catena(r, evita, archetipo) {
         const priv = !!opzioni().strictPrivacy; // v0.51: con Strict Privacy si saltano i fornitori che addestrano sui dati gratuiti
-        const provs = CATENA[r].filter(p => chiave(p) && !(priv && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier));
+        const provs = ordinePerArchetipo(CATENA[r], archetipo).filter(p => chiave(p) && !(priv && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier));
         const liste = await Promise.all(provs.map(p => disponibili(p)));
         const out = [];
         provs.forEach((p, i) => { for (const m of scegli(p, r, liste[i]))
@@ -7329,8 +7900,8 @@ const IA = (() => {
     // ---- Router (BP1 §4.4–4.5, v0.47) ----
     /** Limiti di partenza (token/minuto e contesto); `tpm` si aggiorna dalle intestazioni x-ratelimit-limit-tokens e dopo un 413. */
     const LIMITI = {
-        groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, mistral: { tpm: 50000, ctx: 32000 },
-        cohere: { tpm: 20000, ctx: 128000 }, openrouter: { tpm: 20000, ctx: 32000 }, requesty: { tpm: 20000, ctx: 32000 }
+        groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, xkiro: { tpm: 100000, ctx: 128000 },
+        cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 }
     };
     /** Token di risposta attesi per ruolo: contano solo nel budget (non si inviano: i token di ragionamento li consumerebbero). */
     const USCITA = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000 };
@@ -7340,23 +7911,30 @@ const IA = (() => {
         gemini: { perModello: true, base: { rpm: 5, rpd: 20, tpm: 250000 }, modelli: [
                 { re: /flash-lite/, q: { rpm: 12, rpd: 500, tpm: 250000 } }, { re: /flash/, q: { rpm: 5, rpd: 20, tpm: 250000 } }
             ] },
-        mistral: { base: { rpm: 30, rpd: 2000 }, trainsOnFreeTier: true },
+        xkiro: { base: { rpm: 20, tpd: 500000 }, potenziata: { opz: 'xkiroTelegramVerified', q: { rpm: 20, tpd: 1000000 } } },
         cohere: { base: { rpm: 20, rpd: 33 } },
-        openrouter: { base: { rpm: 20, rpd: 50 }, conCrediti: { rpm: 20, rpd: 1000 } },
         requesty: { base: { rpm: 20, rpd: 200 } },
         groq: { perModello: true, base: { rpm: 30, rpd: 1000 }, modelli: [
                 { re: /8b-instant/, q: { rpm: 30, rpd: 14400 } }, { re: /70b-versatile/, q: { rpm: 30, rpd: 1000 } }, { re: /whisper/, q: { rpm: 20, rpd: 2000 } }
             ] },
     };
     const SOGLIA = 0.85;
+    const OPZ_NOTE = ['strictPrivacy', 'xkiroTelegramVerified'];
     const KO = 'imc-ai-opzioni', KU = 'imc-ai-uso';
-    function opzioni() { try {
-        const j = JSON.parse(ls(KO) || '{}');
-        return j && typeof j === 'object' ? j : {};
+    /** Solo le opzioni note (v0.53: es. `openrouterHasCredits10Usd` salvata da versioni vecchie si ignora). */
+    function opzioni() {
+        try {
+            const j = JSON.parse(ls(KO) || '{}'), o = {};
+            if (j && typeof j === 'object')
+                for (const n of OPZ_NOTE)
+                    if (j[n] === true)
+                        o[n] = true;
+            return o;
+        }
+        catch (_) {
+            return {};
+        }
     }
-    catch (_) {
-        return {};
-    } }
     function impostaOpzione(n, v) {
         const o = opzioni();
         if (v)
@@ -7368,7 +7946,7 @@ const IA = (() => {
     /** Quota e chiave dei contatori per «fornitore:modello» (o solo «fornitore» se la quota è dell'account). */
     function quota(p, m) {
         const Q = PROVIDER_FREE_QUOTAS[p], x = Q.modelli && Q.modelli.find(e => e.re.test(m));
-        const q = p === 'openrouter' && Q.conCrediti && opzioni().openrouterHasCredits10Usd ? Q.conCrediti : x ? x.q : Q.base;
+        const q = Q.potenziata && opzioni()[Q.potenziata.opz] ? Q.potenziata.q : x ? x.q : Q.base;
         return { id: Q.perModello ? p + ':' + m : p, q };
     }
     const giorno = (t) => { const d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
@@ -7381,8 +7959,8 @@ const IA = (() => {
         return {};
     } }
     function contatori(id) {
-        const ora = Date.now(), u = tuttoUso()[id], w = u && Array.isArray(u.w) ? u.w.filter(x => ora - x[0] < 6e4) : [];
-        return { rpm60s: w.length, tpm60s: w.reduce((s, x) => s + (x[1] || 0), 0), rpdToday: u && u.g === giorno(ora) ? u.n || 0 : 0, finoA: u && u.q && u.q > ora ? u.q : 0 };
+        const ora = Date.now(), u = tuttoUso()[id], w = u && Array.isArray(u.w) ? u.w.filter(x => ora - x[0] < 6e4) : [], oggi = !!u && u.g === giorno(ora);
+        return { rpm60s: w.length, tpm60s: w.reduce((s, x) => s + (x[1] || 0), 0), rpdToday: oggi ? u.n || 0 : 0, tpdToday: oggi ? u.t || 0 : 0, finoA: u && u.q && u.q > ora ? u.q : 0 };
     }
     function aggiornaUso(id, f) {
         const tutto = tuttoUso(), ora = Date.now(), g = giorno(ora), v = tutto[id];
@@ -7395,15 +7973,15 @@ const IA = (() => {
         tutto[id] = u;
         for (const k of Object.keys(tutto)) {
             const x = tutto[k];
-            if (x.g !== g && !(x.q && x.q > ora))
+            if ((x.g !== g && !(x.q && x.q > ora)) || RITIRATI.includes(k.split(':')[0]))
                 delete tutto[k];
-        } // via i giorni passati
+        } // via i giorni passati e i fornitori ritirati
         lsScrivi(KU, JSON.stringify(tutto));
     }
     /** Vero se la prossima richiesta porterebbe un contatore oltre `lim` (0,85 = soglia di guardia; 1 = limite vero). */
     function quotaPiena(p, m, tok, lim = SOGLIA) {
         const { id, q } = quota(p, m), c = contatori(id);
-        return c.rpm60s + 1 > q.rpm * lim || c.rpdToday + 1 > q.rpd * lim || (!!q.tpm && c.tpm60s + tok > q.tpm * lim);
+        return c.rpm60s + 1 > q.rpm * lim || (!!q.rpd && c.rpdToday + 1 > q.rpd * lim) || (!!q.tpm && c.tpm60s + tok > q.tpm * lim) || (!!q.tpd && c.tpdToday + tok > q.tpd * lim);
     }
     /** Intestazioni di limite lette solo se esistono (`get(...) !== null`): via CORS molti fornitori non le espongono
      *  e allora valgono i contatori locali. Durate in millisecondi. */
@@ -7506,7 +8084,7 @@ const IA = (() => {
         if (ri.remainingRequests === 0)
             s.finoA = Math.max(s.finoA, ora + Math.min(ri.resetRequests || 6e4, 6 * 36e5));
         if (res.status !== 429)
-            aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); }); // il 429 non consuma quota
+            aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); u.t = (u.t || 0) + tok; }); // il 429 non consuma quota
         if (res.ok) {
             s.k = 0;
             return;
@@ -7518,7 +8096,8 @@ const IA = (() => {
                 att = ritardoCorpo(await res.clone().json().catch(() => null));
             if (!att)
                 att = Math.max(ri.resetTokens || 0, ri.resetRequests || 0);
-            const fino = att ? ora + Math.min(att, 6 * 36e5) : contatori(id).rpdToday < q.rpd * SOGLIA ? ora + 65e3 : mezzanotte();
+            const cg = contatori(id), giornoPieno = (!!q.rpd && cg.rpdToday >= q.rpd * SOGLIA) || (!!q.tpd && cg.tpdToday >= q.tpd * SOGLIA);
+            const fino = att ? ora + Math.min(att, 6 * 36e5) : giornoPieno ? mezzanotte() : ora + 65e3;
             s.finoA = fino;
             s.k++;
             aggiornaUso(id, u => { u.q = Math.max(u.q || 0, fino); });
@@ -7645,7 +8224,7 @@ const IA = (() => {
      *  per i modelli più piccoli. Salta i modelli in pausa o con chiave rifiutata. */
     async function invia(msgs, r, o, comeJson) {
         await Spiega.pronta();
-        const forn = await catena(r, o.evita);
+        const forn = await catena(r, o.evita, o.archetipo);
         if (!forn.length)
             throw new Error('Manca la chiave AI gratuita: inseriscila in Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
         const out = o.maxOut || USCITA[r], tok = stimaTok(msgs);
@@ -7765,7 +8344,7 @@ const IA = (() => {
     }
     /** Altri fornitori facoltativi + stato di tutti i fornitori (Altro → Spiegazioni AI). */
     function campoAltri() {
-        const DOVE = { mistral: 'console.mistral.ai (piano gratuito)', cohere: 'dashboard.cohere.com (chiave di prova)', openrouter: 'openrouter.ai (solo modelli «:free»)', requesty: 'requesty.ai' };
+        const DOVE = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai' };
         const elenco = h('div.tenue.piccolo', null);
         const aggiorna = () => {
             const st = stato();
@@ -7796,10 +8375,36 @@ const IA = (() => {
             return h('label.riga', null, cb, h('span', null, testo));
         };
         aggiorna();
-        return h('div.gruppo', null, h('details', null, h('summary', null, 'Altri fornitori AI (facoltativi)'), h('div.tenue.piccolo', null, 'Usati solo se Groq e Gemini sono in pausa o mancano. Chiavi salvate solo su questo dispositivo.'), ...righe, spunta('strictPrivacy', 'Strict Privacy: non usare fornitori che addestrano i modelli sui dati del piano gratuito (Mistral)'), spunta('openrouterHasCredits10Usd', 'Ho almeno 10 $ di crediti su OpenRouter (1000 richieste al giorno invece di 50)')), h('div.piccolo', null, 'Stato dei fornitori'), elenco, h('div.bottoni', null, h('button.btn.neutro', { onclick: aggiorna }, 'Aggiorna stato')));
+        return h('div.gruppo', null, h('details', null, h('summary', null, 'Altri fornitori AI (facoltativi)'), h('div.tenue.piccolo', null, 'Usati solo se Groq e Gemini sono in pausa o mancano. Chiavi salvate solo su questo dispositivo.'), ...righe, PROVS.some(p => PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier) ? spunta('strictPrivacy', 'Strict Privacy: non usare fornitori che addestrano i modelli sui dati del piano gratuito') : null, spunta('xkiroTelegramVerified', 'Account xkiro verificato con Telegram (1.000.000 token al giorno invece di 500.000)')), h('div.piccolo', null, 'Stato dei fornitori'), elenco, h('div.bottoni', null, h('button.btn.neutro', { onclick: aggiorna }, 'Aggiorna stato')));
     }
-    return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, scegli, accorcia, parseJsonSicuro,
-        chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
+    /** v0.53: pulizia silenziosa una tantum dei dati dei fornitori ritirati (chiavi, opzioni, contatori, elenchi modelli). */
+    (function ripulisci() {
+        try {
+            allinea();
+            const j = JSON.parse(ls(KO) || 'null');
+            if (j && typeof j === 'object' && Object.keys(j).some(n => !OPZ_NOTE.includes(n))) {
+                const o = opzioni();
+                lsScrivi(KO, Object.keys(o).length ? JSON.stringify(o) : '');
+            }
+            const u = tuttoUso();
+            if (Object.keys(u).some(k => RITIRATI.includes(k.split(':')[0]))) {
+                for (const k of Object.keys(u))
+                    if (RITIRATI.includes(k.split(':')[0]))
+                        delete u[k];
+                lsScrivi(KU, Object.keys(u).length ? JSON.stringify(u) : '');
+            }
+            const via = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i) || '';
+                if (RITIRATI.some(r => k.startsWith('imc-modelli-' + r + ':')))
+                    via.push(k);
+            }
+            via.forEach(k => localStorage.removeItem(k));
+        }
+        catch (_) { /* localStorage non disponibile: nulla da pulire */ }
+    })();
+    return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro,
+        chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
         _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, get RM() { return RM; } },
         get gemini() { return !!chiave('gemini'); } };
 })();
@@ -8079,7 +8684,224 @@ const Locale = (() => {
                     : { tipo: 'evento', titolo: r.titolo, data: ymd(r.giorno), inizio: r.ora ? pad2(r.ora[0]) + ':' + pad2(r.ora[1]) : undefined, fine: r.fine ? pad2(r.fine[0]) + ':' + pad2(r.fine[1]) : undefined, tutto_il_giorno: r.tuttoIlGiorno, _rr: r.rrule }];
         return null;
     }
-    return { radice, espandi, pulisciPagine, frasiChiave, accorciaCorretta, citazioneVera, digitabili, pulisciParlato, quasiTermini, segmentoDubbio, carteDaTesto, spiegazioneBreve, concettiMancanti, capisci, distanza };
+    const taglia = (x) => String(x == null ? '' : x).slice(0, 400);
+    /** Primo numero di un testo (accetta 1,2·10^3, 1.2e-3, 3×10⁻⁵, 1 200). */
+    function numero(t) {
+        const sup = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁻': '-' };
+        const x = t.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+/g, m => '^' + m.split('').map(c => sup[c]).join('')).replace(/(\d)\s(?=\d{3}\b)/g, '$1').replace(/−/g, '-');
+        const m = /(-?\d+(?:[.,]\d+)?)\s*(?:(?:[x×·*]\s*10\s*\^?\s*\(?\s*(-?\d+)\)?)|[eE](-?\d+))?/.exec(x);
+        if (!m)
+            return null;
+        const v = parseFloat(m[1].replace(',', '.')) * Math.pow(10, parseInt(m[2] || m[3] || '0', 10));
+        return isFinite(v) ? v : null;
+    }
+    function diagnosticaStemDimensionale(c) {
+        const s = numero(c.scelta), g = numero(c.corretta);
+        if (s == null || g == null || !s || !g || s === g)
+            return null;
+        if (Math.abs(s + g) < 1e-9 * Math.abs(g))
+            return '➖ Segno invertito: il valore è giusto ma con il segno opposto (controlla il verso o la convenzione).';
+        if (Math.abs(g) !== 1 && Math.abs(s * g - 1) < 0.02)
+            return '🔄 Reciproco: hai calcolato 1/x invece di x (controlla la formula inversa).';
+        const l = Math.log10(Math.abs(s / g)), k = Math.round(l);
+        if (k !== 0 && Math.abs(l - k) < 0.02)
+            return '⚠️ Ordine di grandezza: fattore 10^' + k + ' (controlla conversione unità SI).' + (s * g < 0 ? ' Anche il segno è invertito.' : '');
+        return null;
+    }
+    /** H2SO4 → H₂SO₄ (indici in pedice dopo un elemento o una parentesi). */
+    const formula = (t) => t.replace(/([A-Z][a-z]?|\))(\d+)/g, (_, a, n) => a + n.split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[+d]).join(''));
+    const COPPIE_OPPOSTE = [['ossidazion', 'riduzion'], ['ossida', 'riduc'], ['anabol', 'catabol'], ['esocitosi', 'endocitosi'], ['parasimpatic', 'simpatic'], ['antagonist', 'agonist'],
+        ['esotermic', 'endotermic'], ['esoergonic', 'endoergonic'], ['meiosi', 'mitosi'], ['efferent', 'afferent'], ['espirazion', 'inspirazion'], ['diastole', 'sistole'], ['ipotonic', 'ipertonic'],
+        ['catodo', 'anodo'], ['gluconeogenesi', 'glicolisi'], ['depolarizz', 'iperpolarizz'], ['basic', 'acid'], ['extracellular', 'intracellular'], ['eterozigot', 'omozigot'], ['recessiv', 'dominant'],
+        ['matrice mitocondriale', 'citoplasma'], ['citosol', 'mitocondri'], ['nucleo', 'citoplasma'], ['lume', 'stroma'], ['tilacoid', 'stroma'], ['reticolo endoplasmatico liscio', 'reticolo endoplasmatico rugoso'],
+        ['eucariot', 'procariot'], ['idrofil', 'idrofob'], ['purin', 'pirimidin'], ['inibizione', 'attivazione']];
+    function diagnosticaScienzeCompartimenti(c) {
+        const s = n2(c.scelta), g = n2(c.corretta);
+        for (const [a, b] of COPPIE_OPPOSTE) {
+            const re = (w) => new RegExp('(^|[^a-z])' + w.replace(/ /g, '\\s+'));
+            if ((re(a).test(s) && re(b).test(g) && !re(a).test(g)) || (re(b).test(s) && re(a).test(g) && !re(b).test(g)))
+                return '🔀 Inversione rilevata: hai scelto il meccanismo del compartimento opposto.';
+        }
+        const fs = /\b(?:[A-Z][a-z]?\d*|\(\w+\)\d*){2,}\b/.exec(c.scelta), fg = /\b(?:[A-Z][a-z]?\d*|\(\w+\)\d*){2,}\b/.exec(c.corretta);
+        if (fs && fg && fs[0] !== fg[0] && fs[0].replace(/\d/g, '') === fg[0].replace(/\d/g, ''))
+            return '🧪 Formula: stessi elementi ma indici diversi (' + formula(fs[0]) + ' invece di ' + formula(fg[0]) + ').';
+        return null;
+    }
+    /** Anno citato: 1848, 2001, «XV sec» (→ metà secolo). */
+    function anno(t) {
+        const m = /\b(1\d{3}|20\d{2}|[IVX]+\s*sec)/i.exec(t);
+        if (!m)
+            return null;
+        if (/^\d/.test(m[1]))
+            return parseInt(m[1], 10);
+        const r = m[1].replace(/\s*sec.*/i, '').toUpperCase(), v = { I: 1, V: 5, X: 10 };
+        let n = 0;
+        for (let i = 0; i < r.length; i++) {
+            const a = v[r[i]], b = v[r[i + 1]] || 0;
+            n += a < b ? -a : a;
+        }
+        return n ? (n - 1) * 100 + 50 : null;
+    }
+    function diagnosticaCronologiaCausalita(c) {
+        const s = anno(c.scelta), g = anno(c.corretta) ?? anno(c.domanda || '');
+        if (s == null || g == null || Math.abs(s - g) < 3)
+            return null;
+        const d = Math.abs(s - g), circa = d >= 20 ? Math.round(d / 10) * 10 : d;
+        return '⏳ Anacronismo: l\'evento scelto è ' + (s > g ? 'successivo' : 'precedente') + ' di circa ' + circa + ' anni al contesto richiesto.';
+    }
+    const ASSOLUTI = /\b(esclusivamente|sempre|mai|soltanto|unicamente|in ogni caso|in nessun caso|tutti|nessun[oa]?|obbligatoriamente)\b/i;
+    const ECCEZIONI = /\b(salvo(?: che)?|tranne|eccetto|ad eccezione|a meno che|purch[ée]|entro \d+ giorni|di regola|in linea di massima|fatt[oa] salv[oa])\b/i;
+    function diagnosticaNormativaEccezioni(c) {
+        const a = ASSOLUTI.exec(c.scelta);
+        if (a && !new RegExp('\\b' + a[1] + '\\b', 'i').test(c.corretta))
+            return '⚖️ Trappola normativa: l\'opzione contiene "' + a[1].toLowerCase() + '", ma la norma prevede eccezioni.';
+        const ts = /(\d+)\s*(giorni|mesi|anni)/i.exec(c.scelta), tg = /(\d+)\s*(giorni|mesi|anni)/i.exec(c.corretta);
+        if (ts && tg && (ts[1] !== tg[1] || ts[2].toLowerCase() !== tg[2].toLowerCase()))
+            return '📅 Termine sbagliato: ' + ts[0] + ' invece di ' + tg[0] + '.';
+        if (ECCEZIONI.test(c.corretta) && !ECCEZIONI.test(c.scelta))
+            return '⚖️ Trappola normativa: la risposta giusta prevede un\'eccezione o un termine che la tua non considera.';
+        return null;
+    }
+    /** Damerau-Levenshtein (trasposizioni adiacenti), sensibile ad accenti, insensibile alle maiuscole. */
+    function damerau(a, b) {
+        a = a.toLowerCase().trim().slice(0, 120);
+        b = b.toLowerCase().trim().slice(0, 120);
+        const d = Array.from({ length: a.length + 1 }, (_, i) => { const r = new Array(b.length + 1).fill(0); r[0] = i; return r; });
+        for (let j = 0; j <= b.length; j++)
+            d[0][j] = j;
+        for (let i = 1; i <= a.length; i++)
+            for (let j = 1; j <= b.length; j++) {
+                const c = a[i - 1] === b[j - 1] ? 0 : 1;
+                d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + c);
+                if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])
+                    d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+            }
+        return d[a.length][b.length];
+    }
+    function diagnosticaMorfologiaLevenshtein(c) {
+        const s = c.scelta.trim(), g = c.corretta.trim();
+        if (!s || !g || s.length > 80 || g.length > 80)
+            return null;
+        const k = damerau(s, g);
+        if (!k)
+            return null;
+        if (k <= 2 && Math.max(s.length, g.length) >= 3)
+            return '✍️ Quasi esatto (distanza ' + k + (k === 1 ? ' carattere' : ' caratteri') + '): controlla la desinenza/accento.';
+        return null;
+    }
+    /** Pronuncia (sintesi vocale del browser, offline): utile nelle lingue straniere. */
+    function pronuncia(testo, lingua = 'it-IT') {
+        try {
+            if (!('speechSynthesis' in window))
+                return false;
+            const u = new SpeechSynthesisUtterance(testo);
+            u.lang = lingua;
+            speechSynthesis.cancel();
+            speechSynthesis.speak(u);
+            return true;
+        }
+        catch (_) {
+            return false;
+        }
+    }
+    /** Prima riga dove le parentesi/virgolette si sbilanciano (0 = bilanciato). */
+    function rigaSbilanciata(t) {
+        const pila = [], ap = { ')': '(', ']': '[', '}': '{' };
+        let riga = 1, str = null;
+        for (let i = 0; i < t.length; i++) {
+            const ch = t[i];
+            if (ch === '\n') {
+                riga++;
+                continue;
+            }
+            if (str) {
+                if (ch === '\\')
+                    i++;
+                else if (ch === str)
+                    str = null;
+                continue;
+            }
+            if (ch === '"' || ch === '\'' || ch === '`') {
+                str = ch;
+                continue;
+            }
+            if ('([{'.includes(ch))
+                pila.push([ch, riga]);
+            else if (ap[ch]) {
+                const t2 = pila.pop();
+                if (!t2 || t2[0] !== ap[ch])
+                    return riga;
+            }
+        }
+        return str ? riga : pila.length ? pila[pila.length - 1][1] : 0;
+    }
+    function diagnosticaSintassiAST(c) {
+        const s = c.scelta, g = c.corretta;
+        const msg = (r) => '🐛 Errore di sintassi o indice off-by-one alla riga ' + r + ' del blocco.';
+        const rb = rigaSbilanciata(s);
+        if (rb && !rigaSbilanciata(g))
+            return msg(rb);
+        const ej = (t) => { try {
+            JSON.parse(t);
+            return true;
+        }
+        catch (_) {
+            return false;
+        } };
+        if (/^\s*[{[]/.test(g) && ej(g) && !ej(s))
+            return msg(1);
+        if (/^\s*(select|insert|update|delete)\b/i.test(g) && !/;\s*$/.test(s) && /;\s*$/.test(g))
+            return msg(Math.max(1, s.split('\n').length));
+        const ls = s.split('\n'), lg = g.split('\n');
+        for (let i = 0; i < Math.max(ls.length, lg.length); i++) {
+            const a = (ls[i] || '').trim(), b = (lg[i] || '').trim();
+            if (a === b)
+                continue;
+            const op = (t) => t.replace(/<=/g, '<').replace(/>=/g, '>').replace(/\s+/g, '');
+            if (op(a) === op(b))
+                return msg(i + 1); // < invece di <= (o viceversa): classico off-by-one
+            const na = a.match(/-?\d+/g), nb = b.match(/-?\d+/g);
+            if ((ls.length > 1 || lg.length > 1) || (na && nb && na.length === nb.length && na.some((x, k) => Math.abs(+x - +nb[k]) === 1)))
+                return msg(i + 1);
+            return null;
+        }
+        return null;
+    }
+    const PLUGIN = { diagnosticaStemDimensionale, diagnosticaScienzeCompartimenti, diagnosticaCronologiaCausalita, diagnosticaNormativaEccezioni, diagnosticaMorfologiaLevenshtein, diagnosticaSintassiAST };
+    /** Diagnostica locale dell'errore secondo l'archetipo della materia (null = nessuna osservazione utile). */
+    function diagnosticaPerArchetipo(archetipo, c) {
+        const def = ARCHETIPI_DISCIPLINARI[archetipo];
+        const f = def && PLUGIN[def.pluginLocaleId];
+        if (!f)
+            return null;
+        try {
+            return f({ scelta: taglia(c.scelta), corretta: taglia(c.corretta), domanda: taglia(c.domanda), opzioni: c.opzioni });
+        }
+        catch (_) {
+            return null;
+        }
+    }
+    /** Valuta una risposta aperta su una rubrica di punti chiave (sovrapposizione delle radici, pesata IDF tipo BM25). */
+    function rubrica(testo, punti) {
+        const parole = (t) => n2(t).split(/\W+/).filter(w => w.length > 3 && !STOP.has(w)).map(radice);
+        const r = new Set(parole(testo)), docs = punti.map(p => new Set(parole(p)));
+        const df = new Map();
+        docs.forEach(d => d.forEach(w => df.set(w, (df.get(w) || 0) + 1)));
+        const idf = (w) => Math.log(1 + (punti.length - (df.get(w) || 0) + 0.5) / ((df.get(w) || 0) + 0.5));
+        const coperti = [], mancanti = [];
+        punti.forEach((p, i) => {
+            const ws = Array.from(docs[i]);
+            if (!ws.length) {
+                coperti.push(p);
+                return;
+            }
+            const tot = ws.reduce((s, w) => s + idf(w), 0), ok = ws.filter(w => r.has(w)).reduce((s, w) => s + idf(w), 0);
+            (tot && ok / tot >= 0.5 ? coperti : mancanti).push(p);
+        });
+        return { punteggio: punti.length ? coperti.length / punti.length : 0, coperti, mancanti };
+    }
+    return { radice, espandi, pulisciPagine, frasiChiave, accorciaCorretta, citazioneVera, digitabili, pulisciParlato, quasiTermini, segmentoDubbio, carteDaTesto, spiegazioneBreve, concettiMancanti, capisci, distanza,
+        formula, damerau, pronuncia, diagnosticaPerArchetipo, rubrica, PLUGIN };
 })();
 
 // 07-mano.ts — Scrittura a mano negli appunti (v0.31; v0.39 penne, forme, stabilizzazione: scouting Freenotes/GoodNotes/Notability).
@@ -9554,7 +10376,7 @@ const Ripassi = (() => {
     }
     /** Ritenzione desiderata per un giorno: più alta nei 14 giorni prima di un esame. */
     function ritenzione(giorno) {
-        const base = imp().ritenzione || 0.9;
+        const base = imp().ritenzione || Dominio.ritenzioneProfilo(); // v0.52: senza scelta manuale, la ritenzione del profilo (proprietario: 0,90 come prima)
         const vicino = Stato.tutti('esame').some(e => { const g = giorni(giorno, e.data); return g >= 0 && g <= 14; });
         return vicino ? Math.max(base, 0.95) : base;
     }
@@ -10036,6 +10858,9 @@ const Banca = (() => {
     function nascoste(sk) { return Stato.tutti('modq').filter(r => r.sk === sk && r.nascosta && !r.deleted); }
     /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
     async function scheda(pk, m, micro, s) {
+        const imc = Dominio.domandeDi(s.id); // v0.52: domande importate da un pacchetto .imcpack (record 'bancaimc')
+        if (imc)
+            return { domande: applica(imc.map(d => ({ ...d })), s.id), immagini: {}, fonte: 'imcpack' };
         const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
         if (B && B.schede[s.id])
             return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
@@ -10157,8 +10982,49 @@ const QuizApp = (() => {
             v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
         v.corpo.appendChild(app);
         let P = [], cur = 0, ripasso = false, apertaX = false, finito = false;
+        // v0.52 (BP2): sequenza (ordine da ricostruire), abbinamento (coppie) e risposta aperta valutata con una rubrica locale
+        const NOMI_TIPO = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
+        const nuovoTipo = (d) => d.t === 'sequenza' || d.t === 'abbinamento' || d.t === 'risposta_aperta_rubrica';
+        function ordineIniziale(d) {
+            if (d.t === 'mcq')
+                return mescola(d.o.map((_, k) => k));
+            const n = d.t === 'sequenza' ? (d.sequenzaOk || []).length : d.t === 'abbinamento' ? (d.coppieOk || []).length : 0;
+            let o = mescola(Array.from({ length: n }, (_, k) => k));
+            for (let t = 0; t < 5 && n > 1 && o.every((v, k) => v === k); t++)
+                o = mescola(o); // mai già in ordine
+            return o;
+        }
+        const leggiLista = (v) => { try {
+            const j = JSON.parse(String(v));
+            return Array.isArray(j) ? j : [];
+        }
+        catch (_) {
+            return [];
+        } };
+        function areaNuoviTipi(x, a) {
+            const d = x.d;
+            if (d.t === 'sequenza') {
+                const seq = d.sequenzaOk || [], sel = x.sel || [];
+                if (a) {
+                    const sc = leggiLista(x.picked);
+                    return '<ol class="qz-seq">' + sc.map((t, k) => '<li class="' + (t === seq[k] ? 'ok' : 'ko') + '">' + fmt(t) + (t === seq[k] ? '' : ' <span class="tenue piccolo">(al posto ' + (k + 1) + ' va «' + fmt(seq[k]) + '»)</span>') + '</li>').join('') + '</ol>';
+                }
+                return '<ol class="qz-seq">' + sel.map(i => '<li>' + fmt(seq[i]) + '</li>').join('') + '</ol>'
+                    + '<div class="qz-opz">' + x.ord.filter(i => !sel.includes(i)).map(i => '<button type="button" class="qz-opz-b" data-seq="' + i + '"><span>' + fmt(seq[i]) + '</span></button>').join('') + '</div>'
+                    + (sel.length ? '<div class="chips"><button type="button" class="chip" data-az="seqreset">↺ Ricomincia l\'ordine</button></div>' : '<p class="tenue piccolo">Tocca gli elementi nell\'ordine giusto.</p>');
+            }
+            if (d.t === 'abbinamento') {
+                const cp = d.coppieOk || [], sc = a ? leggiLista(x.picked) : [];
+                return '<form class="qz-abb" autocomplete="off">' + cp.map((c, k) => '<label class="qz-abb-r"><span>' + fmt(c[0]) + '</span>'
+                    + (a ? '<span class="' + (sc[k] === c[1] ? 'ok' : 'ko') + '">' + fmt(sc[k] || '—') + (sc[k] === c[1] ? '' : ' → ' + fmt(c[1])) + '</span>'
+                        : '<select data-abb="' + k + '"><option value="">Scegli…</option>' + x.ord.map(i => '<option value="' + esc(cp[i][1]) + '">' + esc(cp[i][1]) + '</option>').join('') + '</select>') + '</label>').join('')
+                    + (a ? '' : '<button type="submit" class="btn">Verifica</button>') + '</form>';
+            }
+            return '<form class="qz-fill qz-rub" autocomplete="off"><textarea id="qz-ans" rows="5" placeholder="Scrivi la tua risposta con parole tue"' + (a ? ' disabled class="' + (x.ok ? 'ok' : 'ko') + '"' : '') + '>' + (a ? esc(x.picked) : '') + '</textarea>'
+                + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI.</p>') + '</form>';
+        }
         const nuovo = (idx, rip) => {
-            P = idx.map(i => { const d = dati.domande[i]; return { d, ord: d.t === 'mcq' ? mescola(d.o.map((_, k) => k)) : [], picked: null, ok: null, hid: [] }; });
+            P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [] }; });
             cur = 0;
             ripasso = rip;
             apertaX = false;
@@ -10179,19 +11045,25 @@ const QuizApp = (() => {
                 + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passi(d.e);
             if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1])
                 s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o[x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
+            if (x.voto)
+                s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
+            if (!x.ok && mc) { /* già sopra */ }
             else if (!x.ok && !mc && ew[0])
-                s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
+                s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
             if (mc && ew.length && (x.ok || x.picked === null))
                 s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => '<p><b>«' + fmt(d.o[k + 1]) + '»</b> — ' + fmt(t) + '</p>').join('') + '</details>';
             return s2 + '</div>';
         }
         function riquadroAI(x) {
+            const nessunaAI = Dominio.senzaAI(); // v0.52: modalità «100% senza AI» → solo la spiegazione breve locale (se c'è)
+            if (nessunaAI && !Locale.spiegazioneBreve(x.d.e))
+                return '';
             const a = x.ai, b = (l, n) => '<button type="button" class="chip' + (a && a.l === l ? ' on' : '') + '" data-ai="' + l + '">' + n + '</button>';
             let o = '';
             if (a)
                 o = a.attesa ? '<p class="tenue">Genero la spiegazione…</p>' : a.errore ? '<p class="tenue">⚠️ ' + esc(a.errore) + '</p>'
                     : '<div class="qz-ai-testo">' + esc(a.testo) + '</div><div class="qz-ai-piede"><span>' + esc(a.modello || '') + '</span><button type="button" class="chip" data-ai="' + a.l + '" data-forza="1">↻ Rigenera</button></div>';
-            return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + b('breve', 'Breve') + b('media', 'Media') + b('dettagliata', 'Dettagliata') + '</div>' + o + '</div>';
+            return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + b('breve', 'Breve') + (nessunaAI ? '' : b('media', 'Media') + b('dettagliata', 'Dettagliata')) + '</div>' + (nessunaAI ? o.replace(/<button[^>]*data-forza[^>]*>[^<]*<\/button>/, '') : o) + '</div>';
         }
         function disegnaQ() {
             if (finito) {
@@ -10201,16 +11073,16 @@ const QuizApp = (() => {
             const x = P[cur], d = x.d, a = fatta(x), mc = d.t === 'mcq';
             let s2 = '<div class="qz-metro" style="--n:' + P.length + '">' + P.map((y, k) => '<span class="' + (y.ok === null ? (k === cur ? 'ora' : '') : y.ok ? 'ok' : 'ko') + '"></span>').join('') + '</div>'
                 + '<div class="qz-stat"><span>Domanda <b>' + (cur + 1) + '</b> di ' + P.length + (ripasso ? ' · ripasso errori' : '') + '</span><span>Punteggio <b>' + punti() + '</b></span></div>'
-                + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (mc ? 'Risposta multipla' : 'A completamento') + '</span></div>';
+                + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (NOMI_TIPO[d.t] || NOMI_TIPO.fill) + '</span></div>';
             for (const g of d.img || [])
                 if (dati.immagini[g.i])
                     s2 += '<figure class="qz-fig"><button type="button" class="qz-zoom-b" data-zoom="' + esc(g.i) + '" aria-label="Ingrandisci immagine">' + svgSicuro(dati.immagini[g.i]) + '</button><figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
-            s2 += '<p class="qz-domanda">' + (mc ? fmt(d.q) : fmtQ(d.q)) + '</p><div class="chips">';
+            s2 += '<p class="qz-domanda">' + (d.t === 'fill' ? fmtQ(d.q) : fmt(d.q)) + '</p><div class="chips">';
             if (mc) {
                 const rest = 2 - x.hid.length;
                 s2 += '<button type="button" class="chip" data-az="aiuto"' + (a || rest <= 0 ? ' disabled' : '') + '>💡 Suggerimento (' + rest + ')</button>';
             }
-            s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
+            s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen || nuovoTipo(d) ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
             if (apertaX)
                 s2 += spiegFonti(d);
             if (mc) {
@@ -10234,6 +11106,8 @@ const QuizApp = (() => {
                     return '<button type="button" class="' + c + '" data-k="' + k + '"' + (a || off ? ' disabled' : '') + '><span class="qz-lett">' + L[k] + '</span><span>' + fmt(d.o[oi]) + tag + '</span></button>';
                 }).join('') + '</div>';
             }
+            else if (nuovoTipo(d))
+                s2 += areaNuoviTipi(x, a);
             else
                 s2 += '<form class="qz-fill" autocomplete="off"><input id="qz-ans" type="text" enterkeyhint="done" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="La tua risposta"' + (a ? ' disabled class="' + (x.ok ? 'ok' : 'ko') + '" value="' + esc(x.picked) + '"' : '') + '>' + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Maiuscole e accenti non contano.</p>') + '</form>';
             if (a)
@@ -10241,7 +11115,7 @@ const QuizApp = (() => {
             const ultima = cur === P.length - 1;
             s2 += '<div class="qz-nav"><button type="button" class="btn neutro" data-az="prec"' + (cur === 0 ? ' disabled' : '') + '>◀ Indietro</button><button type="button" class="btn' + (a ? '' : ' neutro') + '" data-az="avanti">' + (ultima ? 'Vedi il risultato' : a ? 'Avanti ▶' : 'Salta ▶') + '</button></div></section>';
             app.innerHTML = s2;
-            if (!a && !mc) {
+            if (!a && d.t === 'fill') {
                 const i = app.querySelector('#qz-ans');
                 if (i && matchMedia('(hover:hover)').matches)
                     i.focus({ preventScroll: true });
@@ -10260,18 +11134,40 @@ const QuizApp = (() => {
                     avviso('Scrivi una risposta.');
                     return;
                 }
+                const d = x.d;
                 x.picked = val.trim();
-                x.ok = giusta(val, x.d.a || []);
+                if (d.t === 'sequenza') {
+                    const sc = leggiLista(val);
+                    x.ok = sc.length === (d.sequenzaOk || []).length && sc.every((t, k) => t === d.sequenzaOk[k]);
+                }
+                else if (d.t === 'abbinamento') {
+                    const sc = leggiLista(val);
+                    x.ok = (d.coppieOk || []).every((c, k) => sc[k] === c[1]);
+                }
+                else if (d.t === 'risposta_aperta_rubrica') {
+                    const r = Locale.rubrica(val, d.rubricaPunti || []);
+                    x.voto = { coperti: r.coperti, mancanti: r.mancanti };
+                    x.ok = r.punteggio >= 0.6;
+                }
+                else
+                    x.ok = giusta(val, d.a || []);
             }
             const annulla = registraStat(x);
             // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
             if (toastAnnulla)
                 toastAnnulla.remove();
-            avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+            avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
             toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
             if (!x.ok) {
                 const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null;
                 x.avv = Regole.avvisoRisposta(x.d, dk);
+                // v0.52 (BP2 §3): diagnostica locale secondo l'archetipo della materia (zero token)
+                if (x.d.t === 'mcq' || x.d.t === 'fill') {
+                    const sc = typeof x.picked === 'number' ? x.d.o[x.ord[x.picked]] : String(x.picked || ''), gi = x.d.t === 'mcq' ? x.d.o[0] : (x.d.a || [x.d.show || ''])[0];
+                    const dg = Locale.diagnosticaPerArchetipo(x.d.archetipo || Dominio.archetipoMateria(m), { scelta: sc, corretta: gi, domanda: x.d.q, opzioni: x.d.o });
+                    if (dg && dg !== x.avv)
+                        x.avv = x.avv ? x.avv + ' · ' + dg : dg;
+                }
             }
             disegnaQ();
             const w = app.querySelector('#qz-why');
@@ -10282,7 +11178,8 @@ const QuizApp = (() => {
             const x = P[cur], d = x.d, mc = d.t === 'mcq';
             const dd = { q: d.q, opts: mc ? x.ord.map(i => d.o[i]) : [], corretta: mc ? d.o[0] : (d.show || (d.a || [''])[0]),
                 scelta: x.ok ? '' : mc ? (typeof x.picked === 'number' ? d.o[x.ord[x.picked]] : '') : String(x.picked || ''),
-                cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo };
+                cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo,
+                archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: MATERIE_BASE[m] ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
             const id = Spiega.idDi(dd, l), c = Stato.prendi(id);
             if (c && !c.deleted && !forza) {
                 x.ai = { l, testo: c.testo, modello: c.modello + ' · salvata' };
@@ -10352,6 +11249,15 @@ const QuizApp = (() => {
                 rispondi(parseInt(b.dataset.k, 10));
                 return;
             }
+            if (b.dataset.seq != null) { // v0.52: sequenza, un tocco per elemento; completata → si verifica
+                const x = P[cur], seq = x.d.sequenzaOk || [];
+                x.sel = (x.sel || []).concat(parseInt(b.dataset.seq, 10));
+                if (x.sel.length >= seq.length)
+                    rispondi(JSON.stringify(x.sel.map(i => seq[i])));
+                else
+                    disegnaQ();
+                return;
+            }
             if (b.dataset.ai) {
                 chiediAI(b.dataset.ai, !!b.dataset.forza);
                 return;
@@ -10365,6 +11271,10 @@ const QuizApp = (() => {
             }
             else if (az === 'fonti') {
                 apertaX = !apertaX;
+                disegnaQ();
+            }
+            else if (az === 'seqreset') {
+                x.sel = [];
                 disegnaQ();
             }
             else if (az === 'prec') {
@@ -10440,14 +11350,27 @@ const QuizApp = (() => {
             else if (az === 'ripristina')
                 Editor.ripristina(s.id, () => avviso('Ripristinate: rifai il quiz per vederle.'));
         });
-        app.addEventListener('submit', ev => { ev.preventDefault(); const i = app.querySelector('#qz-ans'); if (i)
-            rispondi(i.value); });
+        app.addEventListener('submit', ev => {
+            ev.preventDefault();
+            const sel = Array.from(app.querySelectorAll('select[data-abb]'));
+            if (sel.length) {
+                if (sel.some(x => !x.value)) {
+                    avviso('Completa tutti gli abbinamenti.');
+                    return;
+                }
+                rispondi(JSON.stringify(sel.map(x => x.value)));
+                return;
+            }
+            const i = app.querySelector('#qz-ans');
+            if (i)
+                rispondi(i.value);
+        });
         const tasti = (e) => {
             if (!document.body.contains(app)) {
                 document.removeEventListener('keydown', tasti);
                 return;
             }
-            if (e.metaKey || e.ctrlKey || e.altKey || e.target.tagName === 'INPUT' || finito)
+            if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || finito)
                 return;
             const x = P[cur];
             if (!x)
@@ -11305,7 +12228,8 @@ const Spiega = (() => {
         return 'Chimica, Biologia o Fisica';
     }
     async function chiama(d, l) {
-        const sys = 'Sei un tutor di ' + materia(d.titolo) + ' per il semestre filtro di Medicina. Rispondi in italiano corretto e semplice, rivolgendoti allo studente con il tu. '
+        // v0.52 (BP2): prompt per profilo/archetipo; per il proprietario (Medicina) il testo resta identico a prima
+        const sys = Dominio.promptTutor(d.nomeMateria || materia(d.titolo), d.archetipo)
             + 'Basati sul testo di riferimento del corso e su conoscenze certe; non inventare dati, numeri o citazioni. Se il testo di riferimento non basta, dillo. '
             + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.' + MemoriaIA.linee('spiegazioni', 4);
         const u = 'Quiz: ' + d.titolo + '\nDomanda: ' + d.q
@@ -11315,7 +12239,7 @@ const Spiega = (() => {
             + (d.cit ? '\nTesto di riferimento (dal corso): ' + d.cit : '')
             + (d.passi ? '\nCorrezione già mostrata: ' + d.passi : '')
             + '\n\nSpiega perché la risposta corretta è giusta ' + LIV[l] + '.';
-        const r = await IA.testo([{ role: 'system', content: sys }, { role: 'user', content: u }], 'genera', { temp: 0.3 });
+        const r = await IA.testo([{ role: 'system', content: sys }, { role: 'user', content: u }], 'genera', { temp: 0.3, archetipo: d.archetipo });
         return { testo: r.testo.replace(/\*\*/g, '').replace(/^#+\s*/gm, ''), modello: r.modello };
     }
     async function genera(d, l) {
@@ -12223,7 +13147,9 @@ function apriScheda(pk, m, micro, s, ripasso = false) {
     const apribili = pk.risorse.libri[m] ? blocchi.filter(b => /^\d/.test(b)) : [];
     const f = foglio({
         titolo: (ripasso ? '🧠 Ripasso · ' : '') + micro + ' · scheda ' + s.k + '/' + s.n,
-        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), pk.proprio ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s); } }, '🧩 Quiz nell\'app'), Generatori.per(m, micro).length ? h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s, () => Generatori.serie(m, micro)); } }, '🎲 Esercizi nuovi') : null, pk.proprio ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); AIGen.avvia(pk, m, micro, s); } }, '🤖 Domande AI'), h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
+        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), pk.proprio && !Dominio.haDomande(s.id) ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s); } }, '🧩 Quiz nell\'app'), // v0.52: anche corsi propri con domande .imcpack
+        Generatori.per(m, micro).length ? h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s, () => Generatori.serie(m, micro)); } }, '🎲 Esercizi nuovi') : null, pk.proprio || Dominio.senzaAI() ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); AIGen.avvia(pk, m, micro, s); } }, '🤖 Domande AI'), // v0.52: nascosto senza chiavi AI
+        h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
             const pag = parseInt(b, 10);
             return h('button.chip', { onclick: async () => {
                     if (serveGoogle())
@@ -13337,7 +14263,7 @@ function vistaAltro() {
     // v0.34: Altro = scorciatoie in vista + 4 gruppi di impostazioni (sotto-pagine)
     switch (UI.altroSez) {
         case 'aspetto': return h('div.pagina.sotto', null, sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp));
-        case 'studio': return h('div.pagina.sotto', null, sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());
+        case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro()); // v0.52: profilo e materie
         case 'calendario': return h('div.pagina.sotto', null, scheda('Categorie', cats, nuovaCat), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp));
         case 'dati': return h('div.pagina.sotto', null, sezDrive, sezDati, versione);
     }
@@ -13607,7 +14533,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.51';
+const VERSIONE = '0.53';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -13849,7 +14775,8 @@ async function avvia() {
     Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
     Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
         disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva)
-        Spiega.recuperaDaDrive(); });
+        Spiega.recuperaDaDrive(); if (Drive.stato.sync === 'ok' && Dominio.serveBenvenuto())
+        Dominio.benvenuto(); }); // v0.52: wizard di benvenuto per gli ospiti
     attivaSimboli();
     Tocco.attiva();
     disegna();
