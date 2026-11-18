@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.49';
+const VERSIONE = '0.50';
 
 function applicaTema(): void {
   const i = imp();
@@ -206,11 +206,35 @@ async function avvia(): Promise<void> {
 
   // Service worker: cache dell'app per l'uso offline (solo sul sito vero, non nell'anteprima).
   if ('serviceWorker' in navigator && location.protocol === 'https:' && document.querySelector('link[rel="manifest"]')) {
-    navigator.serviceWorker.register('sw.js').catch(() => { /* offline non disponibile */ });
+    navigator.serviceWorker.register('sw.js').then(reg => Aggiornamento.collega(reg, navigator.serviceWorker)).catch(() => { /* offline non disponibile */ });
   }
   // Chiedo al browser di non cancellare i dati locali quando lo spazio scarseggia.
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) { /* niente */ }
 }
+
+/**
+ * v0.50: nuova versione del service worker pronta → banner «Nuova versione pronta · Aggiorna».
+ * Il tocco manda 'salta' al worker in attesa; al cambio di controller si ricarica (una volta sola).
+ * Prima installazione (nessun controller): nessun banner.
+ */
+const Aggiornamento = (() => {
+  let mostrato = false, ricaricato = false;
+  function banner(reg: ServiceWorkerRegistration): void {
+    if (mostrato || !reg.waiting) return;
+    mostrato = true;
+    avviso('Nuova versione pronta · tocca per aggiornare', 0, () => { if (reg.waiting) reg.waiting.postMessage('salta'); });
+  }
+  function collega(reg: ServiceWorkerRegistration, sw: { controller: ServiceWorker | null; addEventListener(t: string, f: () => void): void }, ricarica: () => void = () => location.reload()): void {
+    if (!sw.controller) return;
+    sw.addEventListener('controllerchange', () => { if (ricaricato) return; ricaricato = true; ricarica(); });
+    if (reg.waiting) banner(reg);
+    reg.addEventListener('updatefound', () => {
+      const nuovo = reg.installing;
+      if (nuovo) nuovo.addEventListener('statechange', () => { if (nuovo.state === 'installed') banner(reg); });
+    });
+  }
+  return { collega };
+})();
 
 avvia().catch(err => {
   document.getElementById('app')!.textContent = 'Errore di avvio: ' + (err && err.message || err);

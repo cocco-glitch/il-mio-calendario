@@ -3,9 +3,14 @@
 const CACHE = 'imc-__VERSIONE__';
 const FILE = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icone/icona-180.png', 'icone/icona-192.png', 'icone/icona-512.png'];
 
+const PDFJS = ['pdf.min.js', 'pdf.worker.min.js'].map(f => 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/' + f);
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILE)).then(() => self.skipWaiting()));
+  // v0.50: niente skipWaiting qui: la nuova versione aspetta il tocco su «Aggiorna» (messaggio 'salta').
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILE)));
+  // pdf.js è facoltativo: se la CDN non risponde l'install non deve fallire.
+  caches.open('imc-lib').then(c => Promise.all(PDFJS.map(u => c.match(u).then(r => r || c.add(u)).catch(() => {})))).catch(() => {});
 });
+self.addEventListener('message', e => { if (e.data === 'salta') self.skipWaiting(); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(nomi => Promise.all(nomi.filter(n => n !== CACHE && n !== 'imc-pdf' && n !== 'imc-lib').map(n => caches.delete(n)))).then(() => self.clients.claim()));
 });

@@ -91,6 +91,7 @@ const Spiega = (() => {
   /** v0.31: legge un'immagine (scrittura a mano) con un modello visivo; restituisce testo. */
   async function vede(istruzioni: string, immagine: string): Promise<string> {
     if (!await pronta() && !Object.keys(IA.tutteChiavi()).length) throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
+    MediaStore.controllaVisione(immagine);   // v0.50: oltre 20 MB nessun invio
     // v0.46: modello visivo scelto dal gateway (Gemini Flash, poi Qwen visivo di Groq)
     const r = await IA.testo([{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }], 'visione', { temp: 0.1, maxOut: 4096 });
     return r.testo;
