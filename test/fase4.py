@@ -2,6 +2,8 @@
 import os, sys, http.server, threading, functools, json
 from playwright.sync_api import sync_playwright
 RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist')
+http.server.ThreadingHTTPServer.request_queue_size = 128   # Windows: coda più ampia per i caricamenti in parallelo
+http.server.SimpleHTTPRequestHandler.protocol_version = 'HTTP/1.1'   # Windows: con HTTP/1.0 la chiusura del socket a volte tronca app.js (ERR_CONNECTION_RESET)
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=RADICE))
 srv.RequestHandlerClass.log_message = lambda *a: None
 threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -56,8 +58,16 @@ with sync_playwright() as p:
         r = I(frase); bad = {k: (r or {}).get(k) for k, v in att.items() if (r or {}).get(k) != v}
         ok(not bad, 'rapido «%s»%s' % (frase, '' if not bad else ' → diverso: %s' % bad))
     # campo rapido nell'interfaccia
-    pg.fill('.rapido-box .rapido', 'domani 15-17 Chimica 3.1'); ok('12 novembre' in pg.inner_text('.rapido-anteprima'), 'anteprima: ' + pg.inner_text('.rapido-anteprima'))
-    pg.press('.rapido-box .rapido', 'Enter'); pg.wait_for_timeout(200)
+    # la pagina Oggi si ridisegna quando finisce di caricare il piano: se il campo viene sostituito dopo il fill, riscrivo
+    pg.wait_for_function("!!Studio.pkPiano()")
+    for _ in range(3):
+        pg.fill('.rapido-box .rapido', 'domani 15-17 Chimica 3.1')
+        try: pg.wait_for_function("(document.querySelector('.rapido-anteprima') || {}).textContent?.includes('12 novembre')", timeout=3000); break
+        except Exception: pass
+    ok('12 novembre' in pg.inner_text('.rapido-anteprima'), 'anteprima: ' + pg.inner_text('.rapido-anteprima'))
+    pg.press('.rapido-box .rapido', 'Enter')
+    try: pg.wait_for_function("Stato.tutti('evento').some(e => e.titolo === 'Chimica 3.1')", timeout=5000)
+    except Exception: pass
     ok(pg.evaluate("Stato.tutti('evento').some(e => e.titolo === 'Chimica 3.1' && e.inizio === '2026-11-12T15:00' && e.fine === '2026-11-12T17:00')"), 'evento creato dal campo rapido')
     pg.screenshot(path='test/30-rapido.png')
     # ICS: esporta e reimporta (andata/ritorno)

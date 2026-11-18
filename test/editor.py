@@ -1,7 +1,7 @@
 # Test v0.23: editor delle domande (Quiz Studio Q2).
 import json, subprocess, sys, time
 from playwright.sync_api import sync_playwright
-srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8767', '-d', 'dist'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8767', '-d', 'dist', '--protocol', 'HTTP/1.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(1); errori = []
 try:
     with sync_playwright() as p:

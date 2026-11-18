@@ -2,7 +2,7 @@
 import json, os, subprocess, sys, time, glob
 from playwright.sync_api import sync_playwright
 
-srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8765', '-d', 'dist'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8765', '-d', 'dist', '--protocol', 'HTTP/1.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(1)
 errori, chiamate = [], []
 def groq(route):

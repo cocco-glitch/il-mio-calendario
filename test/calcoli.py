@@ -2,6 +2,8 @@
 import os, http.server, threading, functools, json
 from playwright.sync_api import sync_playwright
 RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist')
+http.server.ThreadingHTTPServer.request_queue_size = 128   # Windows: coda più ampia per i caricamenti in parallelo
+http.server.SimpleHTTPRequestHandler.protocol_version = 'HTTP/1.1'   # Windows: con HTTP/1.0 la chiusura del socket a volte tronca app.js (ERR_CONNECTION_RESET)
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=RADICE))
 srv.RequestHandlerClass.log_message = lambda *a: None
 threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -43,7 +45,7 @@ with sync_playwright() as p:
     pg.click('.appunto-barra button[aria-label="Lezione audio"]'); pg.wait_for_selector('.dialogo, .foglio, [role=dialog]')
     with pg.expect_file_chooser() as fc:
         pg.click('text=Carica un file audio')
-    fc.value.set_files('/tmp/finto.m4a')
+    fc.value.set_files({'name': 'finto.m4a', 'mimeType': 'audio/mp4', 'buffer': bytes(2048)})   # file finto in memoria: niente percorsi /tmp (Windows)
     pg.wait_for_selector('.audio-pillola.pronta', timeout=15000)
     pg.click('.audio-pillola.pronta button'); pg.wait_for_selector('text=Trascrizione pronta')
     ok('in talpa' in pg.inner_text('.audio-prima') and 'entalpia' in pg.inner_text('.audio-dopo'), 'correzione mostrata con prima/dopo')

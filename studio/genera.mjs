@@ -1,7 +1,8 @@
 // Genera i pacchetti studio JSON (formato v1, vedi docs/formato-studio.md) dai sorgenti.
 // Uso: node studio/genera.mjs   → scrive studio/pacchetti/*.json e controlla i numeri attesi.
+import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
-const qui = new URL('.', import.meta.url).pathname;
+const qui = fileURLToPath(new URL('.', import.meta.url));   // v0.44.2: funziona anche su Windows
 const OGGI = new Date().toISOString().slice(0, 10);
 const NOMI = { C: ['Chimica', 'Bettelheim'], B: ['Biologia', 'Fasano'], F: ['Fisica', 'Scannicchio'] };
 // Risorse su Drive (dal file "00 - DIRETTIVE CLAUDE quiz"): libri divisi in PDF e cartelle quiz.

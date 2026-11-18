@@ -66,14 +66,27 @@ const IA = (() => {
     t = t.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     try { return JSON.parse(t); } catch (_) { const a = t.indexOf('{'), b = t.lastIndexOf('}'); if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1)); throw new Error('risposta non in JSON'); }
   }
+  /** v0.44.2: Groq free = 8.000 token/minuto (input + output). 16.000 caratteri ≈ 4.600 token lasciano spazio alla risposta;
+   *  prima erano 60.000 (≈17.000 token) e le richieste grandi tornavano 413 «Request too large». */
+  const GROQ_CAR = 16000;
+  /** Accorcia i messaggi più lunghi finché il totale sta sotto `lim` caratteri (i brevi, es. istruzioni di sistema, restano interi). */
+  function accorcia<T extends { content: string }>(msgs: T[], lim: number): T[] {
+    const tot = msgs.reduce((s, x) => s + x.content.length, 0); if (tot <= lim) return msgs;
+    const out = msgs.slice(); let eccesso = tot - lim + 30;
+    while (eccesso > 0) {
+      let i = 0; for (let k = 1; k < out.length; k++) if (out[k].content.length > out[i].content.length) i = k;
+      const c = out[i].content, taglio = Math.min(eccesso, c.length - 200); if (taglio <= 0) break;
+      out[i] = { ...out[i], content: c.slice(0, c.length - taglio) + '\n[…testo accorciato…]' }; eccesso -= taglio;
+    }
+    return out;
+  }
   /** Chiede JSON al primo modello disponibile del ruolo. Restituisce anche chi ha risposto. */
   async function chiedi(msgs: { role: string; content: string }[], r: Ruolo, o: { temp?: number; evita?: string; maxCar?: number } = {}): Promise<{ j: any; modello: string }> {
     await Spiega.pronta();
     const forn = await catena(r, o.evita); if (!forn.length) throw new Error('Serve una chiave AI gratuita: Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
     const errori: string[] = []; let ultimo: any = null;
     for (const f of forn) {
-      const lim = f.gem ? 600000 : 60000;
-      const m2 = msgs.map(x => x.content.length > lim ? { ...x, content: x.content.slice(0, lim) + '\n[…testo accorciato…]' } : x);
+      const m2 = accorcia(msgs, f.gem ? 600000 : GROQ_CAR);
       try {
         const corpo: any = { model: f.modello, temperature: o.temp == null ? .3 : o.temp, messages: m2 };
         if (!/llama-3\.1-8b/.test(f.modello)) corpo.response_format = { type: 'json_object' };
@@ -98,5 +111,5 @@ const IA = (() => {
       h('div.riga', null, h('span', null, 'Chiave Gemini'), inp),
       h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
   }
-  return { chiedi, campoGemini, disponibili, catena, get gemini() { return !!gemini(); } };
+  return { chiedi, campoGemini, disponibili, catena, accorcia, GROQ_CAR, get gemini() { return !!gemini(); } };
 })();

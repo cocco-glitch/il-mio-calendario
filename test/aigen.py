@@ -1,7 +1,7 @@
 # Test v0.27: Quiz Studio Q5 — domande AI (Groq simulato): controlli, esame alla cieca, coda, approvazione.
-import json, re, subprocess, sys, time
+import json, os, re, subprocess, sys, tempfile, time
 from playwright.sync_api import sync_playwright
-srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8771', '-d', 'dist'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8771', '-d', 'dist', '--protocol', 'HTTP/1.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(1); errori = []
 GIUSTE = ['Aumenta di dieci volte', 'Il legame ionico', 'Diminuisce la pressione', 'Resta costante']
 def dom(i, q, o, d=None):
@@ -46,7 +46,7 @@ try:
         pg.evaluate("AIGen.coda()"); pg.wait_for_selector('.aig-voce')
         assert pg.locator('.aig-voce').count() == 3
         assert pg.locator('.aig-giusta').first.inner_text().startswith('✓')
-        pg.wait_for_timeout(800); pg.screenshot(path='/tmp/claude-0/aigen.png')
+        pg.wait_for_timeout(800); pg.screenshot(path=os.path.join(tempfile.gettempdir(), 'aigen.png'))
         pg.locator('.aig-voce button:has-text("Approva")').first.click(); pg.wait_for_timeout(300)
         pg.locator('.aig-voce button:has-text("Scarta")').first.click(); pg.wait_for_timeout(300)
         assert pg.locator('.aig-voce').count() == 1

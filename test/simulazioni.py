@@ -2,6 +2,8 @@
 import os, http.server, threading, functools, json
 from playwright.sync_api import sync_playwright
 RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist')
+http.server.ThreadingHTTPServer.request_queue_size = 128   # Windows: coda più ampia per i caricamenti in parallelo
+http.server.SimpleHTTPRequestHandler.protocol_version = 'HTTP/1.1'   # Windows: con HTTP/1.0 la chiusura del socket a volte tronca app.js (ERR_CONNECTION_RESET)
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=RADICE))
 srv.RequestHandlerClass.log_message = lambda *a: None
 threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -24,8 +26,11 @@ with sync_playwright() as p:
       Drive.elencaTutti = async id => id === 'cart1' ? [{ id: 'f2', name: 'Simulazione mista 2.html' }, { id: 'f1', name: 'Simulazione mista 1.html' }, { id: 'x', name: 'note.txt' }] : [];
       Drive.scaricaTesto = async id => q; })(%s)""" % json.dumps(QUIZ))
     # Il giorno della Simulazione 3: la voce del piano apre la modalità simulazione
-    voce = pg.locator('.voce-lista', has_text='Simulazione 3')
-    ok(voce.count() >= 1 and 'tocca per iniziare' in voce.first.inner_text(), 'Oggi: «Simulazione 3 · tocca per iniziare»')
+    try: pg.wait_for_function("[...document.querySelectorAll('.voce-lista')].some(v => v.textContent.includes('Simulazione 3') && v.textContent.includes('tocca per iniziare'))", timeout=8000)   # la pagina Oggi si ridisegna dopo il caricamento del piano
+    except Exception: pass
+    voce = pg.locator('.voce-lista', has_text='Simulazione 3').filter(has_text='tocca per iniziare')
+    vt = voce.first.text_content() if voce.count() else '(nessuna voce; pagina: ' + pg.text_content('.pagina')[:300] + ')'
+    ok('tocca per iniziare' in vt, 'Oggi: «Simulazione 3 · tocca per iniziare»' + ('' if 'tocca per iniziare' in vt else ' → ' + vt))
     voce.first.click(); pg.wait_for_selector('.foglio >> text=Simulazione mista 1')
     t = pg.inner_text('.foglio')
     ok(t.index('mista 1') < t.index('mista 2') and 'note' not in t, 'elenco dei file HTML in ordine')
@@ -46,7 +51,10 @@ with sync_playwright() as p:
     pg.evaluate("UI.studioVista = 'esami'; UI.studioSub = null; vai('studio')"); pg.wait_for_selector('text=Simulazioni a tempo')
     ok('77%' in pg.inner_text('.pagina') and '40/50 min' in pg.inner_text('.pagina'), 'storico in Studio → Esami')
     pg.evaluate("apriSimulazioni()"); pg.wait_for_selector('.foglio >> text=Fatta 1 volta')
-    ok('ultima 77%' in pg.inner_text('.foglio'), 'nell\'elenco: già fatta, ultima 77%')
+    try: pg.wait_for_function("[...document.querySelectorAll('.foglio')].some(f => f.textContent.includes('ultima 77%'))", timeout=8000)   # la riga si completa dopo il titolo
+    except Exception: pass
+    tf = ' | '.join(pg.locator('.foglio').all_text_contents())   # possono esserci due fogli (quello vecchio in chiusura)
+    ok('ultima 77%' in tf, 'nell\'elenco: già fatta, ultima 77%' + ('' if 'ultima 77%' in tf else ' → ' + tf[-400:].replace('\n', ' | ')))
 
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)

@@ -104,7 +104,7 @@ const Spiega = (() => {
       try {
         const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST', headers: { Authorization: 'Bearer ' + chiave(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: msgs }),
+          body: JSON.stringify({ model: mod, temperature: temperatura, response_format: { type: 'json_object' }, messages: IA.accorcia(msgs, IA.GROQ_CAR) }),
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { const e: any = new Error((j && j.error && j.error.message) || 'errore ' + r.status); e.stato = r.status; throw e; }
@@ -122,8 +122,8 @@ const Spiega = (() => {
   /** v0.31: legge un'immagine (scrittura a mano) con il modello visivo di Groq; restituisce testo. */
   async function vede(istruzioni: string, immagine: string): Promise<string> {
     if (!await pronta()) throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
-    // v0.31.1: Groq ha ritirato Llama 4 Scout; oggi il modello visivo pubblico è Qwen 3.8 27B. Si provano in ordine.
-    const VISIVI = ['qwen/qwen3.8-27b', 'meta-llama/llama-4-scout-17b-16e-instruct'];
+    // v0.44.2: Llama 4 Scout ritirato da Groq; l'unico modello visivo è Qwen 3.8 27B (preview, immagini fino a 20 MB).
+    const VISIVI = ['qwen/qwen3.8-27b'];
     let r: Response = null as any, j: any = {};
     for (const mod of VISIVI) {
       r = await fetch('https://api.groq.com/openai/v1/chat/completions', {

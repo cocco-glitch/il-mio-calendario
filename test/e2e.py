@@ -2,6 +2,8 @@
 import sys, os, http.server, threading, functools
 from playwright.sync_api import sync_playwright
 RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist')
+http.server.ThreadingHTTPServer.request_queue_size = 128   # Windows: coda più ampia per i caricamenti in parallelo
+http.server.SimpleHTTPRequestHandler.protocol_version = 'HTTP/1.1'   # Windows: con HTTP/1.0 la chiusura del socket a volte tronca app.js (ERR_CONNECTION_RESET)
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=RADICE))
 srv.RequestHandlerClass.log_message = lambda *a: None
 threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -34,13 +36,20 @@ with sync_playwright() as p:
     n = pg.evaluate("occorrenzeTra(oggi(), piuGiorni(oggi(), 28)).filter(o => o.ev.titolo === 'Palestra').length")
     ok(n == 4, 'ricorrenza settimanale: 4 occorrenze in 28 giorni (trovate %s)' % n)
 
-    # persistenza dopo ricarica
+    # persistenza dopo ricarica: aspetto che la transazione IndexedDB sia scritta (ricaricare subito può interromperla)
+    pg.wait_for_function("""new Promise(ok => { const rq = indexedDB.open('il-mio-calendario', 1); rq.onsuccess = () => { const g = rq.result.transaction('records').objectStore('records').getAll();
+      g.onsuccess = () => { rq.result.close(); ok(g.result.some(r => r.titolo === 'Palestra' && !r.deleted)); }; g.onerror = () => ok(false); }; rq.onerror = () => ok(false); })""", timeout=5000)
     pg.reload(); pg.wait_for_selector('.tabbar')
     ok(pg.locator('.card >> text=Palestra').count() >= 1, 'evento ancora presente dopo ricarica')
 
     # viste calendario
     pg.click('.tabbar >> text=Calendario'); pg.screenshot(path='test/03-mese.png')
-    ok(pg.locator('.mese-chip:text("Palestra")').count() >= 4, 'mese mostra la serie')
+    # la serie parte oggi: quante occorrenze cadono nella griglia del mese dipende dalla data (es. 18/11/2026 → 3)
+    attese = pg.evaluate("""(() => { const p = new Date(UI.data.getFullYear(), UI.data.getMonth(), 1), gm = new Date(p.getFullYear(), p.getMonth() + 1, 0).getDate();
+      const fine = piuGiorni(lunedi(p), Math.ceil((((p.getDay() + 6) % 7) + gm) / 7) * 7);
+      return occorrenzeTra(oggi(), fine).filter(o => o.ev.titolo === 'Palestra').length; })()""")
+    nc = pg.locator('.mese-chip:text("Palestra")').count()
+    ok(attese >= 1 and nc == attese, 'mese mostra la serie (%d di %d)' % (nc, attese))
     pg.click('.segmenti >> text=Settimana'); pg.wait_for_selector('.gr-ev'); pg.screenshot(path='test/04-settimana.png')
     pg.click('.segmenti >> text=Giorno'); pg.screenshot(path='test/05-giorno.png')
     pg.click('.segmenti >> text=Agenda'); pg.screenshot(path='test/06-agenda.png')

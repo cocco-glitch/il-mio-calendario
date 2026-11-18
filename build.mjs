@@ -4,13 +4,17 @@
 // 3) public/ viene copiata in dist/ (il sito da pubblicare)
 // 4) dist/anteprima.html = tutto in un solo file (per provarla senza hosting)
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync, cpSync } from 'node:fs';
 
-const qui = new URL('.', import.meta.url).pathname;
+const qui = fileURLToPath(new URL('.', import.meta.url));   // v0.44.2: funziona anche su Windows
 process.chdir(qui);
 rmSync('build-tmp', { recursive: true, force: true });
 rmSync('dist', { recursive: true, force: true });
-execSync('tsc -p tsconfig.json', { stdio: 'inherit' });
+// v0.44.2: se tsc non è installato globalmente (es. Windows) si usa la versione fissata via npx
+let tsc = 'tsc';
+try { execSync('tsc -v', { stdio: 'ignore' }); } catch (_) { tsc = 'npx -y -p typescript@5.6.3 tsc'; }
+execSync(tsc + ' -p tsconfig.json', { stdio: 'inherit' });
 
 const js = readdirSync('build-tmp').filter(f => f.endsWith('.js')).sort()
   .map(f => readFileSync('build-tmp/' + f, 'utf8')).join('\n');
