@@ -477,7 +477,7 @@ function vistaAltro(): HTMLElement {
   // v0.34: Altro = scorciatoie in vista + 4 gruppi di impostazioni (sotto-pagine)
   switch (UI.altroSez) {
     case 'aspetto': return h('div.pagina.sotto', null, sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp));
-    case 'studio': return h('div.pagina.sotto', null, sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());
+    case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());   // v0.52: profilo e materie
     case 'calendario': return h('div.pagina.sotto', null, scheda('Categorie', cats, nuovaCat), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp));
     case 'dati': return h('div.pagina.sotto', null, sezDrive, sezDati, versione);
   }

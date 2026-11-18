@@ -45,7 +45,7 @@ const Ripassi = (() => {
 
   /** Ritenzione desiderata per un giorno: più alta nei 14 giorni prima di un esame. */
   function ritenzione(giorno: string): number {
-    const base = imp().ritenzione || 0.9;
+    const base = imp().ritenzione || Dominio.ritenzioneProfilo();   // v0.52: senza scelta manuale, la ritenzione del profilo (proprietario: 0,90 come prima)
     const vicino = Stato.tutti<Esame>('esame').some(e => { const g = giorni(giorno, e.data); return g >= 0 && g <= 14; });
     return vicino ? Math.max(base, 0.95) : base;
   }

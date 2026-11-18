@@ -173,5 +173,146 @@ const Locale = (() => {
       : { tipo: 'evento', titolo: r.titolo, data: ymd(r.giorno), inizio: r.ora ? pad2(r.ora[0]) + ':' + pad2(r.ora[1]) : undefined, fine: r.fine ? pad2(r.fine[0]) + ':' + pad2(r.fine[1]) : undefined, tutto_il_giorno: r.tuttoIlGiorno, _rr: r.rrule }];
     return null;
   }
-  return { radice, espandi, pulisciPagine, frasiChiave, accorciaCorretta, citazioneVera, digitabili, pulisciParlato, quasiTermini, segmentoDubbio, carteDaTesto, spiegazioneBreve, concettiMancanti, capisci, distanza };
+
+  // ---------- v0.52 (BP2 §3): diagnostica dell'errore per archetipo disciplinare, a zero token (< 3 ms) ----------
+  interface ContestoDiag { scelta: string; corretta: string; domanda?: string; opzioni?: string[]; }
+  const taglia = (x: any) => String(x == null ? '' : x).slice(0, 400);
+  /** Primo numero di un testo (accetta 1,2·10^3, 1.2e-3, 3×10⁻⁵, 1 200). */
+  function numero(t: string): number | null {
+    const sup: Record<string, string> = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁻': '-' };
+    const x = t.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+/g, m => '^' + m.split('').map(c => sup[c]).join('')).replace(/(\d)\s(?=\d{3}\b)/g, '$1').replace(/−/g, '-');
+    const m = /(-?\d+(?:[.,]\d+)?)\s*(?:(?:[x×·*]\s*10\s*\^?\s*\(?\s*(-?\d+)\)?)|[eE](-?\d+))?/.exec(x);
+    if (!m) return null;
+    const v = parseFloat(m[1].replace(',', '.')) * Math.pow(10, parseInt(m[2] || m[3] || '0', 10));
+    return isFinite(v) ? v : null;
+  }
+  function diagnosticaStemDimensionale(c: ContestoDiag): string | null {
+    const s = numero(c.scelta), g = numero(c.corretta);
+    if (s == null || g == null || !s || !g || s === g) return null;
+    if (Math.abs(s + g) < 1e-9 * Math.abs(g)) return '➖ Segno invertito: il valore è giusto ma con il segno opposto (controlla il verso o la convenzione).';
+    if (Math.abs(g) !== 1 && Math.abs(s * g - 1) < 0.02) return '🔄 Reciproco: hai calcolato 1/x invece di x (controlla la formula inversa).';
+    const l = Math.log10(Math.abs(s / g)), k = Math.round(l);
+    if (k !== 0 && Math.abs(l - k) < 0.02) return '⚠️ Ordine di grandezza: fattore 10^' + k + ' (controlla conversione unità SI).' + (s * g < 0 ? ' Anche il segno è invertito.' : '');
+    return null;
+  }
+  /** H2SO4 → H₂SO₄ (indici in pedice dopo un elemento o una parentesi). */
+  const formula = (t: string) => t.replace(/([A-Z][a-z]?|\))(\d+)/g, (_, a: string, n: string) => a + n.split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[+d]).join(''));
+  const COPPIE_OPPOSTE: [string, string][] = [['ossidazion', 'riduzion'], ['ossida', 'riduc'], ['anabol', 'catabol'], ['esocitosi', 'endocitosi'], ['parasimpatic', 'simpatic'], ['antagonist', 'agonist'],
+    ['esotermic', 'endotermic'], ['esoergonic', 'endoergonic'], ['meiosi', 'mitosi'], ['efferent', 'afferent'], ['espirazion', 'inspirazion'], ['diastole', 'sistole'], ['ipotonic', 'ipertonic'],
+    ['catodo', 'anodo'], ['gluconeogenesi', 'glicolisi'], ['depolarizz', 'iperpolarizz'], ['basic', 'acid'], ['extracellular', 'intracellular'], ['eterozigot', 'omozigot'], ['recessiv', 'dominant'],
+    ['matrice mitocondriale', 'citoplasma'], ['citosol', 'mitocondri'], ['nucleo', 'citoplasma'], ['lume', 'stroma'], ['tilacoid', 'stroma'], ['reticolo endoplasmatico liscio', 'reticolo endoplasmatico rugoso'],
+    ['eucariot', 'procariot'], ['idrofil', 'idrofob'], ['purin', 'pirimidin'], ['inibizione', 'attivazione']];
+  function diagnosticaScienzeCompartimenti(c: ContestoDiag): string | null {
+    const s = n2(c.scelta), g = n2(c.corretta);
+    for (const [a, b] of COPPIE_OPPOSTE) {
+      const re = (w: string) => new RegExp('(^|[^a-z])' + w.replace(/ /g, '\\s+'));
+      if ((re(a).test(s) && re(b).test(g) && !re(a).test(g)) || (re(b).test(s) && re(a).test(g) && !re(b).test(g)))
+        return '🔀 Inversione rilevata: hai scelto il meccanismo del compartimento opposto.';
+    }
+    const fs = /\b(?:[A-Z][a-z]?\d*|\(\w+\)\d*){2,}\b/.exec(c.scelta), fg = /\b(?:[A-Z][a-z]?\d*|\(\w+\)\d*){2,}\b/.exec(c.corretta);
+    if (fs && fg && fs[0] !== fg[0] && fs[0].replace(/\d/g, '') === fg[0].replace(/\d/g, ''))
+      return '🧪 Formula: stessi elementi ma indici diversi (' + formula(fs[0]) + ' invece di ' + formula(fg[0]) + ').';
+    return null;
+  }
+  /** Anno citato: 1848, 2001, «XV sec» (→ metà secolo). */
+  function anno(t: string): number | null {
+    const m = /\b(1\d{3}|20\d{2}|[IVX]+\s*sec)/i.exec(t); if (!m) return null;
+    if (/^\d/.test(m[1])) return parseInt(m[1], 10);
+    const r = m[1].replace(/\s*sec.*/i, '').toUpperCase(), v: Record<string, number> = { I: 1, V: 5, X: 10 };
+    let n = 0; for (let i = 0; i < r.length; i++) { const a = v[r[i]], b = v[r[i + 1]] || 0; n += a < b ? -a : a; }
+    return n ? (n - 1) * 100 + 50 : null;
+  }
+  function diagnosticaCronologiaCausalita(c: ContestoDiag): string | null {
+    const s = anno(c.scelta), g = anno(c.corretta) ?? anno(c.domanda || '');
+    if (s == null || g == null || Math.abs(s - g) < 3) return null;
+    const d = Math.abs(s - g), circa = d >= 20 ? Math.round(d / 10) * 10 : d;
+    return '⏳ Anacronismo: l\'evento scelto è ' + (s > g ? 'successivo' : 'precedente') + ' di circa ' + circa + ' anni al contesto richiesto.';
+  }
+  const ASSOLUTI = /\b(esclusivamente|sempre|mai|soltanto|unicamente|in ogni caso|in nessun caso|tutti|nessun[oa]?|obbligatoriamente)\b/i;
+  const ECCEZIONI = /\b(salvo(?: che)?|tranne|eccetto|ad eccezione|a meno che|purch[ée]|entro \d+ giorni|di regola|in linea di massima|fatt[oa] salv[oa])\b/i;
+  function diagnosticaNormativaEccezioni(c: ContestoDiag): string | null {
+    const a = ASSOLUTI.exec(c.scelta);
+    if (a && !new RegExp('\\b' + a[1] + '\\b', 'i').test(c.corretta)) return '⚖️ Trappola normativa: l\'opzione contiene "' + a[1].toLowerCase() + '", ma la norma prevede eccezioni.';
+    const ts = /(\d+)\s*(giorni|mesi|anni)/i.exec(c.scelta), tg = /(\d+)\s*(giorni|mesi|anni)/i.exec(c.corretta);
+    if (ts && tg && (ts[1] !== tg[1] || ts[2].toLowerCase() !== tg[2].toLowerCase())) return '📅 Termine sbagliato: ' + ts[0] + ' invece di ' + tg[0] + '.';
+    if (ECCEZIONI.test(c.corretta) && !ECCEZIONI.test(c.scelta)) return '⚖️ Trappola normativa: la risposta giusta prevede un\'eccezione o un termine che la tua non considera.';
+    return null;
+  }
+  /** Damerau-Levenshtein (trasposizioni adiacenti), sensibile ad accenti, insensibile alle maiuscole. */
+  function damerau(a: string, b: string): number {
+    a = a.toLowerCase().trim().slice(0, 120); b = b.toLowerCase().trim().slice(0, 120);
+    const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => { const r = new Array(b.length + 1).fill(0); r[0] = i; return r; });
+    for (let j = 0; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+      const c = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + c);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+    return d[a.length][b.length];
+  }
+  function diagnosticaMorfologiaLevenshtein(c: ContestoDiag): string | null {
+    const s = c.scelta.trim(), g = c.corretta.trim(); if (!s || !g || s.length > 80 || g.length > 80) return null;
+    const k = damerau(s, g); if (!k) return null;
+    if (k <= 2 && Math.max(s.length, g.length) >= 3) return '✍️ Quasi esatto (distanza ' + k + (k === 1 ? ' carattere' : ' caratteri') + '): controlla la desinenza/accento.';
+    return null;
+  }
+  /** Pronuncia (sintesi vocale del browser, offline): utile nelle lingue straniere. */
+  function pronuncia(testo: string, lingua = 'it-IT'): boolean {
+    try { if (!('speechSynthesis' in window)) return false; const u = new SpeechSynthesisUtterance(testo); u.lang = lingua; speechSynthesis.cancel(); speechSynthesis.speak(u); return true; } catch (_) { return false; }
+  }
+  /** Prima riga dove le parentesi/virgolette si sbilanciano (0 = bilanciato). */
+  function rigaSbilanciata(t: string): number {
+    const pila: [string, number][] = [], ap: Record<string, string> = { ')': '(', ']': '[', '}': '{' }; let riga = 1, str: string | null = null;
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i]; if (ch === '\n') { riga++; continue; }
+      if (str) { if (ch === '\\') i++; else if (ch === str) str = null; continue; }
+      if (ch === '"' || ch === '\'' || ch === '`') { str = ch; continue; }
+      if ('([{'.includes(ch)) pila.push([ch, riga]);
+      else if (ap[ch]) { const t2 = pila.pop(); if (!t2 || t2[0] !== ap[ch]) return riga; }
+    }
+    return str ? riga : pila.length ? pila[pila.length - 1][1] : 0;
+  }
+  function diagnosticaSintassiAST(c: ContestoDiag): string | null {
+    const s = c.scelta, g = c.corretta;
+    const msg = (r: number) => '🐛 Errore di sintassi o indice off-by-one alla riga ' + r + ' del blocco.';
+    const rb = rigaSbilanciata(s); if (rb && !rigaSbilanciata(g)) return msg(rb);
+    const ej = (t: string) => { try { JSON.parse(t); return true; } catch (_) { return false; } };
+    if (/^\s*[{[]/.test(g) && ej(g) && !ej(s)) return msg(1);
+    if (/^\s*(select|insert|update|delete)\b/i.test(g) && !/;\s*$/.test(s) && /;\s*$/.test(g)) return msg(Math.max(1, s.split('\n').length));
+    const ls = s.split('\n'), lg = g.split('\n');
+    for (let i = 0; i < Math.max(ls.length, lg.length); i++) {
+      const a = (ls[i] || '').trim(), b = (lg[i] || '').trim();
+      if (a === b) continue;
+      const op = (t: string) => t.replace(/<=/g, '<').replace(/>=/g, '>').replace(/\s+/g, '');
+      if (op(a) === op(b)) return msg(i + 1);   // < invece di <= (o viceversa): classico off-by-one
+      const na = a.match(/-?\d+/g), nb = b.match(/-?\d+/g);
+      if ((ls.length > 1 || lg.length > 1) || (na && nb && na.length === nb.length && na.some((x, k) => Math.abs(+x - +nb[k]) === 1))) return msg(i + 1);
+      return null;
+    }
+    return null;
+  }
+  const PLUGIN: Record<string, (c: ContestoDiag) => string | null> = { diagnosticaStemDimensionale, diagnosticaScienzeCompartimenti, diagnosticaCronologiaCausalita, diagnosticaNormativaEccezioni, diagnosticaMorfologiaLevenshtein, diagnosticaSintassiAST };
+  /** Diagnostica locale dell'errore secondo l'archetipo della materia (null = nessuna osservazione utile). */
+  function diagnosticaPerArchetipo(archetipo: string, c: ContestoDiag): string | null {
+    const def = (ARCHETIPI_DISCIPLINARI as Record<string, DefinizioneArchetipo>)[archetipo];
+    const f = def && PLUGIN[def.pluginLocaleId]; if (!f) return null;
+    try { return f({ scelta: taglia(c.scelta), corretta: taglia(c.corretta), domanda: taglia(c.domanda), opzioni: c.opzioni }); } catch (_) { return null; }
+  }
+  /** Valuta una risposta aperta su una rubrica di punti chiave (sovrapposizione delle radici, pesata IDF tipo BM25). */
+  function rubrica(testo: string, punti: string[]): { punteggio: number; coperti: string[]; mancanti: string[] } {
+    const parole = (t: string) => n2(t).split(/\W+/).filter(w => w.length > 3 && !STOP.has(w)).map(radice);
+    const r = new Set(parole(testo)), docs = punti.map(p => new Set(parole(p)));
+    const df = new Map<string, number>(); docs.forEach(d => d.forEach(w => df.set(w, (df.get(w) || 0) + 1)));
+    const idf = (w: string) => Math.log(1 + (punti.length - (df.get(w) || 0) + 0.5) / ((df.get(w) || 0) + 0.5));
+    const coperti: string[] = [], mancanti: string[] = [];
+    punti.forEach((p, i) => {
+      const ws = Array.from(docs[i]); if (!ws.length) { coperti.push(p); return; }
+      const tot = ws.reduce((s, w) => s + idf(w), 0), ok = ws.filter(w => r.has(w)).reduce((s, w) => s + idf(w), 0);
+      (tot && ok / tot >= 0.5 ? coperti : mancanti).push(p);
+    });
+    return { punteggio: punti.length ? coperti.length / punti.length : 0, coperti, mancanti };
+  }
+
+  return { radice, espandi, pulisciPagine, frasiChiave, accorciaCorretta, citazioneVera, digitabili, pulisciParlato, quasiTermini, segmentoDubbio, carteDaTesto, spiegazioneBreve, concettiMancanti, capisci, distanza,
+    formula, damerau, pronuncia, diagnosticaPerArchetipo, rubrica, PLUGIN };
 })();

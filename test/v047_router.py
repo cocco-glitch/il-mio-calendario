@@ -110,12 +110,15 @@ with sync_playwright() as p:
     ok(r['tpm'] == 30000 and r['rest'] == 100, 'x-ratelimit-limit/remaining-tokens letti')
     ok(r['log'] == ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], 'token rimasti insufficienti → modello saltato fino al reset %s' % r['log'])
 
-    # --- fornitori nuovi: solo Mistral (senza elenco modelli → riserva), formato OpenRouter ---
-    r = E("""async () => { prepara({ mistral: 'abcMistral' }); const a = await chiedi('a'); const ch = IA.tutteChiavi();
-      return { a, log: LOG, leg: localStorage.getItem('imc-groq-chiave'), ch, f: [IA.formatoOk('openrouter', 'sk-or-v1-x'), IA.formatoOk('openrouter', 'xx'), IA.formatoOk('cohere', 'qualsiasi')] }; }""")
-    ok(r['a'] == 'ok mistral-large-latest' and r['log'][0].startswith('mistral '), 'solo chiave Mistral → api.mistral.ai, modello di riserva %s' % r['log'])
-    ok(r['ch'] == {'mistral': 'abcMistral'} and r['leg'] is None, 'chiave Mistral solo in imc-ai-keys')
-    ok(r['f'] == [True, False, True], 'formato chiavi nuove %s' % r['f'])
+    # --- fornitore xkiro: solo chiave xkiro (senza elenco modelli → riserva «vendor/modello»), Bearer su /chat/completions ---
+    r = E("""async () => { const H = []; prepara({ xkiro: 'xkProva' }); const f0 = window.fetch;
+      window.fetch = (u, o) => { H.push([String(u), (o && o.headers && (o.headers.Authorization || o.headers.authorization)) || '']); return f0(u, o); };
+      const a = await chiedi('a'); const ch = IA.tutteChiavi();
+      return { a, log: LOG, H: H.filter(x => !x[0].endsWith('/models')), leg: localStorage.getItem('imc-groq-chiave'), ch, f: [IA.formatoOk('cohere', 'qualsiasi'), IA.formatoOk('mistral', 'x')] }; }""")
+    ok(r['a'] == 'ok deepseek/deepseek-v4-pro-0813' and r['log'][0].startswith('xkiro '), 'solo chiave xkiro → api.xkiro.com, modello di riserva %s' % r['log'])
+    ok(r['H'] and r['H'][0][0] == 'https://api.xkiro.com/v1/chat/completions' and r['H'][0][1] == 'Bearer xkProva', 'xkiro: endpoint OpenAI e Bearer %s' % r['H'][:1])
+    ok(r['ch'] == {'xkiro': 'xkProva'} and r['leg'] is None, 'chiave xkiro solo in imc-ai-keys')
+    ok(r['f'][0] is True, 'formato chiavi %s' % r['f'])
 
     # --- al massimo 2 richieste in volo per fornitore ---
     r = E("""async (Q) => { prepara(Q, null, 60); const t = await Promise.all([1, 2, 3, 4, 5].map(i => chiedi('a' + i)));
@@ -124,13 +127,13 @@ with sync_playwright() as p:
 
     # --- impostazioni: stato fornitori e campi delle chiavi nuove; Drive recupera anche Mistral ---
     r = E("""async () => { prepara({ groq: 'gsk_prova1' }); const t = Spiega.sezione().textContent;
-      localStorage.removeItem('imc-groq-chiave'); IA.impostaChiave('mistral', '');
+      localStorage.removeItem('imc-groq-chiave'); IA.impostaChiave('xkiro', '');
       Object.defineProperty(Drive, 'pronto', { get: () => true, configurable: true });
       Drive.preparaCartelle = async () => {}; Drive.idCartella = () => 'dati'; Drive.trovaFile = async n => n === 'chiave-ai.json' ? { id: 'k1' } : null;
-      Drive.scaricaTesto = async () => JSON.stringify({ groq: 'gsk_g', v: 2, chiavi: { groq: 'gsk_g', mistral: 'mKey' } });
-      const fatto = await Spiega.recuperaDaDrive(); return { t, fatto, m: IA.chiave('mistral') }; }""")
-    ok(all(x in r['t'] for x in ['Stato dei fornitori', 'Groq: ✅ pronto', 'Mistral: —', 'OpenRouter', 'Requesty', 'Cohere']), 'impostazioni: stato e campi fornitori')
-    ok(r['fatto'] and r['m'] == 'mKey', 'Drive: recupera anche la chiave Mistral')
+      Drive.scaricaTesto = async () => JSON.stringify({ groq: 'gsk_g', v: 2, chiavi: { groq: 'gsk_g', mistral: 'mKey', openrouter: 'oKey', xkiro: 'xKey' } });
+      const fatto = await Spiega.recuperaDaDrive(); return { t, fatto, x: IA.chiave('xkiro'), ch: Object.keys(IA.tutteChiavi()).sort() }; }""")
+    ok(all(x in r['t'] for x in ['Stato dei fornitori', 'Groq: ✅ pronto', 'xkiro: —', 'Requesty', 'Cohere']) and 'OpenRouter' not in r['t'] and 'Mistral' not in r['t'], 'impostazioni: stato e campi fornitori (niente Mistral/OpenRouter)')
+    ok(r['fatto'] and r['x'] == 'xKey' and r['ch'] == ['groq', 'xkiro'], 'Drive: recupera xkiro, ignora Mistral/OpenRouter %s' % r['ch'])
 
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)

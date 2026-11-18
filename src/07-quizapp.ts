@@ -12,7 +12,9 @@
 // Il risultato finale passa da Cattura.salva come per le schede HTML (progresso, ripassi, errori).
 
 interface CitB { t: string; f: string; l?: string; }
-interface DomB { id: string; sk: string; t: 'mcq' | 'fill'; lv: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[]; }
+// v0.52 (BP2): tipi universali (sequenza, abbinamento, risposta aperta con rubrica) e archetipo — campi facoltativi
+interface DomB { id: string; sk: string; t: 'mcq' | 'fill' | 'sequenza' | 'abbinamento' | 'risposta_aperta_rubrica'; lv: string;
+  archetipo?: string; sequenzaOk?: string[]; coppieOk?: Array<[string, string]>; rubricaPunti?: string[]; linguaCodice?: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[]; }
 interface BancaFile { step: number; schede: Record<string, { titolo: string; materia: string; microstep: string; k: number; n: number; fonti?: string; focus?: string }>; immagini: Record<string, string>; domande: DomB[]; }
 interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Partial<DomB>; nascosta?: boolean; nuova?: boolean; originale?: Partial<DomB>; }
 interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; c?: Record<string, ContoQ>; }
@@ -75,6 +77,8 @@ const Banca = (() => {
 
   /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
   async function scheda(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<{ domande: DomB[]; immagini: Record<string, string>; fonte: string }> {
+    const imc = Dominio.domandeDi(s.id);   // v0.52: domande importate da un pacchetto .imcpack (record 'bancaimc')
+    if (imc) return { domande: applica(imc.map(d => ({ ...d })), s.id), immagini: {}, fonte: 'imcpack' };
     const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
     if (B && B.schede[s.id]) return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
     const K = 'imc-banca-' + s.id;
@@ -100,7 +104,7 @@ const QuizApp = (() => {
   }
   const mescola = <T>(a: T[]) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-  interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; avv?: string; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string }; }
+  interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; avv?: string; sel?: number[]; voto?: { coperti: string[]; mancanti: string[] }; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string }; }
 
   /** Registra la risposta (v0.48: nel contatore di questo dispositivo) e restituisce la funzione per annullarla. */
   function registraStat(v: Voce): () => void {
@@ -144,8 +148,39 @@ const QuizApp = (() => {
     else v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
     v.corpo.appendChild(app);
     let P: Voce[] = [], cur = 0, ripasso = false, apertaX = false, finito = false;
+    // v0.52 (BP2): sequenza (ordine da ricostruire), abbinamento (coppie) e risposta aperta valutata con una rubrica locale
+    const NOMI_TIPO: Record<string, string> = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
+    const nuovoTipo = (d: DomB) => d.t === 'sequenza' || d.t === 'abbinamento' || d.t === 'risposta_aperta_rubrica';
+    function ordineIniziale(d: DomB): number[] {
+      if (d.t === 'mcq') return mescola(d.o!.map((_, k) => k));
+      const n = d.t === 'sequenza' ? (d.sequenzaOk || []).length : d.t === 'abbinamento' ? (d.coppieOk || []).length : 0;
+      let o = mescola(Array.from({ length: n }, (_, k) => k));
+      for (let t = 0; t < 5 && n > 1 && o.every((v, k) => v === k); t++) o = mescola(o);   // mai già in ordine
+      return o;
+    }
+    const leggiLista = (v: any): string[] => { try { const j = JSON.parse(String(v)); return Array.isArray(j) ? j : []; } catch (_) { return []; } };
+    function areaNuoviTipi(x: Voce, a: boolean): string {
+      const d = x.d;
+      if (d.t === 'sequenza') {
+        const seq = d.sequenzaOk || [], sel = x.sel || [];
+        if (a) { const sc = leggiLista(x.picked);
+          return '<ol class="qz-seq">' + sc.map((t, k) => '<li class="' + (t === seq[k] ? 'ok' : 'ko') + '">' + fmt(t) + (t === seq[k] ? '' : ' <span class="tenue piccolo">(al posto ' + (k + 1) + ' va «' + fmt(seq[k]) + '»)</span>') + '</li>').join('') + '</ol>'; }
+        return '<ol class="qz-seq">' + sel.map(i => '<li>' + fmt(seq[i]) + '</li>').join('') + '</ol>'
+          + '<div class="qz-opz">' + x.ord.filter(i => !sel.includes(i)).map(i => '<button type="button" class="qz-opz-b" data-seq="' + i + '"><span>' + fmt(seq[i]) + '</span></button>').join('') + '</div>'
+          + (sel.length ? '<div class="chips"><button type="button" class="chip" data-az="seqreset">↺ Ricomincia l\'ordine</button></div>' : '<p class="tenue piccolo">Tocca gli elementi nell\'ordine giusto.</p>');
+      }
+      if (d.t === 'abbinamento') {
+        const cp = d.coppieOk || [], sc = a ? leggiLista(x.picked) : [];
+        return '<form class="qz-abb" autocomplete="off">' + cp.map((c, k) => '<label class="qz-abb-r"><span>' + fmt(c[0]) + '</span>'
+          + (a ? '<span class="' + (sc[k] === c[1] ? 'ok' : 'ko') + '">' + fmt(sc[k] || '—') + (sc[k] === c[1] ? '' : ' → ' + fmt(c[1])) + '</span>'
+            : '<select data-abb="' + k + '"><option value="">Scegli…</option>' + x.ord.map(i => '<option value="' + esc(cp[i][1]) + '">' + esc(cp[i][1]) + '</option>').join('') + '</select>') + '</label>').join('')
+          + (a ? '' : '<button type="submit" class="btn">Verifica</button>') + '</form>';
+      }
+      return '<form class="qz-fill qz-rub" autocomplete="off"><textarea id="qz-ans" rows="5" placeholder="Scrivi la tua risposta con parole tue"' + (a ? ' disabled class="' + (x.ok ? 'ok' : 'ko') + '"' : '') + '>' + (a ? esc(x.picked) : '') + '</textarea>'
+        + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI.</p>') + '</form>';
+    }
     const nuovo = (idx: number[], rip: boolean) => {
-      P = idx.map(i => { const d = dati.domande[i]; return { d, ord: d.t === 'mcq' ? mescola(d.o!.map((_, k) => k)) : [], picked: null, ok: null, hid: [] }; });
+      P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [] }; });
       cur = 0; ripasso = rip; apertaX = false; finito = false; disegnaQ(); v.corpo.scrollTop = 0;
     };
     const fatta = (x: Voce) => x.picked !== null;
@@ -160,27 +195,30 @@ const QuizApp = (() => {
       let s2 = (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
         + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passi(d.e);
       if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o![x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
-      else if (!x.ok && !mc && ew[0]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
+      if (x.voto) s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
+      if (!x.ok && mc) { /* già sopra */ } else if (!x.ok && !mc && ew[0]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
       if (mc && ew.length && (x.ok || x.picked === null)) s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => '<p><b>«' + fmt(d.o![k + 1]) + '»</b> — ' + fmt(t) + '</p>').join('') + '</details>';
       return s2 + '</div>';
     }
     function riquadroAI(x: Voce): string {
+      const nessunaAI = Dominio.senzaAI();   // v0.52: modalità «100% senza AI» → solo la spiegazione breve locale (se c'è)
+      if (nessunaAI && !Locale.spiegazioneBreve(x.d.e)) return '';
       const a = x.ai, b = (l: string, n: string) => '<button type="button" class="chip' + (a && a.l === l ? ' on' : '') + '" data-ai="' + l + '">' + n + '</button>';
       let o = '';
       if (a) o = a.attesa ? '<p class="tenue">Genero la spiegazione…</p>' : a.errore ? '<p class="tenue">⚠️ ' + esc(a.errore) + '</p>'
         : '<div class="qz-ai-testo">' + esc(a.testo) + '</div><div class="qz-ai-piede"><span>' + esc(a.modello || '') + '</span><button type="button" class="chip" data-ai="' + a.l + '" data-forza="1">↻ Rigenera</button></div>';
-      return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + b('breve', 'Breve') + b('media', 'Media') + b('dettagliata', 'Dettagliata') + '</div>' + o + '</div>';
+      return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + b('breve', 'Breve') + (nessunaAI ? '' : b('media', 'Media') + b('dettagliata', 'Dettagliata')) + '</div>' + (nessunaAI ? o.replace(/<button[^>]*data-forza[^>]*>[^<]*<\/button>/, '') : o) + '</div>';
     }
     function disegnaQ(): void {
       if (finito) { risultato(); return; }
       const x = P[cur], d = x.d, a = fatta(x), mc = d.t === 'mcq';
       let s2 = '<div class="qz-metro" style="--n:' + P.length + '">' + P.map((y, k) => '<span class="' + (y.ok === null ? (k === cur ? 'ora' : '') : y.ok ? 'ok' : 'ko') + '"></span>').join('') + '</div>'
         + '<div class="qz-stat"><span>Domanda <b>' + (cur + 1) + '</b> di ' + P.length + (ripasso ? ' · ripasso errori' : '') + '</span><span>Punteggio <b>' + punti() + '</b></span></div>'
-        + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (mc ? 'Risposta multipla' : 'A completamento') + '</span></div>';
+        + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (NOMI_TIPO[d.t] || NOMI_TIPO.fill) + '</span></div>';
       for (const g of d.img || []) if (dati.immagini[g.i]) s2 += '<figure class="qz-fig"><button type="button" class="qz-zoom-b" data-zoom="' + esc(g.i) + '" aria-label="Ingrandisci immagine">' + svgSicuro(dati.immagini[g.i]) + '</button><figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
-      s2 += '<p class="qz-domanda">' + (mc ? fmt(d.q) : fmtQ(d.q)) + '</p><div class="chips">';
+      s2 += '<p class="qz-domanda">' + (d.t === 'fill' ? fmtQ(d.q) : fmt(d.q)) + '</p><div class="chips">';
       if (mc) { const rest = 2 - x.hid.length; s2 += '<button type="button" class="chip" data-az="aiuto"' + (a || rest <= 0 ? ' disabled' : '') + '>💡 Suggerimento (' + rest + ')</button>'; }
-      s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
+      s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen || nuovoTipo(d) ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
       if (apertaX) s2 += spiegFonti(d);
       if (mc) {
         s2 += '<div class="qz-opz">' + x.ord.map((oi, k) => {
@@ -189,23 +227,38 @@ const QuizApp = (() => {
           if (off && !(a && oi === 0)) c += ' escluso';
           return '<button type="button" class="' + c + '" data-k="' + k + '"' + (a || off ? ' disabled' : '') + '><span class="qz-lett">' + L[k] + '</span><span>' + fmt(d.o![oi]) + tag + '</span></button>';
         }).join('') + '</div>';
-      } else s2 += '<form class="qz-fill" autocomplete="off"><input id="qz-ans" type="text" enterkeyhint="done" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="La tua risposta"' + (a ? ' disabled class="' + (x.ok ? 'ok' : 'ko') + '" value="' + esc(x.picked) + '"' : '') + '>' + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Maiuscole e accenti non contano.</p>') + '</form>';
+      } else if (nuovoTipo(d)) s2 += areaNuoviTipi(x, a);
+      else s2 += '<form class="qz-fill" autocomplete="off"><input id="qz-ans" type="text" enterkeyhint="done" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="La tua risposta"' + (a ? ' disabled class="' + (x.ok ? 'ok' : 'ko') + '" value="' + esc(x.picked) + '"' : '') + '>' + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Maiuscole e accenti non contano.</p>') + '</form>';
       if (a) s2 += correzione(x) + riquadroAI(x);
       const ultima = cur === P.length - 1;
       s2 += '<div class="qz-nav"><button type="button" class="btn neutro" data-az="prec"' + (cur === 0 ? ' disabled' : '') + '>◀ Indietro</button><button type="button" class="btn' + (a ? '' : ' neutro') + '" data-az="avanti">' + (ultima ? 'Vedi il risultato' : a ? 'Avanti ▶' : 'Salta ▶') + '</button></div></section>';
       app.innerHTML = s2;
-      if (!a && !mc) { const i = app.querySelector('#qz-ans') as HTMLInputElement; if (i && matchMedia('(hover:hover)').matches) i.focus({ preventScroll: true }); }
+      if (!a && d.t === 'fill') { const i = app.querySelector('#qz-ans') as HTMLInputElement; if (i && matchMedia('(hover:hover)').matches) i.focus({ preventScroll: true }); }
     }
     function rispondi(val: number | string): void {
       const x = P[cur]; if (fatta(x)) return;
       if (typeof val === 'number') { x.picked = val; x.ok = x.ord[val] === 0; }
-      else { if (!normR(val)) { avviso('Scrivi una risposta.'); return; } x.picked = val.trim(); x.ok = giusta(val, x.d.a || []); }
+      else {
+        if (!normR(val)) { avviso('Scrivi una risposta.'); return; }
+        const d = x.d; x.picked = val.trim();
+        if (d.t === 'sequenza') { const sc = leggiLista(val); x.ok = sc.length === (d.sequenzaOk || []).length && sc.every((t, k) => t === d.sequenzaOk![k]); }
+        else if (d.t === 'abbinamento') { const sc = leggiLista(val); x.ok = (d.coppieOk || []).every((c, k) => sc[k] === c[1]); }
+        else if (d.t === 'risposta_aperta_rubrica') { const r = Locale.rubrica(val, d.rubricaPunti || []); x.voto = { coperti: r.coperti, mancanti: r.mancanti }; x.ok = r.punteggio >= 0.6; }
+        else x.ok = giusta(val, d.a || []);
+      }
       const annulla = registraStat(x);
       // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
       if (toastAnnulla) toastAnnulla.remove();
-      avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+      avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
       toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
-      if (!x.ok) { const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null; x.avv = Regole.avvisoRisposta(x.d, dk); }
+      if (!x.ok) { const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null; x.avv = Regole.avvisoRisposta(x.d, dk);
+        // v0.52 (BP2 §3): diagnostica locale secondo l'archetipo della materia (zero token)
+        if (x.d.t === 'mcq' || x.d.t === 'fill') {
+          const sc = typeof x.picked === 'number' ? x.d.o![x.ord[x.picked]] : String(x.picked || ''), gi = x.d.t === 'mcq' ? x.d.o![0] : (x.d.a || [x.d.show || ''])[0];
+          const dg = Locale.diagnosticaPerArchetipo(x.d.archetipo || Dominio.archetipoMateria(m), { scelta: sc, corretta: gi, domanda: x.d.q, opzioni: x.d.o });
+          if (dg && dg !== x.avv) x.avv = x.avv ? x.avv + ' · ' + dg : dg;
+        }
+      }
       disegnaQ();
       const w = app.querySelector('#qz-why'); if (w) w.scrollIntoView({ block: 'nearest' });
     }
@@ -213,7 +266,8 @@ const QuizApp = (() => {
       const x = P[cur], d = x.d, mc = d.t === 'mcq';
       const dd: DatiDomanda = { q: d.q, opts: mc ? x.ord.map(i => d.o![i]) : [], corretta: mc ? d.o![0] : (d.show || (d.a || [''])[0]),
         scelta: x.ok ? '' : mc ? (typeof x.picked === 'number' ? d.o![x.ord[x.picked]] : '') : String(x.picked || ''),
-        cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo };
+        cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo,
+        archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: MATERIE_BASE[m] ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
       const id = Spiega.idDi(dd, l), c = Stato.prendi<Spiegazione>(id);
       if (c && !c.deleted && !forza) { x.ai = { l, testo: c.testo, modello: c.modello + ' · salvata' }; disegnaQ(); return; }
       // v0.44 locale: la spiegazione breve si ricava dalla correzione passo-passo già scritta (zero token); «rigenera» usa l'AI
@@ -252,10 +306,16 @@ const QuizApp = (() => {
         v.corpo.appendChild(z); return;
       }
       if (b.dataset.k != null) { rispondi(parseInt(b.dataset.k, 10)); return; }
+      if (b.dataset.seq != null) {   // v0.52: sequenza, un tocco per elemento; completata → si verifica
+        const x = P[cur], seq = x.d.sequenzaOk || []; x.sel = (x.sel || []).concat(parseInt(b.dataset.seq, 10));
+        if (x.sel.length >= seq.length) rispondi(JSON.stringify(x.sel.map(i => seq[i]))); else disegnaQ();
+        return;
+      }
       if (b.dataset.ai) { chiediAI(b.dataset.ai, !!b.dataset.forza); return; }
       const az = b.dataset.az, x = P[cur];
       if (az === 'aiuto') { const lib = x.ord.map((oi, k) => oi !== 0 && !x.hid.includes(k) ? k : -1).filter(k => k >= 0); if (lib.length) x.hid.push(lib[Math.floor(Math.random() * lib.length)]); disegnaQ(); }
       else if (az === 'fonti') { apertaX = !apertaX; disegnaQ(); }
+      else if (az === 'seqreset') { x.sel = []; disegnaQ(); }
       else if (az === 'prec') { if (cur > 0) { cur--; apertaX = false; disegnaQ(); v.corpo.scrollTop = 0; } }
       else if (az === 'avanti') { if (cur < P.length - 1) { cur++; apertaX = false; disegnaQ(); v.corpo.scrollTop = 0; } else { const senza = P.filter(y => !fatta(y)).length; if (senza) chiedi('Vedere il risultato?', [{ testo: 'Vedi il risultato', valore: 'si' }, { testo: 'Torna al quiz', valore: 'no' }], senza + (senza === 1 ? ' domanda senza risposta: conta come errata.' : ' domande senza risposta: contano come errate.')).then(si => { if (si === 'si') { finito = true; disegnaQ(); } }); else { finito = true; disegnaQ(); } } }
       else if (az === 'errori') nuovo(P.map((y, k) => y.ok ? -1 : dati.domande.indexOf(y.d)).filter(k => k >= 0), true);
@@ -272,10 +332,15 @@ const QuizApp = (() => {
       else if (az === 'nuova') Editor.apri(null, s.id, nd => { if (nd) { dati.domande.push(nd); avviso('Domanda aggiunta: comparirà quando rifai il quiz.'); } });
       else if (az === 'ripristina') Editor.ripristina(s.id, () => avviso('Ripristinate: rifai il quiz per vederle.'));
     });
-    app.addEventListener('submit', ev => { ev.preventDefault(); const i = app.querySelector('#qz-ans') as HTMLInputElement; if (i) rispondi(i.value); });
+    app.addEventListener('submit', ev => {
+      ev.preventDefault();
+      const sel = Array.from(app.querySelectorAll('select[data-abb]')) as HTMLSelectElement[];
+      if (sel.length) { if (sel.some(x => !x.value)) { avviso('Completa tutti gli abbinamenti.'); return; } rispondi(JSON.stringify(sel.map(x => x.value))); return; }
+      const i = app.querySelector('#qz-ans') as HTMLInputElement | HTMLTextAreaElement; if (i) rispondi(i.value);
+    });
     const tasti = (e: KeyboardEvent) => {
       if (!document.body.contains(app)) { document.removeEventListener('keydown', tasti); return; }
-      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).tagName === 'INPUT' || finito) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement).tagName) || finito) return;
       const x = P[cur]; if (!x) return;
       if (x.d.t === 'mcq' && !fatta(x)) { let k = 'abcde'.indexOf(e.key.toLowerCase()); if (k < 0 && /^[1-5]$/.test(e.key)) k = +e.key - 1; if (k >= 0 && !x.hid.includes(k)) { rispondi(k); return; } }
       if (e.key === 'ArrowRight' || (e.key === 'Enter' && fatta(x))) (app.querySelector('[data-az=avanti]') as HTMLElement).click();

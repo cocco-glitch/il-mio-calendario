@@ -13,24 +13,29 @@
 //   «visione»   scrittura a mano, immagini  gemini → groq
 // v0.47 (BP1 §4.4–4.5): router con controllo preventivo (token stimati vs limite del modello), lettura delle
 // intestazioni x-ratelimit-*, pause dopo 429 / 5xx, chiave rifiutata (401/403) non più riprovata finché non
-// cambia, massimo 2 richieste in volo per fornitore. Fornitori facoltativi: Mistral, Cohere, OpenRouter, Requesty
+// cambia, massimo 2 richieste in volo per fornitore. Fornitori facoltativi: xkiro, Cohere, Requesty
 // (chiavi solo in 'imc-ai-keys').
 // v0.51 (BP1 §11): PROVIDER_FREE_QUOTAS con soglia di guardia all'85% e contatori locali a finestra mobile
 // ('imc-ai-uso'), perché via CORS le intestazioni x-ratelimit-* spesso non arrivano. Gemini parte da flash-lite.
-// Opzioni in 'imc-ai-opzioni': strictPrivacy (salta Mistral), openrouterHasCredits10Usd.
+// Opzioni in 'imc-ai-opzioni': strictPrivacy (salta i fornitori con trainsOnFreeTier), xkiroTelegramVerified.
+// v0.53: tolti Mistral e OpenRouter; nuovo fornitore nativo xkiro (OpenAI Chat Completions, Bearer), subito dopo
+// Gemini e Groq in ogni catena. Chiavi/opzioni/contatori salvati che li citano ancora vengono ignorati e ripuliti.
 // =====================================================================
 
 const IA = (() => {
-  type Prov = 'groq' | 'gemini' | 'mistral' | 'cohere' | 'openrouter' | 'requesty';
+  type Prov = 'groq' | 'gemini' | 'xkiro' | 'cohere' | 'requesty';
   type Ruolo = 'genera' | 'revisiona' | 'veloce' | 'visione' | 'lungo';
   type Msg = { role: string; content: any };
   type Fornitore = { nome: string; prov: Prov; modello: string; gem: boolean };
-  const PROVS: Prov[] = ['groq', 'gemini', 'mistral', 'cohere', 'openrouter', 'requesty'];
-  const ALTRI: Prov[] = ['mistral', 'cohere', 'openrouter', 'requesty'];
-  const NOMI: Record<Prov, string> = { groq: 'Groq', gemini: 'Gemini', mistral: 'Mistral', cohere: 'Cohere', openrouter: 'OpenRouter', requesty: 'Requesty' };
+  const PROVS: Prov[] = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty'];
+  const ALTRI: Prov[] = ['xkiro', 'cohere', 'requesty'];
+  const NOMI: Record<Prov, string> = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty' };
+  /** Fornitori tolti (v0.53): le loro chiavi, opzioni e contatori salvati si ignorano e si ripuliscono in silenzio. */
+  const RITIRATI = ['mistral', 'openrouter'];
+  const eProv = (p: string): p is Prov => (PROVS as string[]).includes(p);
   const BASE: Record<Prov, string> = {
-    groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', mistral: 'https://api.mistral.ai/v1',
-    cohere: 'https://api.cohere.ai/compatibility/v1', openrouter: 'https://openrouter.ai/api/v1', requesty: 'https://router.requesty.ai/v1' };
+    groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', xkiro: 'https://api.xkiro.com/v1',
+    cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1' };
 
   // ---- Chiavi (BP1 §4.1) ----
   const KK = 'imc-ai-keys', LEG: Partial<Record<Prov, string>> = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
@@ -44,6 +49,7 @@ const IA = (() => {
   function allinea(): Partial<Record<Prov, string>> {
     const a = archivio(), ch: Partial<Record<Prov, string>> = { ...(a ? a.chiavi : {}) };
     let cambiato = !a;
+    for (const p of Object.keys(ch)) if (!eProv(p)) { delete (ch as any)[p]; cambiato = true; }   // v0.53: fornitori ritirati
     for (const p of ['groq', 'gemini'] as Prov[]) {
       const v = ls(LEG[p]!) || '';
       if (v !== (ch[p] || '')) { if (v) ch[p] = v; else delete ch[p]; cambiato = true; }
@@ -53,6 +59,7 @@ const IA = (() => {
   }
   const chiave = (p: Prov): string => allinea()[p] || '';
   function impostaChiave(p: Prov, v: string): void {
+    if (!eProv(p)) return;   // v0.53: fornitore ritirato (es. chiave Mistral recuperata da Drive) → ignorato
     v = String(v || '').replace(/\s+/g, '');
     const leg = LEG[p];
     if (leg) lsScrivi(leg, v);
@@ -63,7 +70,7 @@ const IA = (() => {
   }
   const tutteChiavi = (): Partial<Record<Prov, string>> => ({ ...allinea() });
   /** Avviso (non blocco) sul formato della chiave. */
-  const FORMATO: Partial<Record<Prov, RegExp>> = { groq: /^gsk_/, gemini: /^(AIza|AQ\.)/, openrouter: /^sk-or-/ };
+  const FORMATO: Partial<Record<Prov, RegExp>> = { groq: /^gsk_/, gemini: /^(AIza|AQ\.)/ };
   const formatoOk = (p: Prov, v: string) => { const re = FORMATO[p]; return !v || !re || re.test(v); };
 
   // ---- Discovery per pattern (BP1 §4.3) ----
@@ -71,27 +78,31 @@ const IA = (() => {
     groq: { genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
     // v0.51: flash-lite di base (500 richieste/giorno gratis contro le 20 di flash); flash resta come riserva
     gemini: { genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
-    mistral: { genera: [/mistral-(large|medium)/, /mistral-small/], revisiona: [/mistral-(large|medium)/], veloce: [/mistral-small/, /ministral/], lungo: [/mistral-(large|medium)/] },
+    // xkiro: solo ID con prefisso vendor («vendor/modello»), vedi `scegli`
+    xkiro: { genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
     cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
-    openrouter: { genera: [/:free$/], veloce: [/:free$/] },
     requesty: { genera: [/gemini.*flash(?!-lite)/, /gpt-.*mini/, /llama/], veloce: [/flash-lite|mini|small/] },
   };
+  /** Modelli gratuiti consigliati su xkiro (ID sempre con prefisso vendor obbligatorio). */
+  const XKIRO_FREE = ['deepseek/deepseek-v4-pro-0813', 'moonshotai/kimi-k3-agent', 'nvidia/nemotron-3.5-super-vl'];
   /** Usati solo se /models non risponde e non c'è nulla in memoria. */
   const RISERVA: Record<Prov, Partial<Record<Ruolo, string[]>>> = {
     groq: { genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
     gemini: { genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
-    mistral: { genera: ['mistral-large-latest', 'mistral-small-latest'], revisiona: ['mistral-large-latest'], veloce: ['mistral-small-latest'], lungo: ['mistral-large-latest'] },
-    cohere: {}, openrouter: {}, requesty: {},
+    xkiro: { genera: [...XKIRO_FREE], revisiona: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], veloce: ['nvidia/nemotron-3.5-super-vl', 'deepseek/deepseek-v4-pro-0813'],
+      lungo: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], visione: ['nvidia/nemotron-3.5-super-vl'] },
+    cohere: {}, requesty: {},
   };
   const CATENA: Record<Ruolo, Prov[]> = {
-    veloce: ['groq', 'gemini', 'mistral', 'openrouter', 'requesty'], genera: ['gemini', 'groq', 'mistral', 'cohere', 'openrouter', 'requesty'],
-    revisiona: ['groq', 'gemini', 'mistral', 'cohere'], lungo: ['gemini', 'mistral'], visione: ['gemini', 'groq'] };
+    veloce: ['groq', 'gemini', 'xkiro', 'requesty'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty'],
+    revisiona: ['groq', 'gemini', 'xkiro', 'cohere'], lungo: ['gemini', 'xkiro'], visione: ['gemini', 'groq', 'xkiro'] };
   const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound|moderation|ocr|rerank/i;
   const versione = (id: string) => { const m = /(\d+(?:\.\d+)?)/.exec(id.replace(/^.*\//, '')); return m ? parseFloat(m[1]) : 0; };
   const instabile = (id: string) => /preview|exp/i.test(id);
   /** Sceglie fino a 3 modelli per il ruolo, nell'ordine dei pattern; a parità la versione più alta. */
   function scegli(p: Prov, r: Ruolo, lista: string[] | null): string[] {
     const pat = PATTERN[p][r]; if (!pat) return [];
+    if (p === 'xkiro' && lista) lista = lista.filter(m => m.includes('/'));   // prefisso vendor obbligatorio
     if (!lista || !lista.length) return (RISERVA[p][r] || []).slice();
     const out: string[] = [];
     for (const re of pat) {
@@ -131,9 +142,17 @@ const IA = (() => {
     }
     return r;
   }
-  async function catena(r: Ruolo, evita?: string): Promise<Fornitore[]> {
+  /** v0.52 (BP2 §2): con un archetipo disciplinare i fornitori del ruolo si riordinano secondo la sua catena preferita
+   *  (solo quelli che il gateway conosce; gli altri restano dopo, nell'ordine di sempre). Senza archetipo nulla cambia. */
+  function ordinePerArchetipo(lista: Prov[], archetipo?: string): Prov[] {
+    const pref = archetipo ? Dominio.catenaPreferita(archetipo) : [];
+    if (!pref.length) return lista;
+    const pos = (p: Prov) => { const i = pref.indexOf(p); return i < 0 ? pref.length : i; };
+    return lista.map((p, i) => ({ p, i })).sort((x, y) => pos(x.p) - pos(y.p) || x.i - y.i).map(x => x.p);
+  }
+  async function catena(r: Ruolo, evita?: string, archetipo?: string): Promise<Fornitore[]> {
     const priv = !!opzioni().strictPrivacy;   // v0.51: con Strict Privacy si saltano i fornitori che addestrano sui dati gratuiti
-    const provs = CATENA[r].filter(p => chiave(p) && !(priv && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier));
+    const provs = ordinePerArchetipo(CATENA[r], archetipo).filter(p => chiave(p) && !(priv && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier));
     const liste = await Promise.all(provs.map(p => disponibili(p)));
     const out: Fornitore[] = [];
     provs.forEach((p, i) => { for (const m of scegli(p, r, liste[i])) if (m !== evita) out.push({ nome: NOMI[p] + ' ' + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' }); });
@@ -184,31 +203,36 @@ const IA = (() => {
   // ---- Router (BP1 §4.4–4.5, v0.47) ----
   /** Limiti di partenza (token/minuto e contesto); `tpm` si aggiorna dalle intestazioni x-ratelimit-limit-tokens e dopo un 413. */
   const LIMITI: Record<Prov, { tpm: number; ctx: number }> = {
-    groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, mistral: { tpm: 50000, ctx: 32000 },
-    cohere: { tpm: 20000, ctx: 128000 }, openrouter: { tpm: 20000, ctx: 32000 }, requesty: { tpm: 20000, ctx: 32000 } };
+    groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, xkiro: { tpm: 100000, ctx: 128000 },
+    cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 } };
   /** Token di risposta attesi per ruolo: contano solo nel budget (non si inviano: i token di ragionamento li consumerebbero). */
   const USCITA: Record<Ruolo, number> = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000 };
 
   // ---- Quote dei piani gratuiti e contatori locali (BP1 §11, v0.51) ----
-  type Quota = { rpm: number; rpd: number; tpm?: number };
-  type QuotaProv = { base: Quota; perModello?: boolean; modelli?: { re: RegExp; q: Quota }[]; trainsOnFreeTier?: boolean; conCrediti?: Quota };
+  /** `rpd` assente = nessun tetto di richieste al giorno; `tpd` = token al giorno. */
+  type Quota = { rpm: number; rpd?: number; tpm?: number; tpd?: number };
+  /** `potenziata`: quota più alta se l'utente ha attivato l'opzione indicata (es. xkiro verificato con Telegram). */
+  type QuotaProv = { base: Quota; perModello?: boolean; modelli?: { re: RegExp; q: Quota }[]; trainsOnFreeTier?: boolean; potenziata?: { opz: keyof OpzIA; q: Quota } };
   /** Limiti gratuiti noti. `perModello`: la quota è di ogni modello (Gemini, Groq), altrimenti dell'intero account.
    *  Il router si ferma a `SOGLIA` (85%) e passa al fornitore seguente; il resto si usa solo se non c'è alternativa. */
   const PROVIDER_FREE_QUOTAS: Record<Prov, QuotaProv> = {
     gemini: { perModello: true, base: { rpm: 5, rpd: 20, tpm: 250000 }, modelli: [
       { re: /flash-lite/, q: { rpm: 12, rpd: 500, tpm: 250000 } }, { re: /flash/, q: { rpm: 5, rpd: 20, tpm: 250000 } }] },
-    mistral: { base: { rpm: 30, rpd: 2000 }, trainsOnFreeTier: true },
+    xkiro: { base: { rpm: 20, tpd: 500000 }, potenziata: { opz: 'xkiroTelegramVerified', q: { rpm: 20, tpd: 1000000 } } },
     cohere: { base: { rpm: 20, rpd: 33 } },
-    openrouter: { base: { rpm: 20, rpd: 50 }, conCrediti: { rpm: 20, rpd: 1000 } },
     requesty: { base: { rpm: 20, rpd: 200 } },
     groq: { perModello: true, base: { rpm: 30, rpd: 1000 }, modelli: [
       { re: /8b-instant/, q: { rpm: 30, rpd: 14400 } }, { re: /70b-versatile/, q: { rpm: 30, rpd: 1000 } }, { re: /whisper/, q: { rpm: 20, rpd: 2000 } }] },
   };
   const SOGLIA = 0.85;
-  /** Opzioni AI del dispositivo: Strict Privacy (salta i fornitori con `trainsOnFreeTier`) e crediti OpenRouter ≥ 10 $. */
-  type OpzIA = { strictPrivacy?: boolean; openrouterHasCredits10Usd?: boolean };
+  /** Opzioni AI del dispositivo: Strict Privacy (salta i fornitori con `trainsOnFreeTier`) e account xkiro verificato con Telegram. */
+  type OpzIA = { strictPrivacy?: boolean; xkiroTelegramVerified?: boolean };
+  const OPZ_NOTE: (keyof OpzIA)[] = ['strictPrivacy', 'xkiroTelegramVerified'];
   const KO = 'imc-ai-opzioni', KU = 'imc-ai-uso';
-  function opzioni(): OpzIA { try { const j = JSON.parse(ls(KO) || '{}'); return j && typeof j === 'object' ? j : {}; } catch (_) { return {}; } }
+  /** Solo le opzioni note (v0.53: es. `openrouterHasCredits10Usd` salvata da versioni vecchie si ignora). */
+  function opzioni(): OpzIA {
+    try { const j = JSON.parse(ls(KO) || '{}'), o: OpzIA = {}; if (j && typeof j === 'object') for (const n of OPZ_NOTE) if (j[n] === true) o[n] = true; return o; } catch (_) { return {}; }
+  }
   function impostaOpzione(n: keyof OpzIA, v: boolean): void {
     const o = opzioni(); if (v) o[n] = true; else delete o[n];
     lsScrivi(KO, Object.keys(o).length ? JSON.stringify(o) : '');
@@ -216,30 +240,30 @@ const IA = (() => {
   /** Quota e chiave dei contatori per «fornitore:modello» (o solo «fornitore» se la quota è dell'account). */
   function quota(p: Prov, m: string): { id: string; q: Quota } {
     const Q = PROVIDER_FREE_QUOTAS[p], x = Q.modelli && Q.modelli.find(e => e.re.test(m));
-    const q = p === 'openrouter' && Q.conCrediti && opzioni().openrouterHasCredits10Usd ? Q.conCrediti : x ? x.q : Q.base;
+    const q = Q.potenziata && opzioni()[Q.potenziata.opz] ? Q.potenziata.q : x ? x.q : Q.base;
     return { id: Q.perModello ? p + ':' + m : p, q };
   }
   // Contatori a finestra mobile, salvati in localStorage['imc-ai-uso'] = { id: { g: giorno, n: richieste oggi, w: [[ora, token]…] ultimi 60 s, q?: pausa fino a } }
-  type Uso = { g: string; n: number; w: [number, number][]; q?: number };
+  type Uso = { g: string; n: number; w: [number, number][]; q?: number; t?: number };   // t = token di oggi (per `tpd`)
   const giorno = (t: number) => { const d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
   const mezzanotte = () => { const d = new Date(Date.now()); d.setHours(24, 0, 0, 0); return d.getTime(); };
   function tuttoUso(): Record<string, Uso> { try { const j = JSON.parse(ls(KU) || '{}'); return j && typeof j === 'object' ? j : {}; } catch (_) { return {}; } }
-  function contatori(id: string): { rpm60s: number; tpm60s: number; rpdToday: number; finoA: number } {
-    const ora = Date.now(), u = tuttoUso()[id], w = u && Array.isArray(u.w) ? u.w.filter(x => ora - x[0] < 6e4) : [];
-    return { rpm60s: w.length, tpm60s: w.reduce((s, x) => s + (x[1] || 0), 0), rpdToday: u && u.g === giorno(ora) ? u.n || 0 : 0, finoA: u && u.q && u.q > ora ? u.q : 0 };
+  function contatori(id: string): { rpm60s: number; tpm60s: number; rpdToday: number; tpdToday: number; finoA: number } {
+    const ora = Date.now(), u = tuttoUso()[id], w = u && Array.isArray(u.w) ? u.w.filter(x => ora - x[0] < 6e4) : [], oggi = !!u && u.g === giorno(ora);
+    return { rpm60s: w.length, tpm60s: w.reduce((s, x) => s + (x[1] || 0), 0), rpdToday: oggi ? u.n || 0 : 0, tpdToday: oggi ? u.t || 0 : 0, finoA: u && u.q && u.q > ora ? u.q : 0 };
   }
   function aggiornaUso(id: string, f: (u: Uso) => void): void {
     const tutto = tuttoUso(), ora = Date.now(), g = giorno(ora), v = tutto[id];
     const u: Uso = v && v.g === g ? { ...v, w: (Array.isArray(v.w) ? v.w : []).filter(x => ora - x[0] < 6e4) } : { g, n: 0, w: [] };
     if (v && v.q && v.q > ora) u.q = v.q; else delete u.q;
     f(u); tutto[id] = u;
-    for (const k of Object.keys(tutto)) { const x = tutto[k]; if (x.g !== g && !(x.q && x.q > ora)) delete tutto[k]; }   // via i giorni passati
+    for (const k of Object.keys(tutto)) { const x = tutto[k]; if ((x.g !== g && !(x.q && x.q > ora)) || RITIRATI.includes(k.split(':')[0])) delete tutto[k]; }   // via i giorni passati e i fornitori ritirati
     lsScrivi(KU, JSON.stringify(tutto));
   }
   /** Vero se la prossima richiesta porterebbe un contatore oltre `lim` (0,85 = soglia di guardia; 1 = limite vero). */
   function quotaPiena(p: Prov, m: string, tok: number, lim = SOGLIA): boolean {
     const { id, q } = quota(p, m), c = contatori(id);
-    return c.rpm60s + 1 > q.rpm * lim || c.rpdToday + 1 > q.rpd * lim || (!!q.tpm && c.tpm60s + tok > q.tpm * lim);
+    return c.rpm60s + 1 > q.rpm * lim || (!!q.rpd && c.rpdToday + 1 > q.rpd * lim) || (!!q.tpm && c.tpm60s + tok > q.tpm * lim) || (!!q.tpd && c.tpdToday + tok > q.tpd * lim);
   }
   /** Intestazioni di limite lette solo se esistono (`get(...) !== null`): via CORS molti fornitori non le espongono
    *  e allora valgono i contatori locali. Durate in millisecondi. */
@@ -300,14 +324,15 @@ const IA = (() => {
     if (ri.limitTokens && ri.limitTokens > 0) s.tpm = ri.limitTokens;
     if (ri.remainingTokens !== undefined) s.rest = { tok: ri.remainingTokens, finoA: ora + (ri.resetTokens || 6e4) };
     if (ri.remainingRequests === 0) s.finoA = Math.max(s.finoA, ora + Math.min(ri.resetRequests || 6e4, 6 * 36e5));
-    if (res.status !== 429) aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); });   // il 429 non consuma quota
+    if (res.status !== 429) aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); u.t = (u.t || 0) + tok; });   // il 429 non consuma quota
     if (res.ok) { s.k = 0; return; }
     if (res.status === 429) {
       // retry-after → retryDelay nel corpo (Gemini) → reset delle intestazioni → 65 s, o fino a mezzanotte se la quota del giorno è quasi finita
       let att = ri.retryAfter || 0;
       if (!att) att = ritardoCorpo(await res.clone().json().catch(() => null));
       if (!att) att = Math.max(ri.resetTokens || 0, ri.resetRequests || 0);
-      const fino = att ? ora + Math.min(att, 6 * 36e5) : contatori(id).rpdToday < q.rpd * SOGLIA ? ora + 65e3 : mezzanotte();
+      const cg = contatori(id), giornoPieno = (!!q.rpd && cg.rpdToday >= q.rpd * SOGLIA) || (!!q.tpd && cg.tpdToday >= q.tpd * SOGLIA);
+      const fino = att ? ora + Math.min(att, 6 * 36e5) : giornoPieno ? mezzanotte() : ora + 65e3;
       s.finoA = fino; s.k++;
       aggiornaUso(id, u => { u.q = Math.max(u.q || 0, fino); });
       return;
@@ -358,7 +383,7 @@ const IA = (() => {
   const errore = (j: any, stato: number) => { const e: any = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + stato); e.stato = stato; return e; };
   const contenuto = (j: any) => String(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '');
   /** `tronca: false` = non accorciare il testo per farlo stare in un modello piccolo (salta e basta). */
-  type Opz = { temp?: number; evita?: string; maxOut?: number; tronca?: boolean };
+  type Opz = { temp?: number; evita?: string; maxOut?: number; tronca?: boolean; archetipo?: string };   // v0.52: archetipo → ordine fornitori
   /** Un tentativo con un modello (più l'eventuale riprova senza modalità JSON / per JSON illeggibile). */
   async function tenta(f: Fornitore, m2: Msg[], o: Opz, comeJson: boolean, tok: number): Promise<{ testo: string; j?: any; prov: Prov; modello: string }> {
     const k = chiave(f.prov);
@@ -383,7 +408,7 @@ const IA = (() => {
    *  per i modelli più piccoli. Salta i modelli in pausa o con chiave rifiutata. */
   async function invia(msgs: Msg[], r: Ruolo, o: Opz, comeJson: boolean): Promise<{ testo: string; j?: any; prov: Prov; modello: string }> {
     await Spiega.pronta();
-    const forn = await catena(r, o.evita); if (!forn.length) throw new Error('Manca la chiave AI gratuita: inseriscila in Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
+    const forn = await catena(r, o.evita, o.archetipo); if (!forn.length) throw new Error('Manca la chiave AI gratuita: inseriscila in Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
     const out = o.maxOut || USCITA[r], tok = stimaTok(msgs);
     const errori: string[] = [], grandi: Fornitore[] = [], quasiPieni: Fornitore[] = [], saltati: string[] = []; let ultimo: any = null, solo401 = true, provati = 0;
     const prova = async (f: Fornitore, m2: Msg[], t: number) => {
@@ -451,7 +476,7 @@ const IA = (() => {
   }
   /** Altri fornitori facoltativi + stato di tutti i fornitori (Altro → Spiegazioni AI). */
   function campoAltri(): HTMLElement {
-    const DOVE: Record<string, string> = { mistral: 'console.mistral.ai (piano gratuito)', cohere: 'dashboard.cohere.com (chiave di prova)', openrouter: 'openrouter.ai (solo modelli «:free»)', requesty: 'requesty.ai' };
+    const DOVE: Record<string, string> = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai' };
     const elenco = h('div.tenue.piccolo', null);
     const aggiorna = () => {
       const st = stato(); elenco.textContent = '';
@@ -478,13 +503,24 @@ const IA = (() => {
     return h('div.gruppo', null,
       h('details', null, h('summary', null, 'Altri fornitori AI (facoltativi)'),
         h('div.tenue.piccolo', null, 'Usati solo se Groq e Gemini sono in pausa o mancano. Chiavi salvate solo su questo dispositivo.'), ...righe,
-        spunta('strictPrivacy', 'Strict Privacy: non usare fornitori che addestrano i modelli sui dati del piano gratuito (Mistral)'),
-        spunta('openrouterHasCredits10Usd', 'Ho almeno 10 $ di crediti su OpenRouter (1000 richieste al giorno invece di 50)')),
+        PROVS.some(p => PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier) ? spunta('strictPrivacy', 'Strict Privacy: non usare fornitori che addestrano i modelli sui dati del piano gratuito') : null,
+        spunta('xkiroTelegramVerified', 'Account xkiro verificato con Telegram (1.000.000 token al giorno invece di 500.000)')),
       h('div.piccolo', null, 'Stato dei fornitori'), elenco,
       h('div.bottoni', null, h('button.btn.neutro', { onclick: aggiorna }, 'Aggiorna stato')));
   }
-  return { chiedi, testo, json: (msgs: Msg[], r: Ruolo, o?: Opz) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, scegli, accorcia, parseJsonSicuro,
-    chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
+  /** v0.53: pulizia silenziosa una tantum dei dati dei fornitori ritirati (chiavi, opzioni, contatori, elenchi modelli). */
+  (function ripulisci(): void {
+    try {
+      allinea();
+      const j = JSON.parse(ls(KO) || 'null');
+      if (j && typeof j === 'object' && Object.keys(j).some(n => !(OPZ_NOTE as string[]).includes(n))) { const o = opzioni(); lsScrivi(KO, Object.keys(o).length ? JSON.stringify(o) : ''); }
+      const u = tuttoUso(); if (Object.keys(u).some(k => RITIRATI.includes(k.split(':')[0]))) { for (const k of Object.keys(u)) if (RITIRATI.includes(k.split(':')[0])) delete u[k]; lsScrivi(KU, Object.keys(u).length ? JSON.stringify(u) : ''); }
+      const via: string[] = []; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i) || ''; if (RITIRATI.some(r => k.startsWith('imc-modelli-' + r + ':'))) via.push(k); }
+      via.forEach(k => localStorage.removeItem(k));
+    } catch (_) { /* localStorage non disponibile: nulla da pulire */ }
+  })();
+  return { chiedi, testo, json: (msgs: Msg[], r: Ruolo, o?: Opz) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro,
+    chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
     _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, get RM() { return RM; } },
     get gemini() { return !!chiave('gemini'); } };
 })();

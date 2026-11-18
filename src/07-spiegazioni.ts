@@ -12,7 +12,7 @@ interface Spiegazione extends Rec {
   type: 'spiegazione';
   q: string; giusta: string; livello: string; testo: string; modello: string; quiz?: string;
 }
-interface DatiDomanda { q: string; opts: string[]; corretta: string; scelta: string; cit: string; passi: string; titolo: string; }
+interface DatiDomanda { q: string; opts: string[]; corretta: string; scelta: string; cit: string; passi: string; titolo: string; archetipo?: string; nomeMateria?: string; }   // v0.52: archetipo + nome materia (corsi propri)
 
 const Spiega = (() => {
   // v0.46: chiavi e chiamate passano da IA (gateway unico); qui resta solo la logica delle spiegazioni.
@@ -64,7 +64,8 @@ const Spiega = (() => {
   }
 
   async function chiama(d: DatiDomanda, l: string): Promise<{ testo: string; modello: string }> {
-    const sys = 'Sei un tutor di ' + materia(d.titolo) + ' per il semestre filtro di Medicina. Rispondi in italiano corretto e semplice, rivolgendoti allo studente con il tu. '
+    // v0.52 (BP2): prompt per profilo/archetipo; per il proprietario (Medicina) il testo resta identico a prima
+    const sys = Dominio.promptTutor(d.nomeMateria || materia(d.titolo), d.archetipo)
       + 'Basati sul testo di riferimento del corso e su conoscenze certe; non inventare dati, numeri o citazioni. Se il testo di riferimento non basta, dillo. '
       + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.' + MemoriaIA.linee('spiegazioni', 4);
     const u = 'Quiz: ' + d.titolo + '\nDomanda: ' + d.q
@@ -74,7 +75,7 @@ const Spiega = (() => {
       + (d.cit ? '\nTesto di riferimento (dal corso): ' + d.cit : '')
       + (d.passi ? '\nCorrezione già mostrata: ' + d.passi : '')
       + '\n\nSpiega perché la risposta corretta è giusta ' + LIV[l] + '.';
-    const r = await IA.testo([{ role: 'system', content: sys }, { role: 'user', content: u }], 'genera', { temp: 0.3 });
+    const r = await IA.testo([{ role: 'system', content: sys }, { role: 'user', content: u }], 'genera', { temp: 0.3, archetipo: d.archetipo });
     return { testo: r.testo.replace(/\*\*/g, '').replace(/^#+\s*/gm, ''), modello: r.modello };
   }
 

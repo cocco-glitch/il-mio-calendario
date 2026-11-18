@@ -1,6 +1,6 @@
 # Test v0.51: quote gratuite (PROVIDER_FREE_QUOTAS, guardia 85%), contatori locali a finestra mobile,
 # parseRateLimitInfo senza intestazioni (CORS), 429 con retryDelay Gemini / 65 s / mezzanotte, Strict Privacy,
-# crediti OpenRouter, Requesty 404 → fallback immediato.
+# xkiro (20 rpm, 500k token/giorno, 1M con Telegram), pulizia dati Mistral/OpenRouter, Requesty 404 → fallback immediato.
 import os, http.server, threading, functools
 from playwright.sync_api import sync_playwright
 QUI = os.path.dirname(os.path.abspath(__file__))
@@ -43,17 +43,20 @@ with sync_playwright() as p:
 
     # --- tabella delle quote ---
     q = E("""() => { const Q = IA.PROVIDER_FREE_QUOTAS, f = (p, m) => IA._r.quota(p, m).q;
-      return { fl: f('gemini', 'gemini-3.1-flash-lite'), fx: f('gemini', 'gemini-3.8-flash'), mi: Q.mistral, co: f('cohere', 'x'), or: f('openrouter', 'x:free'),
-        rq: f('requesty', 'x'), g8: f('groq', 'llama-3.1-8b-instant'), g70: f('groq', 'llama-3.3-70b-versatile'),
-        idG: IA._r.quota('gemini', 'gemini-3.8-flash').id, idM: IA._r.quota('mistral', 'mistral-small-latest').id }; }""")
+      return { fl: f('gemini', 'gemini-3.1-flash-lite'), fx: f('gemini', 'gemini-3.8-flash'), xk: f('xkiro', 'deepseek/deepseek-v4-pro-0813'), co: f('cohere', 'x'),
+        rq: f('requesty', 'x'), g8: f('groq', 'llama-3.1-8b-instant'), g70: f('groq', 'llama-3.3-70b-versatile'), via: Object.keys(Q).filter(k => /mistral|openrouter/.test(k)),
+        idG: IA._r.quota('gemini', 'gemini-3.8-flash').id, idX: IA._r.quota('xkiro', 'moonshotai/kimi-k3-agent').id }; }""")
     ok(q['fl'] == {'rpm': 12, 'rpd': 500, 'tpm': 250000} and q['fx'] == {'rpm': 5, 'rpd': 20, 'tpm': 250000}, 'gemini flash-lite 12/250k/500, flash 5/250k/20')
-    ok(q['mi']['base'] == {'rpm': 30, 'rpd': 2000} and q['mi']['trainsOnFreeTier'] is True, 'mistral 30/2000, trainsOnFreeTier')
-    ok(q['co'] == {'rpm': 20, 'rpd': 33} and q['or'] == {'rpm': 20, 'rpd': 50} and q['rq'] == {'rpm': 20, 'rpd': 200}, 'cohere 20/33, openrouter 20/50, requesty 20/200')
+    ok(q['xk'] == {'rpm': 20, 'tpd': 500000}, 'xkiro 20 rpm, 500k token/giorno %s' % q['xk'])
+    ok(q['co'] == {'rpm': 20, 'rpd': 33} and q['rq'] == {'rpm': 20, 'rpd': 200}, 'cohere 20/33, requesty 20/200')
+    ok(q['via'] == [], 'Mistral e OpenRouter tolti dalle quote')
     ok(q['g8'] == {'rpm': 30, 'rpd': 14400} and q['g70'] == {'rpm': 30, 'rpd': 1000}, 'groq 8b-instant 30/14400, 70b-versatile 30/1000')
-    ok(q['idG'] == 'gemini:gemini-3.8-flash' and q['idM'] == 'mistral', 'contatori per modello (Gemini/Groq) o per account (altri)')
-    r = E("""() => { IA.impostaOpzione('openrouterHasCredits10Usd', true); const a = IA._r.quota('openrouter', 'x').q.rpd;
-      IA.impostaOpzione('openrouterHasCredits10Usd', false); return [a, IA._r.quota('openrouter', 'x').q.rpd, localStorage.getItem('imc-ai-opzioni')]; }""")
-    ok(r == [1000, 50, None], 'flag openrouterHasCredits10Usd → 1000 al giorno %s' % r)
+    ok(q['idG'] == 'gemini:gemini-3.8-flash' and q['idX'] == 'xkiro', 'contatori per modello (Gemini/Groq) o per account (altri)')
+    r = E("""() => { IA.impostaOpzione('xkiroTelegramVerified', true); const a = IA._r.quota('xkiro', 'x').q.tpd;
+      IA.impostaOpzione('xkiroTelegramVerified', false); return [a, IA._r.quota('xkiro', 'x').q.tpd, localStorage.getItem('imc-ai-opzioni')]; }""")
+    ok(r == [1000000, 500000, None], 'flag xkiroTelegramVerified → 1.000.000 token al giorno %s' % r)
+    r = E("() => [IA.PROVS, IA._r.CATENA ? IA._r.CATENA.genera : null]")
+    ok(r[0].index('xkiro') == r[0].index('gemini') + 1 and r[0].index('groq') < r[0].index('xkiro'), 'xkiro subito dopo Gemini e Groq %s' % r)
 
     # --- Gemini di base su flash-lite; contatori rpm60s / rpdToday / tpm60s salvati ---
     r = E("""async (G) => { prepara(G); const a = await chiedi('ciao'); const c = IA._r.contatori('gemini:gemini-3.1-flash-lite');
@@ -101,13 +104,28 @@ with sync_playwright() as p:
     ok(r['mezz'], '429 con quota del giorno ≥ 85% → quarantena fino a mezzanotte')
     ok(r['salta'], 'modello in quarantena non richiamato')
 
-    # --- Strict Privacy: Mistral saltato ---
-    r = E("""async () => { prepara({ mistral: 'abcMistral', cohere: 'coKey' }); const a = await chiedi('ciao');
-      IA.impostaOpzione('strictPrivacy', true); const b = await chiedi('ciao'); const st = IA.stato().mistral; const t = IA.campoAltri().textContent;
-      IA.impostaOpzione('strictPrivacy', false); return { a, b, st, t }; }""")
-    ok(r['a'] == 'ok mistral-large-latest', 'senza Strict Privacy risponde Mistral')
-    ok(r['b'].startswith('ok ') and 'mistral' not in r['b'] and r['st']['motivo'] == 'privacy', 'Strict Privacy: Mistral saltato (%s, %s)' % (r['b'], r['st']))
-    ok('Strict Privacy' in r['t'] and '10 $' in r['t'] and 'escluso (Strict Privacy)' in r['t'], 'impostazioni: due spunte e stato')
+    # --- xkiro: guardia 85% sui token del giorno; con Telegram il tetto sale a 1M ---
+    r = E("""async () => { const g = (d => d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate())(new Date());
+      prepara({ xkiro: 'xkKey', cohere: 'coKey' }); const a = await chiedi('ciao'); const t1 = (uso().xkiro || {}).t || 0;
+      localStorage.setItem('imc-ai-uso', JSON.stringify({ xkiro: { g, n: 5, w: [], t: 430000 } }));
+      const piena = IA._r.quotaPiena('xkiro', 'x', 0, 0.85); const b = await chiedi('ciao');
+      IA.impostaOpzione('xkiroTelegramVerified', true); const piena2 = IA._r.quotaPiena('xkiro', 'x', 0, 0.85); const c = await chiedi('ciao');
+      IA.impostaOpzione('xkiroTelegramVerified', false); return { a, t1, piena, b, piena2, c }; }""")
+    ok(r['a'] == 'ok deepseek/deepseek-v4-pro-0813' and r['t1'] > 0, 'xkiro risponde e conta i token del giorno (%s, %s)' % (r['a'], r['t1']))
+    ok(r['piena'] and r['b'] == 'ok command-a-03-2025', '430k/500k token (>85%%) → xkiro saltato, risponde Cohere (%s)' % r['b'])
+    ok(not r['piena2'] and r['c'].startswith('ok ') and '/' in r['c'], 'con Telegram 430k/1M → di nuovo xkiro (%s)' % r['c'])
+
+    # --- dati vecchi Mistral/OpenRouter: ignorati in silenzio e ripuliti ---
+    r = E("""() => { localStorage.setItem('imc-ai-opzioni', JSON.stringify({ openrouterHasCredits10Usd: true, xkiroTelegramVerified: true }));
+      localStorage.setItem('imc-ai-keys', JSON.stringify({ v: 2, chiavi: { mistral: 'mKey', openrouter: 'oKey', groq: 'gsk_x' } })); localStorage.setItem('imc-groq-chiave', 'gsk_x');
+      const o = IA.opzioni(), ch = Object.keys(IA.tutteChiavi()), k = JSON.parse(localStorage.getItem('imc-ai-keys')).chiavi;
+      IA.impostaChiave('mistral', 'nuova'); const t = IA.campoAltri().textContent; const st = Object.keys(IA.stato());
+      IA.impostaOpzione('xkiroTelegramVerified', false); IA.impostaChiave('groq', '');
+      return { o, ch, k: Object.keys(k), dopo: IA.chiave('mistral'), t, st }; }""")
+    ok(r['o'] == {'xkiroTelegramVerified': True}, 'opzione OpenRouter vecchia ignorata %s' % r['o'])
+    ok(r['ch'] == ['groq'] and r['k'] == ['groq'] and not r['dopo'], 'chiavi Mistral/OpenRouter ignorate e tolte da imc-ai-keys %s %s' % (r['ch'], r['k']))
+    ok('xkiro' in r['t'] and 'Telegram' in r['t'] and 'Mistral' not in r['t'] and 'OpenRouter' not in r['t'] and 'Strict Privacy' not in r['t'], 'impostazioni: spunta Telegram, niente Mistral/OpenRouter')
+    ok('mistral' not in r['st'] and 'openrouter' not in r['st'], 'stato fornitori senza Mistral/OpenRouter %s' % r['st'])
 
     # --- Requesty: 404 / modello scaduto → subito il seguente, senza riprovare ---
     r = E("""async () => { prepara({ requesty: 'rqKey' }, (h, c) => c.model === 'google/gemini-2.5-flash' ? { status: 404, body: { error: { message: 'model not found' } } } : null);

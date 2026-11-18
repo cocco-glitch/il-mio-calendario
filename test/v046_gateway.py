@@ -15,7 +15,7 @@ def ok(c, m):
     if not c: err.append(m)
 
 # Invariante 1: nessun dominio di fornitore AI fuori da 07-ia.ts
-DOM = re.compile(r'api\.groq\.com|generativelanguage|api\.mistral|cohere\.ai|openrouter\.ai|requesty')
+DOM = re.compile(r'api\.groq\.com|generativelanguage|api\.xkiro|cohere\.ai|requesty')
 fuori = [os.path.basename(f) for f in glob.glob(os.path.join(QUI, '..', 'src', '*.ts')) if not f.endswith('07-ia.ts') and DOM.search(open(f, encoding='utf-8').read())]
 ok(not fuori, 'invariante 1: domini dei fornitori solo in 07-ia.ts %s' % (fuori or ''))
 
