@@ -23,19 +23,21 @@
 // =====================================================================
 
 const IA = (() => {
-  type Prov = 'groq' | 'gemini' | 'xkiro' | 'cohere' | 'requesty';
-  type Ruolo = 'genera' | 'revisiona' | 'veloce' | 'visione' | 'lungo';
+  type Prov = 'groq' | 'gemini' | 'xkiro' | 'cohere' | 'requesty' | 'cerebras' | 'sambanova';
+  type Ruolo = 'genera' | 'revisiona' | 'veloce' | 'visione' | 'lungo' | 'micro';
   type Msg = { role: string; content: any };
   type Fornitore = { nome: string; prov: Prov; modello: string; gem: boolean };
-  const PROVS: Prov[] = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty'];
-  const ALTRI: Prov[] = ['xkiro', 'cohere', 'requesty'];
-  const NOMI: Record<Prov, string> = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty' };
+  const PROVS: Prov[] = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
+  const ALTRI: Prov[] = ['xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
+  const NOMI: Record<Prov, string> = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty', cerebras: 'Cerebras', sambanova: 'SambaNova' };
   /** Fornitori tolti (v0.53): le loro chiavi, opzioni e contatori salvati si ignorano e si ripuliscono in silenzio. */
   const RITIRATI = ['mistral', 'openrouter'];
   const eProv = (p: string): p is Prov => (PROVS as string[]).includes(p);
   const BASE: Record<Prov, string> = {
     groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', xkiro: 'https://api.xkiro.com/v1',
-    cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1' };
+    cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1',
+    // v0.54 (BP3): due fornitori veloci in coda a ogni catena (OpenAI-compatibili, Bearer)
+    cerebras: 'https://api.cerebras.ai/v1', sambanova: 'https://api.sambanova.ai/v1' };
 
   // ---- Chiavi (BP1 §4.1) ----
   const KK = 'imc-ai-keys', LEG: Partial<Record<Prov, string>> = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
@@ -75,27 +77,33 @@ const IA = (() => {
 
   // ---- Discovery per pattern (BP1 §4.3) ----
   const PATTERN: Record<Prov, Partial<Record<Ruolo, RegExp[]>>> = {
-    groq: { genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
+    groq: { micro: [/gpt-oss-20b/, /gpt-oss/, /8b-instant/], genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
     // v0.51: flash-lite di base (500 richieste/giorno gratis contro le 20 di flash); flash resta come riserva
-    gemini: { genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
+    gemini: { micro: [/flash-lite/], genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
     // xkiro: solo ID con prefisso vendor («vendor/modello»), vedi `scegli`
-    xkiro: { genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
+    xkiro: { micro: [/nemotron/, /deepseek/], genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
     cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
     requesty: { genera: [/gemini.*flash(?!-lite)/, /gpt-.*mini/, /llama/], veloce: [/flash-lite|mini|small/] },
+    cerebras: { genera: [/gpt-oss-120b/, /qwen-3.*(235b|480b)/, /llama/], revisiona: [/gpt-oss-120b/, /qwen-3/], veloce: [/llama.*8b|gpt-oss/, /qwen-3/], lungo: [/gpt-oss-120b/, /qwen-3/] },
+    sambanova: { genera: [/gpt-oss-120b/, /deepseek-v3/i, /llama-3.3/i], revisiona: [/deepseek/i, /gpt-oss/], veloce: [/llama.*8b/i, /gpt-oss/], lungo: [/deepseek/i, /llama-3.3/i], visione: [/llama-4|vision/i] },
   };
   /** Modelli gratuiti consigliati su xkiro (ID sempre con prefisso vendor obbligatorio). */
   const XKIRO_FREE = ['deepseek/deepseek-v4-pro-0813', 'moonshotai/kimi-k3-agent', 'nvidia/nemotron-3.5-super-vl'];
   /** Usati solo se /models non risponde e non c'è nulla in memoria. */
   const RISERVA: Record<Prov, Partial<Record<Ruolo, string[]>>> = {
-    groq: { genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
-    gemini: { genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
-    xkiro: { genera: [...XKIRO_FREE], revisiona: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], veloce: ['nvidia/nemotron-3.5-super-vl', 'deepseek/deepseek-v4-pro-0813'],
+    groq: { micro: ['openai/gpt-oss-20b', 'llama-3.1-8b-instant'], genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
+    gemini: { micro: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'], genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
+    xkiro: { micro: ['nvidia/nemotron-3.5-super-vl'], genera: [...XKIRO_FREE], revisiona: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], veloce: ['nvidia/nemotron-3.5-super-vl', 'deepseek/deepseek-v4-pro-0813'],
       lungo: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], visione: ['nvidia/nemotron-3.5-super-vl'] },
     cohere: {}, requesty: {},
+    cerebras: { genera: ['gpt-oss-120b', 'qwen-3-235b-a22b-instruct-2507'], revisiona: ['gpt-oss-120b'], veloce: ['llama3.1-8b', 'gpt-oss-120b'], lungo: ['gpt-oss-120b'] },
+    sambanova: { genera: ['gpt-oss-120b', 'DeepSeek-V3.1', 'Meta-Llama-3.3-70B-Instruct'], revisiona: ['DeepSeek-V3.1'], veloce: ['Meta-Llama-3.1-8B-Instruct'], lungo: ['DeepSeek-V3.1'] },
   };
   const CATENA: Record<Ruolo, Prov[]> = {
-    veloce: ['groq', 'gemini', 'xkiro', 'requesty'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty'],
-    revisiona: ['groq', 'gemini', 'xkiro', 'cohere'], lungo: ['gemini', 'xkiro'], visione: ['gemini', 'groq', 'xkiro'] };
+    veloce: ['groq', 'gemini', 'xkiro', 'requesty', 'cerebras', 'sambanova'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'],
+    revisiona: ['groq', 'gemini', 'xkiro', 'cohere', 'cerebras', 'sambanova'], lungo: ['gemini', 'xkiro', 'cerebras', 'sambanova'], visione: ['gemini', 'groq', 'xkiro', 'sambanova'],
+    // v0.54 (BP3 §2, imbuto livello 2): micro-spiegazione ≤350 token, solo fascia veloce
+    micro: ['gemini', 'groq', 'xkiro'] };
   const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound|moderation|ocr|rerank/i;
   const versione = (id: string) => { const m = /(\d+(?:\.\d+)?)/.exec(id.replace(/^.*\//, '')); return m ? parseFloat(m[1]) : 0; };
   const instabile = (id: string) => /preview|exp/i.test(id);
@@ -204,9 +212,9 @@ const IA = (() => {
   /** Limiti di partenza (token/minuto e contesto); `tpm` si aggiorna dalle intestazioni x-ratelimit-limit-tokens e dopo un 413. */
   const LIMITI: Record<Prov, { tpm: number; ctx: number }> = {
     groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, xkiro: { tpm: 100000, ctx: 128000 },
-    cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 } };
+    cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 }, cerebras: { tpm: 60000, ctx: 65536 }, sambanova: { tpm: 20000, ctx: 32768 } };
   /** Token di risposta attesi per ruolo: contano solo nel budget (non si inviano: i token di ragionamento li consumerebbero). */
-  const USCITA: Record<Ruolo, number> = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000 };
+  const USCITA: Record<Ruolo, number> = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000, micro: 350 };
 
   // ---- Quote dei piani gratuiti e contatori locali (BP1 §11, v0.51) ----
   /** `rpd` assente = nessun tetto di richieste al giorno; `tpd` = token al giorno. */
@@ -221,6 +229,9 @@ const IA = (() => {
     xkiro: { base: { rpm: 20, tpd: 500000 }, potenziata: { opz: 'xkiroTelegramVerified', q: { rpm: 20, tpd: 1000000 } } },
     cohere: { base: { rpm: 20, rpd: 33 } },
     requesty: { base: { rpm: 20, rpd: 200 } },
+    // v0.54: quote gratuite prudenti (da verificare dal vivo)
+    cerebras: { base: { rpm: 30, rpd: 14400, tpd: 1000000 } },
+    sambanova: { base: { rpm: 20, rpd: 1000 } },
     groq: { perModello: true, base: { rpm: 30, rpd: 1000 }, modelli: [
       { re: /8b-instant/, q: { rpm: 30, rpd: 14400 } }, { re: /70b-versatile/, q: { rpm: 30, rpd: 1000 } }, { re: /whisper/, q: { rpm: 20, rpd: 2000 } }] },
   };
@@ -476,7 +487,7 @@ const IA = (() => {
   }
   /** Altri fornitori facoltativi + stato di tutti i fornitori (Altro → Spiegazioni AI). */
   function campoAltri(): HTMLElement {
-    const DOVE: Record<string, string> = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai' };
+    const DOVE: Record<string, string> = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai', cerebras: 'cloud.cerebras.ai (chiave gratuita)', sambanova: 'cloud.sambanova.ai (chiave gratuita)' };
     const elenco = h('div.tenue.piccolo', null);
     const aggiorna = () => {
       const st = stato(); elenco.textContent = '';
@@ -521,6 +532,6 @@ const IA = (() => {
   })();
   return { chiedi, testo, json: (msgs: Msg[], r: Ruolo, o?: Opz) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro,
     chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
-    _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, get RM() { return RM; } },
+    _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, CATENA, get RM() { return RM; } },
     get gemini() { return !!chiave('gemini'); } };
 })();

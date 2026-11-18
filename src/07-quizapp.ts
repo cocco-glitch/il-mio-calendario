@@ -14,10 +14,15 @@
 interface CitB { t: string; f: string; l?: string; }
 // v0.52 (BP2): tipi universali (sequenza, abbinamento, risposta aperta con rubrica) e archetipo — campi facoltativi
 interface DomB { id: string; sk: string; t: 'mcq' | 'fill' | 'sequenza' | 'abbinamento' | 'risposta_aperta_rubrica'; lv: string;
-  archetipo?: string; sequenzaOk?: string[]; coppieOk?: Array<[string, string]>; rubricaPunti?: string[]; linguaCodice?: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[]; }
+  archetipo?: string; sequenzaOk?: string[]; coppieOk?: Array<[string, string]>; rubricaPunti?: string[]; linguaCodice?: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[];
+  // v0.54 (BP3 §1.1): metadati neuro-cognitivi, tutti facoltativi (i quiz v0.51–v0.53 restano validi così come sono)
+  bloomLevel?: BloomN; distractorTypes?: Record<number, TipoDistr>; confidenceLog?: TentativoN[]; sourceRef?: SourceRefN; subtopic?: string; stepId?: string;
+  spiegazione?: string; spiegazioneDistrattori?: Record<number, string> | string[]; }
 interface BancaFile { step: number; schede: Record<string, { titolo: string; materia: string; microstep: string; k: number; n: number; fonti?: string; focus?: string }>; immagini: Record<string, string>; domande: DomB[]; }
 interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Partial<DomB>; nascosta?: boolean; nuova?: boolean; originale?: Partial<DomB>; }
-interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; c?: Record<string, ContoQ>; }
+interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; c?: Record<string, ContoQ>;
+  /** v0.54 (BP3): SRS per singola domanda secondo la matrice certezza × correttezza, e ultimi tentativi. */
+  neuro?: SrsN; confidenceLog?: TentativoN[]; }
 
 const Banca = (() => {
   const file = new Map<string, Promise<BancaFile | null>>();
@@ -104,7 +109,9 @@ const QuizApp = (() => {
   }
   const mescola = <T>(a: T[]) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-  interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; avv?: string; sel?: number[]; voto?: { coperti: string[]; mancanti: string[] }; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string }; }
+  interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; avv?: string; sel?: number[]; voto?: { coperti: string[]; mancanti: string[] }; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string };
+    /** v0.54: inizio della domanda, tempo di risposta, certezza dichiarata e caso della matrice. */
+    t0?: number; ms?: number; cert?: Certezza | null; caso?: CasoN; srs?: SrsN & { contrastivo: boolean; rimando: boolean }; }
 
   /** Registra la risposta (v0.48: nel contatore di questo dispositivo) e restituisce la funzione per annullarla. */
   function registraStat(v: Voce): () => void {
@@ -112,12 +119,23 @@ const QuizApp = (() => {
     const r: StatQ = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false, c: {} };
     const x = StatQC.mio(r, dev); x.n++; if (giusta) x.ok++; StatQC.ricalcola(r);
     r.ultima = ymd(new Date()); r.esito = giusta;
+    // v0.54 (BP3 §1.2): calibrazione metacognitiva (solo se lo studente ha dichiarato la certezza)
+    const neuroPrima = r.neuro ? { ...r.neuro } : undefined, logPrima = r.confidenceLog ? r.confidenceLog.slice() : undefined;
+    if (v.cert) {
+      const t: TentativoN = { ts: new Date().toISOString(), corretto: giusta, livelloCertezza: v.cert, tempoRispostaMs: Math.max(0, Math.round(v.ms || 0)) };
+      r.confidenceLog = Neuro.aggiungiTentativo(r.confidenceLog, t);
+      const p = Neuro.pianifica(r.neuro, v.cert, giusta, r.ultima);
+      v.srs = p; v.caso = p.ultimoCaso;
+      r.neuro = { iv: p.iv, ease: p.ease, due: p.due, reps: p.reps, ultimoCaso: p.ultimoCaso };
+      if (p.tag && p.tag.length) r.neuro.tag = p.tag; if (p.daConsolidare) r.neuro.daConsolidare = true;
+    }
     let scelta = '';
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; scelta = o; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
     Stato.salva(r, true);
     const annulla = () => {
       const q = Stato.prendi<StatQ>(id); if (!q) return;
       const y = StatQC.mio(q, dev); y.xn++; if (giusta) y.xok++; StatQC.ricalcola(q);
+      if (v.cert) { if (neuroPrima) q.neuro = neuroPrima; else delete q.neuro; if (logPrima) q.confidenceLog = logPrima; else delete q.confidenceLog; }
       if (scelta && q.scelte && q.scelte[scelta]) { q.scelte = Object.assign({}, q.scelte); q.scelte[scelta]--; if (!q.scelte[scelta]) delete q.scelte[scelta]; }
       Stato.salva(q, true);
     };
@@ -134,6 +152,29 @@ const QuizApp = (() => {
   }
   let toastAnnulla: Element | null = null;
 
+  // ---- v0.54 (BP3): modalità Allenamento Neuro / Simulazione Esame ----
+  type ModoQ = 'neuro' | 'esame';
+  const K_MODO = 'imc-quiz-modo';
+  /** Predefinita secondo il profilo cognitivo (hypercorrection attiva → neuro); la scelta dell'utente resta. */
+  function modo(): ModoQ {
+    try { const v = localStorage.getItem(K_MODO); if (v === 'neuro' || v === 'esame') return v; } catch (_) { /* niente */ }
+    return Dominio.profilo().attivaHypercorrection === false ? 'esame' : 'neuro';
+  }
+  const impostaModo = (m: ModoQ) => { try { localStorage.setItem(K_MODO, m); } catch (_) { /* niente */ } };
+  const NOMI_CERT: Record<Certezza, string> = { 1: 'Tiro a indovinare', 2: 'Abbastanza sicuro', 3: 'Certo al 100%' };
+  const statPer = (domande: DomB[]) => { const o: Record<string, StatQ | undefined> = {}; for (const d of domande) { const s = Stato.prendi<StatQ>('sq-' + d.id); o[d.id] = s && !s.deleted ? s : undefined; } return o; };
+  /** Export 1 click (BP3 §3.1): testo compatto negli appunti + file .imcpack.json. */
+  async function esporta(domande: DomB[], f: 'errori' | 'illusione' | 'bloom3' | 'tutti', titolo: string, archetipo: string): Promise<number> {
+    const sel = Neuro.daEsportare(domande, statPer(domande), f);
+    if (!sel.length) { avviso(f === 'illusione' ? 'Nessuna illusione di competenza registrata.' : f === 'errori' ? 'Nessun errore da esportare.' : 'Nessuna domanda da esportare.'); return 0; }
+    try { await navigator.clipboard.writeText(Neuro.compatto(sel)); } catch (_) { /* appunti non disponibili: resta il file */ }
+    const j = Neuro.pacchetto(sel, { titolo: titolo + ' · ' + ({ errori: 'errori', illusione: 'illusioni', bloom3: 'Bloom 3-4', tutti: 'tutte' } as any)[f], archetipo, modalita: Dominio.profilo().modalita, oggi: ymd(new Date()) });
+    const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(j, null, 1)], { type: 'application/json' })), download: (titolo || 'quiz').replace(/[\\/:*?"<>|]+/g, '_') + '-' + f + '.imcpack.json' }) as HTMLAnchorElement;
+    document.body.appendChild(a); a.click(); a.remove();
+    avviso(sel.length + ' domande: testo compatto copiato e pacchetto .imcpack scaricato.', 5000);
+    return sel.length;
+  }
+
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
   async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void }): Promise<void> {
     const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { /* */ })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
@@ -148,6 +189,9 @@ const QuizApp = (() => {
     else v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
     v.corpo.appendChild(app);
     let P: Voce[] = [], cur = 0, ripasso = false, apertaX = false, finito = false;
+    // v0.54 (BP3): certezza prima della risposta (modo neuro), tempi per la fatica attentiva (zero token)
+    let mq: ModoQ = modo(), storia: { ms: number; ok: boolean }[] = [], faticaOn = false, faticaZitta = 0;
+    const archM = Dominio.archetipoMateria(m);
     // v0.52 (BP2): sequenza (ordine da ricostruire), abbinamento (coppie) e risposta aperta valutata con una rubrica locale
     const NOMI_TIPO: Record<string, string> = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
     const nuovoTipo = (d: DomB) => d.t === 'sequenza' || d.t === 'abbinamento' || d.t === 'risposta_aperta_rubrica';
@@ -180,7 +224,8 @@ const QuizApp = (() => {
         + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI.</p>') + '</form>';
     }
     const nuovo = (idx: number[], rip: boolean) => {
-      P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [] }; });
+      P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
+      storia = []; faticaOn = false; faticaZitta = 0;
       cur = 0; ripasso = rip; apertaX = false; finito = false; disegnaQ(); v.corpo.scrollTop = 0;
     };
     const fatta = (x: Voce) => x.picked !== null;
@@ -192,13 +237,31 @@ const QuizApp = (() => {
       + (d.cl ? '<div class="qz-mia"><b>Spiegazione di Claude</b> ' + esc(d.cl) + '</div>' : '') + (!d.cit && !d.cl ? '<p>' + fmt(Array.isArray(d.e) ? d.e.join(' ') : d.e) + '</p>' : '') + '</div>';
     function correzione(x: Voce): string {
       const d = x.d, ew = d.ew || [], mc = d.t === 'mcq';
-      let s2 = (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
+      let s2 = bannerCaso(x) + (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
         + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passi(d.e);
       if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o![x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
       if (x.voto) s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
       if (!x.ok && mc) { /* già sopra */ } else if (!x.ok && !mc && ew[0]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
       if (mc && ew.length && (x.ok || x.picked === null)) s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => '<p><b>«' + fmt(d.o![k + 1]) + '»</b> — ' + fmt(t) + '</p>').join('') + '</details>';
       return s2 + '</div>';
+    }
+    /** v0.54 (BP3 §1.2): esito della matrice certezza × correttezza; per l'illusione il confronto è obbligatorio. */
+    function bannerCaso(x: Voce): string {
+      if (!x.caso || x.caso === 'standard') return '';
+      const d = x.d, mc = d.t === 'mcq', oi = mc && typeof x.picked === 'number' ? x.ord[x.picked] : null;
+      const giustaT = mc ? d.o![0] : String(d.show || (d.a || [''])[0]), tuaT = oi != null ? d.o![oi] : String(x.picked || '');
+      const rif = d.sourceRef ? [d.sourceRef.libro, d.sourceRef.capitolo && 'cap. ' + d.sourceRef.capitolo, d.sourceRef.pagina && 'p. ' + d.sourceRef.pagina].filter(Boolean).join(', ') : '';
+      const dove = rif || d.r || Neuro.stepDi(d) || '';
+      if (x.caso === 'illusione_competenza') {
+        const l1 = Neuro.prontaL1(d, oi), tipo = oi != null ? Neuro.tipoDistrattore(d, oi) : null;
+        return '<div class="qz-neuro ko"><b>⚠️ Illusione di competenza</b> — eri certo, ma la risposta è sbagliata. La rivedrai già oggi.'
+          + '<div class="qz-contrasto"><p><span class="qz-tag">La tua</span> ' + fmt(tuaT) + '</p><p><span class="qz-tag">Corretta</span> ' + fmt(giustaT) + '</p>'
+          + (tipo ? '<p class="tenue piccolo">Tipo di trappola: ' + esc(Neuro.NOMI_DISTR[tipo]) + '</p>' : '')
+          + (l1 ? '<p>' + fmt(l1) + '</p>' : '<p class="tenue piccolo">Confronta i due enunciati: cosa cambia? Poi chiedi «🎯 Perché ho sbagliato».</p>') + '</div></div>';
+      }
+      if (x.caso === 'lucky_guess') return '<div class="qz-neuro">🍀 <b>Risposta fortunata</b> — giusta ma tirata a indovinare: non la considero imparata, torna entro domani.</div>';
+      if (x.caso === 'padronanza') return '<div class="qz-neuro ok">🎯 <b>Padronanza</b> — certa e corretta: il prossimo ripasso si allontana (×1,25).</div>';
+      return '<div class="qz-neuro">📌 <b>Lacuna nota</b> — sapevi di non saperlo: ripasso domani' + (dove ? '. Torna alla teoria: <b>' + esc(dove) + '</b>' : ' e rileggi la scheda di teoria') + '.</div>';
     }
     function riquadroAI(x: Voce): string {
       const nessunaAI = Dominio.senzaAI();   // v0.52: modalità «100% senza AI» → solo la spiegazione breve locale (se c'è)
@@ -207,19 +270,24 @@ const QuizApp = (() => {
       let o = '';
       if (a) o = a.attesa ? '<p class="tenue">Genero la spiegazione…</p>' : a.errore ? '<p class="tenue">⚠️ ' + esc(a.errore) + '</p>'
         : '<div class="qz-ai-testo">' + esc(a.testo) + '</div><div class="qz-ai-piede"><span>' + esc(a.modello || '') + '</span><button type="button" class="chip" data-ai="' + a.l + '" data-forza="1">↻ Rigenera</button></div>';
-      return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + b('breve', 'Breve') + (nessunaAI ? '' : b('media', 'Media') + b('dettagliata', 'Dettagliata')) + '</div>' + (nessunaAI ? o.replace(/<button[^>]*data-forza[^>]*>[^<]*<\/button>/, '') : o) + '</div>';
+      return '<div class="qz-box qz-ai"><span class="qz-etich">✨ Spiegazione AI</span><div class="chips">' + (!x.ok && x.picked !== null ? b('perche', '🎯 Perché ho sbagliato') : '') + b('breve', 'Breve') + (nessunaAI ? '' : b('media', 'Media') + b('dettagliata', 'Dettagliata')) + '</div>' + (nessunaAI ? o.replace(/<button[^>]*data-forza[^>]*>[^<]*<\/button>/, '') : o) + '</div>';
     }
     function disegnaQ(): void {
       if (finito) { risultato(); return; }
       const x = P[cur], d = x.d, a = fatta(x), mc = d.t === 'mcq';
-      let s2 = '<div class="qz-metro" style="--n:' + P.length + '">' + P.map((y, k) => '<span class="' + (y.ok === null ? (k === cur ? 'ora' : '') : y.ok ? 'ok' : 'ko') + '"></span>').join('') + '</div>'
-        + '<div class="qz-stat"><span>Domanda <b>' + (cur + 1) + '</b> di ' + P.length + (ripasso ? ' · ripasso errori' : '') + '</span><span>Punteggio <b>' + punti() + '</b></span></div>'
+      if (!a && !x.t0) x.t0 = Date.now();
+      const neuroQ = mq === 'neuro';
+      let s2 = (faticaOn ? '<div class="qz-neuro qz-fatica" role="status">😮‍💨 ' + esc(Neuro.TESTO_FATICA) + '<div class="chips"><button type="button" class="chip" data-az="pausa">⏸ Pausa 3 minuti</button><button type="button" class="chip" data-az="continua">Continua</button><button type="button" class="chip" data-az="chiudisess">Chiudi la sessione</button></div></div>' : '')
+        + '<div class="qz-metro" style="--n:' + P.length + '">' + P.map((y, k) => '<span class="' + (y.ok === null ? (k === cur ? 'ora' : '') : y.ok ? 'ok' : 'ko') + '"></span>').join('') + '</div>'
+        + '<div class="qz-stat"><span>Domanda <b>' + (cur + 1) + '</b> di ' + P.length + (ripasso ? ' · ripasso errori' : '') + '</span><span><button type="button" class="chip piccolo" data-az="modo" title="Cambia modalità">' + (neuroQ ? '🧠 Allenamento neuro' : '📝 Simulazione esame') + '</button> Punteggio <b>' + punti() + '</b></span></div>'
         + '<section class="qz-carta"><div class="qz-qtesta"><span class="qz-liv lv-' + esc(d.lv) + '">' + esc(d.lv) + '</span><span>' + (NOMI_TIPO[d.t] || NOMI_TIPO.fill) + '</span></div>';
       for (const g of d.img || []) if (dati.immagini[g.i]) s2 += '<figure class="qz-fig"><button type="button" class="qz-zoom-b" data-zoom="' + esc(g.i) + '" aria-label="Ingrandisci immagine">' + svgSicuro(dati.immagini[g.i]) + '</button><figcaption>' + esc(g.cap) + (g.f ? ' · ' + esc(g.f) : '') + '</figcaption></figure>';
       s2 += '<p class="qz-domanda">' + (d.t === 'fill' ? fmtQ(d.q) : fmt(d.q)) + '</p><div class="chips">';
       if (mc) { const rest = 2 - x.hid.length; s2 += '<button type="button" class="chip" data-az="aiuto"' + (a || rest <= 0 ? ' disabled' : '') + '>💡 Suggerimento (' + rest + ')</button>'; }
       s2 += '<button type="button" class="chip' + (apertaX ? ' on' : '') + '" data-az="fonti">📖 Spiegazione</button>' + (d.gen || nuovoTipo(d) ? '' : '<button type="button" class="chip" data-az="modifica">✏️ Modifica</button>') + (d.mod ? '<span class="qz-mod">modificata</span>' : '') + '</div>';
       if (apertaX) s2 += spiegFonti(d);
+      if (neuroQ && !a) s2 += '<div class="qz-cert" role="group" aria-label="Quanto sei sicuro?"><span class="tenue piccolo">Quanto sei sicuro? (tasti 1–3)</span><div class="chips">'
+        + ([1, 2, 3] as Certezza[]).map(c => '<button type="button" class="chip' + (x.cert === c ? ' on' : '') + '" data-cert="' + c + '">' + c + ' · ' + NOMI_CERT[c] + '</button>').join('') + '</div></div>';
       if (mc) {
         s2 += '<div class="qz-opz">' + x.ord.map((oi, k) => {
           let c = 'qz-opz-b', tag = ''; const off = x.hid.includes(k);
@@ -237,6 +305,9 @@ const QuizApp = (() => {
     }
     function rispondi(val: number | string): void {
       const x = P[cur]; if (fatta(x)) return;
+      if (mq === 'neuro' && !x.cert) { avviso('Prima dimmi quanto sei sicuro (1, 2 o 3).'); const c = app.querySelector('.qz-cert'); if (c) c.scrollIntoView({ block: 'nearest' }); return; }
+      if (mq !== 'neuro') x.cert = null;
+      x.ms = x.t0 ? Date.now() - x.t0 : 0;
       if (typeof val === 'number') { x.picked = val; x.ok = x.ord[val] === 0; }
       else {
         if (!normR(val)) { avviso('Scrivi una risposta.'); return; }
@@ -247,9 +318,13 @@ const QuizApp = (() => {
         else x.ok = giusta(val, d.a || []);
       }
       const annulla = registraStat(x);
+      // v0.54 (BP3 §1.3): fatica attentiva — banner non bloccante, al massimo una volta ogni 5 risposte
+      storia.push({ ms: x.ms || 0, ok: !!x.ok });
+      if (faticaZitta > 0) faticaZitta--;
+      else if (Neuro.fatica(storia.map(z => z.ms), storia.map(z => z.ok)).allarme) { faticaOn = true; faticaZitta = 5; }
       // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
       if (toastAnnulla) toastAnnulla.remove();
-      avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+      avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
       toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
       if (!x.ok) { const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null; x.avv = Regole.avvisoRisposta(x.d, dk);
         // v0.52 (BP2 §3): diagnostica locale secondo l'archetipo della materia (zero token)
@@ -269,9 +344,29 @@ const QuizApp = (() => {
         cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo,
         archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: MATERIE_BASE[m] ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
       const id = Spiega.idDi(dd, l), c = Stato.prendi<Spiegazione>(id);
+      // v0.54 (BP3 §2): imbuto AI — livello 0 locale → livello 1 spiegazione già pronta / salvata → livello 2 micro-chiamata (≤350 token)
+      if (l === 'perche' || l === 'breve') {
+        const oi = mc && typeof x.picked === 'number' ? x.ord[x.picked] : null;
+        x.ai = { l, attesa: true }; disegnaQ();
+        try {
+          const r = await Neuro.imbuto(d, l === 'perche' ? oi : null, {
+            forza, senzaAI: Dominio.senzaAI(),
+            locale: () => l === 'breve' ? Locale.spiegazioneBreve(d.e) : null,
+            cache: () => c && !c.deleted ? c.testo : null,
+            micro: async () => {
+              const tipo = oi != null ? Neuro.tipoDistrattore(d, oi) : null;
+              const p = Neuro.promptMicro({ q: testoPiano(d.q), corretta: testoPiano(dd.corretta), scelta: testoPiano(dd.scelta || ''), archetipo: dd.archetipo, tono: Dominio.profilo().tonoSpiegazioneAI, tipoDistr: tipo });
+              const g = await IA.testo([{ role: 'user', content: p }], 'micro', { maxOut: Neuro.MAX_TOKEN_MICRO, temp: 0.3, archetipo: dd.archetipo });
+              Stato.salva({ id, type: 'spiegazione', updatedAt: 0, q: dd.q, giusta: dd.corretta, livello: l, testo: g.testo, modello: g.modello, quiz: dd.titolo } as Spiegazione, true);
+              return { testo: g.testo, modello: g.modello };
+            },
+          });
+          x.ai = r ? { l, testo: r.testo, modello: r.modello + (r.livello < 2 ? '' : ' · micro') } : { l, errore: 'Nessuna spiegazione pronta e AI disattivata.' };
+        } catch (e: any) { x.ai = { l, errore: String(e.message || e) }; }
+        if (P[cur] === x) disegnaQ();
+        return;
+      }
       if (c && !c.deleted && !forza) { x.ai = { l, testo: c.testo, modello: c.modello + ' · salvata' }; disegnaQ(); return; }
-      // v0.44 locale: la spiegazione breve si ricava dalla correzione passo-passo già scritta (zero token); «rigenera» usa l'AI
-      if (l === 'breve' && !forza) { const t = Locale.spiegazioneBreve(d.e); if (t) { x.ai = { l, testo: t, modello: 'dalla correzione (senza AI)' }; disegnaQ(); return; } }
       // v0.43 memoria: se dopo una spiegazione più corta ne chiede una più lunga, la corta non bastava → lezione
       if (x.ai && x.ai.testo && (l === 'dettagliata' || (l === 'media' && x.ai.l === 'breve')) && x.ai.l !== l) MemoriaIA.nota('spiegazioni', 'lezione', 'piu-passaggi-' + norm(mat0(pk, m).nome || m), 'In ' + (mat0(pk, m).nome || m) + ' lo studente chiede spesso più dettagli: anche nelle spiegazioni brevi non saltare i passaggi intermedi.');
       x.ai = { l, attesa: true }; disegnaQ();
@@ -291,7 +386,12 @@ const QuizApp = (() => {
       let s2 = '<section class="qz-carta"><div class="qz-punti">' + ok + '<small> / ' + tot + '</small></div><div class="tenue">' + pct + '% di risposte corrette</div>'
         + '<div class="qz-livelli">' + liv.map(z => '<div class="qz-lvriga"><span>' + z[0] + '</span><span class="qz-barra"><span style="width:' + Math.round(z[1] * 100 / z[2]) + '%"></span></span><span>' + z[1] + '/' + z[2] + '</span></div>').join('') + '</div>'
         + (deb ? '<p><b>Punto debole:</b> ' + deb[0] + '</p>' : '<p><b>Nessun punto debole.</b></p>');
+      // v0.54 (BP3 §1.2): illusioni di competenza della sessione, in testa
+      const ill = P.filter(x => x.caso === 'illusione_competenza'), fort = P.filter(x => x.caso === 'lucky_guess').length;
+      if (ill.length) s2 += '<div class="qz-neuro ko"><b>⚠️ Illusioni di competenza: ' + ill.length + '</b> — eri certo ma era sbagliato. Tornano già oggi in cima al ripasso.<ul>' + ill.map(x => '<li>' + fmt(testoPiano(x.d.q).slice(0, 140)) + '</li>').join('') + '</ul></div>';
+      if (fort) s2 += '<p class="tenue piccolo">🍀 ' + fort + (fort === 1 ? ' risposta fortunata' : ' risposte fortunate') + ': da consolidare entro domani.</p>';
       if (sb.length) s2 += '<h3>Da rivedere (' + sb.length + ')</h3>' + sb.map(x => '<details class="qz-altre"><summary>' + fmt(x.d.q) + '</summary><p><b>Risposta corretta:</b> ' + fmt(x.d.t === 'mcq' ? x.d.o![0] : x.d.show) + '</p>' + passi(x.d.e) + (x.d.r ? '<p class="tenue piccolo">Ripassa: ' + esc(x.d.r) + '</p>' : '') + '</details>').join('');
+      s2 += '<div class="chips qz-export"><span class="tenue piccolo">Esporta (appunti + .imcpack):</span><button type="button" class="chip" data-exp="errori">Errori</button><button type="button" class="chip" data-exp="illusione">Illusioni</button><button type="button" class="chip" data-exp="bloom3">Bloom ≥ 3</button></div>';
       s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
         + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
       app.innerHTML = s2; v.corpo.scrollTop = 0;
@@ -312,9 +412,15 @@ const QuizApp = (() => {
         return;
       }
       if (b.dataset.ai) { chiediAI(b.dataset.ai, !!b.dataset.forza); return; }
+      if (b.dataset.cert) { const x = P[cur]; if (!fatta(x)) { x.cert = +b.dataset.cert as Certezza; disegnaQ(); } return; }
+      if (b.dataset.exp) { esporta(dati.domande, b.dataset.exp as any, info ? info.titolo : s.titolo, archM); return; }
       const az = b.dataset.az, x = P[cur];
       if (az === 'aiuto') { const lib = x.ord.map((oi, k) => oi !== 0 && !x.hid.includes(k) ? k : -1).filter(k => k >= 0); if (lib.length) x.hid.push(lib[Math.floor(Math.random() * lib.length)]); disegnaQ(); }
       else if (az === 'fonti') { apertaX = !apertaX; disegnaQ(); }
+      else if (az === 'modo') { mq = mq === 'neuro' ? 'esame' : 'neuro'; impostaModo(mq); avviso(mq === 'neuro' ? '🧠 Allenamento neuro: prima di rispondere dici quanto sei sicuro.' : '📝 Simulazione esame: niente certezza, come all\'esame.'); disegnaQ(); }
+      else if (az === 'continua') { faticaOn = false; disegnaQ(); }
+      else if (az === 'pausa') { faticaOn = false; disegnaQ(); avviso('⏸ Pausa: alzati, bevi un bicchiere d\'acqua, guarda lontano. Riprendi tra 3 minuti.', 8000); }
+      else if (az === 'chiudisess') { faticaOn = false; finito = true; disegnaQ(); }
       else if (az === 'seqreset') { x.sel = []; disegnaQ(); }
       else if (az === 'prec') { if (cur > 0) { cur--; apertaX = false; disegnaQ(); v.corpo.scrollTop = 0; } }
       else if (az === 'avanti') { if (cur < P.length - 1) { cur++; apertaX = false; disegnaQ(); v.corpo.scrollTop = 0; } else { const senza = P.filter(y => !fatta(y)).length; if (senza) chiedi('Vedere il risultato?', [{ testo: 'Vedi il risultato', valore: 'si' }, { testo: 'Torna al quiz', valore: 'no' }], senza + (senza === 1 ? ' domanda senza risposta: conta come errata.' : ' domande senza risposta: contano come errate.')).then(si => { if (si === 'si') { finito = true; disegnaQ(); } }); else { finito = true; disegnaQ(); } } }
@@ -342,17 +448,20 @@ const QuizApp = (() => {
       if (!document.body.contains(app)) { document.removeEventListener('keydown', tasti); return; }
       if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement).tagName) || finito) return;
       const x = P[cur]; if (!x) return;
-      if (x.d.t === 'mcq' && !fatta(x)) { let k = 'abcde'.indexOf(e.key.toLowerCase()); if (k < 0 && /^[1-5]$/.test(e.key)) k = +e.key - 1; if (k >= 0 && !x.hid.includes(k)) { rispondi(k); return; } }
+      // v0.54: in modo neuro 1–3 = certezza e a–e = risposta; in simulazione esame resta 1–5 / a–e
+      if (mq === 'neuro' && !fatta(x) && /^[1-3]$/.test(e.key)) { x.cert = +e.key as Certezza; disegnaQ(); return; }
+      if (x.d.t === 'mcq' && !fatta(x)) { let k = 'abcde'.indexOf(e.key.toLowerCase()); if (k < 0 && mq !== 'neuro' && /^[1-5]$/.test(e.key)) k = +e.key - 1; if (k >= 0 && !x.hid.includes(k)) { rispondi(k); return; } }
       if (e.key === 'ArrowRight' || (e.key === 'Enter' && fatta(x))) (app.querySelector('[data-az=avanti]') as HTMLElement).click();
       else if (e.key === 'ArrowLeft') (app.querySelector('[data-az=prec]') as HTMLElement).click();
     };
     document.addEventListener('keydown', tasti);
-    nuovo(gen ? dati.domande.map((_, k) => k) : Regole.ordina(dati.domande), false);
+    // v0.54 (BP3 §1.3): interleaving — mai più di 2 di fila sullo stesso micro-argomento; Bloom alternato tranne alle medie/biennio
+    nuovo(gen ? dati.domande.map((_, k) => k) : Neuro.interleave(dati.domande, Regole.ordina(dati.domande), { alterna: Dominio.profilo().modalita !== 'medie_biennio' }), false);
   }
 
   /** Statistiche per domanda (per Q4 e per la vista Errori). */
   function stat(sk?: string): StatQ[] { return Stato.tutti<StatQ>('statq').filter(r => !sk || r.sk === sk); }
-  return { apri, stat };
+  return { apri, stat, esporta, modo };
 })();
 
 /** Q2: editor di una domanda (modifica, nascondi, ripristina l'originale, nuova). */

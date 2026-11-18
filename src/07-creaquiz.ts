@@ -231,7 +231,8 @@ const CreaQuiz = (() => {
     const lista = tutti();
     v.corpo.append(h('div.pagina', null,
       h('div.tenue.piccolo', null, 'Creati dall\'app con il metodo delle schede di Claude (stesse regole, fonti dal tuo Drive, doppio controllo). Le schede di Claude restano a parte.'),
-      h('button.btn', { onclick: () => { v.chiudi(); nuovo(); } }, '＋ Crea un quiz'),
+      h('div.bottoni', null, h('button.btn', { onclick: () => { v.chiudi(); nuovo(); } }, '＋ Crea un quiz'), h('button.btn.neutro', { onclick: () => { v.chiudi(); leggero(); } }, '⚡ Creaquiz Leggero')),
+      lista.length ? h('div.chips', null, h('span.piccolo', null, 'Esporta:'), ...([['errori', 'Errori'], ['illusione', 'Illusioni'], ['bloom3', 'Bloom ≥ 3']] as const).map(([fx, n]) => h('button.chip', { onclick: () => QuizApp.esporta(lista.flatMap(r => r.domande), fx, 'Quiz creati in app', Dominio.archetipoMateria(lista[0] ? lista[0].materia : '')) }, n))) : null,
       lista.length ? h('div.lista', null, ...lista.map(r => { const st = QuizApp.stat(r.id); const ultima = st.length ? st[0] : null;
         return h('button.voce-lista', { onclick: () => { v.chiudi(); apri(r); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, '✨ ' + r.titolo),
           h('span.voce-sotto', null, r.materia + ' · ' + r.domande.length + ' domande · ' + new Date(r.creato).toLocaleDateString('it-IT') + (ultima ? ' · ultima: ' + ultima.ok + '/' + ultima.n : '') + ' · fonti: ' + r.fonti.map(f => f.nome + (f.pagine ? ' p. ' + f.pagine.split(',').slice(0, 4).join(',') + (f.pagine.split(',').length > 4 ? '…' : '') : '')).join('; ')))); })) : vuoto('Nessun quiz creato in app per ora.')));
@@ -279,5 +280,119 @@ const CreaQuiz = (() => {
       try { Tocco.clic(1); } catch (_) { /* */ }
     } catch (e: any) { stato.textContent = '⚠️ ' + (e.message || e); pill.append(h('button', { type: 'button', 'aria-label': 'Chiudi', onclick: () => pill.remove() }, '✕')); }
   }
-  return { nuovo, elenco, apri, tutti, controlla, crea };
+
+  // ---------- v0.54 (BP3 §3): Creaquiz Leggero — 3 click, zero attrito, zero token per import/cloze/dedup ----------
+  /** Tutte le domande già in archivio (quiz creati in app), per la deduplicazione. */
+  const archivio = (): DomB[] => tutti().flatMap(r => r.domande || []);
+  const statoPipe = (stepId: string): PipeStep => {
+    const r = Stato.prendi<PipeStep>('ps-' + stepId);
+    return r && !r.deleted ? r : { id: 'ps-' + stepId, type: 'pipestep', updatedAt: 0, stepId, schedaProlissa: 'bozza', schedaCondensata: 'bozza' };
+  };
+  const ICONA_PIPE: Record<StatoPipe, string> = { bozza: '✏️ bozza', pronta: '✅ pronta', verificata: '🔒 verificata' };
+  /** BP3 §3.2: indicatori della pipeline di uno step (scheda prolissa → condensata → quiz bank con copertura Bloom). */
+  function pannelloPipeline(stepId: string): HTMLElement {
+    const box = h('div.gruppo.cq-pipe');
+    const disegna = () => {
+      svuota(box);
+      if (!stepId) { box.append(h('div.tenue.piccolo', null, 'Scrivi lo step (es. «C-3.2») per vedere la pipeline di studio.')); return; }
+      const p = statoPipe(stepId), dom = archivio().filter(d => Neuro.stepDi(d) === stepId || d.sk === stepId || d.subtopic === stepId), cop = Neuro.copertura(dom);
+      const giro = (k: 'schedaProlissa' | 'schedaCondensata') => { const r = statoPipe(stepId); (r as any)[k] = Neuro.prossimoStato(r[k]); Stato.salva(r, true); disegna(); };
+      box.append(h('div.gruppo-titolo', null, 'Pipeline di studio · ' + stepId),
+        h('div.chips', null,
+          h('button.chip', { type: 'button', title: 'Tocca per cambiare stato', onclick: () => giro('schedaProlissa') }, '📚 Scheda prolissa: ' + ICONA_PIPE[p.schedaProlissa]),
+          h('button.chip', { type: 'button', title: 'Tocca per cambiare stato', onclick: () => giro('schedaCondensata') }, '⚡ Scheda condensata: ' + ICONA_PIPE[p.schedaCondensata])),
+        h('div.piccolo', null, '🧩 Quiz bank: ' + cop.quizBankCount + ' domande · Bloom ' + ([1, 2, 3, 4] as BloomN[]).map(b => b + ':' + cop.bloom[b]).join(' ') + ' · copertura ' + cop.pct + '%'
+          + (cop.mancanti.length && cop.quizBankCount ? ' (mancano i livelli ' + cop.mancanti.join(', ') + ')' : '')));
+    };
+    disegna();
+    return box;
+  }
+  function leggiFile(accetta: string): Promise<string | null> {
+    return new Promise(ok => {
+      const i = h('input', { type: 'file', accept: accetta, style: { display: 'none' } }) as HTMLInputElement;
+      i.onchange = () => { const f = i.files && i.files[0]; i.remove(); if (!f) { ok(null); return; } f.text().then(ok, () => ok(null)); };
+      document.body.appendChild(i); i.click();
+    });
+  }
+  function leggero(pre: { materia?: string; stepId?: string; titolo?: string } = {}): void {
+    const v = visore('⚡ Creaquiz Leggero', () => { /* */ });
+    const titolo = h('input.campo', { type: 'text', value: pre.titolo || '', placeholder: 'Titolo del quiz (es. «Enzimi — ripasso lampo»)' }) as HTMLInputElement;
+    const materia = h('input.campo', { type: 'text', value: pre.materia || '', placeholder: 'Materia (es. Biologia)' }) as HTMLInputElement;
+    const step = h('input.campo', { type: 'text', value: pre.stepId || '', placeholder: 'Step / micro-argomento (facoltativo, es. B-2.1)' }) as HTMLInputElement;
+    const testo = h('textarea.campo', { rows: 8, placeholder: 'Incolla qui il JSON delle domande (anche «sporco»: blocchi ```json, virgole finali, chiavi question/options/answer) oppure appunti e testo breve per i completamenti automatici.' }) as HTMLTextAreaElement;
+    const app = Appunti.tutti().slice(0, 60);
+    const selApp = h('select.campo', null, h('option', { value: '' }, '— oppure prendi i punti chiave da un appunto —'), ...app.map(a => h('option', { value: a.id }, a.titolo || '(senza titolo)'))) as HTMLSelectElement;
+    const badge = h('div.cq-badge'), anteprima = h('div.tenue.piccolo');
+    const pipe = h('div');
+    let pronte: DomB[] = [];
+    const idQuiz = 'qc-' + uid();
+    const mostra = (dom: any[], extra: string[]) => {
+      const d = Neuro.deduplica(dom, archivio().concat(pronte));
+      pronte = pronte.concat(d.nuove.map(x => ({ ...x, sk: idQuiz, gen: true })));
+      badge.textContent = d.badge;
+      anteprima.textContent = extra.filter(Boolean).join(' · ') + (pronte.length ? (extra.some(Boolean) ? ' · ' : '') + 'Pronte da salvare: ' + pronte.length : '');
+    };
+    const daTesto = (t: string) => {
+      if (!t.trim()) { avviso('Incolla prima qualcosa.'); return; }
+      if (!/[[{]/.test(t)) { avviso('Non vedo JSON: uso il testo per i completamenti automatici.'); return daCloze(t); }
+      const r = Neuro.importa(t, idQuiz);
+      if (r.errore && !r.domande.length) { avviso('⚠️ ' + r.errore, 6000); return; }
+      mostra(r.domande, [r.riparazioni.length ? '🔧 ' + r.riparazioni.join(', ') : '', r.scartate ? r.scartate + ' scartate (incomplete)' : '']);
+    };
+    const daCloze = (t: string) => {
+      const c = Neuro.cloze(t, { sk: idQuiz, stepId: step.value.trim() || undefined, max: 12 });
+      if (!c.length) { avviso('Non ho trovato frasi chiave adatte (servono frasi complete; **grassetto** sui termini aiuta).', 6000); return; }
+      mostra(c, ['✂️ ' + c.length + ' completamenti dalle frasi chiave (senza AI)']);
+    };
+    // Livello 3 (circuit breaker): oltre 15 domande niente chiamate multiple dall'app → prompt per Gemini e incolla
+    const nAI = h('input.campo', { type: 'number', min: 1, max: 60, value: 10, style: { width: '6em' } }) as HTMLInputElement;
+    const breaker = h('div');
+    const generaAI = async () => {
+      const n = Math.max(1, Math.min(60, parseInt(nAI.value, 10) || 10)), arg = titolo.value.trim() || step.value.trim() || 'il testo incollato';
+      const prompt = Neuro.promptGemini({ argomento: arg, materia: materia.value.trim() || undefined, archetipo: Dominio.archetipoMateria(materia.value.trim()), n, testo: testo.value.trim() || undefined, stepId: step.value.trim() || undefined });
+      svuota(breaker);
+      if (Neuro.serveBreaker(n) || Dominio.senzaAI() || (!Spiega.attiva && !IA.gemini)) {
+        breaker.append(h('div.qz-neuro', null,
+          h('b', null, Neuro.serveBreaker(n) ? '🛑 Più di ' + Neuro.BREAKER + ' domande: le genera Gemini sul web, non l\'app' : '🛑 AI dell\'app non disponibile: usa Gemini sul web'),
+          h('p.piccolo', null, '1) Copia il prompt · 2) incollalo in Gemini · 3) incolla qui sopra il JSON che ti restituisce e premi «Leggi JSON».'),
+          h('button.btn', { type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(prompt); avviso('Prompt copiato: incollalo in Gemini.'); } catch (_) { testo.value = prompt; avviso('Appunti non disponibili: il prompt è nel riquadro, copialo da lì.', 6000); } } }, '📋 Copia Prompt Ottimizzato per Gemini')));
+        return;
+      }
+      breaker.append(h('div.tenue.piccolo', null, 'Genero ' + n + ' domande con una sola chiamata…'));
+      try {
+        const g = await IA.testo([{ role: 'user', content: prompt }], 'genera', { temp: 0.5, archetipo: Dominio.archetipoMateria(materia.value.trim()) });
+        svuota(breaker); daTesto(g.testo); breaker.append(h('div.tenue.piccolo', null, 'Generate con ' + g.modello + '. Controllale prima di salvarle.'));
+      } catch (e: any) { svuota(breaker); breaker.append(h('div.tenue.piccolo', null, '⚠️ ' + (e.message || e))); }
+    };
+    const salva = () => {
+      if (!pronte.length) { avviso('Nessuna domanda nuova da salvare.'); return; }
+      const t = titolo.value.trim() || 'Quiz leggero ' + new Date().toLocaleDateString('it-IT'), st = step.value.trim();
+      const domande = pronte.map(d => { const x: any = { ...d, sk: idQuiz }; if (st && !Neuro.stepDi(x)) x.stepId = st; return x as DomB; });
+      const rec: QCreato = { id: idQuiz, type: 'qcreato', updatedAt: 0, titolo: t, materia: materia.value.trim() || 'Studio', argomento: st || t, cosa: 'leggero', fonti: [], domande, creato: new Date().toISOString(), modelli: [], scartate: 0 };
+      Stato.salva(rec);
+      avviso('✓ Salvato: ' + domande.length + ' domande.');
+      v.chiudi(); apri(rec);
+    };
+    const aggiornaPipe = () => { svuota(pipe); pipe.append(pannelloPipeline(step.value.trim())); };
+    step.addEventListener('change', aggiornaPipe);
+    v.corpo.append(h('div.pagina.modulo', null,
+      h('div.tenue.piccolo', null, 'Import, riparazione, completamenti e deduplicazione avvengono sul dispositivo, senza AI. Le domande già presenti vengono saltate.'),
+      h('label', null, 'Titolo', titolo), h('label', null, 'Materia', materia), h('label', null, 'Step', step),
+      testo,
+      h('div.chips', null,
+        h('button.chip', { type: 'button', onclick: () => daTesto(testo.value) }, '📥 Leggi JSON'),
+        h('button.chip', { type: 'button', onclick: async () => { const t = await leggiFile('.json,.imcpack,application/json'); if (t != null) daTesto(t); } }, '📂 Carica .json / .imcpack'),
+        h('button.chip', { type: 'button', onclick: () => daCloze(testo.value) }, '✂️ Completamenti dal testo')),
+      h('div.chips', null, selApp, h('button.chip', { type: 'button', onclick: () => { const a = app.find(x => x.id === selApp.value); if (!a) { avviso('Scegli un appunto.'); return; } if (!step.value.trim() && (a.micro || a.sub)) { step.value = String(a.micro || a.sub); aggiornaPipe(); } daCloze(a.testo); } }, '✂️ Dai punti chiave')),
+      badge, anteprima,
+      h('div.chips', null, h('span.piccolo', null, 'Oppure con l\'AI:'), nAI, h('button.chip', { type: 'button', onclick: generaAI }, '✨ Genera domande')), breaker,
+      h('div.bottoni', null, h('button.btn', { type: 'button', onclick: salva }, '💾 Salva e apri il quiz'), h('button.btn.neutro', { type: 'button', onclick: () => { pronte = []; badge.textContent = ''; anteprima.textContent = 'Svuotato.'; } }, 'Svuota')),
+      h('div.gruppo', null, h('div.gruppo-titolo', null, 'Esporta dall\'archivio (appunti + .imcpack)'),
+        h('div.chips', null, ...([['errori', 'Solo errori'], ['illusione', 'Illusioni di competenza'], ['bloom3', 'Bloom ≥ 3']] as const).map(([f, n]) =>
+          h('button.chip', { type: 'button', onclick: () => QuizApp.esporta(archivio(), f, 'Quiz creati in app', Dominio.archetipoMateria(materia.value.trim())) }, n)))),
+      pipe));
+    aggiornaPipe();
+  }
+
+  return { nuovo, elenco, apri, tutti, controlla, crea, leggero };
 })();

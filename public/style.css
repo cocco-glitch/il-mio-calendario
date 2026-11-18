@@ -529,6 +529,12 @@ body:has(.visore) .foglio-sfondo { z-index: 27; }
 .qz-zoom-box svg { display: block; width: 100%; height: auto; max-height: 80vh; }
 .qz-zoom-x { position: absolute; bottom: calc(18px + env(safe-area-inset-bottom)); font-size: 13px; color: var(--tenue); }
 .qz-avviso { background: color-mix(in srgb, #d9921a 16%, var(--sup)); border: 1px solid #d9921a; border-radius: 11px; padding: 10px 12px; font-size: 15px; line-height: 1.45; }
+/* v0.54 (BP3): quiz neuro — certezza, esito della matrice, fatica, export */
+.qz-cert { margin: 10px 0 4px; } .qz-cert .chips { margin-top: 4px; }
+.qz-neuro { background: color-mix(in srgb, var(--acc, #3b7ddd) 10%, var(--sup)); border: 1px solid color-mix(in srgb, var(--acc, #3b7ddd) 45%, transparent); border-radius: 11px; padding: 10px 12px; margin: 8px 0; font-size: 15px; line-height: 1.45; }
+.qz-neuro.ko { background: color-mix(in srgb, #d0453a 12%, var(--sup)); border-color: #d0453a; } .qz-neuro.ok { background: color-mix(in srgb, #2e9e5b 12%, var(--sup)); border-color: #2e9e5b; }
+.qz-neuro ul { margin: 6px 0 0 18px; padding: 0; } .qz-contrasto { margin-top: 8px; display: grid; gap: 4px; } .qz-contrasto p { margin: 0; }
+.qz-fatica .chips { margin-top: 6px; } .qz-export { margin: 10px 0; align-items: center; }
 .regole-json { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 
 /* v0.27 Q5: coda domande AI */

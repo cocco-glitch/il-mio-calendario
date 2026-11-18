@@ -88,9 +88,13 @@ const Regole = (() => {
   /** Ordine delle domande del quiz nativo secondo la regola. */
   function ordina(domande: DomB[]): number[] {
     const idx = domande.map((_, k) => k);
-    if (get().ordineQuiz !== 'deboli-prima') return idx;
-    const err = (d: DomB) => { const s = Stato.prendi<StatQ>('sq-' + d.id); return s && !s.deleted ? s.n - s.ok : 0; };
-    return idx.sort((a, b) => err(domande[b]) - err(domande[a]));
+    // v0.54 (BP3 §1.2): prima le domande con ripasso neuro scaduto (illusioni di competenza in testa); ordine stabile
+    const oggi = ymd(new Date());
+    const sq = (d: DomB) => { const s = Stato.prendi<StatQ>('sq-' + d.id); return s && !s.deleted ? s : null; };
+    const urg = (d: DomB) => { const s = sq(d), n = s && s.neuro; if (!n || !n.due || n.due > oggi) return 0; return n.tag && n.tag.includes('illusione_competenza') ? 2 : 1; };
+    const err = (d: DomB) => { const s = sq(d); return s ? s.n - s.ok : 0; };
+    const deboli = get().ordineQuiz === 'deboli-prima';
+    return idx.sort((a, b) => (urg(domande[b]) - urg(domande[a])) || (deboli ? err(domande[b]) - err(domande[a]) : 0) || a - b);
   }
 
   // ---- Studio → Errori: errori tipici ----

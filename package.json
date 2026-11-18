@@ -1,0 +1,8 @@
+{
+  "name": "il-mio-calendario",
+  "private": true,
+  "description": "PWA TypeScript senza bundler: build con `node build.mjs`. Questo file serve solo a fissare TypeScript, così `npx tsc` funziona da solo.",
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
+}

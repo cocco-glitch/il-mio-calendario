@@ -2,3 +2,4 @@ dist/
 build-tmp/
 test/*.png
 __pycache__/
+node_modules/
