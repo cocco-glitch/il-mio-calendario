@@ -6976,7 +6976,7 @@ const Generatori = (() => {
 })();
 
 // =====================================================================
-// 07-ia.ts — GATEWAY AI UNICO (v0.46, BP1 §4)
+// 07-ia.ts — GATEWAY AI UNICO (v0.46, router v0.47 — BP1 §4)
 // Tutte le chiamate ai fornitori AI passano da qui: chat JSON (`chiedi`/`json`), testo libero e visione
 // (`testo`), trascrizione audio (`trascrivi`). Nessun altro file chiama direttamente i domini dei fornitori.
 // Chiavi: localStorage['imc-ai-keys'] = { v:2, chiavi:{ groq, gemini } }. In 0.46 restano rispecchiate anche
@@ -6988,10 +6988,19 @@ const Generatori = (() => {
 //   «revisiona» controllo indipendente      groq → gemini (con `evita` = modello che ha generato)
 //   «lungo»     fonti lunghe                gemini
 //   «visione»   scrittura a mano, immagini  gemini → groq
+// v0.47 (BP1 §4.4–4.5): router con controllo preventivo (token stimati vs limite del modello), lettura delle
+// intestazioni x-ratelimit-*, pause dopo 429 / 5xx, chiave rifiutata (401/403) non più riprovata finché non
+// cambia, massimo 2 richieste in volo per fornitore. Fornitori facoltativi: Mistral, Cohere, OpenRouter, Requesty
+// (chiavi solo in 'imc-ai-keys').
 // =====================================================================
 const IA = (() => {
-    const PROVS = ['groq', 'gemini'];
-    const BASE = { groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai' };
+    const PROVS = ['groq', 'gemini', 'mistral', 'cohere', 'openrouter', 'requesty'];
+    const ALTRI = ['mistral', 'cohere', 'openrouter', 'requesty'];
+    const NOMI = { groq: 'Groq', gemini: 'Gemini', mistral: 'Mistral', cohere: 'Cohere', openrouter: 'OpenRouter', requesty: 'Requesty' };
+    const BASE = {
+        groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', mistral: 'https://api.mistral.ai/v1',
+        cohere: 'https://api.cohere.ai/compatibility/v1', openrouter: 'https://openrouter.ai/api/v1', requesty: 'https://router.requesty.ai/v1'
+    };
     // ---- Chiavi (BP1 §4.1) ----
     const KK = 'imc-ai-keys', LEG = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
     const ls = (k) => { try {
@@ -7021,7 +7030,7 @@ const IA = (() => {
     function allinea() {
         const a = archivio(), ch = { ...(a ? a.chiavi : {}) };
         let cambiato = !a;
-        for (const p of PROVS) {
+        for (const p of ['groq', 'gemini']) {
             const v = ls(LEG[p]) || '';
             if (v !== (ch[p] || '')) {
                 if (v)
@@ -7038,27 +7047,49 @@ const IA = (() => {
     const chiave = (p) => allinea()[p] || '';
     function impostaChiave(p, v) {
         v = String(v || '').replace(/\s+/g, '');
-        lsScrivi(LEG[p], v);
+        const leg = LEG[p];
+        if (leg)
+            lsScrivi(leg, v);
+        else {
+            const a = archivio(), ch = { ...(a ? a.chiavi : {}) };
+            if (v)
+                ch[p] = v;
+            else
+                delete ch[p];
+            if (a || v)
+                lsScrivi(KK, JSON.stringify({ v: 2, chiavi: ch }));
+        }
         allinea();
         for (const k in disp)
             if (k.startsWith(p + ':'))
                 delete disp[k];
+        azzera(p);
     }
     const tutteChiavi = () => ({ ...allinea() });
     /** Avviso (non blocco) sul formato della chiave. */
-    const formatoOk = (p, v) => !v || (p === 'groq' ? /^gsk_/.test(v) : /^(AIza|AQ\.)/.test(v));
+    const FORMATO = { groq: /^gsk_/, gemini: /^(AIza|AQ\.)/, openrouter: /^sk-or-/ };
+    const formatoOk = (p, v) => { const re = FORMATO[p]; return !v || !re || re.test(v); };
     // ---- Discovery per pattern (BP1 §4.3) ----
     const PATTERN = {
         groq: { genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
         gemini: { genera: [/gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/gemini-\d.*flash(?!-lite)/, /pro/], visione: [/gemini-\d.*flash(?!-lite)/, /flash/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
+        mistral: { genera: [/mistral-(large|medium)/, /mistral-small/], revisiona: [/mistral-(large|medium)/], veloce: [/mistral-small/, /ministral/], lungo: [/mistral-(large|medium)/] },
+        cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
+        openrouter: { genera: [/:free$/], veloce: [/:free$/] },
+        requesty: { genera: [/gemini.*flash(?!-lite)/, /gpt-.*mini/, /llama/], veloce: [/flash-lite|mini|small/] },
     };
     /** Usati solo se /models non risponde e non c'è nulla in memoria. */
     const RISERVA = {
         groq: { genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
         gemini: { genera: ['gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.8-flash'], visione: ['gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
+        mistral: { genera: ['mistral-large-latest', 'mistral-small-latest'], revisiona: ['mistral-large-latest'], veloce: ['mistral-small-latest'], lungo: ['mistral-large-latest'] },
+        cohere: {}, openrouter: {}, requesty: {},
     };
-    const CATENA = { veloce: ['groq', 'gemini'], genera: ['gemini', 'groq'], revisiona: ['groq', 'gemini'], lungo: ['gemini'], visione: ['gemini', 'groq'] };
-    const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound/i;
+    const CATENA = {
+        veloce: ['groq', 'gemini', 'mistral', 'openrouter', 'requesty'], genera: ['gemini', 'groq', 'mistral', 'cohere', 'openrouter', 'requesty'],
+        revisiona: ['groq', 'gemini', 'mistral', 'cohere'], lungo: ['gemini', 'mistral'], visione: ['gemini', 'groq']
+    };
+    const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound|moderation|ocr|rerank/i;
     const versione = (id) => { const m = /(\d+(?:\.\d+)?)/.exec(id.replace(/^.*\//, '')); return m ? parseFloat(m[1]) : 0; };
     const instabile = (id) => /preview|exp/i.test(id);
     /** Sceglie fino a 3 modelli per il ruolo, nell'ordine dei pattern; a parità la versione più alta. */
@@ -7085,7 +7116,7 @@ const IA = (() => {
         const k = chiave(p);
         if (!k)
             return [];
-        const ch = p + ':' + k.slice(-6), cl = (p === 'gemini' ? 'g:' : 'q:') + k.slice(-6);
+        const ch = p + ':' + k.slice(-6), cl = (p === 'gemini' ? 'g' : p === 'groq' ? 'q' : p) + ':' + k.slice(-6);
         const c = disp[ch] || (() => { try {
             return JSON.parse(ls('imc-modelli-' + cl) || 'null');
         }
@@ -7134,7 +7165,7 @@ const IA = (() => {
         const out = [];
         provs.forEach((p, i) => { for (const m of scegli(p, r, liste[i]))
             if (m !== evita)
-                out.push({ nome: (p === 'gemini' ? 'Gemini ' : 'Groq ') + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' }); });
+                out.push({ nome: NOMI[p] + ' ' + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' }); });
         return out;
     }
     // v0.45 (BP1 §4.6): lettura robusta del JSON restituito dai modelli.
@@ -7192,9 +7223,6 @@ const IA = (() => {
         }
     }
     const json = parseJsonSicuro;
-    /** v0.44.2: Groq free = 8.000 token/minuto (input + output). 16.000 caratteri ≈ 4.600 token lasciano spazio alla risposta;
-     *  prima erano 60.000 (≈17.000 token) e le richieste grandi tornavano 413 «Request too large». */
-    const GROQ_CAR = 16000;
     /** Accorcia i messaggi di testo più lunghi finché il totale sta sotto `lim` caratteri (i brevi restano interi; immagini intatte). */
     function accorcia(msgs, lim) {
         const len = (x) => typeof x.content === 'string' ? x.content.length : 0;
@@ -7219,57 +7247,242 @@ const IA = (() => {
         }
         return out;
     }
+    // ---- Router (BP1 §4.4–4.5, v0.47) ----
+    /** Limiti di partenza (token/minuto e contesto); `tpm` si aggiorna dalle intestazioni x-ratelimit-limit-tokens e dopo un 413. */
+    const LIMITI = {
+        groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, mistral: { tpm: 50000, ctx: 32000 },
+        cohere: { tpm: 20000, ctx: 128000 }, openrouter: { tpm: 20000, ctx: 32000 }, requesty: { tpm: 20000, ctx: 32000 }
+    };
+    /** Token di risposta attesi per ruolo: contano solo nel budget (non si inviano: i token di ragionamento li consumerebbero). */
+    const USCITA = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000 };
+    let RM = {}; // per «fornitore:modello»
+    let RP = {}; // pausa dell'intero fornitore
+    let NO = {}; // impronta della chiave rifiutata
+    const impronta = (k) => k.slice(-6) + k.length;
+    function sm(p, m) { const id = p + ':' + m; return RM[id] || (RM[id] = { finoA: 0, k: 0, tpm: LIMITI[p].tpm }); }
+    function azzera(p) {
+        if (!p) {
+            RM = {};
+            RP = {};
+            NO = {};
+            return;
+        }
+        delete RP[p];
+        delete NO[p];
+        for (const k of Object.keys(RM))
+            if (k.startsWith(p + ':'))
+                delete RM[k];
+    }
+    /** Stima: 3,5 caratteri per token; delle immagini conta solo il testo. */
+    const stimaTok = (msgs) => Math.ceil(msgs.reduce((s, x) => s + (typeof x.content === 'string' ? x.content.length
+        : Array.isArray(x.content) ? x.content.reduce((a, c) => a + (c && typeof c.text === 'string' ? c.text.length : 0), 0) : 0), 0) / 3.5);
+    const budget = (p, m, out) => Math.min(LIMITI[p].ctx, Math.floor(0.7 * sm(p, m).tpm)) - out;
+    /** Motivo per cui il modello va saltato ora ('' = utilizzabile). */
+    function bloccato(p, m, serve, k) {
+        const ora = Date.now(), P = RP[p], s = sm(p, m);
+        if (NO[p] && NO[p] === impronta(k))
+            return 'chiave non valida';
+        if (P && P.finoA > ora)
+            return P.motivo;
+        if (s.finoA > ora)
+            return 'in pausa';
+        if (s.rest && s.rest.finoA > ora && s.rest.tok < serve)
+            return 'in pausa';
+        return '';
+    }
+    /** Durate delle intestazioni: «7.66s», «2m59.56s», «120ms», «1h2m», «30» (secondi) o data HTTP → millisecondi. */
+    function dur(v) {
+        if (!v)
+            return 0;
+        v = v.trim();
+        if (/^\d+(\.\d+)?$/.test(v))
+            return parseFloat(v) * 1000;
+        const U = { ms: 1, s: 1e3, m: 6e4, h: 36e5 };
+        let t = 0, x;
+        const re = /(\d+(?:\.\d+)?)(ms|h|m|s)/g;
+        while ((x = re.exec(v)))
+            t += parseFloat(x[1]) * U[x[2]];
+        if (!t) {
+            const d = Date.parse(v);
+            if (!isNaN(d))
+                t = Math.max(0, d - Date.now());
+        }
+        return t;
+    }
+    /** Legge le intestazioni e aggiorna lo stato dopo ogni risposta. */
+    function esito(p, m, res, tok, k) {
+        const hd = (n) => res.headers.get(n), s = sm(p, m), ora = Date.now();
+        const lim = parseInt(hd('x-ratelimit-limit-tokens') || '', 10);
+        if (lim > 0)
+            s.tpm = lim;
+        const rim = parseInt(hd('x-ratelimit-remaining-tokens') || '', 10);
+        if (!isNaN(rim))
+            s.rest = { tok: rim, finoA: ora + (dur(hd('x-ratelimit-reset-tokens')) || 6e4) };
+        if (res.ok) {
+            s.k = 0;
+            return;
+        }
+        if (res.status === 429) {
+            const att = dur(hd('retry-after')) || Math.max(dur(hd('x-ratelimit-reset-tokens')), dur(hd('x-ratelimit-reset-requests'))) || Math.min(6e5, 15e3 * Math.pow(2, s.k));
+            s.finoA = ora + Math.min(att, 6 * 36e5);
+            s.k++;
+        }
+        else if (res.status === 413) {
+            if (tok)
+                s.tpm = Math.min(s.tpm, Math.floor(tok * 0.9));
+        }
+        else if (res.status === 401 || res.status === 403)
+            NO[p] = impronta(k);
+        else if (res.status >= 500)
+            RP[p] = { finoA: ora + 30e3, motivo: 'non raggiungibile' };
+    }
+    // al massimo 2 richieste in volo per fornitore
+    const inVolo = {}, attesa = {};
+    async function slot(p) {
+        if ((inVolo[p] || 0) >= 2) {
+            await new Promise(r => (attesa[p] = attesa[p] || []).push(r));
+            return;
+        } // il posto viene passato da `libera`
+        inVolo[p] = (inVolo[p] || 0) + 1;
+    }
+    function libera(p) { const q = attesa[p], n = q && q.shift(); if (n)
+        n();
+    else
+        inVolo[p] = Math.max(0, (inVolo[p] || 0) - 1); }
+    /** Una richiesta passando dal router: posto libero, esito registrato, errori di rete → fornitore in pausa 30 s. */
+    async function manda(p, m, perc, k, corpo, tok) {
+        await slot(p);
+        let res;
+        try {
+            res = await richiesta(p, perc, k, corpo);
+        }
+        catch (e) {
+            RP[p] = { finoA: Date.now() + 30e3, motivo: 'non raggiungibile' };
+            throw e;
+        }
+        finally {
+            libera(p);
+        }
+        esito(p, m, res, tok, k);
+        return res;
+    }
+    const ora2 = (t) => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    /** Stato dei fornitori per le impostazioni. */
+    function stato() {
+        const out = {}, ora = Date.now();
+        for (const p of PROVS) {
+            const k = chiave(p), P = RP[p];
+            if (!k) {
+                out[p] = { ok: false, motivo: 'senza chiave' };
+                continue;
+            }
+            if (NO[p] === impronta(k)) {
+                out[p] = { ok: false, motivo: 'chiave non valida' };
+                continue;
+            }
+            if (P && P.finoA > ora) {
+                out[p] = { ok: false, finoA: P.finoA, motivo: P.motivo };
+                continue;
+            }
+            const ms = Object.keys(RM).filter(x => x.startsWith(p + ':')).map(x => RM[x]);
+            if (ms.length && ms.every(s => s.finoA > ora)) {
+                out[p] = { ok: false, finoA: Math.min(...ms.map(s => s.finoA)), motivo: 'limite gratuito' };
+                continue;
+            }
+            out[p] = { ok: true };
+        }
+        return out;
+    }
     const errore = (j, stato) => { const e = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + stato); e.stato = stato; return e; };
     const contenuto = (j) => String(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '');
-    /** Cuore del gateway: prova i modelli della catena del ruolo finché uno risponde. Con `comeJson` legge il JSON (una riprova se illeggibile). */
+    /** Un tentativo con un modello (più l'eventuale riprova senza modalità JSON / per JSON illeggibile). */
+    async function tenta(f, m2, o, comeJson, tok) {
+        const k = chiave(f.prov);
+        const corpo = { model: f.modello, temperature: o.temp == null ? .3 : o.temp, messages: m2 };
+        if (o.maxOut)
+            corpo[f.prov === 'groq' ? 'max_completion_tokens' : 'max_tokens'] = o.maxOut;
+        if (comeJson)
+            corpo.response_format = { type: 'json_object' };
+        let res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
+        if (res.status === 400 && corpo.response_format) {
+            delete corpo.response_format;
+            res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
+        } // modello senza modalità JSON
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok)
+            throw errore(j, res.status);
+        const t = contenuto(j);
+        if (!comeJson) {
+            const s = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').trim();
+            if (!s)
+                throw new Error('risposta vuota');
+            return { testo: s, prov: f.prov, modello: f.modello };
+        }
+        try {
+            return { testo: t, j: json(t), prov: f.prov, modello: f.modello };
+        }
+        catch (_) { /* una sola riprova, sotto */ }
+        // v0.45: JSON illeggibile → una riprova con lo stesso modello chiedendo solo JSON valido
+        corpo.messages = [...m2, { role: 'assistant', content: String(t).slice(0, 2000) }, { role: 'user', content: 'Rispondi solo con JSON valido, senza testo prima o dopo. Nelle stringhe scrivi i backslash del LaTeX doppi (\\\\frac).' }];
+        const res2 = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok), j2 = await res2.json().catch(() => ({}));
+        if (!res2.ok)
+            throw errore(j2, res2.status);
+        const t2 = contenuto(j2);
+        return { testo: t2, j: json(t2), prov: f.prov, modello: f.modello };
+    }
+    /** Cuore del gateway: 1° giro sui modelli in cui il testo sta per intero; 2° giro (salvo `tronca:false`) accorciando il testo
+     *  per i modelli più piccoli. Salta i modelli in pausa o con chiave rifiutata. */
     async function invia(msgs, r, o, comeJson) {
         await Spiega.pronta();
         const forn = await catena(r, o.evita);
         if (!forn.length)
             throw new Error('Manca la chiave AI gratuita: inseriscila in Altro → Spiegazioni AI (Groq, ed eventualmente Gemini).');
-        const errori = [];
-        let ultimo = null, solo401 = true;
-        for (const f of forn) {
-            const m2 = accorcia(msgs, f.gem ? 600000 : GROQ_CAR), k = chiave(f.prov);
+        const out = o.maxOut || USCITA[r], tok = stimaTok(msgs);
+        const errori = [], grandi = [], saltati = [];
+        let ultimo = null, solo401 = true, provati = 0;
+        const prova = async (f, m2, t) => {
+            provati++;
             try {
-                const corpo = { model: f.modello, temperature: o.temp == null ? .3 : o.temp, messages: m2 };
-                if (o.maxOut)
-                    corpo[f.gem ? 'max_tokens' : 'max_completion_tokens'] = o.maxOut;
-                if (comeJson)
-                    corpo.response_format = { type: 'json_object' };
-                let res = await richiesta(f.prov, '/chat/completions', k, corpo);
-                if (res.status === 400 && corpo.response_format) {
-                    delete corpo.response_format;
-                    res = await richiesta(f.prov, '/chat/completions', k, corpo);
-                } // modello senza modalità JSON
-                const j = await res.json().catch(() => ({}));
-                if (!res.ok)
-                    throw errore(j, res.status);
-                const t = contenuto(j);
-                if (!comeJson) {
-                    const s = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').trim();
-                    if (!s)
-                        throw new Error('risposta vuota');
-                    return { testo: s, prov: f.prov, modello: f.modello };
-                }
-                try {
-                    return { testo: t, j: json(t), prov: f.prov, modello: f.modello };
-                }
-                catch (_) { /* una sola riprova, sotto */ }
-                // v0.45: JSON illeggibile → una riprova con lo stesso modello chiedendo solo JSON valido
-                corpo.messages = [...m2, { role: 'assistant', content: String(t).slice(0, 2000) }, { role: 'user', content: 'Rispondi solo con JSON valido, senza testo prima o dopo. Nelle stringhe scrivi i backslash del LaTeX doppi (\\\\frac).' }];
-                const res2 = await richiesta(f.prov, '/chat/completions', k, corpo), j2 = await res2.json().catch(() => ({}));
-                if (!res2.ok)
-                    throw errore(j2, res2.status);
-                const t2 = contenuto(j2);
-                return { testo: t2, j: json(t2), prov: f.prov, modello: f.modello };
+                return await tenta(f, m2, o, comeJson, t);
             }
             catch (e) {
                 ultimo = e;
                 if (e.stato !== 401 && e.stato !== 403)
                     solo401 = false;
                 errori.push(f.nome + ': ' + String(e.message || e).slice(0, 80));
+                return null;
             }
+        };
+        for (const f of forn) {
+            const b = bloccato(f.prov, f.modello, tok + out, chiave(f.prov));
+            if (b) {
+                saltati.push(b);
+                continue;
+            }
+            if (tok > budget(f.prov, f.modello, out)) {
+                grandi.push(f);
+                continue;
+            }
+            const x = await prova(f, msgs, tok);
+            if (x)
+                return x;
+        }
+        if (o.tronca !== false)
+            for (const f of grandi) {
+                const bud = budget(f.prov, f.modello, out);
+                if (bud < 300 || bloccato(f.prov, f.modello, bud + out, chiave(f.prov)))
+                    continue;
+                const x = await prova(f, accorcia(msgs, Math.floor(bud * 3.5)), bud);
+                if (x)
+                    return x;
+            }
+        if (!provati) {
+            if (saltati.length && saltati.every(s => s === 'chiave non valida'))
+                throw new Error('Chiave AI non valida: controllala in Altro → Spiegazioni AI.');
+            if (!saltati.length)
+                throw new Error('Il testo è troppo lungo per i modelli disponibili: accorcialo, oppure aggiungi la chiave Gemini.');
+            const fino = forn.map(f => Math.max(sm(f.prov, f.modello).finoA, (RP[f.prov] || { finoA: 0 }).finoA)).filter(t => t > Date.now());
+            throw new Error('Tutti i modelli AI sono in pausa per i limiti gratuiti' + (fino.length ? ': riprova verso le ' + ora2(Math.min(...fino)) : '') + '.');
         }
         if (solo401 && ultimo)
             throw new Error('Chiave AI non valida: controllala in Altro → Spiegazioni AI.');
@@ -7290,15 +7503,20 @@ const IA = (() => {
         const k = chiave('groq');
         if (!k)
             throw new Error('Manca la chiave Groq: inseriscila in Altro → Spiegazioni AI.');
+        const mod = o.modello || 'whisper-large-v3-turbo', b0 = bloccato('groq', mod, 0, k);
+        if (b0 === 'chiave non valida')
+            throw new Error('Chiave Groq non valida.');
+        if (b0)
+            throw new Error('Limite gratuito di Groq raggiunto (audio): riprova verso le ' + ora2(Math.max(sm('groq', mod).finoA, (RP.groq || { finoA: 0 }).finoA)) + '.');
         const f = new FormData();
         f.append('file', b, o.nome || 'audio.webm');
-        f.append('model', o.modello || 'whisper-large-v3-turbo');
+        f.append('model', mod);
         f.append('language', o.lingua || 'it');
         f.append('response_format', 'verbose_json');
         f.append('temperature', '0');
         if (o.prompt)
             f.append('prompt', o.prompt.slice(0, 800));
-        const r = await richiesta('groq', '/audio/transcriptions', k, f);
+        const r = await manda('groq', mod, '/audio/transcriptions', k, f, 0);
         const j = await r.json().catch(() => ({}));
         if (r.status === 401)
             throw new Error('Chiave Groq non valida.');
@@ -7324,8 +7542,37 @@ const IA = (() => {
         } };
         return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
     }
-    return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, disponibili, catena, scegli, accorcia, GROQ_CAR, parseJsonSicuro,
-        chiave, impostaChiave, tutteChiavi, formatoOk, get gemini() { return !!chiave('gemini'); } };
+    /** Altri fornitori facoltativi + stato di tutti i fornitori (Altro → Spiegazioni AI). */
+    function campoAltri() {
+        const DOVE = { mistral: 'console.mistral.ai (piano gratuito)', cohere: 'dashboard.cohere.com (chiave di prova)', openrouter: 'openrouter.ai (solo modelli «:free»)', requesty: 'requesty.ai' };
+        const elenco = h('div.tenue.piccolo', null);
+        const aggiorna = () => {
+            const st = stato();
+            elenco.textContent = '';
+            for (const p of PROVS) {
+                const x = st[p];
+                const d = x.ok ? '✅ pronto' : x.motivo === 'senza chiave' ? '—' : x.motivo === 'chiave non valida' ? '❌ chiave non valida'
+                    : '⏳ in pausa fino alle ' + ora2(x.finoA || Date.now()) + (x.motivo === 'non raggiungibile' ? ' (non raggiungibile)' : '');
+                elenco.appendChild(h('div', null, NOMI[p] + ': ' + d));
+            }
+        };
+        const righe = ALTRI.map(p => {
+            const inp = h('input', { type: 'text', placeholder: DOVE[p], value: chiave(p), autocomplete: 'off', autocapitalize: 'none', spellcheck: false, style: { fontFamily: 'monospace' } });
+            const salva = () => {
+                const v = inp.value.replace(/\s+/g, '');
+                inp.value = v;
+                impostaChiave(p, v);
+                aggiorna();
+                avviso(v ? (formatoOk(p, v) ? 'Chiave ' + NOMI[p] + ' salvata su questo dispositivo.' : 'Salvata, ma non sembra una chiave ' + NOMI[p] + '.') : 'Chiave ' + NOMI[p] + ' rimossa.', 5000);
+            };
+            return h('div.riga', null, h('span', null, NOMI[p]), inp, h('button.btn.neutro', { onclick: salva }, 'Salva'));
+        });
+        aggiorna();
+        return h('div.gruppo', null, h('details', null, h('summary', null, 'Altri fornitori AI (facoltativi)'), h('div.tenue.piccolo', null, 'Usati solo se Groq e Gemini sono in pausa o mancano. Chiavi salvate solo su questo dispositivo.'), ...righe), h('div.piccolo', null, 'Stato dei fornitori'), elenco, h('div.bottoni', null, h('button.btn.neutro', { onclick: aggiorna }, 'Aggiorna stato')));
+    }
+    return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, scegli, accorcia, parseJsonSicuro,
+        chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, _r: { stimaTok, budget, dur, get RM() { return RM; } },
+        get gemini() { return !!chiave('gemini'); } };
 })();
 
 // =====================================================================
@@ -10678,6 +10925,9 @@ const Spiega = (() => {
             IA.impostaChiave('groq', ch.groq);
             if (ch.gemini && !IA.gemini)
                 IA.impostaChiave('gemini', ch.gemini);
+            for (const p of IA.ALTRI)
+                if (ch[p] && !IA.chiave(p))
+                    IA.impostaChiave(p, ch[p]); // v0.47
             if (d.modello)
                 scrivi(KM, d.modello);
             avviso('✨ AI pronta: ' + (ch.gemini ? 'chiavi AI recuperate' : 'chiave Groq recuperata') + ' dal tuo Drive.');
@@ -10742,7 +10992,7 @@ const Spiega = (() => {
     }
     /** v0.31: legge un'immagine (scrittura a mano) con un modello visivo; restituisce testo. */
     async function vede(istruzioni, immagine) {
-        if (!await pronta() && !IA.gemini)
+        if (!await pronta() && !Object.keys(IA.tutteChiavi()).length)
             throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
         // v0.46: modello visivo scelto dal gateway (Gemini Flash, poi Qwen visivo di Groq)
         const r = await IA.testo([{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }], 'visione', { temp: 0.1, maxOut: 4096 });
@@ -10767,7 +11017,7 @@ const Spiega = (() => {
             rispondi({ testo: c.testo, modello: c.modello, salvata: true });
             return;
         }
-        if (!await pronta() && !IA.gemini) {
+        if (!await pronta() && !Object.keys(IA.tutteChiavi()).length) {
             rispondi({ errore: 'Manca la chiave AI: incollala in Altro → Spiegazioni AI.' });
             return;
         }
@@ -10908,7 +11158,7 @@ const Spiega = (() => {
                 avviso(String(e.message || e), 8000);
             }
         };
-        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq (e Gemini, se aggiungi la chiave), gratuiti; i modelli migliori disponibili sono scelti da soli. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'), IA.campoGemini(), MemoriaIA.sezione());
+        return scheda('Spiegazioni AI', h('div.tenue.piccolo', null, 'Nei quiz aperti dall\'app, sotto la correzione compare «✨ Spiegazione AI» (breve, media o dettagliata). Usa Groq (e Gemini, se aggiungi la chiave), gratuiti; i modelli migliori disponibili sono scelti da soli. La chiave resta solo su questo dispositivo; le spiegazioni generate si salvano con i tuoi dati su Drive e non si rigenerano.'), h('div.gruppo', null, riga('Chiave Groq', inp)), h('div.bottoni', null, h('button.btn', { onclick: incolla }, '📋 Incolla chiave'), h('button.btn.neutro', { onclick: salvaChiave }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')), h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'), IA.campoGemini(), IA.campoAltri(), MemoriaIA.sezione());
     }
     return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
@@ -13020,7 +13270,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.46';
+const VERSIONE = '0.47';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
