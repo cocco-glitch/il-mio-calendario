@@ -37,6 +37,7 @@ const Spiega = (() => {
       const ch: Record<string, string> = d.v === 2 && d.chiavi ? d.chiavi : { groq: d.groq };
       if (!/^gsk_/.test(ch.groq || '')) return false;
       IA.impostaChiave('groq', ch.groq); if (ch.gemini && !IA.gemini) IA.impostaChiave('gemini', ch.gemini);
+      for (const p of IA.ALTRI) if ((ch as any)[p] && !IA.chiave(p)) IA.impostaChiave(p, (ch as any)[p]);   // v0.47
       if (d.modello) scrivi(KM, d.modello); avviso('✨ AI pronta: ' + (ch.gemini ? 'chiavi AI recuperate' : 'chiave Groq recuperata') + ' dal tuo Drive.'); return true;
     } catch (_) { return false; }
   }
@@ -89,7 +90,7 @@ const Spiega = (() => {
 
   /** v0.31: legge un'immagine (scrittura a mano) con un modello visivo; restituisce testo. */
   async function vede(istruzioni: string, immagine: string): Promise<string> {
-    if (!await pronta() && !IA.gemini) throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
+    if (!await pronta() && !Object.keys(IA.tutteChiavi()).length) throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
     // v0.46: modello visivo scelto dal gateway (Gemini Flash, poi Qwen visivo di Groq)
     const r = await IA.testo([{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }], 'visione', { temp: 0.1, maxOut: 4096 });
     return r.testo;
@@ -106,7 +107,7 @@ const Spiega = (() => {
     if (!d || !d.q || !d.corretta || !LIV[l]) { rispondi({ errore: 'Non riesco a leggere la domanda.' }); return; }
     const id = idDi(d, l), c = Stato.prendi<Spiegazione>(id);
     if (c && !c.deleted && !m.forza) { rispondi({ testo: c.testo, modello: c.modello, salvata: true }); return; }
-    if (!await pronta() && !IA.gemini) { rispondi({ errore: 'Manca la chiave AI: incollala in Altro → Spiegazioni AI.' }); return; }
+    if (!await pronta() && !Object.keys(IA.tutteChiavi()).length) { rispondi({ errore: 'Manca la chiave AI: incollala in Altro → Spiegazioni AI.' }); return; }
     try {
       const g = await genera(d, l);
       Stato.salva({ id, type: 'spiegazione', updatedAt: 0, q: d.q, giusta: d.corretta, livello: l, testo: g.testo, modello: g.modello, quiz: d.titolo } as Spiegazione, true);
@@ -206,6 +207,7 @@ const Spiega = (() => {
         h('button.btn.neutro', { onclick: prova }, 'Prova')),
       h('div.tenue.piccolo', null, n ? 'Spiegazioni salvate: ' + n + '.' : 'Nessuna spiegazione salvata finora.'),
       IA.campoGemini(),
+      IA.campoAltri(),
       MemoriaIA.sezione());
   }
 
