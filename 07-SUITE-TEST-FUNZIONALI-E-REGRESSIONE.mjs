@@ -1,4 +1,4 @@
-// 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs — v0.54 (BP3)
+// 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs — v0.55 (BP3 + BP4)
 // Test funzionali e di regressione SENZA browser e SENZA toccare dist/:
 //  - compila src/07-neuro.ts (modulo puro) in una cartella temporanea del sistema e lo carica in una sandbox vm;
 //  - fetch è sostituita da un contatore: i livelli 0 e 1 dell'imbuto AI devono fare ZERO chiamate di rete;
@@ -25,17 +25,23 @@ function vero(c, m) { if (!c) throw new Error(m || 'condizione falsa'); }
 
 // ---------- caricamento di Neuro (tsc → cartella temporanea, mai dist/) ----------
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'imc-bp3-'));
-fs.writeFileSync(path.join(TMP, 'stub.d.ts'), 'interface Rec { id: string; type: string; updatedAt: number; deleted?: boolean; acc?: string; }\n');
+fs.writeFileSync(path.join(TMP, 'stub.d.ts'), 'interface Rec { id: string; type: string; updatedAt: number; deleted?: boolean; acc?: string; }\n'
+  + 'interface VocePiano { k: string; t: string; d?: string; speciale?: boolean; }\n'
+  + 'interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }\n'
+  + "interface PkPiano { tipo: 'piano'; id: string; modo?: string; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; }\n");
 fs.copyFileSync(path.join(SRC, '07-neuro.ts'), path.join(TMP, 'neuro.ts'));
+fs.copyFileSync(path.join(SRC, '07-pianificatore.ts'), path.join(TMP, 'pianificatore.ts'));
 try {
-  execSync('npx -y -p typescript@5.6.3 tsc --target es2020 --lib es2020 --strict --noEmitOnError false --outDir out stub.d.ts neuro.ts', { cwd: TMP, stdio: 'pipe' });
-} catch (e) { console.log('⚠️ tsc su 07-neuro.ts:\n' + String(e.stdout || e.message).slice(0, 2000)); }
+  execSync('npx -y -p typescript@5.6.3 tsc --target es2020 --lib es2020 --strict --noEmitOnError false --outDir out stub.d.ts neuro.ts pianificatore.ts', { cwd: TMP, stdio: 'pipe' });
+} catch (e) { console.log('⚠️ tsc sui moduli puri:\n' + String(e.stdout || e.message).slice(0, 2000)); }
 const JS = fs.readFileSync(path.join(TMP, 'out', 'neuro.js'), 'utf8');
+const JS_PIAN = fs.readFileSync(path.join(TMP, 'out', 'pianificatore.js'), 'utf8');
 let chiamateRete = 0;
 const sandbox = { console, fetch: async () => { chiamateRete++; throw new Error('rete vietata nei test'); }, Math, Date, JSON, Promise, Set, Map };
 vm.createContext(sandbox);
 vm.runInContext(JS + '\n;this.Neuro = Neuro;', sandbox);
-const N = sandbox.Neuro;
+vm.runInContext(JS_PIAN + '\n;this.Pianificatore = Pianificatore;', sandbox);
+const N = sandbox.Neuro, P = sandbox.Pianificatore;
 const OGGI = '2026-11-18';
 
 console.log('\n== BP3 §1.2 Matrice certezza × correttezza ==');
@@ -179,7 +185,125 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.54', () => vero(/const VERSIONE = '0\.54'/.test(leggi('09-main.ts'))));
+t('versione app 0.55', () => vero(/const VERSIONE = '0\.55'/.test(leggi('09-main.ts'))));
+
+// ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
+console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
+const finestre = (da, a, giorni = [1, 2, 3, 4, 5, 6]) => giorni.map(g => ({ giornoSettimana: g, oraInizio: da, oraFine: a }));
+const V = (o = {}) => ({ materiaCodice: 'C', archetipo: 'scienze_sperimentali', sorgentiDriveIds: [], dataTarget: '2026-12-08', livelloPartenza: 'da_zero',
+  livelloObiettivo: 4, finestreSettimanali: finestre('15:00', '19:00'), maxOreGiorno: 3, ...o });
+const UNITA = [
+  { uid: 'U1', titolo: 'Atomo', prereq: [], densita: 2, minutiBase: 90, concettiChiave: [], fileId: 'f1', nomeFile: 'Chimica.pdf', pagine: [1, 10] },
+  { uid: 'U2', titolo: 'Legami', prereq: ['U1'], densita: 3, minutiBase: 90, concettiChiave: [], fileId: 'f1', nomeFile: 'Chimica.pdf', pagine: [11, 22] },
+  { uid: 'U3', titolo: 'Stechiometria', prereq: ['U1'], densita: 4, minutiBase: 90, concettiChiave: [] },
+  { uid: 'U4', titolo: 'Reazioni', prereq: ['U2', 'U3'], densita: 3, minutiBase: 90, concettiChiave: [] },
+];
+const minHM = s => +s.slice(0, 2) * 60 + +s.slice(3, 5);
+const tutteVoci = p => p.giorni.flatMap(g => g.voci.map(v => ({ ...v, data: g.data })));
+const STAT_ILL = [{ sk: 'C-3.1.1-1', n: 3, ok: 1, neuro: { ultimoCaso: 'illusione_competenza', tag: ['illusione_competenza'] } }, { sk: 'C-3.1.1-2', n: 2, ok: 2, ipercorrezioni: 1 }];
+
+await t('testFattibilitaCritica: 40 unità in ~4 h → critico, 3 rimedi, 0 chiamate AI e di rete', async () => {
+  const indice = Array.from({ length: 40 }, (_, i) => (i + 1) + ' Capitolo numero ' + (i + 1) + ' ..... ' + (1 + i * 10)).join('\n');
+  let ia = 0; const rete0 = chiamateRete;
+  const r = await P.creaPiano(V({ dataTarget: '2026-11-21', finestreSettimanali: finestre('17:00', '19:00'), maxOreGiorno: 2 }),
+    { oggi: OGGI, testoIndice: indice, ia: async () => { ia++; return '[]'; } });
+  eq(r.fatt.stato, 'critico', 'stato'); vero(r.piano === null, 'nessun piano'); eq(r.fatt.rimedi.map(x => x.tipo).sort(), ['piu_minuti', 'sopravvivenza', 'sposta_data'], 'rimedi');
+  vero(r.fatt.oreDisponibili <= 4.5 && r.fatt.oreNecessarie > 40, 'ore ' + r.fatt.oreDisponibili + '/' + r.fatt.oreNecessarie);
+  eq(ia, 0, 'chiamate AI'); eq(r.chiamate, 0, 'chiamate dichiarate'); eq(r.tokenStimati, 0, 'token'); eq(chiamateRete - rete0, 0, 'rete');
+});
+
+await t('testAntiLoopGCal: specchio/app/trasparenti/cancellati non sono occupato; primary letto solo in GET', async () => {
+  const ev = (o) => ({ start: { dateTime: '2026-11-19T16:00:00' }, end: { dateTime: '2026-11-19T17:00:00' }, ...o });
+  const occ = P.occupatoDaEventi([
+    ev({ summary: 'Lezione' }),
+    ev({ summary: 'Specchio', organizer: { email: 'mirror123@group.calendar.google.com' } }),
+    ev({ summary: 'App', extendedProperties: { private: { imc: '1' } } }),
+    ev({ summary: 'Libero', transparency: 'transparent' }),
+    ev({ summary: 'Annullato', status: 'cancelled' }),
+  ], 'mirror123@group.calendar.google.com');
+  eq(occ.length, 1, 'eventi occupati'); eq(occ[0].inizio, '2026-11-19T16:00', 'inizio');
+  const v = V({ maxOreGiorno: 4 }), senza = P.capacita(v, OGGI, []), con = P.capacita(v, OGGI, occ);
+  const g = d => (x => x ? x.minuti : 0)(senza.find(x => x.data === d)) - (x => x ? x.minuti : 0)(con.find(x => x.data === d));
+  vero(g('2026-11-19') > 0, 'l\'impegno di primary riduce la capacità del giorno');
+  const gc = leggi('06-gcal.ts'), fn = gc.slice(gc.indexOf('async function occupatoPrimary'), gc.indexOf('function programma'));
+  vero(/calendars\/primary\/events/.test(fn) && !/method:/.test(fn), 'lettura primary solo GET');
+  vero(fn.includes('Pianificatore.occupatoDaEventi') && fn.includes('gcalMirrorCalendarId()'), 'filtro anti-loop sullo specchio');
+  vero(/gcalLeggiPrimary/.test(fn) && /calendar\.events\.readonly/.test(gc), 'lettura primary opt-in con scope di sola lettura');
+});
+
+await t('testFallbackOfflineZeroAI: AI con 429 → indice locale (TOC), piano valido, 0 token', async () => {
+  const indice = ['1 Atomo ..... 1', '2 Legami chimici ..... 12', '3 Stechiometria ..... 25', '4 Reazioni ..... 38'].join('\n');
+  let viste = 0; const rete0 = chiamateRete;
+  const r = await P.creaPiano(V(), { oggi: OGGI, testoIndice: indice, pid: 'ai-test1',
+    ia: async (msgs, o) => { viste++; eq(o.maxOut, 1800, 'max_tokens'); try { await sandbox.fetch('https://api.groq.com/x'); } catch (_) { /* contata */ } const e = new Error('429 Too Many Requests'); e.status = 429; throw e; } });
+  eq(viste, 1, 'una sola chiamata AI'); eq(chiamateRete - rete0, 1, 'una sola richiesta di rete');
+  eq(r.fonte, 'toc', 'fonte'); eq(r.tokenStimati, 0, 'token'); vero(r.piano && r.piano.giorni.length > 0, 'piano valido');
+  eq(r.piano.fonteMappa, 'toc'); eq(r.piano.unita.length, 4, 'unità dall\'indice'); eq(r.piano.unita[1].prereq, ['U1'], 'prerequisiti lineari');
+  // risposta AI troncata: si recuperano gli oggetti completi (grounding sulla struttura)
+  const parz = P.recuperaArrayParziale('[{"uid":"U1","titolo":"Atomo","prereq":[],"densita":2,"minutiBase":60,"concettiChiave":["protone"]},{"uid":"U2","tit');
+  eq(parz.length, 1, 'JSON parziale');
+});
+
+await t('testAllocazioneFSRS4Livelli: ordine topologico, L1→L4, ripassi FSRS, fine ≤ 21:30, target−1 leggero ≤ 60 min', async () => {
+  const r = await P.creaPiano(V({ finestreSettimanali: finestre('18:00', '23:00', [0, 1, 2, 3, 4, 5, 6]) }), { oggi: OGGI, unita: UNITA, pid: 'ai-test2' });
+  vero(r.piano, 'piano creato (' + r.fatt.stato + ')'); const voci = tutteVoci(r.piano);
+  const prima = (uid, l) => (voci.filter(v => v.uid === uid && v.livelloCognitivo === l && !v.isRipassoFSRS).map(v => v.data).sort()[0]) || '9999';
+  for (const u of UNITA) {
+    for (let l = 1; l < 4; l++) vero(prima(u.uid, l) <= prima(u.uid, l + 1), u.uid + ' L' + l + ' prima di L' + (l + 1));
+    for (const p of u.prereq) vero(prima(p, 1) <= prima(u.uid, 1), p + ' prima di ' + u.uid);
+    vero(prima(u.uid, 1) !== '9999' && prima(u.uid, 4) !== '9999', u.uid + ' con tutti i livelli');
+  }
+  vero(voci.some(v => v.isRipassoFSRS && /~R1$/.test(v.k)), 'ripassi FSRS'); vero(voci.some(v => v.isBuffer && v.speciale), 'buffer (speciali)');
+  for (const v of voci) if (v.ora) vero(minHM(v.ora) + (v.min || 0) <= 21 * 60 + 30, 'oltre le 21:30: ' + v.k + ' ' + v.ora);
+  const leggero = voci.filter(v => v.data === '2026-12-07');
+  vero(leggero.some(v => /~RIPOSO$/.test(v.k)), 'riposo attivo il giorno prima'); vero(leggero.reduce((s, v) => s + (v.min || 0), 0) <= 60, 'target−1 ≤ 60 min');
+  vero(!voci.some(v => v.data >= '2026-12-08'), 'niente dopo la data obiettivo');
+  vero(voci.filter(v => v.sorgenteRef).every(v => v.sorgenteRef.fileId === 'f1'), 'sorgenteRef dal fileId');
+  vero(/^C~test2~U\d~L[1-4]/.test(voci.find(v => v.livelloCognitivo && !v.isRipassoFSRS).k), 'chiavi stabili');
+});
+
+await t('testHookIpercorrezioneZeroToken: ipercorrezioni (neuro + legacy) → +20% e L3 anticipata nel buffer, 0 rete', async () => {
+  const s = P.segnaliIper(STAT_ILL, 'C');
+  vero(s.attiva && s.illusioni >= 2, 'illusione da statq.neuro + campo legacy ipercorrezioni');
+  vero(P.segnaliIper([{ sk: 'C-1', n: 1, ok: 1, confidenceLog: [{ corretto: false, livelloCertezza: 3 }] }], 'C').illusioni === 1, 'confidenceLog certo+sbagliata');
+  eq(P.segnaliIper(STAT_ILL, 'B').illusioni, 0, 'altre materie ignorate');
+  const base = P.oreNecessarie(UNITA, V()), iper = P.oreNecessarie(UNITA, V(), s);
+  vero(Math.abs(iper / base - 1.2) < 0.02, '+20% slot: ' + base + ' → ' + iper);
+  const rete0 = chiamateRete;
+  const r = await P.creaPiano(V(), { oggi: OGGI, unita: UNITA, pid: 'ai-test3', statq: () => STAT_ILL });
+  vero(r.piano && r.piano.iper, 'piano marcato iper'); vero(r.fatt.extraIper, 'fattibilità con extra iper');
+  const prima = JSON.stringify(r.piano);
+  const h = P.hookIpercorrezione(r.piano, { oggi: OGGI, sk: 'C-3.1.1-1', caso: 'illusione_competenza' });
+  vero(h, 'hook applicato'); vero(/~L[34]/.test(h.k), 'attività L3/L4: ' + h.k); vero(h.a < h.da, 'anticipata ' + h.da + ' → ' + h.a);
+  vero(tutteVoci(h.piano).some(v => v.k === h.k && v.data === h.a), 'nel giorno del buffer'); eq(JSON.stringify(r.piano), prima, 'piano originale intatto');
+  eq(P.hookIpercorrezione(r.piano, { oggi: OGGI, sk: 'C-3.1.1-1', caso: 'padronanza' }), null, 'padronanza: niente');
+  eq(P.hookIpercorrezione(r.piano, { oggi: OGGI, sk: 'B-3.1.1-1', caso: 'illusione_competenza' }), null, 'altra materia: niente');
+  eq(chiamateRete - rete0, 0, 'rete');
+  vero(/PianiAI\.dopoQuiz\(v\.d\.sk, v\.caso\)/.test(leggi('07-quizapp.ts')), 'hook collegato al quiz');
+});
+
+await t('testIsolamentoPianiEsistenti: opt-in ai_neuro, altri piani intatti, buffer e FSRS in Ripianifica', async () => {
+  const altro = { formato: 'pacchetto-studio', tipo: 'piano', id: 'gen-x', titolo: 'Altro', aggiornato: '2026-11-01', giorniTeoria: 1, giorni: [{ data: '2026-11-20', voci: [{ k: 'C-3.1.1-1', t: 'x' }] }] };
+  const copia = JSON.stringify(altro), u0 = JSON.stringify(UNITA);
+  eq(P.hookIpercorrezione(altro, { oggi: OGGI, caso: 'illusione_competenza' }), null, 'hook su piano non AI'); eq(P.riassorbi(altro, ['C-3.1.1-1'], OGGI), [], 'riassorbi su piano non AI');
+  const pieno = await P.creaPiano(V(), { oggi: OGGI, unita: UNITA, pid: 'ai-test4', minutiAltriPiani: () => 0 });
+  const r = await P.creaPiano(V(), { oggi: OGGI, unita: UNITA, pid: 'ai-test5', minutiAltriPiani: d => d === '2026-11-19' ? 9999 : 0 });
+  eq(copia, JSON.stringify(altro), 'piano esistente intatto'); eq(u0, JSON.stringify(UNITA), 'unità intatte');
+  const p = r.piano; eq([p.formato, p.tipo, p.origine, p.proprio, p.id], ['pacchetto-studio', 'piano', 'ai_neuro', true, 'ai-test5'], 'piano isolato');
+  vero(!p.giorni.some(g => g.data === '2026-11-19') && pieno.piano.giorni.some(g => g.data === '2026-11-19'), 'rispetta i minuti degli altri piani');
+  vero(/^ai-/.test((await P.creaPiano(V(), { oggi: OGGI, unita: UNITA })).piano.id), 'id ai-…');
+  const l1 = tutteVoci(p).find(v => v.livelloCognitivo === 1 && !v.isRipassoFSRS), rip = tutteVoci(p).find(v => v.isRipassoFSRS);
+  const ri = P.riassorbi(p, [l1.k, rip.k], OGGI);
+  eq(ri.length, 1, 'solo l\'attività, non il ripasso FSRS'); vero(ri[0].k === l1.k && /~BUF~/.test(ri[0].buffer), 'nel buffer');
+  vero(!tutteVoci(P.consumaBuffer(p, [ri[0].buffer])).some(v => v.k === ri[0].buffer) && tutteVoci(p).some(v => v.k === ri[0].buffer), 'buffer consumato su copia');
+  const rp = leggi('07-ripianifica.ts'), ui = leggi('07-pianiai.ts'), gen = leggi('07-generatore.ts');
+  vero(rp.includes('Pianificatore.riassorbi') && rp.includes('Pianificatore.consumaBuffer') && rp.includes('isRipassoFSRS'), 'Ripianifica usa buffer e salta FSRS');
+  vero(gen.includes('PianiAI.bottoni(p)') && ui.includes('✨ Crea Piano Intelligente'), 'pulsante opt-in');
+  vero(ui.includes("Stato.elimina('pk-' + p.id)") && !/Stato\.elimina\((?!'pk-' \+ p\.id)/.test(ui), 'Elimina tocca solo pk-<id>');
+  vero(ui.includes("IA.testo(m as any, 'genera'") && ui.includes('Dominio.senzaAI()'), 'router «genera» e modalità senza AI');
+});
+const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();
+t('Pianificatore e interfaccia concatenati prima del quiz (uso solo a runtime)', () => vero(['07-pianificatore.ts', '07-pianiai.ts'].every(x => fl.indexOf(x) >= 0 && fl.indexOf(x) < fl.indexOf('07-quizapp.ts'))));
 
 fs.rmSync(TMP, { recursive: true, force: true });
 const tot = ok + ko;

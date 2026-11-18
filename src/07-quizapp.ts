@@ -132,6 +132,8 @@ const QuizApp = (() => {
     let scelta = '';
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; scelta = o; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
     Stato.salva(r, true);
+    // v0.55 (BP4 Stadio 5): illusione di competenza / risposta fortunata → anticipo L3/L4 nei piani ai_neuro (0 token)
+    if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess') try { PianiAI.dopoQuiz(v.d.sk, v.caso); } catch (_) { /* il quiz non si blocca */ }
     const annulla = () => {
       const q = Stato.prendi<StatQ>(id); if (!q) return;
       const y = StatQC.mio(q, dev); y.xn++; if (giusta) y.xok++; StatQC.ricalcola(q);

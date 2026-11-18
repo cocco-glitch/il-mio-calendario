@@ -31,7 +31,7 @@ const SECONDO_ACCOUNT = 'nicoleschirru@gmail.com';
 const ACCOUNT_AMMESSI = [PROPRIETARIO, SECONDO_ACCOUNT].filter(Boolean);
 const CARTELLA_APP = 'Calendario personale';
 /** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
-function scopeAttuale(): string { try { return G_SCOPE + (imp().gcal ? ' https://www.googleapis.com/auth/calendar.app.created' : ''); } catch (_) { return G_SCOPE; } }
+function scopeAttuale(): string { try { return G_SCOPE + (imp().gcal ? ' https://www.googleapis.com/auth/calendar.app.created' : '') + (imp().gcalLeggiPrimary ? ' ' + GCAL_SCOPE_LETTURA : ''); } catch (_) { return G_SCOPE; } }
 const SOTTOCARTELLE = ['dati', 'allegati', 'backup', 'studio', '_cestino app'] as const;
 type NomeSotto = typeof SOTTOCARTELLE[number];
 

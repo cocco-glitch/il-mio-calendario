@@ -16,6 +16,7 @@ def ok(c, m):
 
 with sync_playwright() as p:
     pg = p.chromium.launch().new_page(viewport={'width': 390, 'height': 844}); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
+    pg.add_init_script("try { localStorage.setItem('imc-quiz-modo','esame') } catch (e) {}")   # v0.54: quiz senza passo di certezza (default neuro)
     pg.goto(URL); pg.wait_for_selector('.tabbar')
 
     # --- S2: base 3 (2 giuste), poi offline A +2, B +3, C +1 annullata → 8, non 6 ---

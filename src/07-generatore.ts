@@ -251,6 +251,7 @@ function bottoniGeneratore(p?: PkPiano): HTMLElement {
   const nas = !!p && Studio.nascosto(p.id);
   return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null,
     h('button.btn.neutro', { onclick: () => apriGeneratore() }, '✨ Genera un piano'),
+    PianiAI.bottoni(p),   // v0.55 (BP4): «✨ Crea Piano Intelligente» + Pausa / Ricalcola / Elimina dei piani ai_neuro
     p && Studio.pkPiani().length > 1 ? h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '👁 Mostra di nuovo' : '🙈 Nascondi') : null,
     gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null,
     gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') { Generatore.elimina(gen.id); UI.studioPiano = ''; disegna(); } } }, '🗑 Elimina') : null));

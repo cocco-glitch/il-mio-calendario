@@ -77,6 +77,7 @@ interface Impostazioni extends Rec {
   gcalCategorie?: string[];
   gcalStudio?: boolean;                  // copia anche i blocchi del piano di studio
   gcalStudioOra?: string;                // 'HH:mm' dell'avviso dello studio ('' = tutto il giorno)
+  gcalLeggiPrimary?: boolean;            // v0.55 (BP4): opt-in, sola lettura degli impegni di `primary` per il pianificatore
   // v0.7 — Notifiche sul telefono tramite ntfy (vedi 06-notifiche.ts). Tutto facoltativo.
   ntfy?: boolean;                        // attive
   ntfyTopic?: string;                    // codice segreto (il "topic" è la password)

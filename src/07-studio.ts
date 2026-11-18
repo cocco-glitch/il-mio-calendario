@@ -10,16 +10,23 @@
 // ============================================================
 
 interface FileS { id?: string; nome: string; mime?: string; url?: string; }
-interface SchedaS { id: string; k: number; n: number; titolo: string; tipo: 'P' | 'R'; problemi: boolean; pagine: string; slide?: string; quizFile: string; quizFileId?: string; file?: FileS; }
+interface SchedaS { id: string; k: number; n: number; titolo: string; tipo: 'P' | 'R'; problemi: boolean; pagine: string; slide?: string; quizFile: string; quizFileId?: string; file?: FileS;
+  /** v0.55 (BP4): facoltativi, solo nei contenuti del pianificatore neuro-AI. */
+  livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean; }
 interface MicroS { n: string; schede: SchedaS[]; }
-interface SottoS { k: string; n: string; titolo: string; posizione: string; ripasso?: string; svolto?: boolean; data?: string; microstep: MicroS[]; }
+interface SottoS { k: string; n: string; titolo: string; posizione: string; ripasso?: string; svolto?: boolean; data?: string; microstep: MicroS[];
+  livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean; }
 interface MateriaS { m: string; nome: string; libro: string; sottostep: SottoS[]; }
 interface LibroS { nome: string; offset: number; blocco: number; cartella: string; file: Record<string, string>; }
 interface PkStep { tipo: 'step'; id: string; step: number; titolo: string; aggiornato: string; proprio?: boolean; descrizione?: string; risorse: { libri: Record<string, LibroS>; quiz: Record<string, string> }; materie: MateriaS[]; }
-interface VocePiano { k: string; t: string; d?: string; speciale?: boolean; }
+interface VocePiano { k: string; t: string; d?: string; speciale?: boolean;
+  /** v0.55 (BP4, piani 'ai_neuro'): ora d'inizio, durata, unità, livello L1–L4, fonte, ripasso FSRS, buffer. */
+  ora?: string; min?: number; uid?: string; livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean; }
 interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }
 interface Copertura { m: string; ud: string; a: string; stato: 'E' | 'I' | 'N'; k: string; quando: string; }
-interface PkPiano { tipo: 'piano'; id: string; modo?: 'raffinamento'; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; copertura?: Copertura[]; }
+interface PkPiano { tipo: 'piano'; id: string; modo?: 'raffinamento'; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; copertura?: Copertura[];
+  /** v0.55 (BP4): piano isolato del pianificatore neuro-AI (opt-in); assenti negli altri piani. */
+  origine?: 'ai_neuro'; proprio?: boolean; vincoliAI?: VincoliPianoAI; statoFattibilita?: StatoFattibilita; capienza?: number; }
 /** Una voce del piano nel giorno in cui cade (tenendo conto degli spostamenti). */
 interface VoceGiorno { v: VocePiano; g: GiornoPiano; spostata: boolean; p: PkPiano; }
 interface Progresso extends Rec { type: 'progresso'; fatta: boolean; data?: string; punteggio?: number; nota?: string; daRifare?: boolean;
@@ -185,7 +192,9 @@ const Studio = (() => {
     const x = indiceSotto().get(k); if (x) return x;
     return null;
   }
-  function etichetta(k: string): string { const m = /^([A-Z]+)(\d.*)$/.exec(k); return m ? infoMateria(m[1]).breve + ' ' + m[2] : k; }
+  function etichetta(k: string): string {
+    const a = /^([A-Z]+)~[^~]+~([^~]+)~([^~]+)$/.exec(k); if (a) return infoMateria(a[1]).breve + ' ' + (a[2] === 'BUF' ? 'buffer' : a[2] + ' ' + a[3].replace(/-\d+$/, ''));   // v0.55: chiavi dei piani ai_neuro
+    const m = /^([A-Z]+)(\d.*)$/.exec(k); return m ? infoMateria(m[1]).breve + ' ' + m[2] : k; }
 
   // ---------- Piano ----------
   // Chiavi degli spostamenti: 'sp-<k>' per il piano principale, 'sp-<idPiano>-<k>' per gli altri.
@@ -442,8 +451,13 @@ function testoCarte(k: string): string {
   const n = Carte.conta(mz.map(m => m.id));
   return ' · 🃏 ' + (n.nuove + n.ripasso ? (n.nuove + n.ripasso) + ' carte oggi' : n.totale + ' carte');
 }
+function hm2(ora: string, min: number): string { const [a, b] = ora.split(':').map(Number), t = a * 60 + b + min; return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); }
 function testoAvanzamento(k: string, p: PkPiano): string { return testoAvanzamento0(k, p) + testoCarte(k); }
 function testoAvanzamento0(k: string, p: PkPiano): string {
+  if (p.origine === 'ai_neuro') {   // v0.55 (BP4): ora, durata, fonte
+    const v = p.giorni.reduce<VocePiano | undefined>((r, g) => r || g.voci.find(x => x.k === k), undefined);
+    if (v) return [v.ora ? v.ora + (v.min ? '–' + hm2(v.ora, v.min) : '') : '', v.min ? v.min + ' min' : '', v.sorgenteRef && v.sorgenteRef.pagine.length ? (v.sorgenteRef.nomeFile || 'fonte') + ' pp. ' + v.sorgenteRef.pagine.join('–') : '', v.isRipassoFSRS ? 'ancoraggio FSRS' : ''].filter(Boolean).join(' · ');
+  }
   const t = Studio.trovaSotto(k);
   if (!t) return p.modo === 'raffinamento' ? 'schede in preparazione' : 'schede da creare';
   const n = Studio.numeri(Studio.schedeDi(t.sub));

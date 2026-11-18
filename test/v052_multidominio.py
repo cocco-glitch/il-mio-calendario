@@ -34,6 +34,7 @@ PACK = {
 
 with sync_playwright() as p:
     pg = p.chromium.launch().new_context(viewport={'width': 420, 'height': 900}, locale='it-IT').new_page()
+    pg.add_init_script("try { localStorage.setItem('imc-quiz-modo','esame') } catch (e) {}")   # v0.54: quiz senza passo di certezza (default neuro)
     pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.goto(URL); pg.wait_for_selector('.tabbar')
 

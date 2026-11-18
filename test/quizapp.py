@@ -17,6 +17,7 @@ def groq(route):
 try:
     with sync_playwright() as p:
         b = p.chromium.launch(); pg = b.new_page(viewport={'width': 390, 'height': 844})
+        pg.add_init_script("try { localStorage.setItem('imc-quiz-modo','esame') } catch (e) {}")   # v0.54: quiz senza passo di certezza (default neuro)
         pg.on('pageerror', lambda e: errori.append(str(e)))
         pg.route('https://api.groq.com/**', groq)
         pg.goto('http://localhost:8765/index.html'); pg.wait_for_timeout(1500)
@@ -39,16 +40,25 @@ try:
         st = pg.evaluate("Stato.tutti('statq')")
         assert len(st) == 1 and st[0]['n'] == 1 and st[0]['ok'] == 0 and st[0]['scelte'], st
         # AI
+        # v0.54 imbuto AI: senza spiegazione pronta «Breve» arriva al livello 2 (micro-chiamata ≤350 token), poi resta salvata
         pg.click('[data-ai=breve]'); pg.wait_for_timeout(500)
-        assert 'Spiegazione AI di prova' in pg.inner_text('.qz-ai') and 'Lo studente ha risposto' in chiamate[0]['messages'][1]['content']
-        pg.click('[data-ai=media]'); pg.wait_for_timeout(300); pg.click('[data-ai=breve]'); pg.wait_for_timeout(300)
-        assert len(chiamate) == 2 and 'salvata' in pg.inner_text('.qz-ai')
+        assert len(chiamate) == 1 and 'Spiegazione AI di prova' in pg.inner_text('.qz-ai') and 'micro' in pg.inner_text('.qz-ai')
+        assert 'Studente ha sbagliato' in chiamate[0]['messages'][0]['content'] and chiamate[0]['max_completion_tokens'] == 350, chiamate[0]
+        pg.click('[data-ai=media]'); pg.wait_for_timeout(300)
+        assert len(chiamate) == 2 and 'Spiegazione AI di prova' in pg.inner_text('.qz-ai')
+        pg.click('[data-ai=breve]'); pg.wait_for_timeout(300)
+        assert len(chiamate) == 2 and 'salvata' in pg.inner_text('.qz-ai'), (len(chiamate), pg.inner_text('.qz-ai'))
         # spiegazione dalle fonti con citazione
         pg.click('[data-az=fonti]'); assert pg.locator('.qz-box blockquote').count() >= 1
         # rispondo bene a tutte le altre
         for k in range(1, 18):
             pg.click('[data-az=avanti]')
-            d = pg.evaluate("""async k => { const B = await Banca.carica(3); return B.domande.filter(d => d.sk==='C-3.1.1-1')[k]; }""", k)
+            # v0.54: l'ordine è interleaved → riconosco la domanda mostrata dal testo, non dall'indice
+            d = pg.evaluate("""async () => { const B = await Banca.carica(3); const N = s => String(s).replace(/<[^>]+>/g, ' ').replace(/[^A-Za-z0-9àèéìòù]+/g, '').toLowerCase();
+                const vis = N(document.querySelector('.qz-domanda').textContent);
+                const c = B.domande.filter(d => d.sk==='C-3.1.1-1').map(d => ({ d, k: N(d.q).slice(0, 40) })).filter(x => x.k && vis.includes(x.k)).sort((a, b) => b.k.length - a.k.length);
+                return c.length ? c[0].d : null; }""")
+            assert d, 'domanda mostrata non trovata nella banca'
             if d['t'] == 'mcq':
                 bott = pg.locator('.qz-opz-b')
                 for i in range(bott.count()):

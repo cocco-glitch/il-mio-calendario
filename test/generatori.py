@@ -11,6 +11,7 @@ errori = []
 try:
     with sync_playwright() as p:
         b = p.chromium.launch(); pg = b.new_page(viewport={'width': 390, 'height': 844})
+        pg.add_init_script("try { localStorage.setItem('imc-quiz-modo','esame') } catch (e) {}")   # v0.54: quiz senza passo di certezza (default neuro)
         pg.on('pageerror', lambda e: errori.append(str(e)))
         pg.goto('http://localhost:8768/index.html'); pg.wait_for_timeout(1500)
         r = pg.evaluate("""() => { const out = {}; for (const M of Generatori.MODELLI) { let ok = 0, err = []; for (let i = 0; i < 300; i++) { const d = Generatori.genera(M);

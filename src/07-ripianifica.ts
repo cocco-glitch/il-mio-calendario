@@ -29,6 +29,7 @@ const Ripianifica = (() => {
     const fine = (p.giorni.find(g => g.voci.some(v => /^CHIUSURA/.test(v.k))) || p.giorni[p.giorni.length - 1]).data;
     const carico: Record<string, number> = {}, tipo: Record<string, string> = {};
     for (const g of p.giorni) for (const v of g.voci) {
+      if ((v as any).isBuffer) continue;   // v0.55: i buffer dei piani ai_neuro non pesano e non bloccano il giorno
       const d = Studio.dataVoce(v, g, p.id);
       if (v.speciale) { if (g.data === d) tipo[d] = VIETATI.test(v.k) ? 'no' : (tipo[d] || 'riserva'); }
       else carico[d] = (carico[d] || 0) + 1;
@@ -42,9 +43,15 @@ const Ripianifica = (() => {
   }
 
   /** Proposta: per ogni step in ritardo, il nuovo giorno (null se non c'è posto prima della chiusura). */
-  function proponi(modo: 'presto' | 'leggeri', oggiK = ymd(new Date()), p: PkPiano | null = Studio.pkPiano()): { k: string; t: string; da: string; a: string | null }[] {
+  function proponi(modo: 'presto' | 'leggeri', oggiK = ymd(new Date()), p: PkPiano | null = Studio.pkPiano()): { k: string; t: string; da: string; a: string | null; buffer?: string }[] {
     const giorni = giorniUtili(oggiK, p);
-    return inRitardo(oggiK, p).map(x => {
+    // v0.55 (BP4): nei piani ai_neuro prima si usano i buffer futuri; i ripassi FSRS (ancoraggi) non si spostano mai
+    const ai = p && (p as any).origine === 'ai_neuro';
+    const rit = inRitardo(oggiK, p).filter(x => !ai || !p!.giorni.some(g => g.voci.some(v => v.k === x.k && (v as any).isRipassoFSRS)));
+    const buf = ai ? Pianificatore.riassorbi(p, rit.map(x => x.k), oggiK) : [];
+    return rit.map(x => {
+      const b = buf.find(y => y.k === x.k);
+      if (b) return { ...x, a: b.a, buffer: b.buffer };
       const liberi = giorni.filter(g => g.carico < g.max);
       let scelto = liberi[0];
       if (modo === 'leggeri' && liberi.length) scelto = liberi.reduce((a, b) => b.carico < a.carico ? b : a);
@@ -53,10 +60,16 @@ const Ripianifica = (() => {
     });
   }
 
-  function applica(prop: { k: string; a: string | null }[], p: PkPiano = Studio.pkPiano()!): () => void {
+  function applica(prop: { k: string; a: string | null; buffer?: string }[], p: PkPiano = Studio.pkPiano()!): () => void {
     const prima = prop.map(x => ({ k: x.k, sp: Stato.prendi<Rec>(p.id === 'piano' ? 'sp-' + x.k : 'sp-' + p.id + '-' + x.k) }));
     for (const x of prop) if (x.a) Studio.sposta(x.k, x.a, p.id);
-    return () => { for (const x of prima) Studio.sposta(x.k, x.sp && !x.sp.deleted ? (x.sp as any).data : null, p.id); };
+    // v0.55: i buffer usati spariscono dal piano ai_neuro (annullabile: si rimette il piano di prima)
+    const usati = prop.filter(x => x.a && x.buffer).map(x => x.buffer!), pianoPrima = usati.length ? JSON.parse(JSON.stringify(p)) : null;
+    if (pianoPrima) { const n = Pianificatore.consumaBuffer(p, usati); n.aggiornato = new Date().toISOString(); Studio.importa(n); }
+    return () => {
+      for (const x of prima) Studio.sposta(x.k, x.sp && !x.sp.deleted ? (x.sp as any).data : null, p.id);
+      if (pianoPrima) { pianoPrima.aggiornato = new Date().toISOString(); Studio.importa(pianoPrima); }
+    };
   }
 
   return { inRitardo, giorniUtili, proponi, applica };

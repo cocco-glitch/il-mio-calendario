@@ -13,6 +13,8 @@
 // ============================================================
 
 const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
+/** v0.55 (BP4): sola lettura degli eventi, usata SOLO su `primary` dal pianificatore (opt-in imp().gcalLeggiPrimary). */
+const GCAL_SCOPE_LETTURA = 'https://www.googleapis.com/auth/calendar.events.readonly';
 const GCAL_NOME = 'Il mio calendario – app';
 
 const GCal = (() => {
@@ -136,9 +138,19 @@ const GCal = (() => {
       return n;
     } finally { inCorso = false; }
   }
+  /** Id del calendario specchio (nei blueprint: gcalMirrorCalendarId). Le scritture vanno solo lì. */
+  const gcalMirrorCalendarId = (): string => imp().gcalId || '';
+  /** v0.55 (BP4): impegni di `primary` tra due date (SOLA LETTURA, metodo GET). Gli eventi dello specchio sono esclusi
+   *  (anti-loop) da Pianificatore.occupatoDaEventi. Senza consenso o senza accesso → nessun impegno. */
+  async function occupatoPrimary(da: string, a: string): Promise<IntervalloOcc[]> {
+    if (!imp().gcalLeggiPrimary) return [];
+    const q = 'calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=500&timeMin=' + encodeURIComponent(new Date(da + 'T00:00:00').toISOString()) + '&timeMax=' + encodeURIComponent(new Date(a + 'T23:59:59').toISOString());
+    try { const j = await chiama(q); return Pianificatore.occupatoDaEventi((j && j.items) || [], gcalMirrorCalendarId()); }
+    catch (_) { return []; }
+  }
   function programma(): void { if (!attivo()) return; clearTimeout(timer); timer = window.setTimeout(() => allinea().catch(() => { /* riprova al prossimo giro */ }), 5000); }
 
-  return { allinea, programma, attivo, GCAL_NOME };
+  return { allinea, programma, attivo, GCAL_NOME, gcalMirrorCalendarId, occupatoPrimary };
 })();
 
 // ---------- .ics ----------
