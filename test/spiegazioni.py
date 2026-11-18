@@ -48,7 +48,7 @@ with sync_playwright() as p:
     assert 'salvata' in fr.inner_text('.ai-box')
     # rigenera con limite raggiunto sul principale -> riserva
     fr.click('.ai-box button[data-f]'); pg.wait_for_timeout(600)
-    assert 'llama-3.3-70b-versatile' in fr.inner_text('.ai-box'), fr.inner_text('.ai-box')
+    assert 'openai/gpt-oss-20b' in fr.inner_text('.ai-box'), fr.inner_text('.ai-box')   # v0.46+: riserva Groq = gpt-oss-20b
     rec = pg.evaluate("Stato.tutti('spiegazione').length")
     assert rec == 2, rec
     # domanda successiva: riquadro nuovo e vuoto

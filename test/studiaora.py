@@ -20,8 +20,10 @@ with sync_playwright() as p:
     pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("!!Studio.pkPiano() && Studio.pkStep().length >= 3")
     # C2.1 completato il 02/11 → ripasso oggi; una scheda di C2.1 con 50% → anche "da rifare"
     pg.evaluate("Studio.schedeDi(Studio.trovaSotto('C2.1').sub).filter(x => x.tipo === 'P').forEach((x, i) => Studio.segna(x.id, { fatta: true, data: '2026-11-11', punteggio: i ? 80 : 50 }))")
-    tit = pg.eval_on_selector_all('.card', 'els => els.slice(0, 2).map(e => e.innerText.split("\\n")[0])')
-    ok(tit[0].strip() == 'Studia ora', 'pulsante in cima a Oggi: %s' % tit)
+    # v0.50: si guarda il pulsante dentro la prima card, non la prima riga di innerText (instabile mentre la vista si ridisegna)
+    pg.wait_for_function("(() => { const c = document.querySelector('.card'); return !!(c && c.querySelector('.studia-ora')); })()", timeout=5000)
+    tit = pg.eval_on_selector_all('.card', 'els => els.slice(0, 2).map(e => (e.querySelector(".studia-ora") || e).textContent.trim().slice(0, 40))')
+    ok('Studia ora' in tit[0], 'pulsante in cima a Oggi: %s' % tit)
     v = pg.evaluate("StudiaOra.componi(50).map(v => v.tipo + ':' + v.min)")
     ok(v[0].startswith('ripasso') and 'freddo:10' in v and v[-1] == 'richiamo:5', '50 min: ripasso, prova a freddo, …, richiamo finale: %s' % v)
     ok(sum(int(x.split(':')[1]) for x in v) <= 55 and 'pausa:5' in v, 'durata rispettata con una pausa')
