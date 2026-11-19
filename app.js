@@ -412,7 +412,7 @@ const DB = (() => {
 
 function predefiniti() {
     return [
-        { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi' },
+        { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi', widgetNascosti: ['nota', 'tabelle', 'chiusura'] },
         { id: 'cat-studio', type: 'categoria', updatedAt: 1, nome: 'Studio', colore: '#6c8cff', visibile: true, ordine: 0 },
         { id: 'cat-personale', type: 'categoria', updatedAt: 1, nome: 'Personale', colore: '#2fbf8f', visibile: true, ordine: 1 },
         { id: 'cat-salute', type: 'categoria', updatedAt: 1, nome: 'Salute', colore: '#f0708a', visibile: true, ordine: 2 },
@@ -481,6 +481,7 @@ const Stato = (() => {
             return via.length;
         },
         get ver() { return ver; },
+        esiste(id) { return rec.has(id); },
         prendi(id) {
             const r = rec.get(id);
             return r && !r.deleted ? r : undefined;
@@ -3453,10 +3454,12 @@ const Appunti = (() => {
     }
     function salva(a) {
         a.titolo = a.titolo.trim() || (a.testo.trim().split('\n')[0] || 'Appunto').replace(/^#+\s*/, '').slice(0, 60);
-        const col = Carte.collega(a.titolo);
-        if (col.sub) {
-            a.sub = col.sub;
-            a.micro = col.micro;
+        if (!a.subMano) {
+            const col = Carte.collega(a.titolo);
+            if (col.sub) {
+                a.sub = col.sub;
+                a.micro = col.micro;
+            }
         }
         Stato.salva(a);
         if (a.mano && a.mano.im && a.mano.im.length)
@@ -3587,7 +3590,50 @@ const Appunti = (() => {
     }
     function citatoDa(a) { const t = norm(a.titolo); return tutti().filter(x => x.id !== a.id && (x.testo.match(/\[\[([^\]]+)\]\]/g) || []).some(l => norm(l.slice(2, -2)) === t || t.includes(norm(l.slice(2, -2))))); }
     function trova(titolo) { const t = norm(titolo); return tutti().find(x => norm(x.titolo) === t) || tutti().find(x => norm(x.titolo).includes(t)); }
-    return { sezionePer, aggiungiRiga, citatoDa, trova, errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
+    const idGiorno = (k) => 'ap-giorno-' + k;
+    const titoloGiorno = (k) => 'Appunto del ' + fmt(daYmd(k), { day: 'numeric', month: 'long', year: 'numeric' });
+    function testoGiorno(k) {
+        const a = Stato.prendi(idGiorno(k));
+        if (a)
+            return a.testo;
+        const n = Stato.prendi('giorno-' + k);
+        return n ? n.testo : '';
+    }
+    function salvaGiorno(k, testo) {
+        const a = { ...(Stato.prendi(idGiorno(k)) || nuovo({ id: idGiorno(k), titolo: titoloGiorno(k), creato: k, giorno: k })), testo };
+        Stato.salva(a, true);
+        return a;
+    }
+    function sincronizzaGiorno(k) { const a = Stato.prendi(idGiorno(k)); return a ? sincronizzaCarte(a) : [0, 0]; }
+    function migraNoteGiorno() {
+        let n = 0;
+        for (const x of Stato.tutti('nota')) {
+            if (!x.giorno || !x.testo.trim() || Stato.esiste(idGiorno(x.giorno)))
+                continue;
+            Stato.salva(nuovo({ id: idGiorno(x.giorno), titolo: titoloGiorno(x.giorno), testo: x.testo, creato: x.giorno, giorno: x.giorno }), true);
+            n++;
+        }
+        if (n)
+            Stato.notifica();
+        return n;
+    }
+    const notaMigrata = (x) => !!x.giorno && Stato.esiste(idGiorno(x.giorno));
+    function passiCollegabili() {
+        const visti = new Set(), out = [];
+        const metti = (k, t) => { if (!k || visti.has(k))
+            return; visti.add(k); out.push({ k, t }); };
+        for (const p of Studio.pianiAttivi())
+            for (const g of p.giorni)
+                for (const v of g.voci)
+                    if (!v.speciale && !v.isBuffer)
+                        metti(v.k, v.t);
+        for (const pk of Studio.pkStep())
+            for (const ma of pk.materie)
+                for (const s of ma.sottostep)
+                    metti(s.k, s.titolo);
+        return out;
+    }
+    return { passiCollegabili, idGiorno, testoGiorno, salvaGiorno, sincronizzaGiorno, migraNoteGiorno, notaMigrata, sezionePer, aggiungiRiga, citatoDa, trova, errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
 })();
 async function chiediDrive(a, forza = false) {
     if (!Drive.collegato || !Appunti.daSalvareSuDrive(a)) {
@@ -3615,7 +3661,12 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
         fine();
     else if (a)
         chiediDrive(Stato.prendi(ap.id) || ap); disegna(); });
-    const titolo = h('input.appunto-titolo', { type: 'text', placeholder: 'Titolo (es. «Chi 2.2.4 Calore latente» lo collega allo step)', value: ap.titolo });
+    const titolo = h('input.appunto-titolo', { type: 'text', placeholder: 'Titolo', 'aria-label': 'Titolo dell’appunto', value: ap.titolo });
+    const passi = Appunti.passiCollegabili();
+    if (ap.sub && !passi.some(p => p.k === ap.sub))
+        passi.unshift({ k: ap.sub, t: '' });
+    const sceltaStep = h('select.appunto-collega', { 'aria-label': 'Collega a uno step', onchange: () => { ap.sub = sceltaStep.value || undefined; ap.micro = undefined; ap.subMano = 1; modifica(); } }, h('option', { value: '' }, passi.length ? '🔗 Collega a…' : '🔗 Nessuno step (crea un piano in Studio)'), ...passi.map(p => h('option', { value: p.k, selected: p.k === ap.sub }, Studio.etichetta(p.k) + (p.t ? ' · ' + p.t : ''))));
+    const collegato = () => ap.subMano ? { sub: ap.sub, micro: ap.micro } : Carte.collega(titolo.value);
     const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo);
     const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '');
     const stato = h('div.appunto-stato.tenue.piccolo');
@@ -3625,9 +3676,11 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     const aggiungiCarta = (riga) => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n' : '') + riga + '\n'; modifica(); salvaOra(); avviso('🃏 Flashcard aggiunta al testo dell\'appunto.'); };
     const anteprima = h('div.appunto-anteprima', { hidden: true });
     const aggiornaStato = () => {
-        const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
+        const n = Appunti.estraiCarte(testo.value).length, col = collegato();
+        if (!ap.subMano && sceltaStep.value !== (col.sub || ap.sub || ''))
+            sceltaStep.value = col.sub || ap.sub || '';
         svuota(stato);
-        stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
+        stato.append('🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
     };
     let timer = 0;
     const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (pagina) {
@@ -3675,7 +3728,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
         { testo: '🧮  Calcolo: scrivi «12*3,5=» → risultato', azione: () => { testo.focus(); avviso('Scrivi un calcolo e «=»: il risultato appare sopra il testo, Invio per inserirlo. Variabili: «m=2» poi «m*9,81=». Gradi per sin/cos/tan.', 7000); } },
     ], 'Altri strumenti di scrittura'));
     const bollaCalcolo = calcoliInTesto(testo, modifica);
-    const audioOra = () => { salvaOra(); const col = Carte.collega(titolo.value); lezioneAudio({ titolo: titolo.value.trim(), step: col.sub ? Studio.etichetta(col.sub) : '', testo: testo.value }, md => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + md; modifica(); salvaOra(); avviso('🎙 Trascrizione aggiunta · ✨ crea domande e carte', 6000, () => aiDomande(Stato.prendi(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); })); }); };
+    const audioOra = () => { salvaOra(); const col = collegato(); lezioneAudio({ titolo: titolo.value.trim(), step: col.sub ? Studio.etichetta(col.sub) : '', testo: testo.value }, md => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + md; modifica(); salvaOra(); avviso('🎙 Trascrizione aggiunta · ✨ crea domande e carte', 6000, () => aiDomande(Stato.prendi(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); })); }); };
     const azioneTesta = async (s) => {
         if (s === 'drive') {
             salvaOra();
@@ -3868,7 +3921,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
                 sfondoModello = md.sf;
             avviso(md.nome + ': ' + md.sotto, 2500);
         } }, md.nome)));
-    v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, bollaCalcolo, testo, anteprima, riass));
+    v.corpo.append(h('div.appunto', null, titolo, sceltaStep, stato, modelli, scambio, zonaMano, fileIns, barra, bollaCalcolo, testo, anteprima, riass));
     aggiornaStato();
     setTimeout(() => { if (modo === 'mano' && !alRiassunto && a)
         return; const el = alRiassunto ? riass : a ? testo : titolo; const att = document.activeElement; if (att && att !== document.body && att.matches('input, textarea'))
@@ -4979,7 +5032,7 @@ const Carte = (() => {
         return out;
     }
     function mem(v) { return Stato.prendi(idMem(v)); }
-    const nuovePerGiorno = () => imp().carteNuove || 20;
+    const nuovePerGiorno = () => { const e = modalitaEsame(); return e !== null && e <= 3 ? 0 : imp().carteNuove || 20; };
     const ripassiPerGiorno = () => imp().carteRipassi || 150;
     function coda(ids, oggiK = ymd(new Date())) {
         const tutte = voci(ids);
@@ -6195,17 +6248,17 @@ const NOMI_MODALITA = {
     universita_concorsi: '🎓 Università / concorsi', lifelong_pro: '💼 Adulti / professionisti',
 };
 const ARCHETIPI_DISCIPLINARI = {
-    stem_calcolo: { id: 'stem_calcolo', etichetta: 'STEM, Fisica & Calcolo', catenaProviderPreferita: ['groq', 'sambanova', 'nvidia', 'gemini', 'cerebras'],
+    stem_calcolo: { id: 'stem_calcolo', etichetta: 'STEM, Fisica & Calcolo', catenaProviderPreferita: ['groq', 'nvidia', 'gemini'],
         modelliConsigliati: ['openai/gpt-oss-120b', 'qwen/qwen3-32b', 'DeepSeek-R1-Distill-Llama-70B'], modalitaDomandaAbilitate: ['mcq', 'fill', 'sequenza'], pluginLocaleId: 'diagnosticaStemDimensionale' },
-    scienze_sperimentali: { id: 'scienze_sperimentali', etichetta: 'Scienze Sperimentali & Mediche', catenaProviderPreferita: ['gemini', 'groq', 'cohere', 'sambanova', 'github'],
+    scienze_sperimentali: { id: 'scienze_sperimentali', etichetta: 'Scienze Sperimentali & Mediche', catenaProviderPreferita: ['gemini', 'groq', 'cohere', 'github'],
         modelliConsigliati: ['gemini-2.5-flash', 'qwen/qwen3-32b', 'command-a-03-2025'], modalitaDomandaAbilitate: ['mcq', 'fill', 'abbinamento', 'sequenza'], pluginLocaleId: 'diagnosticaScienzeCompartimenti' },
     umanistico_storico: { id: 'umanistico_storico', etichetta: 'Storia, Filosofia & Scienze Umane', catenaProviderPreferita: ['cohere', 'gemini', 'github', 'groq', 'xkiro'],
         modelliConsigliati: ['command-a-03-2025', 'gemini-2.5-flash', 'gpt-4o'], modalitaDomandaAbilitate: ['mcq', 'sequenza', 'abbinamento', 'risposta_aperta_rubrica'], pluginLocaleId: 'diagnosticaCronologiaCausalita' },
     giuridico_economico: { id: 'giuridico_economico', etichetta: 'Diritto, Economia & Concorsi', catenaProviderPreferita: ['gemini', 'groq', 'xkiro', 'cohere', 'github'],
         modelliConsigliati: ['gemini-2.5-flash', 'moonshotai/kimi-k3-agent', 'command-a-03-2025'], modalitaDomandaAbilitate: ['mcq', 'fill', 'abbinamento'], pluginLocaleId: 'diagnosticaNormativaEccezioni' },
-    lingue_letteratura: { id: 'lingue_letteratura', etichetta: 'Lingue Straniere & Letteratura', catenaProviderPreferita: ['groq', 'gemini', 'xkiro', 'cohere', 'cerebras'],
+    lingue_letteratura: { id: 'lingue_letteratura', etichetta: 'Lingue Straniere & Letteratura', catenaProviderPreferita: ['groq', 'gemini', 'xkiro', 'cohere'],
         modelliConsigliati: ['moonshotai/kimi-k3-agent', 'llama-3.3-70b-versatile', 'gemini-2.5-flash'], modalitaDomandaAbilitate: ['fill', 'mcq', 'abbinamento', 'risposta_aperta_rubrica'], pluginLocaleId: 'diagnosticaMorfologiaLevenshtein' },
-    informatica_coding: { id: 'informatica_coding', etichetta: 'Informatica, Coding & Sistemi', catenaProviderPreferita: ['groq', 'cerebras', 'github', 'gemini', 'sambanova'],
+    informatica_coding: { id: 'informatica_coding', etichetta: 'Informatica, Coding & Sistemi', catenaProviderPreferita: ['groq', 'github', 'gemini'],
         modelliConsigliati: ['qwen/qwen3-32b', 'gpt-4o', 'gemini-2.5-flash'], modalitaDomandaAbilitate: ['mcq', 'fill', 'sequenza'], pluginLocaleId: 'diagnosticaSintassiAST' },
 };
 const ICONE_ARCHETIPO = { stem_calcolo: '📐', scienze_sperimentali: '🧪', umanistico_storico: '🏛', giuridico_economico: '⚖️', lingue_letteratura: '🗣', informatica_coding: '💻' };
@@ -7796,15 +7849,14 @@ const Generatori = (() => {
 })();
 
 const IA = (() => {
-    const PROVS = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
-    const ALTRI = ['xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
-    const NOMI = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty', cerebras: 'Cerebras', sambanova: 'SambaNova' };
+    const PROVS = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty'];
+    const ALTRI = ['xkiro', 'cohere', 'requesty'];
+    const NOMI = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty' };
     const RITIRATI = ['mistral', 'openrouter'];
     const eProv = (p) => PROVS.includes(p);
     const BASE = {
         groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', xkiro: 'https://api.xkiro.com/v1',
-        cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1',
-        cerebras: 'https://api.cerebras.ai/v1', sambanova: 'https://api.sambanova.ai/v1'
+        cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1'
     };
     const KK = 'imc-ai-keys', LEG = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
     const ls = (k) => { try {
@@ -7883,8 +7935,6 @@ const IA = (() => {
         xkiro: { micro: [/nemotron/, /deepseek/], genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
         cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
         requesty: { genera: [/gemini.*flash(?!-lite)/, /gpt-.*mini/, /llama/], veloce: [/flash-lite|mini|small/] },
-        cerebras: { genera: [/gpt-oss-120b/, /qwen-3.*(235b|480b)/, /llama/], revisiona: [/gpt-oss-120b/, /qwen-3/], veloce: [/llama.*8b|gpt-oss/, /qwen-3/], lungo: [/gpt-oss-120b/, /qwen-3/] },
-        sambanova: { genera: [/gpt-oss-120b/, /deepseek-v3/i, /llama-3.3/i], revisiona: [/deepseek/i, /gpt-oss/], veloce: [/llama.*8b/i, /gpt-oss/], lungo: [/deepseek/i, /llama-3.3/i], visione: [/llama-4|vision/i] },
     };
     const XKIRO_FREE = ['deepseek/deepseek-v4-pro-0813', 'moonshotai/kimi-k3-agent', 'nvidia/nemotron-3.5-super-vl'];
     const RISERVA = {
@@ -7893,12 +7943,10 @@ const IA = (() => {
         xkiro: { micro: ['nvidia/nemotron-3.5-super-vl'], genera: [...XKIRO_FREE], revisiona: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], veloce: ['nvidia/nemotron-3.5-super-vl', 'deepseek/deepseek-v4-pro-0813'],
             lungo: ['moonshotai/kimi-k3-agent', 'deepseek/deepseek-v4-pro-0813'], visione: ['nvidia/nemotron-3.5-super-vl'] },
         cohere: {}, requesty: {},
-        cerebras: { genera: ['gpt-oss-120b', 'qwen-3-235b-a22b-instruct-2507'], revisiona: ['gpt-oss-120b'], veloce: ['llama3.1-8b', 'gpt-oss-120b'], lungo: ['gpt-oss-120b'] },
-        sambanova: { genera: ['gpt-oss-120b', 'DeepSeek-V3.1', 'Meta-Llama-3.3-70B-Instruct'], revisiona: ['DeepSeek-V3.1'], veloce: ['Meta-Llama-3.1-8B-Instruct'], lungo: ['DeepSeek-V3.1'] },
     };
     const CATENA = {
-        veloce: ['groq', 'gemini', 'xkiro', 'requesty', 'cerebras', 'sambanova'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'],
-        revisiona: ['groq', 'gemini', 'xkiro', 'cohere', 'cerebras', 'sambanova'], lungo: ['gemini', 'xkiro', 'cerebras', 'sambanova'], visione: ['gemini', 'groq', 'xkiro', 'sambanova'],
+        veloce: ['groq', 'gemini', 'xkiro', 'requesty'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty'],
+        revisiona: ['groq', 'gemini', 'xkiro', 'cohere'], lungo: ['gemini', 'xkiro'], visione: ['gemini', 'groq', 'xkiro'],
         micro: ['gemini', 'groq', 'xkiro']
     };
     const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound|moderation|ocr|rerank/i;
@@ -8015,7 +8063,7 @@ const IA = (() => {
     }
     const LIMITI = {
         groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, xkiro: { tpm: 100000, ctx: 128000 },
-        cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 }, cerebras: { tpm: 60000, ctx: 65536 }, sambanova: { tpm: 20000, ctx: 32768 }
+        cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 }
     };
     const USCITA = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000, micro: 350 };
     const PROVIDER_FREE_QUOTAS = {
@@ -8025,8 +8073,6 @@ const IA = (() => {
         xkiro: { base: { rpm: 20, tpd: 500000 }, potenziata: { opz: 'xkiroTelegramVerified', q: { rpm: 20, tpd: 1000000 } } },
         cohere: { base: { rpm: 20, rpd: 33 } },
         requesty: { base: { rpm: 20, rpd: 200 } },
-        cerebras: { base: { rpm: 30, rpd: 14400, tpd: 1000000 } },
-        sambanova: { base: { rpm: 20, rpd: 1000 } },
         groq: { perModello: true, base: { rpm: 30, rpd: 1000 }, modelli: [
                 { re: /8b-instant/, q: { rpm: 30, rpd: 14400 } }, { re: /70b-versatile/, q: { rpm: 30, rpd: 1000 } }, { re: /whisper/, q: { rpm: 20, rpd: 2000 } }
             ] },
@@ -8433,7 +8479,7 @@ const IA = (() => {
         return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
     }
     function campoAltri() {
-        const DOVE = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai', cerebras: 'cloud.cerebras.ai (chiave gratuita)', sambanova: 'cloud.sambanova.ai (chiave gratuita)' };
+        const DOVE = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai' };
         const elenco = h('div.tenue.piccolo', null);
         const aggiorna = () => {
             const st = stato();
@@ -12216,7 +12262,7 @@ const PianiAI = (() => {
         const senza = Dominio.senzaAI();
         const usaAI = h('input', { type: 'checkbox', checked: !senza, disabled: senza });
         const esito = h('div.tenue.piccolo');
-        const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.filter(c => c.livello <= 4).map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)']), '2', function () {
+        const intensita = selettore(Pianificatore.MATRICE_LIVELLI.map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)']), '2', function () {
             oreMax.value = String(Pianificatore.configLivello(+this.value).oreRealiMax);
             avvisiBio();
         });
@@ -12273,7 +12319,7 @@ const PianiAI = (() => {
         const vincoliBP5 = () => {
             const v = vincoli(), p = profilo(), g = Pianificatore.applicaGuardRailBiologici(+intensita.value, p);
             salvaProfilo(p);
-            v.livelloIntensita = Math.min(4, g.livello);
+            v.livelloIntensita = g.livello;
             v.profiloBio = p;
             v.pesi = Pianificatore.applicaRisposte(Pianificatore.pesiIniziali(p), domandeB, scelteB.map(s => s.value === '' ? null : +s.value));
             v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(v.livelloIntensita).oreRealiMax);
@@ -12397,7 +12443,7 @@ const PianiAI = (() => {
         const nas = Studio.nascosto(p.id);
         const dl = p.deload && p.deload.attivo ? p.deload : null;
         return h('span', null, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
-                const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Math.min(4, Pianificatore.livelloEffettivo(p, ymd(new Date()))) } : p.vincoliAI;
+                const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
                 const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
                 if (r.piano && p.deload) {
                     r.piano.deload = p.deload;
@@ -12719,7 +12765,7 @@ const Pianificatore = (() => {
         const cod = String(v.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = o.pid.replace(/^ai-/, '');
         const ordine = ordineTopologico(unita), errori = !!(seg && seg.attiva);
         const bio = v.livelloIntensita ? applicaGuardRailBiologici(v.livelloIntensita, v.profiloBio) : null;
-        const capAnal = bio ? MATRICE_5_LIVELLI[bio.livello - 1].capSforzoAnaliticoMin : Infinity, pausaBio = bio ? bio.pausaMin : 0;
+        const capAnal = bio ? MATRICE_LIVELLI[bio.livello - 1].capSforzoAnaliticoMin : Infinity, pausaBio = bio ? bio.pausaMin : 0;
         const anal = new Map(), eAnal = (l) => l === 1 || l === 3;
         const ref = (u) => u.fileId ? { fileId: u.fileId, nomeFile: u.nomeFile || '', pagine: u.pagine ? [u.pagine[0], u.pagine[1]] : [] } : undefined;
         const coda = [];
@@ -12827,7 +12873,7 @@ const Pianificatore = (() => {
             }
             const restoOff = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
             if (bio && capRaggiunto && restoOff >= 30)
-                metti(g, { k: cod + '~' + pidC + '~OFF~' + g.data.replace(/-/g, ''), t: '🃏 Offloading attivo: ' + modalitaOffloading(MATRICE_5_LIVELLI[bio.livello - 1], v.profiloBio).join(' · '), speciale: true, isOffloading: true }, Math.min(restoOff, 90));
+                metti(g, { k: cod + '~' + pidC + '~OFF~' + g.data.replace(/-/g, ''), t: '🃏 Offloading attivo: ' + modalitaOffloading(MATRICE_LIVELLI[bio.livello - 1], v.profiloBio).join(' · '), speciale: true, isOffloading: true }, Math.min(restoOff, 90));
             const buf = Math.min(Math.round(g.minuti * f.bufferPct / 5) * 5, g.minuti - (usato.get(g.data) || 0));
             if (f.bufferPct > 0 && buf >= 20)
                 metti(g, { k: cod + '~' + pidC + '~BUF~' + g.data.replace(/-/g, ''), t: '🧩 Buffer (recupero o anticipo)', isBuffer: true, speciale: true }, buf);
@@ -12856,15 +12902,13 @@ const Pianificatore = (() => {
     const MAX_TOKEN_CALIBRAZIONE = 450, BUDGET_CALIBRAZIONE = 600;
     const L = (livello, nome, oreRealiMin, oreRealiMax, capSforzoAnaliticoMin, ritenzioneTargetFSRS, itemPerMicroQuiz, maxCardAutogenerateGiorno, abilitaCornellAuto, abilitaTrabocchetti, abilitaMiniCasiCatena, gradoInterleaving, pauseWakefulRestMin, moltiplicatoreResaEquivalente) => ({ livello, nome, oreRealiMin, oreRealiMax, capSforzoAnaliticoMin: Math.min(HARD_CAP_ANALITICO, capSforzoAnaliticoMin), ritenzioneTargetFSRS, itemPerMicroQuiz, maxCardAutogenerateGiorno,
         abilitaCornellAuto, abilitaTrabocchetti, abilitaMiniCasiCatena, gradoInterleaving, pauseWakefulRestMin, moltiplicatoreResaEquivalente });
-    const MATRICE_5_LIVELLI = [
+    const MATRICE_LIVELLI = [
         L(1, 'Mantenimento Leggero', 1.5, 2.5, 90, 0.85, 5, 0, false, false, false, 'nessuno', 1, 1.05),
         L(2, 'Standard Strutturato', 3.0, 4.5, 150, 0.88, 6, 8, true, false, false, 'nessuno', 2, 1.25),
-        L(3, 'Intensivo Universitario', 5.0, 6.5, 210, 0.90, 8, 14, true, true, false, 'intra_materia', 3, 1.48),
-        L(4, 'Pre-Esame / Concorso Avanzato', 7.0, 8.0, 250, 0.92, 8, 20, true, true, true, 'multi_materia', 4, 1.72),
-        L(5, 'Sprint Olimpico Multi-Modale', 8.5, 10.0, 270, 0.94, 8, 25, true, true, true, 'multi_materia', 5, 1.95),
+        L(3, 'Intensivo (pre-esame)', 5.0, 7.0, 230, 0.92, 8, 20, true, true, true, 'multi_materia', 3, 1.6),
     ];
-    const livelloValido = (x) => clamp(Math.round(+x) || 2, 1, 5);
-    const configLivello = (l) => MATRICE_5_LIVELLI[livelloValido(l) - 1];
+    const livelloValido = (x) => clamp(Math.round(+x) || 2, 1, 3);
+    const configLivello = (l) => MATRICE_LIVELLI[livelloValido(l) - 1];
     const PROFILO_BASE = { fasciaEta: '20-26', cronotipo: 'intermedio', autonomiaBRACMin: 55, oreSonnoMedie: '7-8', reazioneErrore: 'sfida_attiva', canalePreferito: 'quiz_immediati' };
     const DOMANDE_UNIVERSALI = [
         { campo: 'fasciaEta', testo: 'Quanti anni hai?', opzioni: [['<16', 'Meno di 16'], ['16-19', '16–19'], ['20-26', '20–26'], ['27-40', '27–40'], ['40+', 'Più di 40']] },
@@ -12886,13 +12930,13 @@ const Pianificatore = (() => {
     function applicaGuardRailBiologici(richiesto, profilo) {
         const p = normalizzaProfilo(profilo || {}), req = livelloValido(richiesto), avvisi = [];
         let livello = req;
-        if (p.fasciaEta === '<16' && req > 3) {
-            livello = 3;
-            avvisi.push('Protezione neurosviluppo: massimo 6.5h multi-modali (livello 3).');
+        if (p.fasciaEta === '<16' && req > 2) {
+            livello = 2;
+            avvisi.push('Protezione neurosviluppo: massimo 4.5h al giorno (livello 2).');
         }
-        if (p.oreSonnoMedie === '<6' && req > 3) {
-            livello = 3;
-            avvisi.push('Con meno di 6h di sonno il consolidamento ippocampale cala: intensità calibrata (livello 3) per evitare perdita di ritenzione.');
+        if (p.oreSonnoMedie === '<6' && req > 2) {
+            livello = 2;
+            avvisi.push('Con meno di 6h di sonno il consolidamento ippocampale cala: intensità calibrata (livello 2) per evitare perdita di ritenzione.');
         }
         const bloccoMin = p.autonomiaBRACMin, pausaMin = bloccoMin === 35 ? 10 : bloccoMin === 100 ? 15 : 12;
         if (bloccoMin === 35)
@@ -13150,7 +13194,7 @@ const Pianificatore = (() => {
         if (piano.deload && piano.deload.attivo && piano.deload.fino > o.oggi)
             return null;
         const p = clona(piano), target = livelloValido(p.livelloIntensita || (p.vincoliAI && p.vincoliAI.livelloIntensita) || 2), fino = piu(o.oggi, 2);
-        const ridotto = Math.max(1, target - 2);
+        const ridotto = Math.max(1, target - 1);
         const cod = String(p.vincoliAI && p.vincoliAI.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = String(p.id).replace(/^ai-/, '');
         const lavoro = p.giorni.filter(g => g.voci.some(v => v.livelloCognitivo && !v.isRipassoFSRS)).map(g => g.data).sort();
         const ultimo = lavoro.length ? lavoro[lavoro.length - 1] : fino;
@@ -13281,7 +13325,7 @@ const Pianificatore = (() => {
         if (m.fonte === 'ai')
             fatt = calcolaFattibilita(v, m.unita, ctx);
         const pid = dip.pid || 'ai-' + Date.now().toString(36);
-        const rMin = v.livelloIntensita ? MATRICE_5_LIVELLI[v.livelloIntensita - 1].ritenzioneTargetFSRS : 0;
+        const rMin = v.livelloIntensita ? MATRICE_LIVELLI[livelloValido(v.livelloIntensita) - 1].ritenzioneTargetFSRS : 0;
         const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo, ritenzione: dip.ritenzione ? dip.ritenzione(rMin) : undefined, intervallo: dip.intervallo });
         piano.fonteMappa = m.fonte;
         return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: m.errore };
@@ -13289,7 +13333,7 @@ const Pianificatore = (() => {
     return { segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
         unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
         compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
-        MATRICE_5_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
+        MATRICE_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
         picchiCircadiani, modalitaOffloading, allocaGiornata, pesiIniziali, applicaRisposte, paroleChiaveBM25, domandeCalibrazioneDefault, promptCalibrazione,
         leggiDomandeCalibrazione, generaDomandeCalibrazione, monitoraAffaticamento, attivaDeload, livelloEffettivo, aggiornaDeload };
 })();
@@ -15500,6 +15544,13 @@ function adesso(giorno = oggi()) {
         pezzi.push(n('errore') + ' errori');
     return { minuti, riassunto: pezzi.join(' + ') || voci[0].titolo };
 }
+function modalitaEsame() {
+    if ((imp() || {}).modoEsame === 'no')
+        return null;
+    const gg = Stato.tutti('esame').map(x => giorniA(x.data)).filter(n => n >= 0);
+    const m = gg.length ? Math.min(...gg) : Infinity;
+    return m <= 21 ? m : null;
+}
 function prossimoEsame() {
     const e = Stato.tutti('esame').filter(x => !x.deleted && giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
     if (!e)
@@ -16117,12 +16168,12 @@ function vistaStudio() {
         UI.studioSub = null;
     }
     const pk = pks.find(p => p.id === UI.studioStep) || pks[pks.length - 1];
-    const voci = [['schede', 'Schede'], ['carte', 'Carte'], ['piano', 'Piano'], ['errori', 'Errori'], ['statistiche', 'Statistiche'], ['esami', 'Esami'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
+    const gruppi = [['Ripassa', ['carte'], ['Flashcard']], ['Piano', ['piano'], ['Piano']], ['Corsi', ['schede', 'syllabus', 'tabelle', 'esami'], ['Schede', 'Syllabus', 'Tabelle', 'Esami']], ['Progressi', ['statistiche', 'errori'], ['Statistiche', 'Errori']]];
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
-    const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
-    const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
+    const gr = gruppi.find(([, vv]) => vv.includes(UI.studioVista)) || gruppi[2];
+    const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
         { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
-        { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+        { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }], 'Strumenti dei quiz')), gr[1].length > 1 ? h('div.chips.sotto-viste', { role: 'tablist', 'aria-label': 'Viste di ' + gr[0] }, gr[1].map((v, k) => h('button.chip' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(UI.studioVista === v), onclick: () => vai(v) }, gr[2][k]))) : null);
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
     if (UI.studioVista === 'tabelle')
@@ -16740,32 +16791,37 @@ function taskDelGiorno(g) {
     const k = ymd(g);
     return Stato.tutti('task').filter(t => !t.fatto && t.scadenza && t.scadenza.slice(0, 10) === k && categoriaVisibile(t.categoriaId)).sort(ordinaTask);
 }
-const WIDGET = [['ripassi', 'Ripassa (sotto-step, carte, quiz, appunti)'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET = [['ripassi', 'Ripassa (sotto-step, carte, quiz, appunti)'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Appunto di oggi'], ['domani', 'Domani']];
 function ordineWidget() {
     const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
     for (const [w] of WIDGET)
         if (!ord.includes(w))
             (w === 'ripassi' || w === 'chiusura' || w === 'studiaora') ? ord.unshift(w) : ord.push(w);
-    return ord.filter(w => !(i.widgetNascosti || []).includes(w));
+    const esame = modalitaEsame() !== null;
+    return ord.filter(w => !(i.widgetNascosti || []).includes(w) && (!esame || !SUPERFLUI_ESAME.includes(w)));
+}
+const SUPERFLUI_ESAME = ['nota', 'tabelle', 'domani'];
+function bannerModoEsame() {
+    const n = modalitaEsame();
+    if (n === null)
+        return null;
+    return h('div.modo-esame', { role: 'status' }, '🎯 Modalità esame · ' + (n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' giorni') + (n <= 3 ? ' · solo ripasso' : ''), h('button.btn-testo', { onclick: () => { const i = imp(); i.modoEsame = 'no'; Stato.salva(i); avviso('Modalità esame spenta: la riattivi da Altro › Aspetto.'); } }, 'Mostra tutto'));
 }
 let timerNotaGiorno = 0;
 function vistaOggi() {
     const g = oggi();
     const occ = occorrenzeDelGiorno(g);
     const tasks = Stato.tutti('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(g))).sort(ordinaTask);
-    const idNota = 'giorno-' + ymd(g);
-    const nota = Stato.prendi(idNota);
+    const kG = ymd(g);
     const area = h('textarea.nota-giorno', {
-        rows: 4, placeholder: 'Appunti di oggi…', value: nota ? nota.testo : '',
+        rows: 4, placeholder: 'Appunti di oggi… (domanda :: risposta diventa una flashcard)', 'aria-label': 'Appunto di oggi', value: Appunti.testoGiorno(kG),
         oninput: () => {
             clearTimeout(timerNotaGiorno);
-            timerNotaGiorno = window.setTimeout(() => {
-                const n = Stato.prendi(idNota) || { id: idNota, type: 'nota', updatedAt: 0, titolo: 'Nota del ' + fmt(g, { day: 'numeric', month: 'long', year: 'numeric' }), testo: '', tag: [], giorno: ymd(g) };
-                n.testo = area.value;
-                Stato.salva(n, true);
-            }, 500);
+            timerNotaGiorno = window.setTimeout(() => { Appunti.salvaGiorno(kG, area.value); }, 500);
         },
+        onchange: () => { clearTimeout(timerNotaGiorno); Appunti.salvaGiorno(kG, area.value); Appunti.sincronizzaGiorno(kG); },
     });
+    const apriGiorno = h('button.btn.neutro.piccolo', { onclick: () => { clearTimeout(timerNotaGiorno); const a = Appunti.salvaGiorno(kG, area.value); apriAppunto(a); } }, '📝 Apri negli appunti');
     const rapido = h('input', { type: 'text', placeholder: '+ Promemoria veloce', enterKeyHint: 'done', onkeydown: (e) => {
             if (e.key === 'Enter' && rapido.value.trim()) {
                 Stato.salva({ id: uid(), type: 'task', updatedAt: 0, titolo: rapido.value.trim(), priorita: 0, fatto: false, scadenza: ymd(g) });
@@ -16778,7 +16834,7 @@ function vistaOggi() {
         && !['evento', 'task', 'nota', 'appunto', 'mazzo'].some(t => Stato.tutti(t).some(r => !r.deleted));
     if (vuotoTotale)
         return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), iniziaIn3Passi(), occ.length ? scheda('Impegni di oggi', occ.map(o => rigaOcc(o, g))) : null, tasks.length ? scheda('Promemoria', tasks.map(rigaTask)) : null, occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null);
-    return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null, ordineWidget().map(w => {
+    return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null, bannerModoEsame(), ordineWidget().map(w => {
         switch (w) {
             case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
             case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
@@ -16790,7 +16846,7 @@ function vistaOggi() {
                 const r = righeDelGiorno(g);
                 return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null;
             }
-            case 'nota': return scheda('Nota del giorno', area);
+            case 'nota': return scheda('Appunto di oggi', area, h('div.bottoni', null, apriGiorno));
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
             case 'studiaora': return widgetStudiaOra();
             case 'ripassi': return widgetRipassa();
@@ -17020,7 +17076,7 @@ function vistaNote() {
     const lista = h('div');
     const zonaTag = h('div.chips');
     function aggiorna() {
-        const tutte = Stato.tutti('nota').filter(n => n.testo.trim() || !n.giorno).sort((a, b) => b.updatedAt - a.updatedAt);
+        const tutte = Stato.tutti('nota').filter(n => (n.testo.trim() || !n.giorno) && !Appunti.notaMigrata(n)).sort((a, b) => b.updatedAt - a.updatedAt);
         const tags = Array.from(new Set(tutte.flatMap(n => n.tag))).sort();
         svuota(zonaTag);
         tags.forEach(t => zonaTag.appendChild(h('button.chip' + (UI.tagNote === t ? '.attivo' : ''), { onclick: () => { UI.tagNote = UI.tagNote === t ? '' : t; aggiorna(); } }, '#' + t)));
@@ -17118,15 +17174,15 @@ function vistaAltro() {
     const sezDati = scheda('I miei dati', h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'), anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null, h('div.bottoni', null, h('button.btn', { onclick: esporta }, 'Esporta backup'), h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport));
     const versione = h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE);
     switch (UI.altroSez) {
-        case 'aspetto': return h('div.pagina.sotto', null, sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp));
-        case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());
+        case 'aspetto': return h('div.pagina.sotto', null, sezionePreset(salvaImp), h('details.personalizza', null, h('summary', null, 'Personalizza'), sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePresetMiei(salvaImp)));
+        case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), h('details.personalizza', null, h('summary', null, 'Avanzate'), Regole.sezioneAltro()));
         case 'calendario': return h('div.pagina.sotto', null, scheda('Categorie', cats, nuovaCat), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp));
         case 'dati': return h('div.pagina.sotto', null, sezDrive, sezDati, versione);
     }
     const nTask = Stato.tutti('task').filter(t => !t.fatto).length;
-    const nNote = Stato.tutti('nota').length;
+    const nNote = Stato.tutti('nota').filter(n => !Appunti.notaMigrata(n)).length;
     const tessera = (sch, ic, tit, sotto, cls) => h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
-    return h('div.pagina', null, Aggiornamento.riga(), h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')), h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } }, h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')), icona('dx', 18)), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)), icona('dx', 18)))), versione);
+    return h('div.pagina', null, Aggiornamento.riga(), h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nessuna nota', 'viola')), h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } }, h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')), icona('dx', 18)), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)), icona('dx', 18)))), versione);
 }
 const GRUPPI_ALTRO = [
     ['aspetto', 'Aspetto', 'Tema, colori, carattere, suoni e animazioni, layout', 'ingranaggio', '#0B5FD9'],
@@ -17161,14 +17217,20 @@ function sezioneLayout(salva) {
     return scheda('Layout', riga('Vista iniziale', selettore([['oggi', 'Oggi'], ['giorno', 'Giorno'], ['settimana', 'Settimana'], ['mese', 'Mese'], ['agenda', 'Agenda']], i.vistaIniziale, function () { salva({ vistaIniziale: this.value, preset: '' }); })), riga('Barra delle sezioni su PC', selettore([['auto', 'Laterale'], ['basso', 'In basso']], i.nav || 'auto', function () { salva({ nav: this.value, preset: '' }); })), h('div.gruppo-titolo', null, 'Riquadri di Oggi (ordine e visibilità)'), ord.map((w, idx) => h('div.widget-riga', null, h('span.nome', null, (WIDGET.find(x => x[0] === w) || [w, w])[1]), h('button.btn-ico', { 'aria-label': 'Su', disabled: idx === 0, onclick: () => sposta(idx, -1) }, '↑'), h('button.btn-ico', { 'aria-label': 'Giù', disabled: idx === ord.length - 1, onclick: () => sposta(idx, 1) }, '↓'), h('label.interruttore', { title: 'Mostra' }, h('input', { type: 'checkbox', checked: !nasc.has(w), onchange: (e) => { e.target.checked ? nasc.delete(w) : nasc.add(w); salva({ widgetNascosti: Array.from(nasc), preset: '' }); } }), h('span')))), h('div.gruppo-titolo', null, 'Sezioni nella barra'), [['cal', 'Calendario'], ['studio', 'Studio'], ['appunti', 'Appunti'], ['task', 'Promemoria'], ['note', 'Note']].map(([s, t]) => h('div.widget-riga', null, h('span.nome', null, t), h('label.interruttore', null, h('input', { type: 'checkbox', checked: !tabN.has(s), onchange: (e) => { e.target.checked ? tabN.delete(s) : tabN.add(s); salva({ tabNascoste: Array.from(tabN), preset: '' }); } }), h('span')))));
 }
 const PRESET_BASE = [
-    { nome: 'Predefinito', valori: { tema: 'auto', accento: '#6c8cff', sfondo: '', font: 'sistema', scala: 1, densita: 'comoda', raggio: 14, widget: [], widgetNascosti: [], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
+    { nome: 'Predefinito', valori: { tema: 'auto', accento: '#6c8cff', sfondo: '', font: 'sistema', scala: 1, densita: 'comoda', raggio: 14, widget: [], widgetNascosti: ['nota', 'tabelle', 'chiusura'], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
     { nome: 'Studio intenso', valori: { tema: 'scuro', accento: '#e9a23b', sfondo: '', font: 'sistema', scala: 1, densita: 'compatta', raggio: 10, widget: ['studio', 'impegni', 'promemoria', 'tabelle', 'nota', 'domani'], widgetNascosti: ['domani'], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
     { nome: 'Minimal', valori: { tema: 'chiaro', accento: '#64748b', sfondo: '#ffffff', font: 'sistema', scala: 1, densita: 'comoda', raggio: 4, widget: ['impegni', 'promemoria', 'studio', 'nota', 'tabelle', 'domani'], widgetNascosti: ['tabelle', 'domani'], tabNascoste: ['note'], nav: 'auto', vistaIniziale: 'oggi' } },
 ];
+const DESC_PRESET = { 'Predefinito': 'Tema automatico, riquadri essenziali', 'Studio intenso': 'Scuro e compatto, lo studio in cima', 'Minimal': 'Chiaro e pulito, solo l\'indispensabile' };
+const applicaPreset = (salva, nome, v) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); };
 function sezionePreset(salva) {
+    const i = imp();
+    return scheda('Stile', h('div.preset-schede', { role: 'radiogroup', 'aria-label': 'Preset' }, PRESET_BASE.map(p => h('button.preset-scheda.chip' + (i.preset === p.nome ? '.attivo' : ''), { role: 'radio', 'aria-checked': String(i.preset === p.nome), onclick: () => applicaPreset(salva, p.nome, p.valori) }, h('span.preset-nome', null, p.nome), h('span.tenue.piccolo', null, DESC_PRESET[p.nome] || '')))), riga('Modalità esame', selettore([['auto', 'Automatica (≤ 21 giorni)'], ['no', 'Spenta']], i.modoEsame === 'no' ? 'no' : 'auto', function () { salva({ modoEsame: this.value }); })));
+}
+function sezionePresetMiei(salva) {
     const i = imp(), miei = Stato.tutti('preset').sort((a, b) => a.nome.localeCompare(b.nome));
-    const applica = (nome, v) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); };
-    return scheda('Preset', h('div.chips', null, PRESET_BASE.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: () => applica(p.nome, p.valori) }, p.nome)), miei.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: async () => {
+    const applica = (nome, v) => applicaPreset(salva, nome, v);
+    return scheda('I miei preset', h('div.chips', null, miei.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: async () => {
             const s = await chiedi(p.nome, [{ testo: 'Applica', valore: 'a' }, { testo: 'Sovrascrivi con l\'aspetto attuale', valore: 's' }, { testo: 'Elimina preset', valore: 'd', pericolo: true }]);
             if (s === 'a')
                 applica(p.nome, p.valori);
@@ -17378,7 +17440,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.59.2';
+const VERSIONE = '0.60.0';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
@@ -17664,6 +17726,12 @@ async function avvia() {
     Tocco.attiva();
     disegna();
     scorciatoiaAvvio();
+    setTimeout(() => { try {
+        Appunti.migraNoteGiorno();
+    }
+    catch (e) {
+        console.warn('Appunti: migrazione note del giorno rimandata', e);
+    } }, 1200);
     setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500);
     avvisoNovita();
     Drive.precarica();
