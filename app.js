@@ -4030,12 +4030,6 @@ async function importaAppunti() {
     }
     disegna();
 }
-function widgetAppunti() {
-    const l = Appunti.appuntiDaRipassare();
-    if (!l.length)
-        return null;
-    return scheda('Appunti da ripassare', h('div.tenue.piccolo', null, l.length + (l.length === 1 ? ' appunto' : ' appunti') + ' · copri, ricorda, scopri'), l.slice(0, 3).map(a => h('button.voce-lista', { onclick: () => apriCornell(a, true) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo), h('span.voce-sotto', null, Appunti.daRipassare(a).length + ' sezioni')))));
-}
 function conLink(html) { return html.replace(/\[\[([^\]]+)\]\]/g, (_t, x) => '<a href="#" class="ap-link" data-ap="' + esc(x) + '">' + esc(x) + '</a>'); }
 function attivaLink(el, prima) {
     el.querySelectorAll('a.ap-link').forEach(l => l.addEventListener('click', e => {
@@ -5380,14 +5374,6 @@ function rigaCarte(k) {
     const n = Carte.conta(mz.map(m => m.id));
     return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaCarte(mz.map(m => m.id), Studio.etichetta(k)) }, '🃏 Flashcard di ' + Studio.etichetta(k) + ' (' + (n.nuove + n.ripasso) + ' oggi / ' + n.totale + ')'));
 }
-function widgetCarte() {
-    if (!Carte.mazzi().length)
-        return null;
-    const n = Carte.conta();
-    if (!(n.nuove + n.ripasso))
-        return null;
-    return scheda('Flashcard di oggi', h('div.tenue.piccolo', null, n.ripasso + ' da ripassare + ' + n.nuove + ' nuove · circa ' + Math.max(2, Math.round((n.ripasso + n.nuove) * 0.2)) + ' min'), h('div.bottoni', null, h('button.btn', { onclick: () => avviaCarte(undefined, 'Tutti i mazzi') }, '▶ Ripassa')));
-}
 
 const Cattura = (() => {
     const SPIA = '<script>(function(){var retry=false,inviato=null;function leggi(){try{'
@@ -5522,6 +5508,94 @@ function sezioneSonno() {
     const pocoSonno = gruppo(g => !!g.sonno && g.sonno < 7), sonnoOk = gruppo(g => !!g.sonno && g.sonno >= 7);
     const focusAlto = gruppo(g => !!g.focus && g.focus >= 4), focusBasso = gruppo(g => !!g.focus && g.focus <= 2);
     return h('section.card', null, h('h2.card-titolo', null, 'Sonno, concentrazione e risultati'), h('div.numeri', null, numero(pocoSonno != null ? pocoSonno + '%' : '—', 'con < 7 h di sonno'), numero(sonnoOk != null ? sonnoOk + '%' : '—', 'con ≥ 7 h')), h('div.numeri', null, numero(focusBasso != null ? focusBasso + '%' : '—', 'concentrazione 1–2'), numero(focusAlto != null ? focusAlto + '%' : '—', 'concentrazione 4–5')), h('div.tenue.piccolo', null, 'Media dei punteggi dei quiz fatti in quei giorni (' + giorni.length + ' giornate chiuse). È una correlazione sui tuoi dati, non una prova: più giornate chiudi, più è affidabile.'));
+}
+
+const CodaRipasso = (() => {
+    const ORDINE = ['step', 'carte', 'quiz', 'appunti', 'piano'];
+    const MIN = 10;
+    const giornoData = (g) => new Date(g + 'T12:00');
+    function step(g) {
+        const out = [];
+        for (const x of Ripassi.delGiorno(g).oggi) {
+            const sc = Ripassi.schedaDaProporre(x.k);
+            if (!sc)
+                continue;
+            const t = trovaScheda(sc.id), sub = Studio.trovaSotto(x.k), pc = Math.round(x.r * 100) + '%';
+            out.push({ sorgente: 'step', id: 'step:' + x.k, k: x.k, materia: materiaDi(x.k), n: 1, min: MIN, rischio: 1 - x.r, priorita: 0,
+                titolo: Studio.etichetta(x.k) + (sub ? ' · ' + sub.sub.titolo : ''),
+                sotto: 'Rifai: ' + (t ? t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ')' : sc.titolo) + ' · ricordo ' + pc,
+                voce: { tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ricordo ' + pc, min: MIN, k: x.k, id: sc.id },
+                apri: () => { const s = trovaScheda(sc.id); if (s)
+                    apriScheda(s.pk, s.m, s.micro, s.s, true); } });
+        }
+        return out;
+    }
+    function carte(g) {
+        if (!Carte.mazzi().length)
+            return [];
+        const nc = Carte.conta(), n = nc.ripasso + nc.nuove;
+        if (!n)
+            return [];
+        const min = Math.min(15, Math.max(5, Math.round(n * 0.2))), sotto = nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove';
+        return [{ sorgente: 'carte', id: 'carte', n, min, rischio: nc.ripasso ? 1 - Ripassi.ritenzione(g) : 0.05, priorita: 0,
+                titolo: '🃏 Flashcard (' + n + ')', sotto, voce: { tipo: 'carte', titolo: '🃏 Flashcard', sotto, min }, apri: () => avviaCarte(undefined, 'Flashcard') }];
+    }
+    function quiz(g) {
+        const d = QuizRifare.dovute(g);
+        if (!d.length)
+            return [];
+        const ill = d.some(s => !!(s.neuro && s.neuro.tag && s.neuro.tag.includes('illusione_competenza')));
+        const sotto = (d.length > QuizRifare.MAX ? 'Le ' + QuizRifare.MAX + ' più urgenti' : 'Le domande scadute') + ', prima le illusioni di competenza';
+        const min = Math.max(3, QuizRifare.minuti(d.length));
+        return [{ sorgente: 'quiz', id: 'quiz', ids: d.map(s => s.id), n: d.length, min, rischio: ill ? 0.5 : 1 - Ripassi.ritenzione(g), priorita: 0,
+                titolo: '🎯 Quiz da rifare (' + d.length + ')', sotto, voce: { tipo: 'quiz', titolo: '🎯 Quiz da rifare (' + d.length + ')', sotto, min }, apri: () => { QuizRifare.avvia(); } }];
+    }
+    function appunti(g) {
+        return Appunti.appuntiDaRipassare().map(a => {
+            const sotto = 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni';
+            return { sorgente: 'appunti', id: a.id, materia: a.sub ? materiaDi(a.sub) : undefined, n: 1, min: 4, rischio: 1 - Ripassi.ritenzione(g), priorita: 0,
+                titolo: '🧠 ' + a.titolo, sotto, voce: { tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto, min: 4, id: a.id }, apri: () => apriCornell(a, true) };
+        });
+    }
+    function piano(g) {
+        return Studio.vociDelGiorno(giornoData(g)).filter(x => x.v.isRipassoFSRS && !Studio.stepFatto(x.v.k, x.p)).map(x => {
+            const min = x.v.min || MIN, pid = x.p.id;
+            return { sorgente: 'piano', id: 'piano:' + pid + ':' + x.v.k, k: x.v.k, materia: materiaDi(x.v.k) || undefined, n: 1, min, rischio: 1 - Ripassi.ritenzione(g), priorita: 0,
+                titolo: x.v.t, sotto: x.p.titolo || 'Piano', voce: { tipo: 'piano', titolo: x.v.t, sotto: (x.p.titolo || 'Piano') + ' · ancoraggio FSRS', min, k: x.v.k, id: pid },
+                apri: () => apriPianoDi(pid) };
+        });
+    }
+    const ADAPTER = { step, carte, quiz, appunti, piano };
+    function vicinanza(materia, g) {
+        const es = Stato.tutti('esame').filter(e => !e.deleted && (!materia || !e.materie || !e.materie.length || e.materie.includes(materia)));
+        let d = Infinity;
+        for (const e of es) {
+            const x = Math.round((daDt(e.data).getTime() - daDt(g).getTime()) / 864e5);
+            if (x >= 0 && x < d)
+                d = x;
+        }
+        return d === Infinity ? 0 : Math.max(0, 1 - d / 60);
+    }
+    function per(s, g = ymd(new Date())) {
+        return ADAPTER[s](g).map(e => ({ ...e, priorita: Math.round(e.rischio * (1 + vicinanza(e.materia, g)) * 20) / 20 }));
+    }
+    function dovuti(g = ymd(new Date())) {
+        const tutti = ORDINE.flatMap(s => per(s, g).map((e, i) => ({ e, o: ORDINE.indexOf(s), i })));
+        return tutti.sort((a, b) => b.e.priorita - a.e.priorita || a.o - b.o || a.i - b.i).map(x => x.e);
+    }
+    const conta = (g) => dovuti(g).reduce((s, e) => s + e.n, 0);
+    return { dovuti, per, conta, vicinanza };
+})();
+function apriPianoDi(pid) { UI.studioVista = 'piano'; UI.studioPiano = pid; vai('studio'); }
+function widgetRipassa() {
+    const el = CodaRipasso.dovuti(), r = Ripassi.delGiorno();
+    if (!el.length)
+        return r.fatti.length ? h('section.card.ripassa', null, h('h2.card-titolo', null, '🧠 Ripassa'), h('div.tenue.piccolo', null, '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.')) : null;
+    const somma = (s) => el.filter(e => e.sorgente === s).reduce((t, e) => t + e.n, 0);
+    const nomi = [['step', 'sotto-step', 'sotto-step'], ['carte', 'carta', 'carte'], ['quiz', 'quiz', 'quiz'], ['appunti', 'appunto', 'appunti'], ['piano', 'dal piano', 'dal piano']];
+    const pezzi = nomi.map(([s, uno, piu]) => { const n = somma(s); return n ? n + ' ' + (n === 1 ? uno : piu) : ''; }).filter(Boolean);
+    const min = el.reduce((t, e) => t + e.min, 0), N = el.reduce((t, e) => t + e.n, 0), MAX = 5;
+    return h('section.card.ripassa', null, h('h2.card-titolo', null, '🧠 Ripassa (' + N + ')'), h('div.tenue.piccolo', null, pezzi.join(' · ') + ' · circa ' + min + ' min, prima il più a rischio'), el.slice(0, MAX).map(e => h('button.voce-lista', { onclick: () => e.apri() }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, e.titolo), h('span.voce-sotto', null, e.sotto)), icona('dx', 18))), el.length > MAX ? h('div.tenue.piccolo', null, '+' + (el.length - MAX) + ' altri: li trovi in «Studia ora».') : null, r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' sotto-step in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null, h('div.bottoni', null, h('button.btn', { onclick: () => el[0].apri() }, '▶ Inizia')));
 }
 
 const CreaQuiz = (() => {
@@ -11364,22 +11438,6 @@ function chipRicordo(k) {
         return null;
     return h('span.chip-ricordo', { style: { color: coloreRicordo(r), borderColor: coloreRicordo(r) }, title: 'Probabilità di ricordare questo sotto-step oggi' }, '🧠 ' + Math.round(r * 100) + '%');
 }
-function widgetRipassi() {
-    const r = Ripassi.delGiorno();
-    if (!r.oggi.length && !r.fatti.length)
-        return null;
-    const proposta = (k) => { const sc = Ripassi.schedaDaProporre(k); return sc ? trovaScheda(sc.id) : null; };
-    const riga = (x) => {
-        const t = proposta(x.k), sub = Studio.trovaSotto(x.k);
-        if (!t || !sub)
-            return null;
-        return h('button.voce-lista', { onclick: () => apriScheda(t.pk, t.m, t.micro, t.s, true) }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + sub.sub.titolo), h('span.voce-sotto', null, 'Rifai: ' + t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ') · ricordo ', h('b', { style: { color: coloreRicordo(x.r) } }, Math.round(x.r * 100) + '%'))), icona('dx', 18));
-    };
-    const primo = r.oggi.map(x => proposta(x.k)).find(Boolean);
-    return scheda('Ripassi di oggi', h('div.tenue.piccolo', null, r.oggi.length
-        ? r.oggi.length + (r.oggi.length === 1 ? ' sotto-step' : ' sotto-step') + ' · circa ' + r.minuti + ' min. Rifai la scheda proposta (va bene anche «rifai solo gli errori») e scrivi il punteggio: l\'app decide quando riproporre il sotto-step.'
-        : '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.'), r.oggi.map(riga), r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null, primo ? h('div.bottoni', null, h('button.btn', { onclick: () => apriScheda(primo.pk, primo.m, primo.micro, primo.s, true) }, '▶ Inizia')) : null);
-}
 
 const MemoriaIA = (() => {
     const TETTO = 300, GIORNO = 864e5;
@@ -15216,25 +15274,21 @@ const StudiaOra = (() => {
             resto -= v.min;
             return true;
         } return false; };
-        let tettoRip = Math.max(MIN, Math.round(minuti * 0.4));
-        for (const x of Ripassi.delGiorno(ymd(giorno)).oggi) {
-            if (tettoRip < MIN)
-                break;
-            const sc = Ripassi.schedaDaProporre(x.k);
-            if (!sc)
-                continue;
-            if (metti({ tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ricordo ' + Math.round(x.r * 100) + '%', min: MIN, k: x.k, id: sc.id }))
-                tettoRip -= MIN;
+        let tettoRip = Math.max(MIN, Math.round(minuti * 0.4)), nAp = 0;
+        for (const e of CodaRipasso.dovuti(ymd(giorno))) {
+            if (e.sorgente === 'step') {
+                if (tettoRip >= MIN && metti(e.voce))
+                    tettoRip -= MIN;
+            }
+            else if (e.sorgente === 'appunti') {
+                if (nAp < 3) {
+                    nAp++;
+                    metti(e.voce);
+                }
+            }
+            else
+                metti(e.voce);
         }
-        const nc = Carte.conta();
-        const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
-        if (nc.ripasso + nc.nuove && Carte.mazzi().length)
-            metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
-        const nq = QuizRifare.conta(ymd(giorno));
-        if (nq)
-            metti({ tipo: 'quiz', titolo: '🎯 Quiz da rifare (' + nq + ')', sotto: (nq > QuizRifare.MAX ? 'Le ' + QuizRifare.MAX + ' più urgenti' : 'Le domande scadute') + ', prima le illusioni di competenza', min: Math.max(3, QuizRifare.minuti(nq)) });
-        for (const a of Appunti.appuntiDaRipassare().slice(0, 3))
-            metti({ tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto: 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni', min: 4, id: a.id });
         for (const vg of Studio.vociDelGiorno(giorno)) {
             if (vg.v.speciale || vg.p.modo === 'raffinamento')
                 continue;
@@ -15282,6 +15336,10 @@ function eseguiVoce(v) {
     }
     if (v.tipo === 'quiz') {
         QuizRifare.avvia();
+        return;
+    }
+    if (v.tipo === 'piano' && v.id) {
+        apriPianoDi(v.id);
         return;
     }
     if (v.tipo === 'appunto' && v.id) {
@@ -15385,6 +15443,8 @@ function adesso(giorno = oggi()) {
         pezzi.push(Math.min(nq, QuizRifare.MAX) + ' quiz da rifare');
     if (n('appunto'))
         pezzi.push(n('appunto') + (n('appunto') === 1 ? ' appunto' : ' appunti'));
+    if (n('piano'))
+        pezzi.push(n('piano') + (n('piano') === 1 ? ' ripasso del piano' : ' ripassi del piano'));
     const st = voci.find(v => (v.tipo === 'scheda' || v.tipo === 'freddo') && v.k);
     if (st && st.k)
         pezzi.push(Studio.etichetta(st.k));
@@ -16631,7 +16691,7 @@ function taskDelGiorno(g) {
     const k = ymd(g);
     return Stato.tutti('task').filter(t => !t.fatto && t.scadenza && t.scadenza.slice(0, 10) === k && categoriaVisibile(t.categoriaId)).sort(ordinaTask);
 }
-const WIDGET = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET = [['ripassi', 'Ripassa (sotto-step, carte, quiz, appunti)'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 function ordineWidget() {
     const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
     for (const [w] of WIDGET)
@@ -16683,9 +16743,7 @@ function vistaOggi() {
             case 'nota': return scheda('Nota del giorno', area);
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
             case 'studiaora': return widgetStudiaOra();
-            case 'carte': return widgetCarte();
-            case 'appunti': return widgetAppunti();
-            case 'ripassi': return widgetRipassi();
+            case 'ripassi': return widgetRipassa();
             case 'chiusura': return widgetChiusura();
             case 'esami': return widgetEsami();
             case 'timer': return widgetTimer();
@@ -17169,7 +17227,7 @@ function sezioneNotifiche(salva) {
 function sezioneStudio(salva) {
     const i = imp();
     const num = (k, def, min, max) => h('input', { type: 'number', min: String(min), max: String(max), inputMode: 'numeric', value: String(i[k] || def), onchange: (e) => salva({ [k]: Math.max(min, Math.min(max, parseInt(e.target.value, 10) || def)) }) });
-    return scheda('Studio', riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')), riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')), riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')), riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')), h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassi di oggi) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
+    return scheda('Studio', riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')), riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')), riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')), riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')), h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassa) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
 }
 const PASSO = 15;
 function trascinabile(el, o, nGiorni) {
@@ -17270,7 +17328,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.58.6';
+const VERSIONE = '0.59.0';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
