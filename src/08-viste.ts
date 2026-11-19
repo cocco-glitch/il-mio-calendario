@@ -91,12 +91,20 @@ function taskDelGiorno(g: Date): Task[] {
 }
 
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET: [string, string][] = [['ripassi', 'Ripassa (sotto-step, carte, quiz, appunti)'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET: [string, string][] = [['ripassi', 'Ripassa (sotto-step, carte, quiz, appunti)'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Appunto di oggi'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget(): string[] {
   const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
   for (const [w] of WIDGET) if (!ord.includes(w)) (w === 'ripassi' || w === 'chiusura' || w === 'studiaora') ? ord.unshift(w) : ord.push(w); // v0.7: i ripassi in cima
-  return ord.filter(w => !(i.widgetNascosti || []).includes(w));
+  // v0.60: Modalità esame (≤ 21 giorni da un esame): Oggi mostra solo l'essenziale
+  const esame = modalitaEsame() !== null;
+  return ord.filter(w => !(i.widgetNascosti || []).includes(w) && (!esame || !SUPERFLUI_ESAME.includes(w)));
+}
+const SUPERFLUI_ESAME = ['nota', 'tabelle', 'domani'];
+function bannerModoEsame(): HTMLElement | null {
+  const n = modalitaEsame(); if (n === null) return null;
+  return h('div.modo-esame', { role: 'status' }, '🎯 Modalità esame · ' + (n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' giorni') + (n <= 3 ? ' · solo ripasso' : ''),
+    h('button.btn-testo', { onclick: () => { const i = imp(); i.modoEsame = 'no'; Stato.salva(i); avviso('Modalità esame spenta: la riattivi da Altro › Aspetto.'); } }, 'Mostra tutto'));
 }
 let timerNotaGiorno = 0;
 function vistaOggi(): HTMLElement {
@@ -104,20 +112,17 @@ function vistaOggi(): HTMLElement {
   const occ = occorrenzeDelGiorno(g);
   const tasks = Stato.tutti<Task>('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(g))).sort(ordinaTask);
 
-  // Nota del giorno: id fisso per data, così non si duplica tra dispositivi.
-  const idNota = 'giorno-' + ymd(g);
-  const nota = Stato.prendi<Nota>(idNota);
+  // v0.60 (N1): la nota del giorno è l'appunto datato 'ap-giorno-<data>' (id fisso: niente doppioni tra dispositivi).
+  const kG = ymd(g);
   const area = h('textarea.nota-giorno', {
-    rows: 4, placeholder: 'Appunti di oggi…', value: nota ? nota.testo : '',
+    rows: 4, placeholder: 'Appunti di oggi… (domanda :: risposta diventa una flashcard)', 'aria-label': 'Appunto di oggi', value: Appunti.testoGiorno(kG),
     oninput: () => {
       clearTimeout(timerNotaGiorno);
-      timerNotaGiorno = window.setTimeout(() => {
-        const n: Nota = Stato.prendi<Nota>(idNota) || { id: idNota, type: 'nota', updatedAt: 0, titolo: 'Nota del ' + fmt(g, { day: 'numeric', month: 'long', year: 'numeric' }), testo: '', tag: [], giorno: ymd(g) };
-        n.testo = area.value;
-        Stato.salva(n, true);
-      }, 500);
+      timerNotaGiorno = window.setTimeout(() => { Appunti.salvaGiorno(kG, area.value); }, 500);
     },
+    onchange: () => { clearTimeout(timerNotaGiorno); Appunti.salvaGiorno(kG, area.value); Appunti.sincronizzaGiorno(kG); },
   }) as HTMLTextAreaElement;
+  const apriGiorno = h('button.btn.neutro.piccolo', { onclick: () => { clearTimeout(timerNotaGiorno); const a = Appunti.salvaGiorno(kG, area.value); apriAppunto(a); } }, '📝 Apri negli appunti');
 
   const rapido = h('input', { type: 'text', placeholder: '+ Promemoria veloce', enterKeyHint: 'done', onkeydown: (e: KeyboardEvent) => {
     if (e.key === 'Enter' && rapido.value.trim()) {
@@ -146,13 +151,14 @@ function vistaOggi(): HTMLElement {
     h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))),
     campoRapido(),
     senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null,
+    bannerModoEsame(),
     ordineWidget().map(w => {
       switch (w) {
         case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
         case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
         case 'studio': { const st = Studio.vociDelGiorno(g); return Studio.pkPiani().length ? scheda('Studio di oggi', indicatoreStudio(), st.length ? st.map(rigaStudio) : vuoto('Niente dal piano per oggi.'), bottoniFreddo(st)) : null; }
         case 'tabelle': { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; }
-        case 'nota': return scheda('Nota del giorno', area);
+        case 'nota': return scheda('Appunto di oggi', area, h('div.bottoni', null, apriGiorno));
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
         // v0.57.1 (D3) → v0.58: anche con corsi propri, carte, appunti o quiz da rifare (sempre)
         case 'studiaora': return widgetStudiaOra();   // v0.58: card «Adesso» sempre in cima, anche senza pacchetti-step
@@ -402,7 +408,7 @@ function vistaNote(): HTMLElement {
   const lista = h('div');
   const zonaTag = h('div.chips');
   function aggiorna(): void {
-    const tutte = Stato.tutti<Nota>('nota').filter(n => n.testo.trim() || !n.giorno).sort((a, b) => b.updatedAt - a.updatedAt);
+    const tutte = Stato.tutti<Nota>('nota').filter(n => (n.testo.trim() || !n.giorno) && !Appunti.notaMigrata(n)).sort((a, b) => b.updatedAt - a.updatedAt);
     const tags = Array.from(new Set(tutte.flatMap(n => n.tag))).sort();
     svuota(zonaTag);
     tags.forEach(t => zonaTag.appendChild(h('button.chip' + (UI.tagNote === t ? '.attivo' : ''), { onclick: () => { UI.tagNote = UI.tagNote === t ? '' : t; aggiorna(); } }, '#' + t)));
@@ -511,20 +517,20 @@ function vistaAltro(): HTMLElement {
 
   // v0.34: Altro = scorciatoie in vista + 4 gruppi di impostazioni (sotto-pagine)
   switch (UI.altroSez) {
-    case 'aspetto': return h('div.pagina.sotto', null, sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp));
-    case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());   // v0.52: profilo e materie
+    case 'aspetto': return h('div.pagina.sotto', null, sezionePreset(salvaImp), h('details.personalizza', null, h('summary', null, 'Personalizza'), sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePresetMiei(salvaImp)));   // v0.60 (U8)
+    case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), h('details.personalizza', null, h('summary', null, 'Avanzate'), Regole.sezioneAltro()));   // v0.60: il raro in «Avanzate»   // v0.52: profilo e materie
     case 'calendario': return h('div.pagina.sotto', null, scheda('Categorie', cats, nuovaCat), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp));
     case 'dati': return h('div.pagina.sotto', null, sezDrive, sezDati, versione);
   }
   const nTask = Stato.tutti<Task>('task').filter(t => !t.fatto).length;
-  const nNote = Stato.tutti<Nota>('nota').length;
+  const nNote = Stato.tutti<Nota>('nota').filter(n => !Appunti.notaMigrata(n)).length;
   const tessera = (sch: Scheda, ic: string, tit: string, sotto: string, cls: string) =>
     h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
   return h('div.pagina', null,
     Aggiornamento.riga(),
     h('div.tessere-altro', null,
       tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'),
-      tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')),
+      tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nessuna nota', 'viola')),
     h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } },
       h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')),
       icona('dx', 18)),
@@ -602,16 +608,26 @@ function sezioneLayout(salva: SalvaImp): HTMLElement {
 }
 
 const PRESET_BASE: { nome: string; valori: Partial<Impostazioni> }[] = [
-  { nome: 'Predefinito', valori: { tema: 'auto', accento: '#6c8cff', sfondo: '', font: 'sistema', scala: 1, densita: 'comoda', raggio: 14, widget: [], widgetNascosti: [], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
+  { nome: 'Predefinito', valori: { tema: 'auto', accento: '#6c8cff', sfondo: '', font: 'sistema', scala: 1, densita: 'comoda', raggio: 14, widget: [], widgetNascosti: ['nota', 'tabelle', 'chiusura'], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
   { nome: 'Studio intenso', valori: { tema: 'scuro', accento: '#e9a23b', sfondo: '', font: 'sistema', scala: 1, densita: 'compatta', raggio: 10, widget: ['studio', 'impegni', 'promemoria', 'tabelle', 'nota', 'domani'], widgetNascosti: ['domani'], tabNascoste: [], nav: 'auto', vistaIniziale: 'oggi' } },
   { nome: 'Minimal', valori: { tema: 'chiaro', accento: '#64748b', sfondo: '#ffffff', font: 'sistema', scala: 1, densita: 'comoda', raggio: 4, widget: ['impegni', 'promemoria', 'studio', 'nota', 'tabelle', 'domani'], widgetNascosti: ['tabelle', 'domani'], tabNascoste: ['note'], nav: 'auto', vistaIniziale: 'oggi' } },
 ];
+const DESC_PRESET: Record<string, string> = { 'Predefinito': 'Tema automatico, riquadri essenziali', 'Studio intenso': 'Scuro e compatto, lo studio in cima', 'Minimal': 'Chiaro e pulito, solo l\'indispensabile' };
+const applicaPreset = (salva: SalvaImp, nome: string, v: Partial<Impostazioni>) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); };   // v0.56.1: avviso solo a scrittura confermata
+/** v0.60 (U8): i 3 preset in cima, come schede grandi: si parte da qui, il resto è in «Personalizza». */
 function sezionePreset(salva: SalvaImp): HTMLElement {
+  const i = imp();
+  return scheda('Stile',
+    h('div.preset-schede', { role: 'radiogroup', 'aria-label': 'Preset' },
+      PRESET_BASE.map(p => h('button.preset-scheda.chip' + (i.preset === p.nome ? '.attivo' : ''), { role: 'radio', 'aria-checked': String(i.preset === p.nome), onclick: () => applicaPreset(salva, p.nome, p.valori) },
+        h('span.preset-nome', null, p.nome), h('span.tenue.piccolo', null, DESC_PRESET[p.nome] || '')))),
+    riga('Modalità esame', selettore([['auto', 'Automatica (≤ 21 giorni)'], ['no', 'Spenta']], i.modoEsame === 'no' ? 'no' : 'auto', function (this: HTMLSelectElement) { salva({ modoEsame: this.value as Impostazioni['modoEsame'] }); })));
+}
+function sezionePresetMiei(salva: SalvaImp): HTMLElement {
   const i = imp(), miei = Stato.tutti<Preset>('preset').sort((a, b) => a.nome.localeCompare(b.nome));
-  const applica = (nome: string, v: Partial<Impostazioni>) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); };   // v0.56.1: avviso solo a scrittura confermata
-  return scheda('Preset',
+  const applica = (nome: string, v: Partial<Impostazioni>) => applicaPreset(salva, nome, v);
+  return scheda('I miei preset',
     h('div.chips', null,
-      PRESET_BASE.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: () => applica(p.nome, p.valori) }, p.nome)),
       miei.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: async () => {
         const s = await chiedi(p.nome, [{ testo: 'Applica', valore: 'a' }, { testo: 'Sovrascrivi con l\'aspetto attuale', valore: 's' }, { testo: 'Elimina preset', valore: 'd', pericolo: true }]);
         if (s === 'a') applica(p.nome, p.valori);

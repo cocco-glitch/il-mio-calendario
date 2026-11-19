@@ -158,6 +158,13 @@ function adesso(giorno = oggi()): { minuti: number; riassunto: string } {
   return { minuti, riassunto: pezzi.join(' + ') || voci[0].titolo };
 }
 /** v0.58: esame più vicino (oggi compreso) e stato rispetto al piano. */
+/** v0.60: giorni al prossimo esame se la «Modalità esame» è attiva (≤ 21 giorni, non spenta), altrimenti null. */
+function modalitaEsame(): number | null {
+  if ((imp() || {} as Impostazioni).modoEsame === 'no') return null;
+  const gg = Stato.tutti<Esame>('esame').map(x => giorniA(x.data)).filter(n => n >= 0);
+  const m = gg.length ? Math.min(...gg) : Infinity;
+  return m <= 21 ? m : null;
+}
 function prossimoEsame(): { nome: string; giorni: number; stato: string } | null {
   const e = Stato.tutti<Esame>('esame').filter(x => !x.deleted && giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
   if (!e) return null;

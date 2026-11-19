@@ -23,7 +23,7 @@ with sync_playwright() as p:
         pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
         pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_timeout(600)
         # ospite: niente programma del proprietario (in locale il sito lo carica perché non c'è accesso)
-        pg.evaluate("Stato.tutti('pacchetto').concat(Stato.tutti('esame')).forEach(r => Stato.elimina(r.id))")
+        pg.evaluate("Stato.tutti('pacchetto').concat(Stato.tutti('esame')).forEach(r => Stato.elimina(r.id)); (() => { const i = imp(); i.widgetNascosti = []; Stato.salva(i, true); })()")  # v0.60: riquadri spenti di default riaccesi
 
         # --- U10: Oggi senza corsi → un solo riquadro guida al posto dei riquadri vuoti ---
         pg.evaluate("vai('oggi')"); pg.wait_for_timeout(150)

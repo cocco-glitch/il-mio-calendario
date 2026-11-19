@@ -46,17 +46,17 @@ interface DefinizioneArchetipo {
   pluginLocaleId: string;
 }
 const ARCHETIPI_DISCIPLINARI: Record<ArchetipoDisciplinare, DefinizioneArchetipo> = {
-  stem_calcolo: { id: 'stem_calcolo', etichetta: 'STEM, Fisica & Calcolo', catenaProviderPreferita: ['groq', 'sambanova', 'nvidia', 'gemini', 'cerebras'],
+  stem_calcolo: { id: 'stem_calcolo', etichetta: 'STEM, Fisica & Calcolo', catenaProviderPreferita: ['groq', 'nvidia', 'gemini'],
     modelliConsigliati: ['openai/gpt-oss-120b', 'qwen/qwen3-32b', 'DeepSeek-R1-Distill-Llama-70B'], modalitaDomandaAbilitate: ['mcq', 'fill', 'sequenza'], pluginLocaleId: 'diagnosticaStemDimensionale' },
-  scienze_sperimentali: { id: 'scienze_sperimentali', etichetta: 'Scienze Sperimentali & Mediche', catenaProviderPreferita: ['gemini', 'groq', 'cohere', 'sambanova', 'github'],
+  scienze_sperimentali: { id: 'scienze_sperimentali', etichetta: 'Scienze Sperimentali & Mediche', catenaProviderPreferita: ['gemini', 'groq', 'cohere', 'github'],
     modelliConsigliati: ['gemini-2.5-flash', 'qwen/qwen3-32b', 'command-a-03-2025'], modalitaDomandaAbilitate: ['mcq', 'fill', 'abbinamento', 'sequenza'], pluginLocaleId: 'diagnosticaScienzeCompartimenti' },
   umanistico_storico: { id: 'umanistico_storico', etichetta: 'Storia, Filosofia & Scienze Umane', catenaProviderPreferita: ['cohere', 'gemini', 'github', 'groq', 'xkiro'],
     modelliConsigliati: ['command-a-03-2025', 'gemini-2.5-flash', 'gpt-4o'], modalitaDomandaAbilitate: ['mcq', 'sequenza', 'abbinamento', 'risposta_aperta_rubrica'], pluginLocaleId: 'diagnosticaCronologiaCausalita' },
   giuridico_economico: { id: 'giuridico_economico', etichetta: 'Diritto, Economia & Concorsi', catenaProviderPreferita: ['gemini', 'groq', 'xkiro', 'cohere', 'github'],
     modelliConsigliati: ['gemini-2.5-flash', 'moonshotai/kimi-k3-agent', 'command-a-03-2025'], modalitaDomandaAbilitate: ['mcq', 'fill', 'abbinamento'], pluginLocaleId: 'diagnosticaNormativaEccezioni' },
-  lingue_letteratura: { id: 'lingue_letteratura', etichetta: 'Lingue Straniere & Letteratura', catenaProviderPreferita: ['groq', 'gemini', 'xkiro', 'cohere', 'cerebras'],
+  lingue_letteratura: { id: 'lingue_letteratura', etichetta: 'Lingue Straniere & Letteratura', catenaProviderPreferita: ['groq', 'gemini', 'xkiro', 'cohere'],
     modelliConsigliati: ['moonshotai/kimi-k3-agent', 'llama-3.3-70b-versatile', 'gemini-2.5-flash'], modalitaDomandaAbilitate: ['fill', 'mcq', 'abbinamento', 'risposta_aperta_rubrica'], pluginLocaleId: 'diagnosticaMorfologiaLevenshtein' },
-  informatica_coding: { id: 'informatica_coding', etichetta: 'Informatica, Coding & Sistemi', catenaProviderPreferita: ['groq', 'cerebras', 'github', 'gemini', 'sambanova'],
+  informatica_coding: { id: 'informatica_coding', etichetta: 'Informatica, Coding & Sistemi', catenaProviderPreferita: ['groq', 'github', 'gemini'],
     modelliConsigliati: ['qwen/qwen3-32b', 'gpt-4o', 'gemini-2.5-flash'], modalitaDomandaAbilitate: ['mcq', 'fill', 'sequenza'], pluginLocaleId: 'diagnosticaSintassiAST' },
 };
 const ICONE_ARCHETIPO: Record<ArchetipoDisciplinare, string> = { stem_calcolo: '📐', scienze_sperimentali: '🧪', umanistico_storico: '🏛', giuridico_economico: '⚖️', lingue_letteratura: '🗣', informatica_coding: '💻' };

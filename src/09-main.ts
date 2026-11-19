@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.59.2';
+const VERSIONE = '0.60.0';
 
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
@@ -211,6 +211,7 @@ async function avvia(): Promise<void> {
   Tocco.attiva();
   disegna();
   scorciatoiaAvvio();   // v0.58: scorciatoie PWA (tocco lungo sull'icona)
+  setTimeout(() => { try { Appunti.migraNoteGiorno(); } catch (e) { console.warn('Appunti: migrazione note del giorno rimandata', e); } }, 1200);   // v0.60 (N1)
   setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500);   // v0.57 (A14)
   avvisoNovita();
   Drive.precarica();

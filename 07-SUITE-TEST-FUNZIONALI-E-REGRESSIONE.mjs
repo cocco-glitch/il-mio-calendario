@@ -153,7 +153,7 @@ t('v0.57.1 D1/D2/D3/D5/Q3/Q6: guardie statiche', () => {
   vero(/MATERIE_BASE\)\.filter\(\(\) => Drive\.eProprietario\(\)\)/.test(leggi('07-pianiai.ts')), 'D1 pianiai');
   vero(/Drive\.eProprietario\(\) \? \['Chimica'/.test(leggi('07-creaquiz.ts')), 'D2 creaquiz');
   vero(/case 'studiaora': return widgetStudiaOra\(\)/.test(leggi('08-viste.ts')), 'D3 Studia ora (v0.58: sempre)');
-  vero(/MATRICE_5_LIVELLI\.filter\(c => c\.livello <= 4\)/.test(leggi('07-pianiai.ts')), 'D5 wizard 1–4');
+  vero(/MATRICE_LIVELLI\.map\(/.test(leggi('07-pianiai.ts')) && !/MATRICE_5_LIVELLI/.test(leggi('07-pianiai.ts')), 'D5 → v0.60: wizard 1–3');
   vero(/for \(const c of carteNuove\) Stato\.elimina\(c\)/.test(leggi('07-quizapp.ts')) && /annullaPiani\(\)/.test(leggi('07-quizapp.ts')), 'Q3 annulla completo');
   vero(/dataset\.titolo === titolo/.test(leggi('07-studio.ts')), 'Q6 un solo visore');
 });
@@ -177,8 +177,8 @@ t('pipeline: bozza → pronta → verificata → bozza e copertura Bloom', () =>
 
 console.log('\n== Regressione statica su src/ ==');
 const ia = leggi('07-ia.ts');
-t('catena «genera»: gemini → groq → xkiro → cohere → requesty → cerebras → sambanova', () => {
-  const m = /genera:\s*\[([^\]]+)\]/.exec(ia.slice(ia.indexOf('const CATENA'))); eq(m[1].replace(/['\s]/g, '').split(','), ['gemini', 'groq', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova']);
+t('catena «genera»: gemini → groq → xkiro → cohere → requesty (v0.60: via cerebras/sambanova)', () => {
+  const m = /genera:\s*\[([^\]]+)\]/.exec(ia.slice(ia.indexOf('const CATENA'))); eq(m[1].replace(/['\s]/g, '').split(','), ['gemini', 'groq', 'xkiro', 'cohere', 'requesty']);
 });
 t('catena «micro» (livello 2): gemini → groq → xkiro, uscita 350 token', () => {
   const m = /micro:\s*\[([^\]]+)\]\s*\}/.exec(ia.slice(ia.indexOf('const CATENA'))); eq(m[1].replace(/['\s]/g, '').split(','), ['gemini', 'groq', 'xkiro']);
@@ -186,13 +186,14 @@ t('catena «micro» (livello 2): gemini → groq → xkiro, uscita 350 token', (
 });
 // v0.59.2: anche src/su-richiesta/ (strumenti-quiz.js, caricato al primo uso)
 function SRC_TUTTI() { return [...fs.readdirSync(SRC).filter(x => x.endsWith('.ts')), ...fs.readdirSync(path.join(SRC, 'su-richiesta')).filter(x => x.endsWith('.ts')).map(x => 'su-richiesta/' + x)]; }
-t('nessun riferimento attivo a Mistral/OpenRouter in src/', () => {
+t('nessun riferimento attivo a Mistral/OpenRouter/Cerebras/SambaNova in src/ né in connect-src', () => {
   const sporchi = [];
   for (const f of SRC_TUTTI()) leggi(f).split('\n').forEach((r, i) => {
     const codice = r.replace(/\/\/.*$/, '').replace(/\/\*\*.*\*\//, '');
-    if (/mistral|openrouter/i.test(codice) && !/const RITIRATI = \['mistral', 'openrouter'\]/.test(codice)) sporchi.push(f + ':' + (i + 1));
+    if (/mistral|openrouter|cerebras|sambanova/i.test(codice) && !/const RITIRATI = \[/.test(codice)) sporchi.push(f + ':' + (i + 1));
   });
   eq(sporchi, [], 'righe');
+  vero(!/cerebras|sambanova/.test(fs.readFileSync(path.join(SRC, '..', 'public', 'index.html'), 'utf8')), 'connect-src ridotta');
 });
 t('Google Calendar: scritture solo sul calendario specchio (gcalId), mai su primary', () => {
   const g = leggi('06-gcal.ts'), scritture = g.split('\n').filter(r => /method: '(PUT|POST|DELETE|PATCH)'/.test(r));
@@ -205,13 +206,24 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.59.2', () => vero(/const VERSIONE = '0\.59\.2'/.test(leggi('09-main.ts'))));
+t('versione app 0.60.0', () => vero(/const VERSIONE = '0.60.0'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
 t('v0.59: coda unica di ripasso (CodaRipasso, un solo riquadro Ripassa, Studia ora dalla coda)', () => vero(/const CodaRipasso/.test(leggi('07-coda.ts')) && /function widgetRipassa/.test(leggi('07-coda.ts')) && !/function widgetCarte|function widgetAppunti|function widgetRipassi/.test(leggi('07-carte.ts') + leggi('07-appunti.ts') + leggi('07-memoria.ts')) && /CodaRipasso\.dovuti/.test(leggi('07-studiaora.ts')) && /case 'ripassi': return widgetRipassa\(\)/.test(leggi('08-viste.ts'))));
 t('v0.59.1: Oggi «vuoto» solo senza studio (piani, coda, appunti, mazzi)', () => vero(/vuotoTotale = senzaCorsi && !Studio\.pkPiani\(\)\.length && !CodaRipasso\.conta\(\)/.test(leggi('08-viste.ts'))));
+t('v0.60 N2: appunto collegato a uno step scelto da un elenco (piani attivi + corsi), il titolo non lo sovrascrive', () => { const a = leggi('07-appunti.ts'); vero(/function passiCollegabili/.test(a) && /Studio\.pianiAttivi\(\)/.test(a) && /'aria-label': 'Collega a uno step'/.test(a) && /if \(!a\.subMano\) \{ const col = Carte\.collega/.test(a)); });
+t('v0.60 N1: nota del giorno = appunto datato (id fisso, migrazione che non ricrea gli eliminati, nota vecchia intatta)', () => { const a = leggi('07-appunti.ts'), v = leggi('08-viste.ts'); vero(/'ap-giorno-' \+ k/.test(a) && /Stato\.esiste\(idGiorno\(x\.giorno\)\)/.test(a) && /giorno\?: string; sub\?/.test(a), 'appunti'); vero(/esiste\(id: string\): boolean \{ return rec\.has\(id\)/.test(leggi('03-modello.ts')), 'Stato.esiste'); vero(/Appunti\.salvaGiorno\(kG/.test(v) && !/type: 'nota', updatedAt: 0, titolo: 'Nota del '/.test(v), 'Oggi'); vero(/Appunti\.migraNoteGiorno\(\)/.test(leggi('09-main.ts')), 'avvio'); });
 
+t('v0.60 Taglio: Studio 4 sotto-schede, 3 stili in Aspetto, Modalità esame che nasconde solo il superfluo e non riaccende i nascosti', () => {
+  const st = leggi('07-studio.ts'), v = leggi('08-viste.ts'), c = leggi('07-carte.ts'), m = leggi('03-modello.ts');
+  vero(/\['Ripassa', \['carte'\]/.test(st) && /\['Piano', \['piano'\]/.test(st) && /\['Corsi', \['schede', 'syllabus', 'tabelle', 'esami'\]/.test(st) && /\['Progressi', \['statistiche', 'errori'\]/.test(st), '4 gruppi');
+  vero(!/Altro ▾/.test(st), 'niente più «Altro ▾»');
+  vero(/details\.personalizza/.test(v) && /function sezionePreset/.test(v) && /role: 'radiogroup'/.test(v), 'U8 preset in cima, Personalizza chiuso');
+  vero(/SUPERFLUI_ESAME = \['nota', 'tabelle', 'domani'\]/.test(v) && /!\(i\.widgetNascosti \|\| \[\]\)\.includes\(w\) && \(!esame/.test(v), 'esame: nascosti restano nascosti');
+  vero(/modalitaEsame\(\)/.test(c), 'niente carte nuove negli ultimi 3 giorni');
+  vero(/widgetNascosti: \['nota', 'tabelle', 'chiusura'\]/.test(m), 'nota/tabelle/chiusura spenti di default');
+});
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
 const finestre = (da, a, giorni = [1, 2, 3, 4, 5, 6]) => giorni.map(g => ({ giornoSettimana: g, oraInizio: da, oraFine: a }));
@@ -349,14 +361,14 @@ await t('testGuardRailBP4: prereq in ciclo sanificati prima di Kahn, data obiett
 });
 // ---------- BP5: 5 livelli, questionario 6+3, guard-rail biologici, Burnout Circuit Breaker ----------
 const minDi = (o) => +o.slice(0, 2) * 60 + +o.slice(3, 5);
-t('testHardCapEricssonL5: L5 con 9,5 h → analitico ≤ 270 min, il resto offloading attivo', () => {
+t('testHardCapEricssonL5 (v0.60: L5 → L3): 9,5 h → analitico ≤ 270 min, il resto offloading attivo', () => {
   const rete0 = chiamateRete;
-  eq(P.MATRICE_5_LIVELLI.length, 5); vero(P.MATRICE_5_LIVELLI.every(c => c.capSforzoAnaliticoMin <= 270), 'cap ≤ 270 in matrice');
-  eq(P.configLivello(5).capSforzoAnaliticoMin, 270); eq(P.configLivello(5).moltiplicatoreResaEquivalente, 1.95); eq(P.configLivello(1).ritenzioneTargetFSRS, 0.85);
+  eq(P.MATRICE_LIVELLI.length, 3); vero(P.MATRICE_LIVELLI.every(c => c.capSforzoAnaliticoMin <= 270), 'cap ≤ 270 in matrice');
+  eq(P.configLivello(5).livello, 3, 'migrazione 5 → 3'); eq(P.configLivello(4).livello, 3, 'migrazione 4 → 3'); eq(P.configLivello(5).capSforzoAnaliticoMin, 230); eq(P.configLivello(1).ritenzioneTargetFSRS, 0.85);
   for (const cronotipo of ['allodola_mattina', 'intermedio', 'pomeridiano', 'gufo_sera']) for (const autonomiaBRACMin of [35, 55, 80, 100]) {
     const g = P.allocaGiornata(5, { fasciaEta: '20-26', oreSonnoMedie: '7-8', cronotipo, autonomiaBRACMin }, { minuti: 570 });
     const an = g.slot.filter(x => x.analitico).reduce((a, x) => a + x.min, 0);
-    vero(an <= 270 && an === g.analiticoMin, cronotipo + '/' + autonomiaBRACMin + ': analitico ' + an);
+    vero(an <= 230 && an === g.analiticoMin, cronotipo + '/' + autonomiaBRACMin + ': analitico ' + an);
     vero(g.slot.filter(x => x.analitico).every(x => x.tipo === 'L1_codifica' || x.tipo === 'L3_problemi' || x.tipo === 'L3_faded'), 'solo L1/L3 analitici');
     vero(g.slot.some(x => x.tipo === 'offloading') && g.studioMin - an > 0, 'eccedenza → offloading');
     vero(g.slot.every(x => minDi(x.ora) + x.min <= 21 * 60 + 30), 'mai oltre le 21:30');
@@ -392,17 +404,17 @@ t('testAllocazioneCircadianaDip: 13:00–15:00 solo flashcard/cue, mai L1/L3', (
   vero(sc.slot.some(x => x.tipo === 'L3_faded') && !sc.slot.some(x => x.tipo === 'L3_problemi'), 'scaffolding: faded nei primi 2 giorni');
   vero(P.allocaGiornata(3, { reazioneErrore: 'necessita_scaffolding' }, { giorno: 2 }).slot.some(x => x.tipo === 'L3_problemi'), 'dal giorno 3 problemi');
 });
-t('testCapBiologiciEtaESonno: <16 o sonno <6 che chiedono L5 → L3 con avviso; BRAC 35 → 35 + 10', () => {
+t('testCapBiologiciEtaESonno: <16 o sonno <6 che chiedono L3 → L2 con avviso; BRAC 35 → 35 + 10', () => {
   const a = P.applicaGuardRailBiologici(5, { fasciaEta: '<16' });
-  eq(a.livello, 3); eq(a.richiesto, 5); vero(a.avvisi.some(x => /neurosviluppo/.test(x) && /6\.5h/.test(x)), 'avviso età');
+  eq(a.livello, 2); eq(a.richiesto, 3); vero(a.avvisi.some(x => /neurosviluppo/.test(x) && /4\.5h/.test(x)), 'avviso età');
   const b = P.applicaGuardRailBiologici(5, { oreSonnoMedie: '<6' });
-  eq(b.livello, 3); vero(b.avvisi.some(x => /6h di sonno/.test(x) && /ippocampale/.test(x)), 'avviso sonno');
-  const c = P.applicaGuardRailBiologici(4, { fasciaEta: '<16', oreSonnoMedie: '<6' }); eq(c.livello, 3); eq(c.avvisi.length, 2);
-  eq(P.applicaGuardRailBiologici(3, { fasciaEta: '<16', oreSonnoMedie: '<6' }).livello, 3, 'L3 resta L3');
-  eq(P.applicaGuardRailBiologici(5, { fasciaEta: '20-26', oreSonnoMedie: '7-8' }).livello, 5, 'adulto riposato: L5');
+  eq(b.livello, 2); vero(b.avvisi.some(x => /6h di sonno/.test(x) && /ippocampale/.test(x)), 'avviso sonno');
+  const c = P.applicaGuardRailBiologici(3, { fasciaEta: '<16', oreSonnoMedie: '<6' }); eq(c.livello, 2); eq(c.avvisi.length, 2);
+  eq(P.applicaGuardRailBiologici(2, { fasciaEta: '<16', oreSonnoMedie: '<6' }).livello, 2, 'L2 resta L2');
+  eq(P.applicaGuardRailBiologici(5, { fasciaEta: '20-26', oreSonnoMedie: '7-8' }).livello, 3, 'adulto riposato: L3 (5 migrato)');
   const d = P.applicaGuardRailBiologici(2, { autonomiaBRACMin: 35 }); eq(d.bloccoMin, 35); eq(d.pausaMin, 10);
   const g = P.allocaGiornata(5, { fasciaEta: '<16', autonomiaBRACMin: 35 });
-  eq(g.livello, 3); vero(g.studioMin <= 6.5 * 60, 'ore L3'); vero(g.slot.filter(x => x.tipo === 'wakeful_rest').every(x => x.min === 10), 'pause 10');
+  eq(g.livello, 2); vero(g.studioMin <= 4.5 * 60, 'ore L2'); vero(g.slot.filter(x => x.tipo === 'wakeful_rest').every(x => x.min === 10), 'pause 10');
   vero(g.slot.filter(x => x.tipo !== 'wakeful_rest').every(x => x.min <= 35), 'micro-blocchi 35');
   eq(P.DOMANDE_UNIVERSALI.length, 6, 'Blocco A: 6 domande');
 });
@@ -426,17 +438,17 @@ await t('testBurnoutCircuitBreaker48h: errori +30% in 2 giorni → de-load 48 h 
   vero(r.piano, 'piano'); const p0 = JSON.stringify(r.piano), chiavi = tutteVoci(r.piano).filter(v => !v.speciale).map(v => v.k).sort();
   const d = P.attivaDeload(r.piano, { oggi: OGGI, motivo: 'test' });
   eq(JSON.stringify(r.piano), p0, 'originale intatto'); vero(d && d.deload.attivo, 'de-load attivo');
-  eq(d.deload.fino, '2026-11-20'); eq(d.deload.livelloTarget, 4); eq(d.deload.livelloRidotto, 2); eq(d.livelloIntensita, 2);
+  eq(d.deload.fino, '2026-11-20'); eq(d.deload.livelloTarget, 3); eq(d.deload.livelloRidotto, 2); eq(d.livelloIntensita, 2);
   for (const g of d.giorni) if (g.data >= OGGI && g.data < '2026-11-20') {
     vero(!g.voci.some(v => v.livelloCognitivo && !v.isRipassoFSRS && !v.isBuffer), g.data + ': niente capitoli nuovi');
   }
   vero(tutteVoci(d).some(v => v.isDeload), 'voce de-load (FSRS leggero + Wakeful Rest)');
   eq(tutteVoci(d).filter(v => !v.speciale).map(v => v.k).sort().join(), chiavi.join(), 'chiavi invariate, niente perso');
   eq(P.attivaDeload(d, { oggi: OGGI }), null, 'niente doppio de-load');
-  eq(P.livelloEffettivo(d, '2026-11-19'), 2); eq(P.livelloEffettivo(d, '2026-11-20'), 3); eq(P.livelloEffettivo(d, '2026-11-21'), 4);
+  eq(P.livelloEffettivo(d, '2026-11-19'), 2); eq(P.livelloEffettivo(d, '2026-11-20'), 3); eq(P.livelloEffettivo(d, '2026-11-21'), 3);
   eq(P.aggiornaDeload(d, '2026-11-19'), null);
   const x = P.aggiornaDeload(d, '2026-11-20'); eq(x.livelloIntensita, 3); vero(x.deload.attivo);
-  const y = P.aggiornaDeload(x, '2026-11-21'); eq(y.livelloIntensita, 4); vero(!y.deload.attivo, 'de-load chiuso');
+  const y = P.aggiornaDeload(x, '2026-11-21'); eq(y.livelloIntensita, 3); vero(!y.deload.attivo, 'de-load chiuso');
   eq(P.attivaDeload({ ...r.piano, origine: 'manuale' }, { oggi: OGGI }), null, 'solo ai_neuro');
   eq(ia, 0, 'AI'); eq(chiamateRete - rete0, 0, 'rete');
   const ui = leggi('07-pianiai.ts'), qz = leggi('07-quizapp.ts');
@@ -827,7 +839,7 @@ await t('v0.59.2: quiz in app — confutazioni da spiegazioneDistrattori, sezion
   vero(/ew = ewDi\(d\)/.test(qa) && /spiegazioneDistrattori/.test(qa), 'correzione usa le confutazioni dei quiz da Drive');
   vero(/sezioniSpiegazione\(d\.e\)/.test(qa) && /function sezioniSpiegazione/.test(sp) && /RISPOSTA ESATTA\|PERCH/.test(qa), 'spiegazione a sezioni, lettere originali omesse');
   vero(/d\.erroreTipico/.test(qa) && /d\.erroreTipico = s\(x\.erroreTipico\)/.test(id), 'erroreTipico importato e mostrato');
-  vero(/conStrumentiQuiz\(\(\) => StrumentiQuiz\.prompt\(\)\)/.test(st) && /conStrumentiQuiz\(\(\) => StrumentiQuiz\.diagnostica\(\)\)/.test(st), 'voci in Studio «Altro ▾», caricate su richiesta');
+  vero(/conStrumentiQuiz\(\(\) => StrumentiQuiz\.prompt\(\)\)/.test(st) && /conStrumentiQuiz\(\(\) => StrumentiQuiz\.diagnostica\(\)\)/.test(st), 'voci in Studio «⋯», caricate su richiesta');
   vero(/dist\/strumenti-quiz\.js/.test(bm) && /app \+ '\\n' \+ extra/.test(bm) && /'strumenti-quiz\.js'/.test(sw), 'strumenti-quiz.js costruito, nell\'anteprima e in cache offline');
   vero(!fs.readdirSync(SRC).some(f => /diagnosiquiz|masterprompt|strumentiquiz/.test(f)), 'strumenti quiz fuori dal pacchetto principale');
   vero(/isEvalSupported: false/.test(sq) && !/innerHTML/.test(sq), 'pdf.js senza eval, niente innerHTML');

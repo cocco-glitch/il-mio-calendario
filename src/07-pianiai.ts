@@ -92,9 +92,8 @@ const PianiAI = (() => {
     const senza = Dominio.senzaAI();
     const usaAI = h('input', { type: 'checkbox', checked: !senza, disabled: senza }) as HTMLInputElement;
     const esito = h('div.tenue.piccolo');
-    // v0.56 (BP5): intensità 1–5 e questionario 6+3
-    // v0.57.1 (D5): il livello 5 «Sprint» contraddice il Burnout Breaker → il wizard offre 1–4 (il modulo puro lo conserva per i piani vecchi)
-    const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.filter(c => c.livello <= 4).map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)'] as [string, string]), '2', function () {
+    // v0.56 (BP5): questionario 6+3 · v0.60 «Taglio»: intensità a 3 livelli (Leggero, Standard, Intensivo)
+    const intensita = selettore(Pianificatore.MATRICE_LIVELLI.map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)'] as [string, string]), '2', function () {
       oreMax.value = String(Pianificatore.configLivello(+this.value).oreRealiMax); avvisiBio();
     });
     const prof0 = profiloSalvato() || Pianificatore.normalizzaProfilo({});
@@ -136,7 +135,7 @@ const PianiAI = (() => {
     const vincoliBP5 = (): VincoliPianoAI => {
       const v = vincoli(), p = profilo(), g = Pianificatore.applicaGuardRailBiologici(+intensita.value, p);
       salvaProfilo(p);
-      v.livelloIntensita = Math.min(4, g.livello) as IntensitaPiano; v.profiloBio = p;
+      v.livelloIntensita = g.livello; v.profiloBio = p;
       v.pesi = Pianificatore.applicaRisposte(Pianificatore.pesiIniziali(p), domandeB, scelteB.map(s => s.value === '' ? null : +s.value));
       v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(v.livelloIntensita).oreRealiMax);
       return v;
@@ -244,7 +243,7 @@ const PianiAI = (() => {
       p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null,
       h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'),
       h('button.btn.neutro', { onclick: async () => {
-        const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Math.min(4, Pianificatore.livelloEffettivo(p, ymd(new Date()))) as IntensitaPiano } : p.vincoliAI;
+        const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
         const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
         if (r.piano && p.deload) { r.piano.deload = p.deload; r.piano.vincoliAI = p.vincoliAI; }
         if (!r.piano) { avviso('⛔ Da oggi il piano è critico: ' + r.fatt.rimedi.map(x => x.testo).join(' · '), 9000); return; }

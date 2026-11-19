@@ -68,6 +68,8 @@ interface Impostazioni extends Rec {
   raggio?: number;                       // angoli arrotondati in px
   widget?: string[];                     // ordine dei riquadri di Oggi
   widgetNascosti?: string[];
+  /** v0.60: «Modalità esame» automatica a ≤ 21 giorni da un esame ('no' = spenta). */
+  modoEsame?: 'auto' | 'no';
   tabNascoste?: string[];                // sezioni nascoste dalla barra
   nav?: 'auto' | 'basso';
   preset?: string;                       // nome dell'ultimo preset applicato
@@ -118,7 +120,7 @@ interface Occ { ev: Evento; inizio: Date; fine: Date; chiave: string; }
 /** Dati di partenza di un dispositivo nuovo (updatedAt = 1: alla prima sincronizzazione vincono quelli su Drive). */
 function predefiniti(): Rec[] {
   return [
-    { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi' } as Rec,
+    { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi', widgetNascosti: ['nota', 'tabelle', 'chiusura'] } as Rec,   // v0.60: Nota del giorno, Tabelle e Chiusura spenti di default (non rimossi)
     { id: 'cat-studio', type: 'categoria', updatedAt: 1, nome: 'Studio', colore: '#6c8cff', visibile: true, ordine: 0 } as Rec,
     { id: 'cat-personale', type: 'categoria', updatedAt: 1, nome: 'Personale', colore: '#2fbf8f', visibile: true, ordine: 1 } as Rec,
     { id: 'cat-salute', type: 'categoria', updatedAt: 1, nome: 'Salute', colore: '#f0708a', visibile: true, ordine: 2 } as Rec,
@@ -181,6 +183,8 @@ const Stato = (() => {
     },
     /** Numero di versione dei dati: cambia a ogni salvataggio/unione (per le cache). */
     get ver(): number { return ver; },
+    /** v0.60: true anche per le lapidi (serve alle migrazioni una tantum: un record eliminato non va ricreato). */
+    esiste(id: string): boolean { return rec.has(id); },
     prendi<T extends Rec>(id: string): T | undefined {
       const r = rec.get(id);
       return r && !r.deleted ? (r as T) : undefined;

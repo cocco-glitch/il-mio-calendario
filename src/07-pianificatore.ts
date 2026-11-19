@@ -22,7 +22,7 @@ interface VincoliPianoAI {
   livelloIntensita?: IntensitaPiano; profiloBio?: ProfiloBiopsicologico; pesi?: PesiAdattiviAlgoritmo;
 }
 // ---------- v0.56 (BP5): 5 livelli di intensità, questionario 6+3, Burnout Circuit Breaker ----------
-type IntensitaPiano = 1 | 2 | 3 | 4 | 5;
+type IntensitaPiano = 1 | 2 | 3;
 interface ConfigLivelloIntensita {
   livello: IntensitaPiano; nome: string; oreRealiMin: number; oreRealiMax: number;
   capSforzoAnaliticoMin: number; ritenzioneTargetFSRS: number; itemPerMicroQuiz: number; maxCardAutogenerateGiorno: number;
@@ -360,7 +360,7 @@ const Pianificatore = (() => {
     const ordine = ordineTopologico(unita), errori = !!(seg && seg.attiva);
     // v0.56 (BP5): con un livello di intensità → hard cap analitico (L1+L3), pause Wakeful Rest BRAC, dip 13–15 senza teoria/calcolo
     const bio = v.livelloIntensita ? applicaGuardRailBiologici(v.livelloIntensita, v.profiloBio) : null;
-    const capAnal = bio ? MATRICE_5_LIVELLI[bio.livello - 1].capSforzoAnaliticoMin : Infinity, pausaBio = bio ? bio.pausaMin : 0;
+    const capAnal = bio ? MATRICE_LIVELLI[bio.livello - 1].capSforzoAnaliticoMin : Infinity, pausaBio = bio ? bio.pausaMin : 0;
     const anal = new Map<string, number>(), eAnal = (l: number) => l === 1 || l === 3;
     const ref = (u: UnitaAI): SorgenteRef | undefined => u.fileId ? { fileId: u.fileId, nomeFile: u.nomeFile || '', pagine: u.pagine ? [u.pagine[0], u.pagine[1]] : [] } : undefined;
     // coda dei compiti: L1→L2 subito, L3 almeno 2 giorni dopo L1, L4 almeno 4 (interleaving con le unità successive)
@@ -435,7 +435,7 @@ const Pianificatore = (() => {
       }
       // 2b) BP5 §1.1: oltre l'hard cap analitico → Offloading Attivo Multi-Modale
       const restoOff = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
-      if (bio && capRaggiunto && restoOff >= 30) metti(g, { k: cod + '~' + pidC + '~OFF~' + g.data.replace(/-/g, ''), t: '🃏 Offloading attivo: ' + modalitaOffloading(MATRICE_5_LIVELLI[bio.livello - 1], v.profiloBio).join(' · '), speciale: true, isOffloading: true }, Math.min(restoOff, 90));
+      if (bio && capRaggiunto && restoOff >= 30) metti(g, { k: cod + '~' + pidC + '~OFF~' + g.data.replace(/-/g, ''), t: '🃏 Offloading attivo: ' + modalitaOffloading(MATRICE_LIVELLI[bio.livello - 1], v.profiloBio).join(' · '), speciale: true, isOffloading: true }, Math.min(restoOff, 90));
       // 3) buffer per imprevisti (consumati da Ripianifica e dall'hook post-quiz)
       const buf = Math.min(Math.round(g.minuti * f.bufferPct / 5) * 5, g.minuti - (usato.get(g.data) || 0));
       if (f.bufferPct > 0 && buf >= 20) metti(g, { k: cod + '~' + pidC + '~BUF~' + g.data.replace(/-/g, ''), t: '🧩 Buffer (recupero o anticipo)', isBuffer: true, speciale: true }, buf);
@@ -467,15 +467,14 @@ const Pianificatore = (() => {
     pauseWakefulRestMin: number, moltiplicatoreResaEquivalente: number): ConfigLivelloIntensita =>
     ({ livello, nome, oreRealiMin, oreRealiMax, capSforzoAnaliticoMin: Math.min(HARD_CAP_ANALITICO, capSforzoAnaliticoMin), ritenzioneTargetFSRS, itemPerMicroQuiz, maxCardAutogenerateGiorno,
       abilitaCornellAuto, abilitaTrabocchetti, abilitaMiniCasiCatena, gradoInterleaving, pauseWakefulRestMin, moltiplicatoreResaEquivalente });
-  const MATRICE_5_LIVELLI: ConfigLivelloIntensita[] = [
+  const MATRICE_LIVELLI: ConfigLivelloIntensita[] = [
     L(1, 'Mantenimento Leggero', 1.5, 2.5, 90, 0.85, 5, 0, false, false, false, 'nessuno', 1, 1.05),
     L(2, 'Standard Strutturato', 3.0, 4.5, 150, 0.88, 6, 8, true, false, false, 'nessuno', 2, 1.25),
-    L(3, 'Intensivo Universitario', 5.0, 6.5, 210, 0.90, 8, 14, true, true, false, 'intra_materia', 3, 1.48),
-    L(4, 'Pre-Esame / Concorso Avanzato', 7.0, 8.0, 250, 0.92, 8, 20, true, true, true, 'multi_materia', 4, 1.72),
-    L(5, 'Sprint Olimpico Multi-Modale', 8.5, 10.0, 270, 0.94, 8, 25, true, true, true, 'multi_materia', 5, 1.95),
+    L(3, 'Intensivo (pre-esame)', 5.0, 7.0, 230, 0.92, 8, 20, true, true, true, 'multi_materia', 3, 1.6),
   ];
-  const livelloValido = (x: any): IntensitaPiano => clamp(Math.round(+x) || 2, 1, 5) as IntensitaPiano;
-  const configLivello = (l: number) => MATRICE_5_LIVELLI[livelloValido(l) - 1];
+  /** v0.60 «Taglio»: 3 livelli invece di 5. I piani salvati con 4 o 5 vengono portati a 3 (il più vicino) alla lettura. */
+  const livelloValido = (x: any): IntensitaPiano => clamp(Math.round(+x) || 2, 1, 3) as IntensitaPiano;
+  const configLivello = (l: number) => MATRICE_LIVELLI[livelloValido(l) - 1];
   const PROFILO_BASE: ProfiloBiopsicologico = { fasciaEta: '20-26', cronotipo: 'intermedio', autonomiaBRACMin: 55, oreSonnoMedie: '7-8', reazioneErrore: 'sfida_attiva', canalePreferito: 'quiz_immediati' };
 
   /** Blocco A del questionario: 6 domande universali, 0 token, linguaggio semplice. */
@@ -497,12 +496,12 @@ const Pianificatore = (() => {
     return out;
   }
 
-  /** §4.1 Cap biologici preventivi (0 token): età < 16 o sonno < 6 h → massimo L3; BRAC 35 → micro-blocchi 35 + 10. */
+  /** §4.1 Cap biologici preventivi (0 token): età < 16 o sonno < 6 h → massimo L2 (v0.60); BRAC 35 → micro-blocchi 35 + 10. */
   function applicaGuardRailBiologici(richiesto: number, profilo?: Partial<ProfiloBiopsicologico> | null): GuardRailBio {
     const p = normalizzaProfilo(profilo || {}), req = livelloValido(richiesto), avvisi: string[] = [];
     let livello = req;
-    if (p.fasciaEta === '<16' && req > 3) { livello = 3; avvisi.push('Protezione neurosviluppo: massimo 6.5h multi-modali (livello 3).'); }
-    if (p.oreSonnoMedie === '<6' && req > 3) { livello = 3; avvisi.push('Con meno di 6h di sonno il consolidamento ippocampale cala: intensità calibrata (livello 3) per evitare perdita di ritenzione.'); }
+    if (p.fasciaEta === '<16' && req > 2) { livello = 2; avvisi.push('Protezione neurosviluppo: massimo 4.5h al giorno (livello 2).'); }
+    if (p.oreSonnoMedie === '<6' && req > 2) { livello = 2; avvisi.push('Con meno di 6h di sonno il consolidamento ippocampale cala: intensità calibrata (livello 2) per evitare perdita di ritenzione.'); }
     const bloccoMin = p.autonomiaBRACMin, pausaMin = bloccoMin === 35 ? 10 : bloccoMin === 100 ? 15 : 12;
     if (bloccoMin === 35) avvisi.push('Micro-blocchi da 35 minuti + 10 minuti di pausa (Wakeful Rest, zero schermi).');
     return { livello, richiesto: req, avvisi, bloccoMin, pausaMin };
@@ -688,7 +687,7 @@ const Pianificatore = (() => {
     if (!piano || piano.origine !== 'ai_neuro') return null;
     if (piano.deload && piano.deload.attivo && piano.deload.fino > o.oggi) return null;
     const p: PkPianoAI = clona(piano), target = livelloValido(p.livelloIntensita || (p.vincoliAI && p.vincoliAI.livelloIntensita) || 2), fino = piu(o.oggi, 2);
-    const ridotto = Math.max(1, target - 2) as IntensitaPiano;
+    const ridotto = Math.max(1, target - 1) as IntensitaPiano;
     const cod = String(p.vincoliAI && p.vincoliAI.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = String(p.id).replace(/^ai-/, '');
     const lavoro = p.giorni.filter(g => g.voci.some(v => v.livelloCognitivo && !v.isRipassoFSRS)).map(g => g.data).sort();
     const ultimo = lavoro.length ? lavoro[lavoro.length - 1] : fino;
@@ -784,7 +783,7 @@ const Pianificatore = (() => {
     const m = dip.unita ? { unita: dip.unita, fonte: 'toc' as const, chiamate: 0, tokenStimati: 0 } : await mappaCurriculumAI(struttura, v, seg, dip.ia);
     if (m.fonte === 'ai') fatt = calcolaFattibilita(v, m.unita, ctx);
     const pid = dip.pid || 'ai-' + Date.now().toString(36);
-    const rMin = v.livelloIntensita ? MATRICE_5_LIVELLI[v.livelloIntensita - 1].ritenzioneTargetFSRS : 0;
+    const rMin = v.livelloIntensita ? MATRICE_LIVELLI[livelloValido(v.livelloIntensita) - 1].ritenzioneTargetFSRS : 0;
     const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo, ritenzione: dip.ritenzione ? dip.ritenzione(rMin) : undefined, intervallo: dip.intervallo });
     piano.fonteMappa = m.fonte;
     return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: (m as any).errore };
@@ -794,7 +793,7 @@ const Pianificatore = (() => {
     unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
     compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
     // v0.56 (BP5)
-    MATRICE_5_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
+    MATRICE_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
     picchiCircadiani, modalitaOffloading, allocaGiornata, pesiIniziali, applicaRisposte, paroleChiaveBM25, domandeCalibrazioneDefault, promptCalibrazione,
     leggiDomandeCalibrazione, generaDomandeCalibrazione, monitoraAffaticamento, attivaDeload, livelloEffettivo, aggiornaDeload };
 })();

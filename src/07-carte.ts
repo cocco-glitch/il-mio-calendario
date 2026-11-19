@@ -163,7 +163,8 @@ const Carte = (() => {
     return out;
   }
   function mem(v: Voce): Memoria | undefined { return Stato.prendi<Memoria>(idMem(v)); }
-  const nuovePerGiorno = () => (imp() as any).carteNuove || 20;
+  // v0.60: Modalità esame — negli ultimi 3 giorni niente carte nuove, solo ripasso
+  const nuovePerGiorno = () => { const e = modalitaEsame(); return e !== null && e <= 3 ? 0 : (imp() as any).carteNuove || 20; };
   const ripassiPerGiorno = () => (imp() as any).carteRipassi || 150;
   /** Coda di oggi: carte scadute (prima le più a rischio) + nuove fino al limite, mescolate tra mazzi. */
   function coda(ids?: string[], oggiK = ymd(new Date())): Voce[] {

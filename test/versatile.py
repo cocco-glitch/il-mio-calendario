@@ -39,7 +39,7 @@ with sync_playwright() as p:
     sid = pg.evaluate("Studio.schedeDi(Studio.trovaSotto('%s').sub)[0].id" % k)
     pg.evaluate("Studio.segna('%s', { fatta: true, punteggio: 55 }); Studio.segna('C-2.2.1-1', { fatta: true, punteggio: 90 }); Studio.segna('B-2.2.2-1', { fatta: true, daRifare: true })" % sid)
     ok(pg.evaluate("tutteLeSchede().filter(x => daRifare(x.s.id)).length") == 2, 'registro errori: punteggio < 70% e segnate a mano')
-    pg.evaluate('UI.studioSub = null; disegna()'); pg.click('.segmenti >> text=Errori'); pg.wait_for_selector('.card-titolo'); pg.screenshot(path='test/41-errori.png')
+    pg.evaluate('UI.studioSub = null; disegna()'); pg.click('.segmenti >> text=Progressi'); pg.click('.sotto-viste >> text=Errori'); pg.wait_for_selector('.card-titolo'); pg.screenshot(path='test/41-errori.png')
     pg.evaluate("Studio.segna('%s', { punteggio: 85 })" % sid)
     ok(pg.evaluate("tutteLeSchede().filter(x => daRifare(x.s.id)).length") == 1, 'rifatta con 85%: esce dal registro')
     # --- timer
@@ -52,11 +52,11 @@ with sync_playwright() as p:
     pg.evaluate("Timer.avvia({ m: 'B', titolo: 'Bio' })"); pg.clock.run_for(10 * 60 * 1000); pg.evaluate("Timer.ferma()")
     ok(pg.evaluate("Stato.tutti('sessione').filter(s => s.m === 'B')[0].minuti") == 10, 'fermato a 10 minuti: registrati 10')
     # --- statistiche
-    pg.click('.tabbar >> text=Studio'); pg.click('.segmenti .tendina-btn'); pg.click('.tendina-menu >> text=Statistiche'); pg.wait_for_selector('.grafico')
+    pg.click('.tabbar >> text=Studio'); pg.click('.segmenti >> text=Progressi'); pg.click('.sotto-viste >> text=Statistiche'); pg.wait_for_selector('.grafico')
     ok('35 min' in pg.inner_text('.pagina'), 'statistiche: 35 min di studio')
     pg.screenshot(path='test/42-statistiche.png', full_page=True)
     # --- esami
-    pg.click('.segmenti .tendina-btn'); pg.click('.tendina-menu >> text=Esami'); pg.click('text=+ Aggiungi esame'); pg.fill('.foglio .titolo-grande', 'Primo appello'); pg.fill('.foglio input[type=date]', '2026-12-10'); pg.click('.foglio-testa >> text=Salva')
+    pg.click('.segmenti >> text=Corsi'); pg.click('.sotto-viste >> text=Esami'); pg.click('text=+ Aggiungi esame'); pg.fill('.foglio .titolo-grande', 'Primo appello'); pg.fill('.foglio input[type=date]', '2026-12-10'); pg.click('.foglio-testa >> text=Salva')
     pg.click('.tabbar >> text=Oggi'); pg.wait_for_timeout(1100); txt = pg.inner_text('.pagina')
     ok('28' in txt and '1° appello' in txt, 'Oggi: conto alla rovescia 28 giorni')
     ok(any('Primo appello' in x for x in pg.evaluate("Studio.vociDelGiorno(daYmd('2026-12-10')).map(x => x.v.t)")), 'esame nel calendario')

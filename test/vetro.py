@@ -30,7 +30,7 @@ with sync_playwright() as p:
     # l'ultimo elemento della pagina non resta sotto la barra
     pg.evaluate("const m = document.querySelector('main'); m.scrollTop = m.scrollHeight"); pg.wait_for_timeout(100)
     ok(pg.evaluate("(() => { const c = Array.from(document.querySelectorAll('main .card')).pop().getBoundingClientRect(); return c.bottom <= document.querySelector('.tabbar').getBoundingClientRect().top + 1; })()"), 'ultima scheda visibile sopra la barra')
-    pg.evaluate("UI.altroSez='aspetto'; vai('altro')"); pg.wait_for_timeout(200)
+    pg.evaluate("UI.altroSez='aspetto'; vai('altro'); document.querySelectorAll('details.personalizza').forEach(d => d.open = true)"); pg.wait_for_timeout(200)  # v0.60: opzioni sotto «Personalizza»
     pg.locator('.riga', has_text='Effetto vetro').locator('select').select_option('no'); pg.wait_for_timeout(200)
     ok(pg.evaluate("document.documentElement.dataset.vetro") == 'no' and pg.evaluate("getComputedStyle(document.querySelector('.tabbar')).position") != 'fixed', 'disattivato: superfici piene, barra normale')
     ctx2 = b.new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, reduced_motion='reduce')

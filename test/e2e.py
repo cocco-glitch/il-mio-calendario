@@ -87,7 +87,7 @@ with sync_playwright() as p:
     ok(pg.locator('.card >> text=Idee').count() == 1, 'ricerca globale trova la nota')
 
     # tema chiaro salvato
-    pg.click('.tabbar >> text=Altro'); pg.click('.riga-gruppo >> text=Aspetto'); pg.locator('.card select').first.select_option('chiaro')
+    pg.click('.tabbar >> text=Altro'); pg.click('.riga-gruppo >> text=Aspetto'); pg.click('details.personalizza > summary'); pg.locator('.riga', has_text='Tema').locator('select').first.select_option('chiaro')  # v0.60: sotto «Personalizza»
     ok(pg.evaluate('document.documentElement.dataset.tema') == 'chiaro', 'tema chiaro applicato')
     pg.screenshot(path='test/08-impostazioni-chiaro.png', full_page=True)
     pg.reload(); pg.wait_for_selector('.tabbar')

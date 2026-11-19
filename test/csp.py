@@ -28,7 +28,7 @@ ok("'unsafe-eval'" not in csp.get('script-src', []), "niente 'unsafe-eval' in sc
 ok('*' not in csp.get('connect-src', []) and 'https:' not in csp.get('connect-src', []), 'connect-src senza jolly')
 ia = open(os.path.join(QUI, '..', 'src', '07-ia.ts'), encoding='utf-8').read()
 host_ia = sorted(set(re.findall(r"'(https://[a-z0-9.-]+)/", ia)))
-ok(len(host_ia) >= 7, 'endpoint AI trovati in 07-ia.ts (%d)' % len(host_ia))
+ok(len(host_ia) >= 5, 'endpoint AI trovati in 07-ia.ts (%d)' % len(host_ia))
 mancanti = [x for x in host_ia if x not in csp.get('connect-src', [])]
 ok(not mancanti, 'ogni endpoint AI è in connect-src (%s)' % (mancanti or 'tutti'))
 for g in ('https://www.googleapis.com', 'https://accounts.google.com'):

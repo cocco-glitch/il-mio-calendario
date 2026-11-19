@@ -17,6 +17,7 @@ def apri(p, quando):
     ctx = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome')
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.clock.install(time=quando); pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("!!Studio.pkPiano()")
+    pg.evaluate("(() => { const i = imp(); i.widgetNascosti = []; i.modoEsame = 'no'; Stato.salva(i, true); vai('oggi'); })()"); pg.wait_for_timeout(200)  # v0.60: chiusura spenta di default
     return pg
 
 with sync_playwright() as p:

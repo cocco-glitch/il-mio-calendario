@@ -11,7 +11,7 @@
 // 'mz-appunti'), collegato allo stesso sotto-step; una riga cancellata toglie la sua carta.
 // Drive: copia «titolo.md» in «Calendario personale/Appunti», SOLO dopo conferma nell'app.
 
-interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; mano?: Mano; manoPng?: string; fonte?: { id: string; agg?: string }; creato?: string; sub?: string; micro?: string; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number; }
+interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; mano?: Mano; manoPng?: string; fonte?: { id: string; agg?: string }; creato?: string; giorno?: string; sub?: string; micro?: string; /** v0.60 (N2): step scelto dall'elenco: il titolo non lo cambia più. */ subMano?: 1; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number; }
 
 const Appunti = (() => {
   const tutti = () => Stato.tutti<Appunto>('appunto').sort((a, b) => b.updatedAt - a.updatedAt);
@@ -48,7 +48,7 @@ const Appunti = (() => {
   }
   function salva(a: Appunto): [number, number] {
     a.titolo = a.titolo.trim() || (a.testo.trim().split('\n')[0] || 'Appunto').replace(/^#+\s*/, '').slice(0, 60);
-    const col = Carte.collega(a.titolo); if (col.sub) { a.sub = col.sub; a.micro = col.micro; }
+    if (!a.subMano) { const col = Carte.collega(a.titolo); if (col.sub) { a.sub = col.sub; a.micro = col.micro; } }
     Stato.salva(a);
     if (a.mano && a.mano.im && a.mano.im.length) Allegati.alleggerisci(a.id).catch(e => console.warn('Allegati: alleggerimento rimandato', e));   // v0.57 (A14)
     return sincronizzaCarte(a);
@@ -136,7 +136,42 @@ const Appunti = (() => {
   /** Appunti che citano questo con [[titolo]]. */
   function citatoDa(a: Appunto): Appunto[] { const t = norm(a.titolo); return tutti().filter(x => x.id !== a.id && (x.testo.match(/\[\[([^\]]+)\]\]/g) || []).some(l => norm(l.slice(2, -2)) === t || t.includes(norm(l.slice(2, -2))))); }
   function trova(titolo: string): Appunto | undefined { const t = norm(titolo); return tutti().find(x => norm(x.titolo) === t) || tutti().find(x => norm(x.titolo).includes(t)); }
-  return { sezionePer, aggiungiRiga, citatoDa, trova, errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
+  // ---- v0.60 (N1): la «Nota del giorno» di Oggi è un appunto datato (un solo blocco note) ----
+  /** Id fisso per data (come la vecchia nota 'giorno-<data>'): niente doppioni tra dispositivi. */
+  const idGiorno = (k: string) => 'ap-giorno-' + k;
+  const titoloGiorno = (k: string) => 'Appunto del ' + fmt(daYmd(k), { day: 'numeric', month: 'long', year: 'numeric' });
+  /** Testo dell'appunto del giorno; se non c'è ancora, quello della vecchia nota del giorno (migrazione in lettura). */
+  function testoGiorno(k: string): string {
+    const a = Stato.prendi<Appunto>(idGiorno(k)); if (a) return a.testo;
+    const n = Stato.prendi<Nota>('giorno-' + k); return n ? n.testo : '';
+  }
+  /** Salvataggio mentre si scrive in Oggi: silenzioso (non ridisegna). Le carte si allineano con `sincronizzaGiorno` all'uscita dal campo. */
+  function salvaGiorno(k: string, testo: string): Appunto {
+    const a: Appunto = { ...(Stato.prendi<Appunto>(idGiorno(k)) || nuovo({ id: idGiorno(k), titolo: titoloGiorno(k), creato: k, giorno: k })), testo };
+    Stato.salva(a, true); return a;
+  }
+  function sincronizzaGiorno(k: string): [number, number] { const a = Stato.prendi<Appunto>(idGiorno(k)); return a ? sincronizzaCarte(a) : [0, 0]; }
+  /** Una tantum, idempotente: ogni vecchia nota del giorno con testo diventa il suo appunto datato (la nota resta intatta). */
+  function migraNoteGiorno(): number {
+    let n = 0;
+    for (const x of Stato.tutti<Nota>('nota')) {
+      if (!x.giorno || !x.testo.trim() || Stato.esiste(idGiorno(x.giorno))) continue;
+      Stato.salva(nuovo({ id: idGiorno(x.giorno), titolo: titoloGiorno(x.giorno), testo: x.testo, creato: x.giorno, giorno: x.giorno }), true); n++;
+    }
+    if (n) Stato.notifica();
+    return n;
+  }
+  /** La vecchia nota del giorno è già diventata un appunto (si nasconde dall'elenco Note). */
+  const notaMigrata = (x: Nota) => !!x.giorno && Stato.esiste(idGiorno(x.giorno));
+  /** v0.60 (N2): gli step a cui collegare un appunto — prima le voci dei piani attivi, poi i sotto-step dei corsi. */
+  function passiCollegabili(): { k: string; t: string }[] {
+    const visti = new Set<string>(), out: { k: string; t: string }[] = [];
+    const metti = (k: string, t: string) => { if (!k || visti.has(k)) return; visti.add(k); out.push({ k, t }); };
+    for (const p of Studio.pianiAttivi()) for (const g of p.giorni) for (const v of g.voci) if (!v.speciale && !v.isBuffer) metti(v.k, v.t);
+    for (const pk of Studio.pkStep()) for (const ma of pk.materie) for (const s of ma.sottostep) metti(s.k, s.titolo);
+    return out;
+  }
+  return { passiCollegabili, idGiorno, testoGiorno, salvaGiorno, sincronizzaGiorno, migraNoteGiorno, notaMigrata, sezionePer, aggiungiRiga, citatoDa, trova, errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
 })();
 
 /** Chiede conferma e salva la copia su Drive (regola: niente su Drive senza conferma). */
@@ -154,7 +189,14 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   const ap = a ? { ...a } : Appunti.nuovo(extra);
   let cambiato = false;
   const v = visore(a ? '📝 Appunto' : '📝 Nuovo appunto', () => { document.body.classList.remove('mano-pieno'); if (cambiato) fine(); else if (a) chiediDrive(Stato.prendi<Appunto>(ap.id) || ap); disegna(); });
-  const titolo = h('input.appunto-titolo', { type: 'text', placeholder: 'Titolo (es. «Chi 2.2.4 Calore latente» lo collega allo step)', value: ap.titolo }) as HTMLInputElement;
+  const titolo = h('input.appunto-titolo', { type: 'text', placeholder: 'Titolo', 'aria-label': 'Titolo dell’appunto', value: ap.titolo }) as HTMLInputElement;
+  // v0.60 (N2): lo step si sceglie da un elenco (il numero nel titolo resta solo come scorciatoia)
+  const passi = Appunti.passiCollegabili();
+  if (ap.sub && !passi.some(p => p.k === ap.sub)) passi.unshift({ k: ap.sub, t: '' });
+  const sceltaStep = h('select.appunto-collega', { 'aria-label': 'Collega a uno step', onchange: () => { ap.sub = sceltaStep.value || undefined; ap.micro = undefined; ap.subMano = 1; modifica(); } },
+    h('option', { value: '' }, passi.length ? '🔗 Collega a…' : '🔗 Nessuno step (crea un piano in Studio)'),
+    ...passi.map(p => h('option', { value: p.k, selected: p.k === ap.sub }, Studio.etichetta(p.k) + (p.t ? ' · ' + p.t : '')))) as HTMLSelectElement;
+  const collegato = () => ap.subMano ? { sub: ap.sub, micro: ap.micro } : Carte.collega(titolo.value);
   const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo) as HTMLTextAreaElement;
   const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '') as HTMLTextAreaElement;
   const stato = h('div.appunto-stato.tenue.piccolo');
@@ -165,8 +207,9 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
   const aggiungiCarta = (riga: string) => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n' : '') + riga + '\n'; modifica(); salvaOra(); avviso('🃏 Flashcard aggiunta al testo dell\'appunto.'); };
   const anteprima = h('div.appunto-anteprima', { hidden: true });
   const aggiornaStato = () => {
-    const n = Appunti.estraiCarte(testo.value).length, col = Carte.collega(titolo.value);
-    svuota(stato); stato.append(col.sub ? h('span.chip-mini', null, '🔗 ' + Studio.etichetta(col.sub) + (col.micro ? ' ' + col.micro : '')) : h('span', null, 'Nessuno step collegato'), ' · 🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
+    const n = Appunti.estraiCarte(testo.value).length, col = collegato();
+    if (!ap.subMano && sceltaStep.value !== (col.sub || ap.sub || '')) sceltaStep.value = col.sub || ap.sub || '';
+    svuota(stato); stato.append('🃏 ' + n + (n === 1 ? ' carta' : ' carte'), cambiato ? ' · modifiche non salvate' : ' · salvato', (() => { const e = col.sub ? Appunti.errori({ ...ap, sub: col.sub }).length : 0; return e ? ' · ⚠️ ' + e + ' errori quiz' : ''; })());
   };
   let timer = 0;
   const salvaOra = () => { ap.titolo = titolo.value; ap.testo = testo.value; ap.riassunto = riass.value.trim() || undefined; if (pagina) { const d = pagina.dati(); ap.mano = manoVuota(d) ? undefined : d; } if (!ap.testo.trim() && !ap.titolo.trim() && !ap.mano) return; const r = Appunti.salva(ap); Object.assign(ap, Stato.prendi<Appunto>(ap.id) || {}); cambiato = false; aggiornaStato(); return r; };
@@ -198,7 +241,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
       { testo: '🧮  Calcolo: scrivi «12*3,5=» → risultato', azione: () => { testo.focus(); avviso('Scrivi un calcolo e «=»: il risultato appare sopra il testo, Invio per inserirlo. Variabili: «m=2» poi «m*9,81=». Gradi per sin/cos/tan.', 7000); } },
     ], 'Altri strumenti di scrittura'));
   const bollaCalcolo = calcoliInTesto(testo, modifica);
-  const audioOra = () => { salvaOra(); const col = Carte.collega(titolo.value); lezioneAudio({ titolo: titolo.value.trim(), step: col.sub ? Studio.etichetta(col.sub) : '', testo: testo.value }, md => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + md; modifica(); salvaOra(); avviso('🎙 Trascrizione aggiunta · ✨ crea domande e carte', 6000, () => aiDomande(Stato.prendi<Appunto>(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); })); }); };
+  const audioOra = () => { salvaOra(); const col = collegato(); lezioneAudio({ titolo: titolo.value.trim(), step: col.sub ? Studio.etichetta(col.sub) : '', testo: testo.value }, md => { testo.value = testo.value.replace(/\s*$/, '') + (testo.value.trim() ? '\n\n' : '') + md; modifica(); salvaOra(); avviso('🎙 Trascrizione aggiunta · ✨ crea domande e carte', 6000, () => aiDomande(Stato.prendi<Appunto>(ap.id) || ap, rr => { testo.value = testo.value.replace(/\s*$/, '') + '\n\n## Domande\n' + rr.join('\n') + '\n'; modifica(); salvaOra(); })); }); };
   const azioneTesta = async (s: string) => {
     if (s === 'drive') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { x.drive && !Appunti.daSalvareSuDrive(x) ? avviso('Copia su Drive già aggiornata.') : chiediDrive(x, true); } }
     if (s === 'cornell' || s === 'copri') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { cambiato = false; v.chiudi(); apriCornell(x, s === 'copri'); } }
@@ -279,7 +322,7 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     if (pagina && manoVuota(pagina.dati())) { svuota(zonaMano); pagina = paginaMano(zonaMano, undefined, modifica, md.sf, opzMano); } else if (!pagina) sfondoModello = md.sf;
     avviso(md.nome + ': ' + md.sotto, 2500);
   } }, md.nome)));
-  v.corpo.append(h('div.appunto', null, titolo, stato, modelli, scambio, zonaMano, fileIns, barra, bollaCalcolo, testo, anteprima, riass));
+  v.corpo.append(h('div.appunto', null, titolo, sceltaStep, stato, modelli, scambio, zonaMano, fileIns, barra, bollaCalcolo, testo, anteprima, riass));
   aggiornaStato();
   setTimeout(() => { if (modo === 'mano' && !alRiassunto && a) return; const el = alRiassunto ? riass : a ? testo : titolo; const att = document.activeElement; if (att && att !== document.body && (att as HTMLElement).matches('input, textarea')) return; el.focus(); if (alRiassunto) el.scrollIntoView({ block: 'center' }); }, 80);
 }

@@ -25,7 +25,7 @@ with sync_playwright() as p:
     pg.click('text=＋ Nuovo appunto'); pg.wait_for_selector('.appunto-testo')
     pg.fill('.appunto-titolo', 'Chi 2.2.4 Calore latente'); pg.fill('.appunto-testo', TESTO)
     pg.wait_for_timeout(100)
-    ok('Chi 2.2' in pg.inner_text('.appunto-stato') and '2 carte' in pg.inner_text('.appunto-stato'), 'stato: step collegato e 2 carte')
+    ok('Chi 2.2' in pg.eval_on_selector('.appunto-collega', 'e => e.selectedOptions[0].textContent') and '2 carte' in pg.inner_text('.appunto-stato'), 'stato: step collegato e 2 carte')
     pg.screenshot(path='test/appunti-editor.png')
     pg.clock.run_for(2000); pg.wait_for_timeout(100)
     a = pg.evaluate("Appunti.tutti()[0]")

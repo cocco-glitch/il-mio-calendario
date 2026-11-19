@@ -488,16 +488,18 @@ function vistaStudio(): HTMLElement {
   const pks = Studio.pkStep(), piano = Studio.pkPiano();
   if (UI.studioSub) { const t = Studio.trovaSotto(UI.studioSub); if (t) return vistaSottostep(t.pk, t.mat, t.sub); UI.studioSub = null; }
   const pk = pks.find(p => p.id === UI.studioStep) || pks[pks.length - 1];
-  const voci: [typeof UI.studioVista, string][] = [['schede', 'Schede'], ['carte', 'Carte'], ['piano', 'Piano'], ['errori', 'Errori'], ['statistiche', 'Statistiche'], ['esami', 'Esami'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
-  // v0.41 standard a tendina: 4 viste frequenti in vista, le altre nel menu «Altro ▾» (quella aperta resta visibile)
-  const vai = (v: typeof UI.studioVista) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
-  const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
-  const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)),
-    h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'),   // v0.58 (Q5): visibile, non più solo in «Altro ▾»
+  // v0.60 «Taglio»: 4 schede (Ripassa · Piano · Corsi · Progressi); le viste di prima restano, raggruppate (solo interfaccia)
+  type VS = typeof UI.studioVista;
+  const gruppi: [string, VS[], string[]][] = [['Ripassa', ['carte'], ['Flashcard']], ['Piano', ['piano'], ['Piano']], ['Corsi', ['schede', 'syllabus', 'tabelle', 'esami'], ['Schede', 'Syllabus', 'Tabelle', 'Esami']], ['Progressi', ['statistiche', 'errori'], ['Statistiche', 'Errori']]];
+  const vai = (v: VS) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
+  const gr = gruppi.find(([, vv]) => vv.includes(UI.studioVista)) || gruppi[2];
+  const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])),
+    h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'),   // v0.58 (Q5)
     h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'),   // v0.58.1
-    tendina('Altro ▾', () => (voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })) as VoceTendina[]).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
+    tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
       { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
-      { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));   // v0.59.2
+      { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }] as VoceTendina[], 'Strumenti dei quiz')),   // v0.59.2
+    gr[1].length > 1 ? h('div.chips.sotto-viste', { role: 'tablist', 'aria-label': 'Viste di ' + gr[0] }, gr[1].map((v, k) => h('button.chip' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(UI.studioVista === v), onclick: () => vai(v) }, gr[2][k]))) : null);
   if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
   if (UI.studioVista === 'errori') return h('div.pagina', null, seg, vistaErrori());
