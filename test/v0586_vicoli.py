@@ -60,6 +60,11 @@ with sync_playwright() as p:
         pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, dialog').forEach(e => e.remove())")
         d = pg.evaluate("[materiaPerNome('anatomia '), materiaPerNome('Anatomia'), Stato.tutti('materia').filter(m => !m.deleted && /anatomia/i.test(m.nome)).length]")
         ok(d[0] == d[1] and d[2] == 1, '%s: materia deduplicata per nome (%s)' % (nome, d))
+        # v0.59.1: con un piano (o carte/appunti) ma senza agenda, Oggi mostra la guida SOPRA i riquadri soliti, non al loro posto
+        pg.evaluate("(() => { const mz = Carte.nuovoMazzo('Vicoli'); Carte.riempi(mz.id, [{ f: 'Osso', r: 'tessuto' }]); vai('oggi'); })()"); pg.wait_for_timeout(200)
+        ok(pg.locator('.inizia-3').count() == 1 and pg.locator('.card.ripassa').count() == 1 and pg.locator('.nota-giorno').count() == 1,
+           '%s: piano + carte senza agenda → guida + «Ripassa (N)» + riquadri soliti' % nome)
+        pg.evaluate("Stato.tutti('carta').concat(Stato.tutti('mazzo')).forEach(r => Stato.elimina(r.id))")
 
         # --- U10: chi ha già impegni ma nessun corso vede la guida sopra i riquadri soliti, e può nasconderla ---
         pg.evaluate("Stato.salva({ id: 'ev-t1', type: 'evento', updatedAt: 0, titolo: 'Riunione', inizio: ymd(new Date()) + 'T09:00', fine: ymd(new Date()) + 'T10:00', tuttoIlGiorno: false, categoriaId: (categorie()[0] || {}).id, promemoria: [], checklist: [] }); vai('oggi')"); pg.wait_for_timeout(150)

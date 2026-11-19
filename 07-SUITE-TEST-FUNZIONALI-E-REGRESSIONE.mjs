@@ -203,11 +203,12 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.59.0', () => vero(/const VERSIONE = '0\.59\.0'/.test(leggi('09-main.ts'))));
+t('versione app 0.59.1', () => vero(/const VERSIONE = '0\.59\.1'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
 t('v0.59: coda unica di ripasso (CodaRipasso, un solo riquadro Ripassa, Studia ora dalla coda)', () => vero(/const CodaRipasso/.test(leggi('07-coda.ts')) && /function widgetRipassa/.test(leggi('07-coda.ts')) && !/function widgetCarte|function widgetAppunti|function widgetRipassi/.test(leggi('07-carte.ts') + leggi('07-appunti.ts') + leggi('07-memoria.ts')) && /CodaRipasso\.dovuti/.test(leggi('07-studiaora.ts')) && /case 'ripassi': return widgetRipassa\(\)/.test(leggi('08-viste.ts'))));
+t('v0.59.1: Oggi «vuoto» solo senza studio (piani, coda, appunti, mazzi)', () => vero(/vuotoTotale = senzaCorsi && !Studio\.pkPiani\(\)\.length && !CodaRipasso\.conta\(\)/.test(leggi('08-viste.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');

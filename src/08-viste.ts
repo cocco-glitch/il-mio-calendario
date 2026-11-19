@@ -131,7 +131,9 @@ function vistaOggi(): HTMLElement {
   // v0.58.6 (U10): chi non ha ancora nessun dato vede un solo riquadro «Inizia in 3 passi» al posto dei riquadri vuoti;
   // chi usa già agenda o note (ma non ha corsi) lo vede sopra i riquadri soliti, finché non lo nasconde.
   const senzaCorsi = !Studio.pkStep().length;
-  const vuotoTotale = senzaCorsi && !Stato.tutti<Rec>('evento').some(r => !r.deleted) && !Stato.tutti<Rec>('task').some(r => !r.deleted) && !Stato.tutti<Rec>('nota').some(r => !r.deleted);
+  // v0.59.1: conta anche lo studio (piani, carte, appunti): chi ha solo quelli deve vedere «Ripassa (N)» e i riquadri soliti.
+  const vuotoTotale = senzaCorsi && !Studio.pkPiani().length && !CodaRipasso.conta()
+    && !['evento', 'task', 'nota', 'appunto', 'mazzo'].some(t => Stato.tutti<Rec>(t).some(r => !r.deleted));
   if (vuotoTotale) return h('div.pagina', null,
     h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))),
     campoRapido(),
