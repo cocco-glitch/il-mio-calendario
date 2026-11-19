@@ -9118,6 +9118,208 @@ const IA = (() => {
         get gemini() { return !!chiave('gemini'); } };
 })();
 
+// ============================================================
+// v0.58.1 — «📥 Importa quiz da Drive»: elenca i .json delle cartelle «<materia> quiz» e traduce lo schema
+// *_quiz_e_calendario.json (schemaVersion 2) in: un corso proprio (PkStep) con le schede del sotto-step,
+// la Banca domande (record 'bancaimc', o[0] = risposta corretta) e un piano (PkPiano) che mette lo step
+// in Oggi / Studia ora già da oggi, con i ripassi FSRS indicati dal pacchetto.
+// Id deterministici: reimportare lo stesso file aggiorna, non duplica; i progressi stanno altrove e restano.
+// ============================================================
+const ImportaDrive = (() => {
+    const s = (x) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
+    const hash = (t) => { let x = 5381; for (let i = 0; i < t.length; i++)
+        x = ((x << 5) + x + t.charCodeAt(i)) | 0; return (x >>> 0).toString(36); };
+    const LV = { 1: 'Sbarramento', 2: 'Applicativo', 3: 'Applicativo', 4: 'Problema' };
+    /** È un pacchetto quiz+calendario? (per nome o per contenuto) */
+    const eNomeQuiz = (nome) => /_quiz_e_calendario\.json$/i.test(nome);
+    function valida(j) {
+        if (!j || typeof j !== 'object')
+            return 'Il file non è un oggetto JSON.';
+        if (!j.meta || !s(j.meta.sottoStep))
+            return 'Manca meta.sottoStep.';
+        if (!/^\d+(\.\d+)*$/.test(s(j.meta.sottoStep)))
+            return 'meta.sottoStep non valido: ' + s(j.meta.sottoStep);
+        if (!Array.isArray(j.quiz) || !j.quiz.length)
+            return 'Il pacchetto non contiene quiz.';
+        return '';
+    }
+    /** domanda → q, opzioni → o (la corretta per prima), esatta → o[0], spiegazione → e, fonte → r. */
+    function domanda(x, sk, k) {
+        const opz = Array.isArray(x.opzioni) ? x.opzioni.map(s).filter(Boolean) : [];
+        const es = Number(x.esatta);
+        if (!s(x.domanda) || opz.length < 2 || !Number.isInteger(es) || es < 0 || es >= opz.length)
+            return null;
+        const bl = Number(x.livelloCognitivo);
+        const d = { id: 'q-drv-' + (s(x.id) || hash(sk + '|' + s(x.domanda))), sk, t: 'mcq', lv: LV[bl] || 'Applicativo', q: s(x.domanda),
+            o: [opz[es], ...opz.filter((_, i) => i !== es)], e: s(x.spiegazione), stepId: k };
+        if (s(x.fonte))
+            d.r = s(x.fonte);
+        if (bl >= 1 && bl <= 4)
+            d.bloomLevel = bl;
+        return d;
+    }
+    const piuGiorni = (data, n) => { const d = new Date(data + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d); };
+    /** «+1g», «+3 g», «+2s» (settimane) → giorni. */
+    function giorniIntervallo(t) { const m = /\+?\s*(\d+)\s*([gs])/i.exec(t); return m ? Number(m[1]) * (m[2].toLowerCase() === 's' ? 7 : 1) : 0; }
+    /** Traduzione pura (nessun salvataggio): testata nella suite Node. */
+    function traduci(j, oggiK = ymd(oggi())) {
+        const err = valida(j);
+        if (err)
+            throw new Error(err);
+        const meta = j.meta, sotto = s(meta.sottoStep);
+        const cod = (s(meta.codiceMateria).toUpperCase().replace(/[^A-Z]/g, '') || 'X');
+        const nome = s(meta.materia) || cod, titolo = s(meta.titolo) || sotto, k = cod + sotto;
+        const ps = (j.programmaCalendario && j.programmaCalendario.pianoStrutturato) || {};
+        const quiz = (j.quiz || []).filter(q => q && typeof q === 'object');
+        const perId = new Map(quiz.map((q, i) => [s(q.id) || '#' + i, q]));
+        const usate = new Set(), banche = [];
+        let nd = 0, scart = 0;
+        const raccogli = (ids, sk) => {
+            const out = [];
+            for (const id of ids) {
+                const q = perId.get(id);
+                if (!q || usate.has(id))
+                    continue;
+                usate.add(id);
+                const d = domanda(q, sk, k);
+                if (d)
+                    out.push(d);
+                else
+                    scart++;
+            }
+            return out;
+        };
+        const sotSch = (Array.isArray(ps.sottoSchede) ? ps.sottoSchede : []).filter(x => x && s(x.codice));
+        const micro = [];
+        sotSch.forEach(x => {
+            const n = s(x.codice), schede = [];
+            const p = raccogli((x.schedePrioritarie || []).map(s), cod + '-' + n + '-1');
+            const r = raccogli((x.schedeRaffinamento || []).map(s), cod + '-' + n + '-2');
+            const tit = s(x.titolo) || n;
+            schede.push({ id: cod + '-' + n + '-1', k: 1, n: r.length ? 2 : 1, titolo: tit, tipo: 'P', problemi: false, pagine: '', quizFile: '' });
+            if (r.length)
+                schede.push({ id: cod + '-' + n + '-2', k: 2, n: 2, titolo: tit + ' · raffinamento', tipo: 'R', problemi: false, pagine: '', quizFile: '' });
+            banche.push({ sk: cod + '-' + n + '-1', domande: p });
+            if (r.length)
+                banche.push({ sk: cod + '-' + n + '-2', domande: r });
+            micro.push({ n, schede });
+        });
+        // domande non assegnate a nessuna sotto-scheda: nella prima scheda P (o in una scheda unica)
+        const resto = [...perId.keys()].filter(id => !usate.has(id));
+        if (resto.length) {
+            if (!micro.length) {
+                const n = sotto + '.1';
+                micro.push({ n, schede: [{ id: cod + '-' + n + '-1', k: 1, n: 1, titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' }] });
+                banche.push({ sk: cod + '-' + n + '-1', domande: [] });
+            }
+            const b = banche[0];
+            b.domande.push(...raccogli(resto, b.sk));
+        }
+        const piene = banche.filter(b => b.domande.length);
+        for (const b of piene)
+            nd += b.domande.length;
+        const pk = { tipo: 'step', id: 'drv-' + cod.toLowerCase() + '-' + sotto, step: Number(sotto.split('.')[0]) || 0, titolo: nome + ' ' + sotto + ' · ' + titolo, aggiornato: oggiK, proprio: true,
+            descrizione: 'Importato da Drive' + (s(meta.unitaDidattica) ? ' · ' + s(meta.unitaDidattica) : ''), risorse: { libri: {}, quiz: {} },
+            materie: [{ m: cod, nome, libro: '', sottostep: [{ k, n: sotto, titolo, posizione: '', microstep: micro }] }] };
+        // piano: lo step oggi (entra subito in Oggi / Studia ora), poi i ripassi FSRS del pacchetto
+        const prevista = ((j.programmaCalendario && j.programmaCalendario.formatoGeneraMjs) || []).map(s).filter(Boolean)[0];
+        const giorni = new Map();
+        const giorno = (d) => { let g = giorni.get(d); if (!g) {
+            g = { data: d, voci: [] };
+            giorni.set(d, g);
+        } return g; };
+        giorno(oggiK).voci.push({ k, t: titolo, min: Number(ps.durataTotaleMin) || undefined });
+        for (const a of Array.isArray(ps.ancoraggiRipassoFSRS) ? ps.ancoraggiRipassoFSRS : []) {
+            const n = giorniIntervallo(s(a && a.intervallo));
+            if (!n)
+                continue;
+            const g = giorno(piuGiorni(oggiK, n));
+            if (!g.voci.some(v => v.k === k))
+                g.voci.push({ k, t: '🔁 Ripasso ' + nome + ' ' + sotto + ' (' + s(a.intervallo) + ')', speciale: true, isRipassoFSRS: true });
+        }
+        const piano = { tipo: 'piano', id: 'drv-piano-' + cod.toLowerCase() + '-' + sotto, titolo: '📥 ' + nome + ' ' + sotto, aggiornato: oggiK, giorniTeoria: 0, proprio: true,
+            nota: 'Quiz importati da Drive' + (prevista ? ' · data del pacchetto: ' + (prevista.split('|').pop() || '').trim() : ''),
+            giorni: [...giorni.values()].sort((a, b) => a.data < b.data ? -1 : 1) };
+        return { pk, piano, banche: piene, domande: nd, scartate: scart };
+    }
+    /** Salva la traduzione: corso proprio, banca domande (le banche vecchie del pacchetto spariscono), piano. */
+    function salvaTraduzione(t) {
+        const idPk = t.pk.id, nuove = new Set(t.banche.map(b => b.sk));
+        const vecchio = Studio.pkStep().find(p => p.id === idPk);
+        if (vecchio) {
+            const vs = vecchio.materie[0] && vecchio.materie[0].sottostep[0], ns = t.pk.materie[0].sottostep[0];
+            if (vs) {
+                ns.svolto = vs.svolto;
+                ns.data = vs.data;
+            }
+        }
+        for (const b of t.banche)
+            Stato.salva({ id: 'bq-' + b.sk, type: 'bancaimc', updatedAt: 0, sk: b.sk, pk: idPk, domande: b.domande }, true);
+        for (const r of Stato.tutti('bancaimc'))
+            if (r.pk === idPk && !nuove.has(r.sk))
+                Stato.elimina(r.id);
+        salvaPacchetto(t.pk);
+        const r = Stato.rec.get('pk-' + t.piano.id) || { id: 'pk-' + t.piano.id, type: 'pacchetto', updatedAt: 0 };
+        r.contenuto = t.piano;
+        r.deleted = false;
+        Stato.salva(r);
+        Stato.notifica();
+    }
+    /** I .json nelle cartelle «… quiz» (biologia quiz, fisica quiz, chimica quiz…). */
+    async function elenca() {
+        const cartelle = (await Drive.cercaCartelle('quiz')).filter(c => /(^|\s)quiz$/i.test(c.name.trim()));
+        const out = [];
+        for (const c of cartelle)
+            for (const f of await Drive.elencaTutti(c.id))
+                if (/\.json$/i.test(f.name))
+                    out.push({ id: f.id, name: f.name, cartella: c.name });
+        return out.sort((a, b) => (Number(eNomeQuiz(b.name)) - Number(eNomeQuiz(a.name))) || a.name.localeCompare(b.name, 'it', { numeric: true }));
+    }
+    async function importaFile(f) {
+        const j = JsonAI.leggiFile(await Drive.scaricaTesto(f.id));
+        const t = traduci(j);
+        salvaTraduzione(t);
+        return t;
+    }
+    /** Il foglio: elenco esplicito dei pacchetti trovati, un tocco per importarne uno. */
+    function apri() {
+        if (serveGoogle())
+            return;
+        const stato = h('p.tenue', { role: 'status' }, 'Cerco le cartelle «… quiz» su Drive…');
+        const lista = h('div.lista-drv');
+        const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo: h('div', null, stato, lista) });
+        elenca().then(files => {
+            if (!files.length) {
+                stato.textContent = 'Nessun .json nelle cartelle «… quiz» del tuo Drive.';
+                return;
+            }
+            stato.textContent = files.length + (files.length === 1 ? ' pacchetto trovato' : ' pacchetti trovati') + '. Tocca «Importa»: entra nella coda di oggi.';
+            for (const x of files) {
+                const esito = h('div.tenue.piccolo');
+                const btn = h('button.btn', { 'aria-label': 'Importa ' + x.name }, 'Importa');
+                btn.onclick = async () => {
+                    btn.disabled = true;
+                    esito.textContent = 'Importo…';
+                    try {
+                        const t = await importaFile(x);
+                        esito.textContent = '✓ ' + t.domande + ' domande in Banca' + (t.scartate ? ' (' + t.scartate + ' scartate)' : '') + ' · in coda oggi';
+                        btn.textContent = 'Reimporta';
+                        btn.disabled = false;
+                        avviso('📥 ' + t.pk.titolo + ': ' + t.domande + ' domande, in Studia ora', 5000, () => { f.chiudi(); vai('oggi'); });
+                    }
+                    catch (e) {
+                        console.warn('ImportaDrive', x.name, e);
+                        esito.textContent = '✗ ' + (String(e instanceof Error ? e.message : e) === 'NOLOGIN' ? 'Accedi a Google e riprova.' : String(e instanceof Error ? e.message : e));
+                        btn.disabled = false;
+                    }
+                };
+                lista.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', null, x.name), h('div.tenue.piccolo', null, '📁 ' + x.cartella + (eNomeQuiz(x.name) ? '' : ' · schema da verificare')), esito), btn));
+            }
+        }).catch((e) => { console.warn('ImportaDrive.elenca', e); stato.textContent = String(e instanceof Error ? e.message : e) === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : 'Errore Drive: ' + String(e instanceof Error ? e.message : e); });
+    }
+    return { traduci, salvaTraduzione, elenca, importaFile, apri, eNomeQuiz };
+})();
+
 // =====================================================================
 // 07-locale.ts — v0.44 ALGORITMI LOCALI (zero token): tutto ciò che si può fare senza AI si fa qui.
 // Ogni assistente prova prima questi; chiama l'AI solo per ciò che resta (e le manda meno testo).
@@ -16314,7 +16516,8 @@ function vistaStudio() {
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
     const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), // v0.58 (Q5): visibile, non più solo in «Altro ▾»
-    tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+    h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), // v0.58.1
+    tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
     if (UI.studioVista === 'tabelle')
@@ -17609,7 +17812,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.58.0';
+const VERSIONE = '0.58.1';
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
  *  con la superficie più critica del tema (--sup2) è ≥ 4,5:1. Un colore non esadecimale resta com'è. */
