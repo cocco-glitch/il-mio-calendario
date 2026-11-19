@@ -185,3 +185,12 @@ Chiavi Gemini nuove «AQ.» accettate (Bearer → x-goog-api-key → ?key=). I m
 - 2026-11-19 · Un solo ingresso «＋ Crea piano» con tre modalità (dalle schede, Intelligente, dal libro); «Crea piano dal libro» riusa il corso con lo stesso nome; «Primi passi» nello Studio vuoto (anche senza login); «ricordami di …» → «Di …» senza prefisso.
 - 2026-11-19 · INP: il primo layout di Mese costava per le combinazioni font-size/peso nuove (~65 ms ciascuna a CPU 4×) → token `--fs-xs`/`--fw-xs` condivisi con Oggi e chip troncati; Errori con 20 domande + «Mostra altre» e `content-visibility` · primo disegno < 200 ms, ora in `prestazioni.py`.
 - 2026-11-19 · `esc()` codifica anche `'` · attributi tra apici singoli sicuri.
+
+## v0.58.3 — Importa quiz da Drive a parti (19/11)
+- 2026-11-19 · Formato riconosciuto dal CONTENUTO (`ImportaParti.classifica`): file intero (v2 o ampliato), parte `{parte, quiz}`, chiusura `{meta.stepId, programmaCalendario.pianoStrutturato}` senza `quiz` · Gemini produce 2 schede per messaggio, i nomi dei file non sono affidabili.
+- 2026-11-19 · Nuovo standard: 1 scheda Gemini (18 domande, `scheda: biologia-3.3-S01`) = 1 scheda dell'app `B-<sottoStep>-<n>`; P/R dalle liste di SCHEDE della chiusura, altrimenti da `categoria`/`sottoStep` · una scheda resta un'unità di studio, non una domanda; i file v2 interi restano invariati.
+- 2026-11-19 · Le parti si accumulano: reimportare (anche una parte alla volta o in ordine sparso) aggiorna gli stessi id, le schede già importate restano; ID duplicato tra parti → vince il file più recente (modifiedTime), segnalato · stesso risultato in qualunque ordine.
+- 2026-11-19 · Senza chiusura: domande in Banca e corso con microstep da `sottoStep`+`categoria`, niente ripassi; avviso «il piano arriverà con il file di chiusura».
+- 2026-11-19 · Validatore locale (zero token) prima di «Importa», salvato nell'innesto (`rapporto`): bloccanti (opzioni ≠ 4, esatta fuori 0..3, ID duplicato nella stessa parte, JSON illeggibile) saltano solo la domanda/parte; avvisi (18/scheda, 18–25 schede, L1–L4 25/35/25/15 ±3, posizione di `esatta`, corretta più lunga >25%, gemelle, erroreTipico, spiegazioneDistrattori, fonti «da verificare», BRAC 45–50) non bloccano.
+- 2026-11-19 · Ripassi FSRS con `target` = id schede dell'app (+1/+3/+7 g); la data del pacchetto resta solo nella nota · come v0.58.1.
+- 2026-11-19 · Banca: già in IndexedDB (`bancaimc`), nessuno spostamento; misura 1.710 domande in 5 step: preparazione + salvataggio 24 ms.

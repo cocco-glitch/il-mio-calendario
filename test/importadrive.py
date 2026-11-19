@@ -38,6 +38,7 @@ STUB = """([files, nomi]) => {
   Object.defineProperty(Drive, 'pronto', { get: () => true, configurable: true });
   Drive.cercaCartelle = async () => [{ id: 'cb', name: 'biologia quiz' }, { id: 'zz', name: 'quiz vecchi archivio' }];
   Drive.elencaTutti = async (id) => id === 'cb' ? [...Object.entries(nomi).reverse().map(([s, n]) => ({ id: 'f' + s.replace('.', ''), name: n })), { id: 'x', name: 'note.txt' }] : [];
+  Drive.elencaCompleti = async (id) => (await Drive.elencaTutti(id)).map(f => ({ ...f, mimeType: 'application/json', modifiedTime: '2026-11-19T08:00:00Z' }));
   Drive.scaricaTesto = async (id) => JSON.stringify(files[id]);
 }"""
 OGGI = '2026-11-19'

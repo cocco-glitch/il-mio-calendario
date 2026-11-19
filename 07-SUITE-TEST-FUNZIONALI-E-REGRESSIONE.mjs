@@ -203,7 +203,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.58.2', () => vero(/const VERSIONE = '0\.58\.2'/.test(leggi('09-main.ts'))));
+t('versione app 0.58.3', () => vero(/const VERSIONE = '0\.58\.3'/.test(leggi('09-main.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
@@ -587,12 +587,13 @@ t('v0.58: guardie statiche (Adesso, scorciatoie PWA, quiz da appunto, pulsante S
 await t('v0.58.2: ImportaDrive — traduci (schema 2 e 0.58) + riconosci (dove va) + innesti', async () => {
   const { createRequire } = await import('node:module');
   const ts = createRequire(import.meta.url)('typescript');
-  const js = ts.transpileModule(leggi('07-importadrive.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+  const js = ['07-importadrive-parti.ts', '07-importadrive.ts'].map(f => ts.transpileModule(leggi(f), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText).join('\n');
   const ymdF = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const materiaDi = k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; };
   const sb = { console, ymd: ymdF, oggi: () => new Date(), materiaDi };
   vm.createContext(sb); vm.runInContext(js + '\n;this.ImportaDrive = ImportaDrive;', sb);
   const ID = sb.ImportaDrive;
+  globalThis.__ID_SANDBOX = sb;   // riusato dal test v0.58.3
   // --- schema 2 ---
   const q = (n, es) => ({ id: 'biologia-3.3-0' + n, livelloCognitivo: n, tipoItem: 'scelta_multipla', domanda: 'D' + n + '?', opzioni: ['a' + n, 'b' + n, 'c' + n, 'd' + n], esatta: es, spiegazione: 'perché ' + n, fonte: 'Campbell p.' + n });
   const j = { meta: { schemaVersion: 2, materia: 'Biologia', codiceMateria: 'B', unitaDidattica: 'UD3', sottoStep: '3.3', titolo: 'Membrane' },
@@ -652,6 +653,75 @@ await t('v0.58.2: ImportaDrive — traduci (schema 2 e 0.58) + riconosci (dove v
   vero(/ImportaDrive\.applicaCorsi\(/.test(leggi('07-studio.ts')) && /ImportaDrive\.applicaPiani\(/.test(leggi('07-studio.ts')), 'Studio applica gli innesti in lettura');
   vero(/!x\.innesto/.test(leggi('07-extra.ts')), 'salvaPacchetto non salva gli innesti nel corso');
   vero(/'📥 Importa quiz da Drive'/.test(leggi('07-studio.ts')) && /ImportaDrive\.gestisci\(\)/.test(leggi('07-studio.ts')), 'pulsante in Studio + «Sposta quiz importati»');
+});
+
+await t('v0.58.3: quiz a PARTI — classifica, raggruppa, unisci (ordine qualsiasi), formato ampliato, validatore', async () => {
+  const sb = globalThis.__ID_SANDBOX; vero(!!sb, 'sandbox ImportaDrive'); if (!sb) return;
+  vm.runInContext(';this.ImportaParti = ImportaParti;', sb);
+  const ID = sb.ImportaDrive, IP = sb.ImportaParti;
+  const pad = n => String(n).padStart(2, '0');
+  // Step sintetico come il master prompt: 6 schede da 18, livelli 25/35/25/15, esatta ruotata, gemelle, corretta non la più lunga.
+  const LIV = [1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 2];   // 5/8/4/3 ≈ 22/39/22/17 → per 6 schede resta in ±3? controllato sotto con soglie
+  const domanda = (s, i, o = {}) => ({ id: 'biologia-3.3-S' + pad(s) + '-' + pad(i), stepId: 'biologia-3.3', sottoStep: s <= 3 ? '3.3.1' : '3.3.2', scheda: 'biologia-3.3-S' + pad(s), categoria: s % 3 === 0 ? 'raffinamento' : 'prioritaria',
+    livello: 'L' + LIV[i - 1], livelloCognitivo: LIV[i - 1], domanda: 'S' + s + ' D' + i + '?', opzioni: ['opzione lunga A' + i, 'B' + i, 'opzione lunga C' + i, 'opz D' + i].map((x, j) => j === (i + s) % 4 ? 'giusta ' + i : x), esatta: (i + s) % 4,
+    spiegazione: 'perché', spiegazioneDistrattori: ['no 1', 'no 2', 'no 3'], distractorTypes: ['misconception', 'caso limite', 'inventato'], sourceRef: 'Campbell, cap. 7, p. 140', fonte: 'Campbell cap. 7 p. 140', erroreTipico: 'confonde',
+    coppiaGemellaId: i <= 2 && s % 3 === 1 ? 'g' + s : undefined, campoIgnoto: 42, ...o });
+  const parte = (a, b, extra = []) => ({ parte: 'biologia-3.3-s' + a + '-' + b, quiz: [...[a, b].flatMap(s => Array.from({ length: 18 }, (_, i) => domanda(s, i + 1))), ...extra] });
+  const chiusura = { meta: { stepId: 'biologia-3.3', materia: 'biologia', unita: 'UD3', titolo: 'Membrane', domandeTotali: 108, ripartizioneSchede: { totale: 6 } },
+    programmaCalendario: { pianoStrutturato: { durataTotaleMin: 95, sottoSchede: [{ codice: '3.3.1', titolo: 'Fosfolipidi', durataBracMin: 45, schedePrioritarie: ['biologia-3.3-S01', 'biologia-3.3-S02'], schedeRaffinamento: ['biologia-3.3-S03'] },
+      { codice: '3.3.2', titolo: 'Trasporto', durataBracMin: 50, schedePrioritarie: ['biologia-3.3-S04', 'biologia-3.3-S05'], schedeRaffinamento: ['biologia-3.3-S06'] }],
+      ancoraggiRipassoFSRS: [{ intervallo: '+1g', target: ['biologia-3.3-S01', 'biologia-3.3-S02'] }, { intervallo: '+3g', target: ['biologia-3.3-S03'] }, { intervallo: '+7g', target: [] }] } }, conteggi: { domande: 108 } };
+  eq([IP.classifica(parte(1, 2)), IP.classifica(chiusura), IP.classifica({ meta: { sottoStep: '3.3' }, quiz: [] }), IP.classifica({ a: 1 }), IP.classifica(null)], ['parte', 'chiusura', 'intero', 'ignoto', 'ignoto'], 'riconosce dal contenuto');
+  eq([IP.stepDi(parte(1, 2)), IP.stepDi(chiusura), IP.numScheda('biologia-3.3-S05'), IP.numScheda('S7'), IP.numScheda('biologia-3.3-01'), IP.numScheda('fisica-1.1-02')], ['biologia-3.3', 'biologia-3.3', 5, 7, 0, 0], 'stepId e numero di scheda');
+  const file = (id, json, mod) => ({ id, name: id + '.json', cartella: 'biologia quiz', modificato: mod, tipo: IP.classifica(json), step: IP.stepDi(json), json });
+  const P1 = file('p1', parte(1, 2), '2026-11-19T08:00:00Z'), P2 = file('p2', parte(3, 4), '2026-11-19T09:00:00Z'), P3 = file('p3', parte(5, 6), '2026-11-19T10:00:00Z'), C = file('chiusura', chiusura, '2026-11-19T11:00:00Z');
+  // stato dell'elenco
+  const g12 = IP.raggruppa([P1, P2]); eq([g12.length, g12[0].tipo, g12[0].stato, g12[0].domande, g12[0].parti.length], [1, 'parti', 'senza-chiusura', 72, 2], 'senza chiusura: una voce, «manca il file di chiusura»');
+  const g12c = IP.raggruppa([P1, C, P2])[0]; eq([g12c.stato, g12c.mancanti, g12c.partiAttese, g12c.totaleSchede], ['mancano', [5, 6], 3, 6], 'con chiusura: mancano S05, S06 (2/3 parti)');
+  const gTutto = IP.raggruppa([P3, C, P1, P2])[0]; eq([gTutto.stato, gTutto.domande, gTutto.domandeAttese], ['completo', 108, 108], 'tutte le parti: completo');
+  // ordine qualsiasi = stesso risultato
+  const tr = l => ID.preparaGruppo(IP.raggruppa(l)[0], '2026-11-19').t;
+  const a = tr([P1, P2, P3, C]), b = tr([C, P3, P1, P2]);
+  eq(JSON.stringify(a), JSON.stringify(b), 'parti in ordine o sparse: stessa traduzione');
+  eq(a.sub.microstep.map(m => m.n + ':' + m.schede.map(s => s.id + s.tipo).join(',')), ['3.3.1:B-3.3.1-1P,B-3.3.1-2P,B-3.3.1-3R', '3.3.2:B-3.3.2-4P,B-3.3.2-5P,B-3.3.2-6R'], 'una scheda Gemini = una scheda app, P/R dagli elenchi della chiusura');
+  eq([a.domande, a.scartate, a.min, a.sub.microstep[0].schede[0].n, a.ripassi.map(r => r.giorni + ':' + (r.target || []).join('|')).join(' ')], [108, 0, 95, 6, '1:B-3.3.1-1|B-3.3.1-2 3:B-3.3.1-3 7:'], 'conteggi, durata, ripassi con target = id scheda app');
+  const senza = tr([P2, P1]);
+  eq([senza.ripassi.length, senza.sub.microstep.map(m => m.n).join(','), senza.domande], [0, '3.3.1,3.3.2', 72], 'senza chiusura: microstep da sottoStep, nessun ripasso');
+  eq(senza.sub.microstep[1].schede.map(s => s.id + s.tipo), ['B-3.3.2-4P'], 'senza chiusura: P/R dalla categoria, stessi id');
+  // campi neuro
+  const d = a.banche[0].domande[0];
+  eq([d.o.length, d.o[0], d.bloomLevel, d.subtopic, d.spiegazione, JSON.stringify(d.spiegazioneDistrattori), JSON.stringify(d.distractorTypes), d.sourceRef.capitolo, d.sourceRef.pagina, 'campoIgnoto' in d],
+    [4, 'giusta 1', 1, '3.3.1', 'perché', '{"1":"no 1","2":"no 2","3":"no 3"}', '{"1":"misconception","2":"caso_limite"}', '7', '140', false], 'formato ampliato → campi neuro (chiavi ignote saltate)');
+  for (const [lv, atteso] of [['L3', 3], [3, 3], ['3', 3], ['L9', undefined]]) eq(ID.traduci({ meta: { stepId: 'biologia-3.3' }, quiz: [domanda(1, 1, { livello: undefined, livelloCognitivo: lv })] }, '2026-11-19').banche[0].domande[0].bloomLevel, atteso, 'livelloCognitivo ' + JSON.stringify(lv));
+  // duplicati: tra parti vince la più recente; nella stessa parte è bloccante
+  const P1b = file('p1b', { parte: 'biologia-3.3-s1-2', quiz: [domanda(1, 1, { domanda: 'NUOVA' })] }, '2026-11-19T12:00:00Z');
+  const gd = IP.raggruppa([P1, P1b, P2, P3, C])[0], ud = IP.unisci(gd);
+  eq([ud.pacchetto.quiz.length, ud.pacchetto.quiz.find(q => q.id === 'biologia-3.3-S01-01').domanda, ud.duplicati.length], [108, 'NUOVA', 1], 'id ripetuto tra parti: vince il file più recente (segnalato)');
+  const dup = file('pd', parte(5, 6, [domanda(5, 1), { id: 'x', domanda: 'tre', opzioni: ['a', 'b', 'c'], esatta: 0 }, { id: 'y', domanda: 'fuori', opzioni: ['a', 'b', 'c', 'd'], esatta: 4 }]), '2026-11-19T10:00:00Z');
+  const ub = IP.unisci(IP.raggruppa([P1, P2, dup, C])[0]);
+  eq([ub.pacchetto.quiz.length, ub.bloccanti.length], [108, 3], 'bloccanti (id doppio nella parte, 3 opzioni, esatta 4): saltata solo la domanda');
+  const rotto = { id: 'r', name: 'rotto.json', cartella: 'biologia quiz', modificato: '', tipo: 'parte', step: 'biologia-3.3', json: null, errore: 'JSON non valido' };
+  const ur = IP.unisci(IP.raggruppa([P1, rotto, C])[0]); vero(ur.pacchetto.quiz.length === 36 && ur.bloccanti.some(x => /rotto\.json.*saltata/.test(x)), 'JSON non valido: salta solo quella parte');
+  // validatore
+  const rOk = ID.preparaGruppo(gTutto, '2026-11-19').rapporto;
+  eq(rOk.bloccanti, [], 'step pulito: nessun bloccante');
+  vero(!rOk.avvisi.some(x => /lunga|sbilanciata|erroreTipico|spiegazioneDistrattori|gemelle/.test(x)), 'step pulito: niente avvisi su lunghezza/posizione/campi: ' + rOk.avvisi.join(' | '));
+  const tutteZero = { quiz: Array.from({ length: 36 }, (_, i) => domanda(1 + (i >= 18), 1 + i % 18, { esatta: 0, opzioni: ['la corretta molto molto lunga', 'b', 'c', 'd'], fonte: 'p. da verificare', erroreTipico: '' })) };
+  const rv = IP.valida(tutteZero);
+  vero(rv.avvisi.some(x => /sbilanciata/.test(x)), 'esatta sempre 0 → avviso');
+  vero(rv.avvisi.some(x => /più lunga nel 100%/.test(x)), 'corretta sempre la più lunga → avviso');
+  vero(rv.avvisi.some(x => /da verificare/.test(x)) && rv.avvisi.some(x => /erroreTipico/.test(x)), 'fonti da verificare / erroreTipico vuoto → avviso');
+  vero(rv.bloccanti.length === 0, 'gli avvisi non bloccano');
+  vero(IP.bloccantiDomanda({ domanda: 'x', opzioni: ['a', 'b', 'c'], esatta: 0 }).some(x => /3 opzioni/.test(x)), 'opzioni ≠ 4 → bloccante');
+  vero(ID.traduci({ meta: { stepId: 'biologia-3.3' }, quiz: [domanda(1, 1), { ...domanda(1, 2), opzioni: ['a', 'b', 'c'] }] }, '2026-11-19').scartate === 1, 'traduci: 3 opzioni scartata');
+  // file reali (facoltativi): test/fixtures/*.json
+  const FIX = path.join(path.dirname(SRC), 'test', 'fixtures');
+  const reali = fs.existsSync(FIX) ? fs.readdirSync(FIX).filter(x => /quiz_e_calendario.*\.json$/i.test(x)) : [];
+  for (const f of reali) {
+    const j = JSON.parse(fs.readFileSync(path.join(FIX, f), 'utf8')), tr2 = ID.traduci(j, '2026-11-19');
+    vero(tr2.domande > 0 && /^B\d/.test(tr2.k), 'reale ' + f + ': ' + tr2.k + ' · ' + tr2.domande + ' domande, ' + tr2.scartate + ' scartate');
+  }
+  if (!reali.length) console.log('    (nessun file reale in test/fixtures: saltati)');
 });
 
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();

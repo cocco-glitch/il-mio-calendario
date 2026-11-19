@@ -19,6 +19,7 @@ const PianiAI = (() => {
   }
   /** v0.58 (Q4): codice materia di un quiz creato in app (sk «qc-…»), dal campo materia del record qcreato. */
   function materiaDiSk(sk: string): string | undefined {
+    if (/^[A-Z]+-\d/.test(sk || '')) return sk.split('-')[0];   // v0.58.3: schede importate da Drive («B-3.3.1-5»)
     if (!/^qc-/.test(sk || '')) return undefined;
     const r = Stato.prendi<QCreato>(sk); if (!r || r.deleted || !r.materia) return undefined;
     const n = (x: string) => String(x || '').trim().toLowerCase();

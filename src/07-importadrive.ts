@@ -8,24 +8,31 @@
 //   percorso si può CAMBIARE quando si vuole (sposta) senza duplicare nulla. Id scheda invariati.
 //   Schemi letti: «schemaVersion 2» (meta.sottoStep, pianoStrutturato.sottoSchede) e «versioneSchema 0.58»
 //   (meta.stepId, sottoSchede[].rangeId, quiz[].categoria).
+// v0.58.3 — formato AMPLIATO (per domanda: scheda «biologia-3.3-S05», sottoStep, categoria, livello «L1».."L4",
+//   spiegazioneDistrattori[3], distractorTypes[3], sourceRef) e import A PARTI (07-importadrive-parti.ts).
+//   Una SCHEDA Gemini (18 domande) = una scheda dell'app: id «<cod>-<sottoStep>-<n>» con n = numero della
+//   scheda nello step (S05 → 5), stabile qualunque parte arrivi prima. Opzioni ≠ 4 o esatta fuori 0..3: scartata.
 // ============================================================
 
 /** Una domanda nello schema dei pacchetti Drive (campi in italiano). */
-interface QuizDrive { id?: string; livelloCognitivo?: number | string; tipoItem?: string; domanda?: string; opzioni?: string[]; esatta?: number; spiegazione?: string; fonte?: string; erroreTipico?: string;
-  sottoStep?: string; categoria?: string; }
+interface QuizDrive { id?: string; livelloCognitivo?: number | string; livello?: number | string; tipoItem?: string; domanda?: string; opzioni?: string[]; esatta?: number; spiegazione?: string; fonte?: string; erroreTipico?: string;
+  sottoStep?: string; categoria?: string; stepId?: string; scheda?: string | number; coppiaGemellaId?: string;
+  spiegazioneDistrattori?: string[] | Record<string, string>; distractorTypes?: string[] | Record<string, string>; sourceRef?: string | SourceRefN; }
 interface SottoSchedaDrive { codice?: string; sottoStep?: string; titolo?: string; durataMin?: number; durataBracMin?: number; schedePrioritarie?: string[]; schedeRaffinamento?: string[]; rangeId?: string[]; fonte?: string; }
 interface PacchettoDrive {
-  meta?: { materia?: string; codiceMateria?: string; unitaDidattica?: string; unita?: string; sottoStep?: string; stepId?: string; titolo?: string };
+  meta?: { materia?: string; codiceMateria?: string; unitaDidattica?: string; unita?: string; sottoStep?: string; stepId?: string; titolo?: string; domandeTotali?: number; ripartizioneSchede?: { totale?: number } };
   programmaCalendario?: { formatoGeneraMjs?: string[]; pianoStrutturato?: { durataTotaleMin?: number; sottoSchede?: SottoSchedaDrive[]; ancoraggiRipassoFSRS?: { intervallo?: string; target?: string[] }[] } };
   sottoSchede?: SottoSchedaDrive[];
   quiz?: QuizDrive[];
+  parte?: string;
 }
 /** Il pacchetto letto e tradotto, indipendente dalla destinazione. */
 interface TraduzioneDrive { k: string; cod: string; nome: string; sotto: string; ud: string; titolo: string; min: number; dataPacchetto: string;
-  sub: SottoS; banche: { sk: string; domande: DomB[] }[]; ripassi: { giorni: number; etichetta: string }[]; domande: number; scartate: number; }
+  sub: SottoS; banche: { sk: string; domande: DomB[] }[]; ripassi: RipassoDrive[]; domande: number; scartate: number; }
 /** Un innesto: il sotto-step importato e il posto dove sta (corso, piano, giorno). '' = corso/piano «da Drive». */
 interface InnestoRec extends Rec { type: 'innesto'; k: string; cod: string; nome: string; ud: string; titolo: string; min: number; sub: SottoS; corso: string; piano: string; data: string;
-  ripassi: { giorni: number; etichetta: string }[]; banche: string[]; file: string; aggiornato: string; spostato?: string; }
+  ripassi: RipassoDrive[]; banche: string[]; file: string; aggiornato: string; spostato?: string; rapporto?: RapportoQuiz; }
+interface RipassoDrive { giorni: number; etichetta: string; target?: string[]; }
 interface DestinazioneDrive { id: string; titolo: string; punti: number; motivo: string; data?: string; }
 interface SceltaDrive { corso: string; piano: string; data: string; }
 
@@ -33,6 +40,7 @@ const ImportaDrive = (() => {
   const s = (x: unknown) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
   const hash = (t: string) => { let x = 5381; for (let i = 0; i < t.length; i++) x = ((x << 5) + x + t.charCodeAt(i)) | 0; return (x >>> 0).toString(36); };
   const LV: Record<number, string> = { 1: 'Sbarramento', 2: 'Applicativo', 3: 'Applicativo', 4: 'Problema' };
+  const TIPI_D: TipoDistr[] = ['misconception', 'inversione_causa', 'confusione_termine', 'caso_limite', 'plausibile_generico'];
   const CORSO_DRV = 'drv-ud-', PIANO_DRV = 'drv-piano';
   const nomeDi = (cod: string) => typeof nomeMateria === 'function' ? nomeMateria(cod) : cod;   // nei test Node la funzione può mancare
 
@@ -60,16 +68,41 @@ const ImportaDrive = (() => {
     return cand.sort((x, y) => dist(x) - dist(y))[0];
   }
 
-  /** domanda → q, opzioni → o (la corretta per prima), esatta → o[0], spiegazione → e, fonte → r. */
+  /** 3, "3", "L3" → 3 (0 se non è 1–4). */
+  const livello = (x: unknown) => { const n = Number(s(x).replace(/^L/i, '')); return n >= 1 && n <= 4 ? n : 0; };
+  /** «Campbell, cap. 5, p. 112» → { libro, capitolo, pagina }. */
+  function rifFonte(x: unknown, k: string): SourceRefN | undefined {
+    if (x && typeof x === 'object') { const o = x as Record<string, unknown>, r: SourceRefN = {}; for (const c of ['libro', 'capitolo', 'pagina'] as const) if (s(o[c])) r[c] = s(o[c]); return Object.keys(r).length ? { ...r, stepId: s(o.stepId) || k } : undefined; }
+    const t = s(x); if (!t) return undefined;
+    const cap = /cap(?:itolo)?\.?\s*([\w.]+)/i.exec(t), pag = /(?:^|[^a-z])pp?\.\s*(\d+(?:\s*[-–]\s*\d+)?)/i.exec(t);
+    const libro = s(t.split(/[,;]|\bcap/i)[0]);
+    return { ...(libro ? { libro } : {}), ...(cap ? { capitolo: cap[1] } : {}), ...(pag ? { pagina: pag[1].replace(/\s/g, '') } : {}), stepId: k };
+  }
+  /** I 3 valori «per distrattore» (array nell'ordine delle opzioni sbagliate, o oggetto per indice ORIGINALE) → indici in o (1..3). */
+  function perDistrattore(v: unknown, es: number): Record<number, string> | null {
+    const out: Record<number, string> = {};
+    if (Array.isArray(v)) v.map(s).forEach((x, i) => { if (x) out[i + 1] = x; });
+    else if (v && typeof v === 'object') for (const [kk, x] of Object.entries(v as Record<string, unknown>)) { const j = Number(kk); if (Number.isInteger(j) && j >= 0 && j <= 3 && j !== es && s(x)) out[j < es ? j + 1 : j] = s(x); }
+    return Object.keys(out).length ? out : null;
+  }
+  /** domanda → q, opzioni → o (la corretta per prima), esatta → o[0], spiegazione → e, fonte → r; campi neuro (07-neuro). */
   function domanda(x: QuizDrive, sk: string, k: string): DomB | null {
-    const opz = Array.isArray(x.opzioni) ? x.opzioni.map(s).filter(Boolean) : [];
+    const opz = Array.isArray(x.opzioni) ? x.opzioni.map(s) : [];
     const es = Number(x.esatta);
-    if (!s(x.domanda) || opz.length < 2 || !Number.isInteger(es) || es < 0 || es >= opz.length) return null;
-    const bl = Number(s(x.livelloCognitivo).replace(/^L/i, ''));
+    if (!s(x.domanda) || opz.length !== 4 || opz.some(o => !o) || !Number.isInteger(es) || es < 0 || es > 3) return null;
+    const bl = livello(x.livelloCognitivo) || livello(x.livello);
     const d: DomB = { id: 'q-drv-' + (s(x.id) || hash(sk + '|' + s(x.domanda))), sk, t: 'mcq', lv: LV[bl] || 'Applicativo', q: s(x.domanda),
       o: [opz[es], ...opz.filter((_, i) => i !== es)], e: s(x.spiegazione), stepId: k };
     if (s(x.fonte)) d.r = s(x.fonte);
-    if (bl >= 1 && bl <= 4) d.bloomLevel = bl as BloomN;
+    if (bl) d.bloomLevel = bl as BloomN;
+    if (s(x.spiegazione)) d.spiegazione = s(x.spiegazione);
+    const sd = perDistrattore(x.spiegazioneDistrattori, es);
+    if (sd) d.spiegazioneDistrattori = sd;
+    const dt = perDistrattore(x.distractorTypes, es);
+    if (dt) { const m: Record<number, TipoDistr> = {}; for (const [i, v] of Object.entries(dt)) { const tv = v.toLowerCase().replace(/[\s-]+/g, '_'); if (TIPI_D.includes(tv as TipoDistr)) m[Number(i)] = tv as TipoDistr; } if (Object.keys(m).length) d.distractorTypes = m; }
+    const sr = rifFonte(x.sourceRef, k) || (s(x.fonte) ? rifFonte(x.fonte, k) : undefined);
+    if (sr) d.sourceRef = sr;
+    if (s(x.sottoStep)) d.subtopic = s(x.sottoStep);
     return d;
   }
   function falla(msg: string): never { throw new Error(msg); }
@@ -87,9 +120,14 @@ const ImportaDrive = (() => {
     if (!Array.isArray(j.quiz) || !j.quiz.length) return falla('Il pacchetto non contiene quiz.');
     const mat = s(meta.materia), codGrezzo = s(meta.codiceMateria) || (/^[A-Za-z]{1,4}$/.test(mat) ? mat : '') || gc[0] || mat.slice(0, 1);
     const cod = codGrezzo.toUpperCase().replace(/[^A-Z]/g, '') || 'X', k = cod + sotto;
-    const nome = (mat.length > 4 ? mat : '') || nomeDi(cod);
+    const nome = (mat.length > 4 ? mat.charAt(0).toUpperCase() + mat.slice(1) : '') || nomeDi(cod);
     const titolo = s(meta.titolo) || gc[2] || sotto;
     const quiz = j.quiz.filter(q => q && typeof q === 'object');
+    if (quiz.some(q => ImportaParti.numScheda(q.scheda))) {   // v0.58.3: formato ampliato, una scheda Gemini = una scheda dell'app
+      const r = perSchede(quiz, sez0, cod, k, sotto, titolo, Number(meta.ripartizioneSchede && meta.ripartizioneSchede.totale) || 0);
+      return { k, cod, nome, sotto, ud: s(meta.unitaDidattica || meta.unita) || gc[1] || '', titolo, min: Number(ps.durataTotaleMin) || r.min, dataPacchetto: gc.length ? dataDa(gc[gc.length - 1], oggiK) : '',
+        sub: { k, n: sotto, titolo, posizione: '', microstep: r.micro, innesto: true }, banche: r.banche, ripassi: ripassiDi(ps, r.mappa), domande: r.banche.reduce((a, b) => a + b.domande.length, 0), scartate: r.scartate };
+    }
     const perId = new Map(quiz.map((q, i) => [s(q.id) || '#' + i, q] as [string, QuizDrive]));
     const usate = new Set<string>(), banche: { sk: string; domande: DomB[] }[] = [];
     let scart = 0;
@@ -124,11 +162,61 @@ const ImportaDrive = (() => {
       const b = banche[0]; b.domande.push(...raccogli(resto, b.sk));
     }
     const piene = banche.filter(b => b.domande.length);
-    const ripassi: { giorni: number; etichetta: string }[] = [];
-    for (const a of Array.isArray(ps.ancoraggiRipassoFSRS) ? ps.ancoraggiRipassoFSRS : []) { const n = giorniIntervallo(s(a && a.intervallo)); if (n && !ripassi.some(r => r.giorni === n)) ripassi.push({ giorni: n, etichetta: s(a.intervallo) }); }
+    const ripassi = ripassiDi(ps, new Map());
     const sub: SottoS = { k, n: sotto, titolo, posizione: '', microstep: micro, innesto: true };
     return { k, cod, nome, sotto, ud: s(meta.unitaDidattica || meta.unita) || gc[1] || '', titolo, min: Number(ps.durataTotaleMin) || min, dataPacchetto: gc.length ? dataDa(gc[gc.length - 1], oggiK) : '',
       sub, banche: piene, ripassi, domande: piene.reduce((a, b) => a + b.domande.length, 0), scartate: scart };
+  }
+
+  type PianoStr = NonNullable<NonNullable<PacchettoDrive['programmaCalendario']>['pianoStrutturato']>;
+  /** Ripassi FSRS dagli ancoraggi (+1g/+3g/+7g); target = schede (id Gemini «…-S05» → id app «B-3.3.1-5»). */
+  function ripassiDi(ps: PianoStr, mappa: Map<number, string>): RipassoDrive[] {
+    const out: RipassoDrive[] = [];
+    for (const a of Array.isArray(ps.ancoraggiRipassoFSRS) ? ps.ancoraggiRipassoFSRS : []) {
+      const n = giorniIntervallo(s(a && a.intervallo)); if (!n) continue;
+      const target = (Array.isArray(a.target) ? a.target : []).map(x => mappa.get(ImportaParti.numScheda(x)) || '').filter(Boolean);
+      const gia = out.find(r => r.giorni === n);
+      if (gia) { if (target.length) gia.target = [...new Set([...(gia.target || []), ...target])]; continue; }
+      out.push(target.length ? { giorni: n, etichetta: s(a.intervallo), target } : { giorni: n, etichetta: s(a.intervallo) });
+    }
+    return out.sort((x, y) => x.giorni - y.giorni);
+  }
+  /**
+   * Formato ampliato: ogni domanda dice la sua scheda («biologia-3.3-S05»). Il microstep viene dagli elenchi della
+   * chiusura (schedePrioritarie/schedeRaffinamento con id di SCHEDE), altrimenti dal sottoStep della domanda;
+   * P/R dagli elenchi, altrimenti dalla categoria. id app = <cod>-<microstep>-<n>: non dipende dall'ordine delle parti.
+   */
+  function perSchede(quiz: QuizDrive[], sez: SottoSchedaDrive[], cod: string, k: string, sotto: string, titolo: string, totale: number) {
+    const daElenco = new Map<number, { n: string; tipo: 'P' | 'R'; tit: string }>(), titoloMicro = new Map<string, string>();
+    let min = 0;
+    for (const x of sez) {
+      const n = s(x.codice || x.sottoStep); if (!n) continue;
+      titoloMicro.set(n, s(x.titolo) || n); min += Number(x.durataBracMin || x.durataMin) || 0;
+      for (const [l, tipo] of [[x.schedePrioritarie, 'P'], [x.schedeRaffinamento, 'R']] as [string[] | undefined, 'P' | 'R'][])
+        for (const id of l || []) { const m = ImportaParti.numScheda(id); if (m && !daElenco.has(m)) daElenco.set(m, { n, tipo, tit: s(x.titolo) || n }); }
+    }
+    const ok = (n: string) => /^\d+(\.\d+)*$/.test(n) && (n === sotto || n.startsWith(sotto + '.'));
+    const schede = new Map<number, { micro: string; tipo: 'P' | 'R'; qs: QuizDrive[] }>();
+    let primo = 0;
+    for (const q of quiz) {
+      const n = ImportaParti.numScheda(q.scheda) || primo; if (!n) continue;
+      if (!primo) primo = n;
+      let c = schede.get(n);
+      if (!c) { const e = daElenco.get(n), ms = s(q.sottoStep); c = { micro: e ? e.n : ok(ms) ? ms : sotto + '.1', tipo: e ? e.tipo : /raffin/i.test(s(q.categoria)) ? 'R' : 'P', qs: [] }; schede.set(n, c); }
+      c.qs.push(q);
+    }
+    const nTot = Math.max(totale, ...schede.keys()), usate = new Set<string>(), perMicro = new Map<string, SchedaS[]>(), banche: { sk: string; domande: DomB[] }[] = [], mappa = new Map<number, string>();
+    let scartate = 0;
+    for (const n of [...schede.keys()].sort((a, b) => a - b)) {
+      const c = schede.get(n)!, sk = cod + '-' + c.micro + '-' + n, dom: DomB[] = [];
+      for (const q of c.qs) { const d = domanda(q, sk, k); if (!d) { scartate++; continue; } if (usate.has(d.id)) continue; usate.add(d.id); dom.push(d); }
+      if (!dom.length) continue;
+      mappa.set(n, sk); banche.push({ sk, domande: dom });
+      const l = perMicro.get(c.micro) || []; perMicro.set(c.micro, l);
+      l.push({ id: sk, k: n, n: nTot, titolo: (titoloMicro.get(c.micro) || titolo) + ' · scheda ' + n + (c.tipo === 'R' ? ' (raffinamento)' : ''), tipo: c.tipo, problemi: false, pagine: '', quizFile: '' });
+    }
+    const micro: MicroS[] = [...perMicro.keys()].sort(cmpNum).map(n => ({ n, schede: perMicro.get(n)! }));
+    return { micro, banche, mappa, scartate, min };
   }
 
   // ---------- Riconoscimento: dove va? ----------
@@ -217,7 +305,7 @@ const ImportaDrive = (() => {
       const pid = x.piano && base.some(p => p.id === x.piano) ? x.piano : PIANO_DRV;
       const dest = base.find(p => p.id === pid);
       if (!(dest && dest.giorni.some(g => g.voci.some(v => v.k === x.k && !v.speciale)))) metti(pid, x.data, { k: x.k, t: x.titolo, min: x.min || undefined, innesto: true });
-      for (const r of x.ripassi || []) metti(pid, piuGiorni(x.data, r.giorni), { k: 'RIP-' + x.k + '-' + r.giorni, t: '🔁 Ripasso ' + x.nome + ' ' + numeroK(x.k) + ' (' + r.etichetta + ')', speciale: true, isRipassoFSRS: true, innesto: true });
+      for (const r of x.ripassi || []) metti(pid, piuGiorni(x.data, r.giorni), { k: 'RIP-' + x.k + '-' + r.giorni, t: '🔁 Ripasso ' + x.nome + ' ' + numeroK(x.k) + ' (' + r.etichetta + (r.target && r.target.length ? ' · ' + r.target.length + (r.target.length === 1 ? ' scheda' : ' schede') : '') + ')', speciale: true, isRipassoFSRS: true, innesto: true });
     }
     return out;
   }
@@ -261,12 +349,30 @@ const ImportaDrive = (() => {
     if (Stato.prendi('pk-drv-piano-' + cod.toLowerCase() + '-' + sotto)) Stato.elimina('pk-drv-piano-' + cod.toLowerCase() + '-' + sotto);
   }
   /** Importa: salva l'innesto (stesso id a ogni reimportazione: aggiorna, non duplica) e lo mette nel posto scelto. */
-  function salva(t: TraduzioneDrive, sc: SceltaDrive, file = ''): InnestoRec {
+  /** v0.58.3 (a parti): tiene le schede già importate che questa volta mancano (parte spostata/non ancora rilevata). */
+  function accumula(t: TraduzioneDrive, prima: InnestoRec): TraduzioneDrive {
+    const nuove = new Set(t.banche.map(b => b.sk)), tenute = (prima.banche || []).filter(sk => !nuove.has(sk) && Stato.prendi<BancaImcRec>('bq-' + sk));
+    if (!tenute.length) return t;
+    const micro = t.sub.microstep.map(m => ({ ...m, schede: m.schede.slice() }));
+    for (const m of prima.sub.microstep) for (const sc of m.schede) {
+      if (!tenute.includes(sc.id)) continue;
+      let dm = micro.find(x => x.n === m.n); if (!dm) { dm = { n: m.n, schede: [] }; micro.push(dm); }
+      if (!dm.schede.some(x => x.id === sc.id)) dm.schede.push(sc);
+    }
+    for (const m of micro) m.schede.sort((a, b) => a.k - b.k);
+    micro.sort((a, b) => cmpNum(a.n, b.n));
+    const tenuteB = tenute.map(sk => ({ sk, domande: (Stato.prendi<BancaImcRec>('bq-' + sk)!.domande || []).filter(d => String(d.id).startsWith('q-drv-')) }));
+    const banche = [...t.banche, ...tenuteB];
+    return { ...t, sub: { ...t.sub, microstep: micro }, banche, domande: banche.reduce((a, b) => a + b.domande.length, 0) };
+  }
+  function salva(t: TraduzioneDrive, sc: SceltaDrive, file = '', opz: { accumula?: boolean; rapporto?: RapportoQuiz } = {}): InnestoRec {
     const id = 'inn-' + t.k, prima = Stato.prendi<InnestoRec>(id);
     togliVecchio(t.cod, t.sotto, id);
+    if (prima && prima.sub && opz.accumula) t = accumula(t, prima);
     if (prima && prima.sub) t.sub.svolto = prima.sub.svolto;
     const x: InnestoRec = { ...(prima || { id, type: 'innesto', updatedAt: 0 } as InnestoRec), k: t.k, cod: t.cod, nome: t.nome, ud: t.ud, titolo: t.titolo, min: t.min, sub: t.sub,
       ripassi: t.ripassi, file: file || (prima && prima.file) || '', banche: [], corso: '', piano: '', data: sc.data, aggiornato: '' };
+    if (opz.rapporto) x.rapporto = opz.rapporto; else delete x.rapporto;
     x.banche = salvaBanche(id, t.banche, prima ? prima.banche || [] : []);
     applicaScelta(x, sc);
     Stato.notifica();
@@ -298,15 +404,37 @@ const ImportaDrive = (() => {
     return n;
   }
 
-  interface FileDrive { id: string; name: string; cartella: string; }
-  /** I .json nelle cartelle «… quiz» (biologia quiz, fisica quiz, chimica quiz…). */
+  interface FileDrive { id: string; name: string; cartella: string; modificato?: string; }
+  /** I .json nelle cartelle «… quiz» (biologia quiz, fisica quiz, chimica quiz…), con la data di modifica. */
   async function elenca(): Promise<FileDrive[]> {
     const cartelle = (await Drive.cercaCartelle('quiz')).filter(c => /(^|\s)quiz$/i.test(c.name.trim()));
     const out: FileDrive[] = [];
-    for (const c of cartelle) for (const f of await Drive.elencaTutti(c.id)) if (/\.json$/i.test(f.name)) out.push({ id: f.id, name: f.name, cartella: c.name });
+    for (const c of cartelle) for (const f of await Drive.elencaCompleti(c.id)) if (/\.json$/i.test(f.name)) out.push({ id: f.id, name: f.name, cartella: c.name, modificato: f.modifiedTime || '' });
     return out.sort((a, b) => (Number(eNomeQuiz(b.name)) - Number(eNomeQuiz(a.name))) || a.name.localeCompare(b.name, 'it', { numeric: true }));
   }
+  /** Scarica e riconosce dal CONTENUTO (intero / parte / chiusura). Un JSON illeggibile resta in elenco con l'errore. */
+  async function leggiTutti(files: FileDrive[]): Promise<FileQuizLetto[]> {
+    const out: FileQuizLetto[] = new Array(files.length);
+    let i = 0;
+    const lavora = async () => { while (i < files.length) { const n = i++, f = files[n];
+      try { const j = JsonAI.leggiFile(await Drive.scaricaTesto(f.id)) as PacchettoDrive, tipo = ImportaParti.classifica(j);
+        out[n] = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '', tipo, step: tipo === 'ignoto' ? '' : ImportaParti.stepDi(j), json: tipo === 'ignoto' ? null : j, errore: tipo === 'ignoto' ? 'Non è un pacchetto quiz' : undefined };
+      } catch (e: unknown) { if (String(e instanceof Error ? e.message : e) === 'NOLOGIN') throw e; out[n] = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '', tipo: 'ignoto', step: '', json: null, errore: 'JSON non valido' }; }
+    } };
+    await Promise.all([lavora(), lavora(), lavora(), lavora()]);
+    return out;
+  }
   async function leggiFile(f: FileDrive): Promise<TraduzioneDrive> { return traduci(JsonAI.leggiFile(await Drive.scaricaTesto(f.id)) as PacchettoDrive); }
+  /** Una voce dell'elenco → traduzione + rapporto di qualità (puro, testato in Node). */
+  function preparaGruppo(g: GruppoQuiz, oggiK = ymd(oggi())): { t: TraduzioneDrive; rapporto: RapportoQuiz } {
+    const u = ImportaParti.unisci(g);
+    const rapporto = ImportaParti.valida(u.pacchetto, { bloccanti: u.bloccanti, duplicati: u.duplicati, completo: g.tipo === 'intero' || g.stato === 'completo' });
+    if (g.tipo === 'parti' && !g.chiusura) rapporto.avvisi.unshift('Manca il file di chiusura: importo domande e schede, il piano dei ripassi arriverà con la chiusura');
+    if (g.tipo === 'parti' && g.mancanti.length) rapporto.avvisi.unshift('Mancano le schede ' + g.mancanti.map(n => 'S' + String(n).padStart(2, '0')).join(', '));
+    const t = traduci(u.pacchetto, oggiK);
+    if (t.scartate) rapporto.avvisi.push(t.scartate + ' domande scartate (opzioni ≠ 4 o «esatta» fuori 0..3)');
+    return { t, rapporto };
+  }
   /** Destinazioni proposte per un pacchetto, sui corsi e piani attuali. */
   const proponi = (t: { k: string; cod: string; nome: string; sotto: string; ud: string; dataPacchetto: string }) => riconosci(t, Studio.pkStep(), Studio.pianiAttivi());
   /** Importa con la destinazione riconosciuta (la migliore), senza chiedere: per test e automatismi. */
@@ -362,7 +490,23 @@ const ImportaDrive = (() => {
     listaInnesti(cont);
     if (!cont.firstChild) cont.appendChild(h('p.tenue', null, 'Nessun quiz importato da Drive. Usa «📥 Importa quiz da Drive».'));
   }
-  /** Il foglio: elenco dei pacchetti su Drive; «Importa» legge il file, riconosce il posto e lo propone. */
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const nomeStep = (step: string) => { const m = /^(.+?)-(\d+(?:\.\d+)*)$/.exec(step); return m ? m[1].charAt(0).toUpperCase() + m[1].slice(1) + ' ' + m[2] : step; };
+  /** Riga di testo di una voce a parti: «Biologia 3.3 · 19 schede · 342 domande · 8/10 parti». */
+  function rigaGruppo(g: GruppoQuiz): { titolo: string; stato: string } {
+    const titolo = nomeStep(g.step) + ' · ' + g.totaleSchede + ' schede · ' + g.domande + ' domande · ' + g.parti.length + '/' + (g.partiAttese || '?') + ' parti';
+    const stato = g.stato === 'completo' ? '✅ Completo'
+      : g.stato === 'senza-chiusura' ? '⏳ Manca il file di chiusura (piano e ripassi)'
+      : '🧩 Mancano parti' + (g.mancanti.length ? ': schede ' + g.mancanti.map(n => 'S' + pad2(n)).join(', ') : g.domandeAttese ? ' (' + g.domande + '/' + g.domandeAttese + ' domande)' : '');
+    return { titolo, stato };
+  }
+  /** Il riepilogo di qualità (zero token): bloccanti in rosso, avvisi, misure. */
+  function riepilogo(r: RapportoQuiz): HTMLElement {
+    const n = r.bloccanti.length, a = r.avvisi.length;
+    return h('details.drv-qualita', null, h('summary.piccolo', null, n ? '⛔ ' + n + ' bloccanti (saltati) · ' + a + ' avvisi' : a ? '⚠️ ' + a + ' avvisi di qualità' : '✓ Controllo qualità superato'),
+      h('ul.piccolo', { style: { margin: '4px 0', paddingLeft: '18px' } }, ...r.bloccanti.slice(0, 12).map(x => h('li', { style: { color: 'var(--rosso, #c0392b)' } }, x)), ...r.avvisi.map(x => h('li', null, x)), ...r.righe.map(x => h('li.tenue', null, x))));
+  }
+  /** Il foglio: una voce per pacchetto intero o per step a parti; «Importa» riconosce il posto e lo propone. */
   function apri(): void {
     if (serveGoogle()) return;
     migraVecchi();
@@ -370,34 +514,41 @@ const ImportaDrive = (() => {
     const gia = h('div'), lista = h('div.lista-drv');
     const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo: h('div', null, stato, lista, gia) });
     listaInnesti(gia);
-    elenca().then(files => {
+    elenca().then(async files => {
       if (!files.length) { stato.textContent = 'Nessun .json nelle cartelle «… quiz» del tuo Drive.'; return; }
-      stato.textContent = files.length + (files.length === 1 ? ' pacchetto trovato' : ' pacchetti trovati') + '. «Importa» riconosce dove va nei tuoi programmi: puoi cambiarlo prima di confermare.';
-      for (const x of files) {
+      stato.textContent = 'Leggo ' + files.length + ' file…';
+      const letti = await leggiTutti(files), gruppi = ImportaParti.raggruppa(letti.filter(x => x.tipo !== 'ignoto'));
+      const ignoti = letti.filter(x => x.tipo === 'ignoto');
+      stato.textContent = gruppi.length + (gruppi.length === 1 ? ' pacchetto trovato' : ' pacchetti trovati') + (ignoti.length ? ' (' + ignoti.length + ' file non riconosciuti)' : '') + '. «Importa» riconosce dove va nei tuoi programmi: puoi cambiarlo prima di confermare.';
+      for (const g of gruppi) {
         const esito = h('div.tenue.piccolo'), zona = h('div');
-        const btn = h('button.btn', { 'aria-label': 'Importa ' + x.name }, 'Importa') as HTMLButtonElement;
-        btn.onclick = async () => {
-          btn.disabled = true; esito.textContent = 'Leggo il pacchetto…'; svuota(zona);
-          try {
-            const t = await leggiFile(x), d = proponi(t), prima = Stato.prendi<InnestoRec>('inn-' + t.k);
-            esito.textContent = 'Riconosciuto: ' + t.nome + ' ' + t.sotto + (t.ud ? ' · ' + t.ud : '') + ' · ' + t.domande + ' domande' + (t.scartate ? ' (' + t.scartate + ' scartate)' : '') + (t.dataPacchetto ? ' · pacchetto del ' + breve(t.dataPacchetto) : '');
-            zona.appendChild(pannelloScelta(t.k, t.nome + ' ' + t.sotto + ' · ' + t.titolo, d, prima ? { corso: prima.corso, piano: prima.piano, data: prima.data } : null, 'Inserisci', sc => {
-              const inn = salva(t, sc, x.name);
-              svuota(zona); btn.textContent = 'Reimporta';
-              esito.textContent = '✓ ' + t.domande + ' domande in Banca · ' + dove(inn);
-              listaInnesti(gia);
-              avviso('📥 ' + t.k + ' → ' + dove(inn), 5000, () => { f.chiudi(); vai('oggi'); });
-            }));
-          } catch (e: unknown) {
-            console.warn('ImportaDrive', x.name, e);
-            esito.textContent = '✗ ' + (String(e instanceof Error ? e.message : e) === 'NOLOGIN' ? 'Accedi a Google e riprova.' : String(e instanceof Error ? e.message : e));
-          }
-          btn.disabled = false;
+        let prep: { t: TraduzioneDrive; rapporto: RapportoQuiz } | null = null, errore = '';
+        try { prep = preparaGruppo(g); } catch (e: unknown) { errore = String(e instanceof Error ? e.message : e); }
+        const etichetta = g.tipo === 'intero' ? g.files[0].name : nomeStep(g.step);
+        const btn = h('button.btn', { 'aria-label': 'Importa ' + etichetta }, Stato.prendi('inn-' + (prep ? prep.t.k : '')) ? 'Reimporta' : 'Importa') as HTMLButtonElement;
+        if (!prep) { btn.disabled = true; esito.textContent = '✗ ' + errore; }
+        btn.onclick = () => {
+          if (!prep) return;
+          const { t, rapporto } = prep, d = proponi(t), prima = Stato.prendi<InnestoRec>('inn-' + t.k);
+          svuota(zona);
+          esito.textContent = 'Riconosciuto: ' + t.nome + ' ' + t.sotto + (t.ud ? ' · ' + t.ud : '') + ' · ' + t.domande + ' domande' + (t.scartate ? ' (' + t.scartate + ' scartate)' : '') + (t.dataPacchetto ? ' · pacchetto del ' + breve(t.dataPacchetto) : '');
+          zona.appendChild(pannelloScelta(t.k, t.nome + ' ' + t.sotto + ' · ' + t.titolo, d, prima ? { corso: prima.corso, piano: prima.piano, data: prima.data } : null, 'Inserisci', sc => {
+            const t0 = performance.now(), inn = salva(t, sc, etichetta, { accumula: g.tipo === 'parti', rapporto });
+            console.info('ImportaDrive.salva', t.k, t.domande, 'domande', Math.round(performance.now() - t0), 'ms');
+            svuota(zona); btn.textContent = 'Reimporta';
+            esito.textContent = '✓ ' + t.domande + ' domande in Banca · ' + dove(inn) + (g.tipo === 'parti' && !g.chiusura ? ' · il piano arriverà con il file di chiusura' : '');
+            listaInnesti(gia);
+            avviso('📥 ' + t.k + ' → ' + dove(inn), 5000, () => { f.chiudi(); vai('oggi'); });
+          }));
         };
-        lista.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, x.name), h('div.tenue.piccolo', null, '📁 ' + x.cartella + (eNomeQuiz(x.name) ? '' : ' · schema da verificare')), esito, zona), btn));
+        let titolo: string, sotto: string;
+        if (g.tipo === 'intero') { titolo = g.files[0].name; sotto = '📁 ' + g.files[0].cartella + (eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare'); }
+        else { const r = rigaGruppo(g); titolo = r.titolo; sotto = '📁 ' + g.files[0].cartella + ' · ' + r.stato; }
+        lista.appendChild(h('div.cat-riga', { 'data-step': g.step }, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, titolo), h('div.tenue.piccolo.drv-stato', null, sotto), prep ? riepilogo(prep.rapporto) : null, esito, zona), btn));
       }
+      for (const x of ignoti) lista.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, x.name), h('div.tenue.piccolo', null, '📁 ' + x.cartella + ' · ✗ ' + (x.errore || 'non riconosciuto') + ' (saltato)'))));
     }).catch((e: unknown) => { console.warn('ImportaDrive.elenca', e); stato.textContent = String(e instanceof Error ? e.message : e) === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : 'Errore Drive: ' + String(e instanceof Error ? e.message : e); });
   }
 
-  return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiFile, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
+  return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
 })();
