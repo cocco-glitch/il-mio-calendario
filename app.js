@@ -16725,7 +16725,8 @@ function vistaOggi() {
     const domani = piuGiorni(g, 1);
     const occDomani = occorrenzeDelGiorno(domani);
     const senzaCorsi = !Studio.pkStep().length;
-    const vuotoTotale = senzaCorsi && !Stato.tutti('evento').some(r => !r.deleted) && !Stato.tutti('task').some(r => !r.deleted) && !Stato.tutti('nota').some(r => !r.deleted);
+    const vuotoTotale = senzaCorsi && !Studio.pkPiani().length && !CodaRipasso.conta()
+        && !['evento', 'task', 'nota', 'appunto', 'mazzo'].some(t => Stato.tutti(t).some(r => !r.deleted));
     if (vuotoTotale)
         return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), iniziaIn3Passi(), occ.length ? scheda('Impegni di oggi', occ.map(o => rigaOcc(o, g))) : null, tasks.length ? scheda('Promemoria', tasks.map(rigaTask)) : null, occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null);
     return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null, ordineWidget().map(w => {
@@ -17328,7 +17329,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.59.0';
+const VERSIONE = '0.59.1';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
