@@ -8810,6 +8810,8 @@ const ImportaDrive = (() => {
             d.sourceRef = sr;
         if (s(x.sottoStep))
             d.subtopic = s(x.sottoStep);
+        if (s(x.erroreTipico))
+            d.erroreTipico = s(x.erroreTipico);
         return d;
     }
     function falla(msg) { throw new Error(msg); }
@@ -13754,22 +13756,41 @@ const QuizApp = (() => {
         const punti = () => P.filter(x => x.ok).length;
         const corretta = (x) => x.ord.indexOf(0);
         const passi = (e) => '<ol class="qz-passi">' + (Array.isArray(e) ? e : [e]).map(t => { const m2 = String(t).match(/^([^:]{2,80}):\s([\s\S]*)$/); return '<li>' + (m2 ? '<b>' + fmt(m2[1]) + ':</b> ' + fmt(m2[2]) : fmt(t)) + '</li>'; }).join('') + '</ol>';
+        const ewDi = (d) => {
+            if (d.ew && d.ew.length)
+                return d.ew;
+            const sd = d.spiegazioneDistrattori;
+            if (!sd || d.t !== 'mcq')
+                return [];
+            return Array.isArray(sd) ? sd.slice(0, 3).map(String) : [1, 2, 3].map(k => sd[k] || '');
+        };
+        const passiDi = (d, conConfutazioni) => {
+            const sez = typeof d.e === 'string' ? sezioniSpiegazione(d.e) : [];
+            if (sez.length < 2)
+                return passi(d.e);
+            const tieni = sez.filter(x => !(conConfutazioni && /^(RISPOSTA ESATTA|PERCH)/.test(x.etichetta)));
+            return passi(tieni.map(x => x.etichetta ? x.etichetta.charAt(0) + x.etichetta.slice(1).toLowerCase() + ': ' + x.testo : x.testo));
+        };
         const spiegFonti = (d) => '<div class="qz-box"><span class="qz-etich">Spiegazione dalle fonti</span>'
             + (d.cit || []).map(c => '<blockquote>«' + esc(c.t) + '»<span class="qz-chi">' + esc(c.f) + (c.l ? ' · <a href="' + esc(c.l) + '" target="_blank" rel="noopener">apri la pagina</a>' : '') + '</span></blockquote>').join('')
             + (d.cl ? '<div class="qz-mia"><b>Spiegazione di Claude</b> ' + esc(d.cl) + '</div>' : '') + (!d.cit && !d.cl ? '<p>' + fmt(Array.isArray(d.e) ? d.e.join(' ') : d.e) + '</p>' : '') + '</div>';
         function correzione(x) {
-            const d = x.d, ew = d.ew || [], mc = d.t === 'mcq';
+            const d = x.d, ew = ewDi(d), mc = d.t === 'mcq';
             let s2 = bannerCaso(x) + (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
-                + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passi(d.e);
+                + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passiDi(d, mc && ew.some(Boolean));
             if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1])
                 s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o[x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
+            if (!x.ok && d.erroreTipico)
+                s2 += '<div class="qz-perche"><b>Errore tipico</b><p>' + fmt(d.erroreTipico) + '</p></div>';
             if (x.voto)
                 s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
             if (!x.ok && mc) { }
             else if (!x.ok && !mc && ew[0])
                 s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
-            if (mc && ew.length && (x.ok || x.picked === null))
-                s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => '<p><b>«' + fmt(d.o[k + 1]) + '»</b> — ' + fmt(t) + '</p>').join('') + '</details>';
+            const tua = !x.ok && typeof x.picked === 'number' ? x.ord[x.picked] : -1;
+            if (mc && ew.some(Boolean))
+                s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => ({ t, k, pos: x.ord.indexOf(k + 1) })).filter(z => z.t && z.k + 1 !== tua).sort((a, b) => a.pos - b.pos)
+                    .map(z => '<p><b>' + L[z.pos] + ') «' + fmt(d.o[z.k + 1]) + '»</b> — ' + fmt(z.t) + '</p>').join('') + '</details>';
             return s2 + '</div>';
         }
         function bannerCaso(x) {
@@ -14870,6 +14891,33 @@ function apriRipianifica(piano) {
             const annulla = Ripianifica.applica(prop, pp);
             avviso('Spostati ' + prop.filter(x => x.a).length + ' step · tocca per annullare', 8000, () => { annulla(); avviso('Spostamenti annullati.'); });
         } });
+}
+
+const RE_SEZ_SPIEGAZIONE = /(COSA CHIEDE|CONCETTO(?: E MECCANISMO|\/MECCANISMO)?|FORMULA|RISPOSTA ESATTA|PERCH[ÉE] GLI ALTRI NO|IN SINTESI)\s*:/;
+function sezioniSpiegazione(sp) {
+    const parti = String(sp || '').split(new RegExp(RE_SEZ_SPIEGAZIONE.source, 'g'));
+    const out = [];
+    if (parti[0].trim())
+        out.push({ etichetta: '', testo: parti[0].trim() });
+    for (let i = 1; i < parti.length; i += 2)
+        out.push({ etichetta: parti[i], testo: (parti[i + 1] || '').trim() });
+    return out;
+}
+let strumentiQuizInArrivo = null;
+function conStrumentiQuiz(fn) {
+    if (typeof StrumentiQuiz !== 'undefined') {
+        fn();
+        return;
+    }
+    if (!strumentiQuizInArrivo)
+        strumentiQuizInArrivo = new Promise((ok, ko) => {
+            const s = document.createElement('script');
+            s.src = 'strumenti-quiz.js?v=' + encodeURIComponent(VERSIONE);
+            s.onload = () => ok();
+            s.onerror = () => { strumentiQuizInArrivo = null; s.remove(); ko(new Error('serve la connessione la prima volta')); };
+            document.head.appendChild(s);
+        });
+    strumentiQuizInArrivo.then(fn, (e) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
 }
 
 const Simulazioni = (() => {
@@ -16073,7 +16121,8 @@ function vistaStudio() {
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
     const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
-        { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+        { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
+        { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
     if (UI.studioVista === 'tabelle')
@@ -17329,7 +17378,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.59.1';
+const VERSIONE = '0.59.2';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
