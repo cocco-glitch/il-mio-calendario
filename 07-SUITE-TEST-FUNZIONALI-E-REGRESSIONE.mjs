@@ -203,7 +203,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.58.1', () => vero(/const VERSIONE = '0\.58\.1'/.test(leggi('09-main.ts'))));
+t('versione app 0.58.2', () => vero(/const VERSIONE = '0\.58\.2'/.test(leggi('09-main.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
@@ -584,38 +584,74 @@ t('v0.58: guardie statiche (Adesso, scorciatoie PWA, quiz da appunto, pulsante S
   vero(/hookIpercorrezione\(p, \{ oggi, sk, caso, materia: materiaDiSk\(sk\) \}\)/.test(leggi('07-pianiai.ts')), 'Q4 hook con materia');
 });
 
-await t('v0.58.1: ImportaDrive.traduci — schema *_quiz_e_calendario.json → PkStep + Banca + PkPiano', async () => {
+await t('v0.58.2: ImportaDrive — traduci (schema 2 e 0.58) + riconosci (dove va) + innesti', async () => {
   const { createRequire } = await import('node:module');
   const ts = createRequire(import.meta.url)('typescript');
   const js = ts.transpileModule(leggi('07-importadrive.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
   const ymdF = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  const sb = { console, ymd: ymdF, oggi: () => new Date() };
+  const materiaDi = k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; };
+  const sb = { console, ymd: ymdF, oggi: () => new Date(), materiaDi };
   vm.createContext(sb); vm.runInContext(js + '\n;this.ImportaDrive = ImportaDrive;', sb);
+  const ID = sb.ImportaDrive;
+  // --- schema 2 ---
   const q = (n, es) => ({ id: 'biologia-3.3-0' + n, livelloCognitivo: n, tipoItem: 'scelta_multipla', domanda: 'D' + n + '?', opzioni: ['a' + n, 'b' + n, 'c' + n, 'd' + n], esatta: es, spiegazione: 'perché ' + n, fonte: 'Campbell p.' + n });
   const j = { meta: { schemaVersion: 2, materia: 'Biologia', codiceMateria: 'B', unitaDidattica: 'UD3', sottoStep: '3.3', titolo: 'Membrane' },
     programmaCalendario: { formatoGeneraMjs: ['B|UD3|Membrane|N|3.3|Mer 18/11'], pianoStrutturato: { durataTotaleMin: 90,
       sottoSchede: [{ codice: '3.3.1', titolo: 'Fosfolipidi', schedePrioritarie: ['biologia-3.3-01', 'biologia-3.3-02'], schedeRaffinamento: ['biologia-3.3-03'] }],
       ancoraggiRipassoFSRS: [{ intervallo: '+1g', target: [] }, { intervallo: '+7g', target: [] }] } },
     quiz: [q(1, 2), q(2, 0), q(3, 1), q(4, 3), { id: 'rotta', domanda: 'x', opzioni: ['a'], esatta: 0 }] };
-  const t1 = sb.ImportaDrive.traduci(j, '2026-11-19');
-  eq(t1.pk.id, 'drv-b-3.3', 'id corso deterministico');
-  eq(t1.pk.materie[0].sottostep[0].k, 'B3.3', 'chiave sotto-step');
-  eq(t1.pk.materie[0].sottostep[0].microstep[0].schede.map(s => s.id + s.tipo), ['B-3.3.1-1P', 'B-3.3.1-2R'], 'schede P/R con id <materia>-<microstep>-<k>');
+  const t1 = ID.traduci(j, '2026-11-19');
+  eq([t1.k, t1.cod, t1.sotto, t1.ud, t1.min, t1.dataPacchetto], ['B3.3', 'B', '3.3', 'UD3', 90, '2026-11-18'], 'chiave, UD, durata, data del pacchetto');
+  vero(t1.sub.innesto && t1.sub.k === 'B3.3', 'sotto-step marcato innesto');
+  eq(t1.sub.microstep[0].schede.map(s => s.id + s.tipo), ['B-3.3.1-1P', 'B-3.3.1-2R'], 'schede P/R con id <materia>-<microstep>-<k>');
   const p = t1.banche.find(b => b.sk === 'B-3.3.1-1');
   eq(p.domande.map(d => d.q), ['D1?', 'D2?', 'D4?'], 'prioritarie + non assegnate nella P');
   const d1 = p.domande[0];
   eq([d1.o[0], d1.e, d1.r, d1.bloomLevel, d1.t, d1.stepId], ['c1', 'perché 1', 'Campbell p.1', 1, 'mcq', 'B3.3'], 'esatta → o[0], spiegazione → e, fonte → r');
   eq(d1.o.slice().sort(), ['a1', 'b1', 'c1', 'd1'], 'nessuna opzione persa');
   eq(t1.domande, 4, '4 domande valide'); eq(t1.scartate, 1, '1 scartata');
-  eq(t1.piano.id, 'drv-piano-b-3.3', 'id piano deterministico');
-  eq(t1.piano.giorni.map(g => g.data), ['2026-11-19', '2026-11-20', '2026-11-26'], 'oggi + ripassi FSRS');
-  vero(t1.piano.giorni[0].voci[0].k === 'B3.3' && !t1.piano.giorni[0].voci[0].speciale, 'step oggi in coda (non speciale)');
-  vero(t1.piano.giorni[1].voci[0].speciale && t1.piano.giorni[1].voci[0].isRipassoFSRS, 'ripassi speciali');
-  vero(/Mer 18\/11/.test(t1.piano.nota), 'data del pacchetto nella nota');
-  eq(JSON.stringify(sb.ImportaDrive.traduci(j, '2026-11-19').banche), JSON.stringify(t1.banche), 'reimportare = stesso risultato');
-  let err = ''; try { sb.ImportaDrive.traduci({ meta: { sottoStep: '3.3' }, quiz: [] }); } catch (e) { err = e.message; } vero(/quiz/.test(err), 'senza quiz: errore chiaro');
-  vero(sb.ImportaDrive.eNomeQuiz('biologia_3_4_quiz_e_calendario.json') && !sb.ImportaDrive.eNomeQuiz('note.json'), 'riconosce il nome');
-  vero(/ImportaDrive\.apri\(\)/.test(leggi('07-studio.ts')) && /'📥 Importa quiz da Drive'/.test(leggi('07-studio.ts')), 'pulsante in Studio');
+  eq(t1.ripassi.map(r => r.giorni), [1, 7], 'ripassi FSRS del pacchetto');
+  eq(JSON.stringify(ID.traduci(j, '2026-11-19').banche), JSON.stringify(t1.banche), 'reimportare = stesso risultato');
+  let err = ''; try { ID.traduci({ meta: { sottoStep: '3.3' }, quiz: [] }); } catch (e) { err = e.message; } vero(/quiz/.test(err), 'senza quiz: errore chiaro');
+  err = ''; try { ID.traduci({ meta: {}, quiz: [q(1, 0)] }); } catch (e) { err = e.message; } vero(/sotto-step/.test(err), 'senza sotto-step: errore chiaro');
+  // --- schema 0.58 (sottoSchede in cima, rangeId, categoria, livello «L2») ---
+  const qv = (n, sotto, cat) => ({ id: 'biologia-4.1-' + String(n).padStart(2, '0'), stepId: 'biologia-4.1', sottoStep: sotto, categoria: cat, livelloCognitivo: 'L' + (1 + n % 4), domanda: 'V' + n + '?', opzioni: ['a', 'b', 'c', 'd'], esatta: n % 4, spiegazione: 's', fonte: 'f' });
+  const v = { meta: { versioneSchema: '0.58', materia: 'B', unita: 'UD4', stepId: 'biologia-4.1', titolo: 'Genetica' },
+    programmaCalendario: { formatoGeneraMjs: ['B|UD4|Genetica|N|4.1|Sab 21/11'] },
+    sottoSchede: [{ sottoStep: '4.1.1', titolo: 'Mendel', durataBracMin: 40, rangeId: ['biologia-4.1-01', 'biologia-4.1-02', 'biologia-4.1-03'] },
+      { sottoStep: '4.1.2', titolo: 'Eccezioni', durataBracMin: 35, rangeId: ['biologia-4.1-04', 'biologia-4.1-05'] }],
+    quiz: [qv(1, '4.1.1', 'prioritaria'), qv(2, '4.1.1', 'prioritaria'), qv(3, '4.1.2', 'raffinamento'), qv(4, '4.1.2', 'prioritaria'), qv(5, '4.1.2', 'raffinamento'), qv(6, '4.1.2', 'prioritaria')] };
+  const t2 = ID.traduci(v, '2026-11-19');
+  eq([t2.k, t2.ud, t2.min, t2.dataPacchetto, t2.domande], ['B4.1', 'UD4', 75, '2026-11-21', 6], 'v0.58: chiave da stepId, UD, durata, data');
+  eq(t2.banche.map(b => b.sk + ':' + b.domande.length), ['B-4.1.1-1:2', 'B-4.1.1-2:1', 'B-4.1.2-1:2', 'B-4.1.2-2:1'], 'rangeId vince su sottoStep; categoria → P/R');
+  eq(t2.banche[0].domande[1].bloomLevel, 3, '«L3» → bloomLevel 3');
+  vero(ID.eNomeQuiz('biologia_4_1_quiz_e_calendario_v058.json') && ID.eNomeQuiz('biologia_3_4_quiz_e_calendario.json') && !ID.eNomeQuiz('note.json'), 'riconosce il nome (anche _v058)');
+  // --- riconosci: dove va ---
+  const sch = (m, n) => ({ n: m + '.1', schede: [{ id: 'B-' + m + '.1-1', k: 1, n: 1, titolo: n, tipo: 'P', problemi: false, pagine: '', quizFile: '' }] });
+  const corso = (id, step, subs) => ({ tipo: 'step', id, step, titolo: 'Step ' + step, aggiornato: '', risorse: { libri: {}, quiz: {} }, materie: [{ m: 'B', nome: 'Biologia', libro: '', sottostep: subs.map(n => ({ k: 'B' + n, n, titolo: n, posizione: '', microstep: [sch(n, n)] })) }, { m: 'F', nome: 'Fisica', libro: '', sottostep: [] }] });
+  const corsi = [corso('step-1', 1, ['1.1']), corso('step-2', 2, ['2.1']), corso('step-3', 3, ['3.1', '3.2'])];
+  const piano = { tipo: 'piano', id: 'piano', titolo: 'Piano', aggiornato: '', giorniTeoria: 0, giorni: [
+    { data: '2026-11-16', voci: [{ k: 'B3.2', t: '' }] }, { data: '2026-11-18', voci: [{ k: 'B3.3', t: '' }, { k: 'SIM3', t: '', speciale: true }] }, { data: '2026-11-21', voci: [{ k: 'B4.1', t: '' }] }] };
+  const raff = { tipo: 'piano', id: 'raff', modo: 'raffinamento', titolo: 'Raff', aggiornato: '', giorniTeoria: 0, giorni: [{ data: '2026-12-11', voci: [{ k: 'B3.3', t: '' }] }] };
+  const r1 = ID.riconosci(t1, corsi, [piano, raff], '2026-11-19');
+  eq([r1.corsi[0].id, r1.corsi[0].punti], ['step-3', 90], 'B3.3 → step-3 (stessa UD, dopo B3.2)');
+  vero(/dopo B3\.2/.test(r1.corsi[0].motivo), 'il motivo dice «dopo B3.2»: ' + r1.corsi[0].motivo);
+  eq([r1.piani[0].id, r1.piani[0].data], ['piano', '2026-11-19'], 'piano che lo prevedeva il 18/11 (in ritardo) → oggi');
+  vero(/ritardo/.test(r1.piani[0].motivo), 'motivo: in ritardo');
+  vero(r1.piani.find(x => x.id === 'raff').punti < r1.piani[0].punti && r1.piani.some(x => x.id === ''), 'raffinamento sotto, piano «a parte» disponibile');
+  const r2 = ID.riconosci(t2, corsi, [piano], '2026-11-19');
+  eq([r2.corsi[0].id, r2.corsi[0].punti], ['', 70], 'B4.1 senza corso UD4 → corso «Step 4 · da Drive»');
+  eq([r2.piani[0].id, r2.piani[0].data, r2.piani[0].punti], ['piano', '2026-11-21', 100], 'B4.1 già previsto il 21/11 → resta il 21/11');
+  const t3 = Object.assign({}, t2, { k: 'B4.2', sotto: '4.2', dataPacchetto: '2026-11-23' });
+  const r3 = ID.riconosci(t3, corsi, [piano], '2026-11-19');
+  eq([r3.piani[0].id, r3.piani[0].data, r3.piani[0].punti], ['piano', '2026-11-23', 80], 'B4.2 non previsto: dopo B4.1, nel giorno del pacchetto');
+  const corsoDrv = { tipo: 'step', id: 'drv-ud-4', step: 4, titolo: 'Step 4 (UD4) · da Drive', aggiornato: '', proprio: true, risorse: { libri: {}, quiz: {} }, materie: [{ m: 'B', nome: 'Biologia', libro: '', sottostep: [{ k: 'B4.1', n: '4.1', titolo: '', posizione: '', microstep: [], innesto: true }] }] };
+  const r4 = ID.riconosci(t3, [...corsi, corsoDrv], [piano], '2026-11-19');
+  vero(r4.corsi[0].id === '' && r4.corsi.filter(x => x.id === '' || x.id === 'drv-ud-4').length === 1 && /Step 4 \(UD4\)/.test(r4.corsi[0].titolo), 'B4.2 va con B4.1 nel corso UD4 da Drive (un\'opzione sola)');
+  eq(ID.cmpNum('3.10', '3.9') > 0 && ID.cmpNum('4.1', '3.10') > 0, true, 'ordine numerico dei sotto-step');
+  vero(/ImportaDrive\.applicaCorsi\(/.test(leggi('07-studio.ts')) && /ImportaDrive\.applicaPiani\(/.test(leggi('07-studio.ts')), 'Studio applica gli innesti in lettura');
+  vero(/!x\.innesto/.test(leggi('07-extra.ts')), 'salvaPacchetto non salva gli innesti nel corso');
+  vero(/'📥 Importa quiz da Drive'/.test(leggi('07-studio.ts')) && /ImportaDrive\.gestisci\(\)/.test(leggi('07-studio.ts')), 'pulsante in Studio + «Sposta quiz importati»');
 });
 
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();

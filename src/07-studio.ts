@@ -13,15 +13,19 @@ interface FileS { id?: string; nome: string; mime?: string; url?: string; }
 interface SchedaS { id: string; k: number; n: number; titolo: string; tipo: 'P' | 'R'; problemi: boolean; pagine: string; slide?: string; quizFile: string; quizFileId?: string; file?: FileS;
   /** v0.55 (BP4): facoltativi, solo nei contenuti del pianificatore neuro-AI. */
   livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean; }
-interface MicroS { n: string; schede: SchedaS[]; }
+interface MicroS { n: string; schede: SchedaS[]; innesto?: boolean; }
 interface SottoS { k: string; n: string; titolo: string; posizione: string; ripasso?: string; svolto?: boolean; data?: string; microstep: MicroS[];
+  /** v0.58.2: sotto-step innestato da un pacchetto quiz di Drive (applicato in lettura, mai salvato nel corso). */
+  innesto?: boolean;
   livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean; }
 interface MateriaS { m: string; nome: string; libro: string; sottostep: SottoS[]; }
 interface LibroS { nome: string; offset: number; blocco: number; cartella: string; file: Record<string, string>; }
 interface PkStep { tipo: 'step'; id: string; step: number; titolo: string; aggiornato: string; proprio?: boolean; descrizione?: string; risorse: { libri: Record<string, LibroS>; quiz: Record<string, string> }; materie: MateriaS[]; }
 interface VocePiano { k: string; t: string; d?: string; speciale?: boolean;
   /** v0.55 (BP4, piani 'ai_neuro'): ora d'inizio, durata, unità, livello L1–L4, fonte, ripasso FSRS, buffer. */
-  ora?: string; min?: number; uid?: string; livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean; }
+  ora?: string; min?: number; uid?: string; livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean;
+  /** v0.58.2: voce aggiunta da un innesto Drive. */
+  innesto?: boolean; }
 interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }
 interface Copertura { m: string; ud: string; a: string; stato: 'E' | 'I' | 'N'; k: string; quando: string; }
 interface PkPiano { tipo: 'piano'; id: string; modo?: 'raffinamento'; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; copertura?: Copertura[];
@@ -82,9 +86,9 @@ const Studio = (() => {
   }
   // v0.17: risultati memorizzati finché i dati non cambiano (Stato.ver)
   const memo = <T>(f: () => T) => { let v = -1, x: T; return () => { if (v !== Stato.ver) { x = f(); v = Stato.ver; } return x; }; };
-  const pkStepM = memo(() => Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step) as PkStep[]);
+  const pkStepM = memo(() => ImportaDrive.applicaCorsi(Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step) as PkStep[]));   // v0.58.2: + innesti Drive
   function pkStep(): PkStep[] { return pkStepM().slice(); }
-  const pkPianiM = memo(() => Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1) as PkPiano[]);
+  const pkPianiM = memo(() => ImportaDrive.applicaPiani(Stato.tutti<Rec>('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1) as PkPiano[]));   // v0.58.2: + innesti Drive
   function pkPiani(): PkPiano[] { return pkPianiM().slice(); }
   /** v0.20.1: piani visibili in Oggi, calendario, ritardi e ripassi (quelli nascosti restano solo nella vista Piano). */
   const nascosto = (id: string) => ((imp() as any).pianiNascosti || []).includes(id);
@@ -491,7 +495,8 @@ function vistaStudio(): HTMLElement {
   const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)),
     h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'),   // v0.58 (Q5): visibile, non più solo in «Altro ▾»
     h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'),   // v0.58.1
-    tendina('Altro ▾', () => (voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })) as VoceTendina[]).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+    tendina('Altro ▾', () => (voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })) as VoceTendina[]).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
+      { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
   if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
   if (UI.studioVista === 'errori') return h('div.pagina', null, seg, vistaErrori());

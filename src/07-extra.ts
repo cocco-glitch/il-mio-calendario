@@ -219,7 +219,11 @@ function editorEsame(es?: Esame): void {
 // e quindi sincronizzato su Drive come tutto il resto. Argomenti = sotto-step (con data facoltativa:
 // compaiono nel calendario e nel ritardo). Schede = qualsiasi cosa da fare, con file Drive collegato.
 function pacchettoRec(pk: PkStep): Rec { return Stato.rec.get('pk-' + pk.id)!; }
-function salvaPacchetto(pk: PkStep): void { pk.aggiornato = ymd(new Date()); const r = pacchettoRec(pk) || { id: 'pk-' + pk.id, type: 'pacchetto', updatedAt: 0 } as Rec; r.contenuto = pk; r.deleted = false; Stato.salva(r); }
+function salvaPacchetto(pk: PkStep): void {
+  // v0.58.2: gli innesti Drive sono applicati in lettura: non finiscono mai dentro il corso salvato
+  if (pk.id.startsWith('drv-ud-')) return;
+  pk.materie = pk.materie.filter(m => !m.sottostep.length || m.sottostep.some(x => !x.innesto)).map(m => ({ ...m, sottostep: m.sottostep.filter(x => !x.innesto).map(x => x.microstep.some(z => z.innesto) ? { ...x, microstep: x.microstep.filter(z => !z.innesto) } : x) }));
+  pk.aggiornato = ymd(new Date()); const r = pacchettoRec(pk) || { id: 'pk-' + pk.id, type: 'pacchetto', updatedAt: 0 } as Rec; r.contenuto = pk; r.deleted = false; Stato.salva(r); }
 function nuovoCodice(nome: string): string {
   const usati = new Set([...Object.keys(MATERIE_BASE), ...tutteLeSchede().map(x => x.mat.m), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m)), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice)]);
   const base = norm(nome).replace(/[^a-z]/g, '').toUpperCase() || 'M';
