@@ -113,7 +113,12 @@ with sync_playwright() as p:
     pg.click('.tabbar >> text=Altro'); pg.click('.riga-gruppo >> text=Aspetto'); pg.click('.chip >> text=Minimal'); pg.wait_for_timeout(200)
     ok(pg.locator('.tabbar button', has_text='Note').count() == 0 and pg.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()") == '#ffffff', 'Minimal: sezione Note nascosta, sfondo bianco')
     pg.click('.tabbar >> text=Oggi'); pg.screenshot(path='test/32-minimal.png')
-    pg.evaluate("(() => { const i = imp(); i.scala = 1.25; i.font = 'serif'; Stato.salva(i); applicaTema(); })()")
+    pg.evaluate("(async () => { const i = imp(); i.scala = 1.25; i.font = 'serif'; await Stato.salva(i); applicaTema(); await Stato.scritto(); })()")
+    # v0.56.1: attesa deterministica — il record impostazioni deve risultare su IndexedDB prima del reload
+    su_idb = pg.evaluate("""() => new Promise(ok => { const rq = indexedDB.open('il-mio-calendario'); rq.onsuccess = () => {
+      const db = rq.result, g = db.transaction('records').objectStore('records').get('impostazioni');
+      g.onsuccess = () => { db.close(); ok(g.result ? [g.result.scala, g.result.preset] : null); }; }; })""")
+    ok(su_idb == [1.25, 'Minimal'], 'impostazioni confermate su IndexedDB prima del reload (%s)' % su_idb)
     pg.reload(); pg.wait_for_selector('.tabbar')
     ok(pg.evaluate("[getComputedStyle(document.documentElement).getPropertyValue('--scala').trim(), imp().preset]") == ['1.25', 'Minimal'], 'aspetto salvato dopo ricarica')
     b.close()

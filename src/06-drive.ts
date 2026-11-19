@@ -87,6 +87,10 @@ const Drive = (() => {
     });
   }
 
+  /** v0.56.1: consenso incrementale (es. calendar.events.readonly per il wizard BP4). Chiede a Google lo scope attuale
+   *  con popup; se l'utente rifiuta, il token Drive già valido resta quello di prima (accedi lo sostituisce solo in caso di successo). */
+  function ampliaPermessi(): Promise<boolean> { return accedi(true); }
+
   async function tokenValido(interattivo = false): Promise<string> {
     if (token && Date.now() < scadenzaToken) return token;
     if (await accedi(false)) return token;
@@ -377,7 +381,7 @@ const Drive = (() => {
 
   return {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
-    sincronizza, programma, login, logout, precarica,
+    sincronizza, programma, login, logout, precarica, ampliaPermessi,
     caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
     elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle, api,
     get collegato() { return !!stato.email; },

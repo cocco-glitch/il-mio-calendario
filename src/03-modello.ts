@@ -129,6 +129,8 @@ const Stato = (() => {
   const rec = new Map<string, Rec>();
   const TIPI_SERVIZIO = new Set(['notifica']);       // v0.17: lapidi ripulibili dopo 7 giorni
   const lapideScaduta = (r: Rec) => TIPI_SERVIZIO.has(r.type) && (r.updatedAt || 0) < Date.now() - 7 * 86400000;
+  const inCorso = new Set<Promise<void>>();         // v0.56.1: scritture IndexedDB non ancora confermate
+  const traccia = (p: Promise<void>): Promise<void> => { const q = p.catch(e => { console.warn('DB.salva', e); }); inCorso.add(q); q.then(() => inCorso.delete(q)); return q; };
   let ver = 0, cacheVer = -1;                       // v0.17: versione dei dati e cache per tipo
   const perTipo = new Map<string, Rec[]>();
   const ascoltatori: Array<() => void> = [];
@@ -184,16 +186,19 @@ const Stato = (() => {
       return r && !r.deleted ? (r as T) : undefined;
     },
     /** Salva un record aggiornando updatedAt (serve alla sincronizzazione). */
-    salva(r: Rec, silenzioso = false): void {
+    salva(r: Rec, silenzioso = false): Promise<void> {
       r.updatedAt = Date.now();
       // v0.44 privacy: ogni dato porta l'account a cui appartiene (serve a non mescolare mai gli account)
       try { const em = JSON.parse(localStorage.getItem('imc-email') || '""'); if (em) (r as any).acc = String(em).toLowerCase(); } catch (_) { /* */ }
       rec.set(r.id, r); ver++;
-      DB.salva([r]);
+      const p = traccia(DB.salva([r]));   // v0.56.1: promise risolta solo a transazione IndexedDB completata (oncomplete)
       if (!silenzioso) notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
       if (typeof Drive !== 'undefined') Drive.programma();
       if (typeof GCal !== 'undefined' && (r.type === 'evento' || r.type === 'task')) GCal.programma();
+      return p;
     },
+    /** v0.56.1: si risolve quando tutte le scritture IndexedDB avviate finora sono confermate (oncomplete). */
+    scritto(): Promise<void> { return Promise.all(Array.from(inCorso)).then(() => undefined); },
     /** Eliminazione "morbida": il record resta come lapide per la sync. */
     elimina(id: string): void {
       const r = rec.get(id);
@@ -213,7 +218,7 @@ const Stato = (() => {
         if (m) { if (!StatQC.uguali(m, mio!)) { rec.set(e.id, m); cambiati.push(m); ver++; } continue; }
         if (!mio || (e.updatedAt || 0) > (mio.updatedAt || 0)) { rec.set(e.id, e); cambiati.push(e); ver++; }
       }
-      if (cambiati.length) { DB.salva(cambiati); notifica(); }
+      if (cambiati.length) { traccia(DB.salva(cambiati)); notifica(); }
       return cambiati.length;
     },
     esporta(): Rec[] { return Array.from(rec.values()); },

@@ -572,7 +572,7 @@ const PRESET_BASE: { nome: string; valori: Partial<Impostazioni> }[] = [
 ];
 function sezionePreset(salva: SalvaImp): HTMLElement {
   const i = imp(), miei = Stato.tutti<Preset>('preset').sort((a, b) => a.nome.localeCompare(b.nome));
-  const applica = (nome: string, v: Partial<Impostazioni>) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); avviso('Preset «' + nome + '» applicato'); };
+  const applica = (nome: string, v: Partial<Impostazioni>) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); };   // v0.56.1: avviso solo a scrittura confermata
   return scheda('Preset',
     h('div.chips', null,
       PRESET_BASE.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: () => applica(p.nome, p.valori) }, p.nome)),

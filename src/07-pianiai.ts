@@ -144,7 +144,15 @@ const PianiAI = (() => {
       try {
         const v = vincoliBP5();
         if (!v.materiaCodice || !v.dataTarget || !v.finestreSettimanali.length) { avviso('Scegli materia, data e almeno un giorno.'); return; }
-        if (!!imp().gcalLeggiPrimary !== primary.checked) { const i = imp(); i.gcalLeggiPrimary = primary.checked || undefined; Stato.salva(i); }
+        if (!!imp().gcalLeggiPrimary !== primary.checked) {
+          const i = imp(), attiva = primary.checked; i.gcalLeggiPrimary = attiva || undefined; Stato.salva(i);
+          // v0.56.1: opt-in → consenso incrementale subito (prima del calcolo); se negato si torna indietro, così il rinnovo
+          // silenzioso del token Drive non chiede mai uno scope non concesso.
+          if (attiva && Drive.collegato && !(await Drive.ampliaPermessi())) {
+            i.gcalLeggiPrimary = undefined; Stato.salva(i); primary.checked = false;
+            avviso('Accesso in lettura a Google Calendar non concesso: il piano non terrà conto di «primary».', 6000);
+          }
+        }
         esito.textContent = 'Calcolo la fattibilità (0 token)…';
         const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: usaAI.checked, testoIndice: indice.value, titolo: '🧠 ' + nomeMateria(v.materiaCodice) + ' entro ' + v.dataTarget }));
         if (!r.piano) { if (r.fatt.stato === 'critico') mostraRimedi(r.fatt); else esito.textContent = 'Nessun argomento trovato: incolla l\'indice o indica un PDF.'; return; }
