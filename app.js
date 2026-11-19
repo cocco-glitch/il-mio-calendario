@@ -1,34 +1,22 @@
 "use strict";
-// ============================================================
-// 01-json.ts — v0.57 (BP6 · A15): UNICO parser JSON dell'app (risposte AI, quiz incollati, pacchetti
-// .imcpack / pacchetto-studio, mappe del pianificatore). Prima c'erano tre copie divergenti
-// (IA.parseJsonSicuro, Neuro.parseTollerante, Pianificatore.leggiRisposta). Modulo PURO: niente DOM né rete.
-// - parseSicuro: <think>, fence, testo intorno → primo JSON bilanciato, LaTeX riparato; lancia se non c'è JSON.
-// - parseTollerante: parse diretto → riparazioni (fence, virgolette tipografiche, virgole finali) → riga per riga.
-// - recuperaArrayParziale: oggetti completi di un array troncato (risposta interrotta a metà).
-// - leggiFile: testo di un file JSON (BOM tollerato); null se illeggibile.
-// ============================================================
 const JsonAI = (() => {
-    /** BOM e caratteri di controllo (tranne \t \n \r) via. */
     function pulisci(raw) { return String(raw == null ? '' : raw).replace(/^\uFEFF/, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''); }
     const togliFence = (t) => t.replace(/```(?:json|javascript|js)?/gi, '');
     const LATEX = new Set(('frac dfrac tfrac sqrt text textrm mathrm mathbf mathit operatorname times cdot div pm mp neq ne leq le geq ge approx sim propto infty partial nabla int sum prod lim log ln exp sin cos tan to rightarrow leftarrow Rightarrow rightleftharpoons leftrightarrow left right bar vec hat dot overline underline ' +
         'alpha beta gamma Gamma delta Delta epsilon varepsilon zeta eta theta Theta iota kappa lambda Lambda mu nu xi Xi pi Pi rho sigma Sigma tau upsilon phi Phi varphi chi psi Psi omega Omega degree circ ce pu quad qquad newline not in notin cup cap subset forall exists rm bf it').split(' '));
-    /** Raddoppia i backslash del LaTeX SOLO dentro le stringhe JSON: `\\` già doppi, `\uXXXX` e i veri escape (\n, \t, \" …) restano. */
     function riparaLatex(t) {
         return t.replace(/"(?:[^"\\]|\\.)*"/gs, s => s.replace(/\\(\\|u[0-9a-fA-F]{4}|[a-zA-Z]+|[\s\S])/g, (m, x) => {
             if (x === '\\' || /^u[0-9a-fA-F]{4}$/.test(x))
-                return m; // già escapato · unicode valido
+                return m;
             if (!/^[a-zA-Z]/.test(x))
-                return '"/'.includes(x) ? m : '\\\\' + x; // \" \/ validi; \( \, \[ … sono LaTeX
+                return '"/'.includes(x) ? m : '\\\\' + x;
             if (LATEX.has(x))
-                return '\\\\' + x; // comando LaTeX intero (limite noto: \nu \tau \theta …)
+                return '\\\\' + x;
             if (/^[bfnrt]/.test(x))
-                return m; // vero escape JSON seguito da testo (es. \nnuovo)
-            return '\\\\' + x; // \l \s \c… invalidi in JSON → LaTeX
+                return m;
+            return '\\\\' + x;
         }));
     }
-    /** Toglie <think>, fence ``` e testo intorno; estrae il PRIMO JSON bilanciato (fuori dalle stringhe), ripara il LaTeX, poi JSON.parse. */
     function parseJsonSicuro(raw) {
         let t = pulisci(raw).replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').replace(/```(?:json)?/gi, '');
         const i = t.search(/[{[]/);
@@ -57,7 +45,6 @@ const JsonAI = (() => {
             }
         }
         t = t.slice(i, j + 1);
-        // sempre riparare prima: «\frac» è JSON valido (\f = form feed) ma va letto come LaTeX
         try {
             return JSON.parse(riparaLatex(t));
         }
@@ -81,7 +68,7 @@ const JsonAI = (() => {
         try {
             return { ok: true, dati: JSON.parse(raw), riparazioni: rip };
         }
-        catch (_) { /* si ripara */ }
+        catch (_) { }
         if (/```/.test(raw))
             rip.push('blocco markdown rimosso');
         const s = riparaJson(raw);
@@ -90,20 +77,19 @@ const JsonAI = (() => {
         try {
             return { ok: true, dati: JSON.parse(s), riparazioni: rip.concat(rip.length ? [] : ['caratteri spuri rimossi']) };
         }
-        catch (_) { /* ultima prova: un oggetto per riga */ }
+        catch (_) { }
         const righe = s.split('\n').map(x => x.trim().replace(/,$/, '')).filter(x => /^\{.*\}$/.test(x));
         const v = [];
         for (const r of righe) {
             try {
                 v.push(JSON.parse(r));
             }
-            catch (_) { /* riga scartata */ }
+            catch (_) { }
         }
         if (v.length)
             return { ok: true, dati: v, riparazioni: rip.concat(['letto riga per riga']) };
         return { ok: false, dati: null, riparazioni: rip };
     }
-    /** Recupera gli oggetti completi di un array JSON troncato; «chiave» = nome dell'array cercato (es. 'unita'). */
     function recuperaArrayParziale(raw, chiave = '') {
         const s = String(raw || ''), k0 = chiave && s.indexOf(chiave) >= 0 ? s.indexOf('[', s.indexOf(chiave)) : s.indexOf('[');
         if (k0 < 0)
@@ -134,7 +120,7 @@ const JsonAI = (() => {
                     try {
                         out.push(JSON.parse(s.slice(ini, k + 1)));
                     }
-                    catch (_) { /* oggetto rotto */ }
+                    catch (_) { }
                     ini = -1;
                 }
                 if (prof < 0)
@@ -145,7 +131,6 @@ const JsonAI = (() => {
         }
         return out;
     }
-    /** Oggetto/array da testo AI o già oggetto: parseSicuro, poi tollerante; null se niente. */
     function leggi(r) {
         if (r && typeof r === 'object')
             return r;
@@ -157,7 +142,6 @@ const JsonAI = (() => {
             return p.ok ? p.dati : null;
         }
     }
-    /** File JSON (pacchetti, .imcpack): BOM tollerato; null se illeggibile. */
     function leggiFile(t) { try {
         return JSON.parse(pulisci(t));
     }
@@ -168,13 +152,6 @@ const JsonAI = (() => {
     return { pulisci, riparaLatex, parseSicuro: parseJsonSicuro, riparaJson, parseTollerante, recuperaArrayParziale, leggi, leggiFile };
 })();
 
-// ============================================================
-// 01-util.ts — Utilità di base: DOM, date, id, markdown.
-// NOTA ARCHITETTURA: niente moduli/import. Tutti i file in src/ sono
-// "script" globali, compilati da tsc e concatenati in ordine di nome
-// (vedi build.mjs) in un unico app.js. Zero dipendenze esterne.
-// ============================================================
-/** Crea un elemento: h('div.card.big', {onclick: fn}, figli...) */
 function h(tag, attrs, ...figli) {
     const parti = tag.split('.');
     const el = document.createElement(parti[0] || 'div');
@@ -224,16 +201,12 @@ function uid() {
     try {
         return crypto.randomUUID();
     }
-    catch (_) { /* vecchi browser */ }
+    catch (_) { }
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
         const r = (Math.random() * 16) | 0;
         return (c === 'x' ? r : (r & 3) | 8).toString(16);
     });
 }
-// ---------- Date ----------
-// Le date sono salvate come stringhe "orario a muro" locali (Europe/Rome sul
-// tuo iPhone/PC): 'YYYY-MM-DD' oppure 'YYYY-MM-DDTHH:mm'. Niente fusi/UTC:
-// un impegno alle 15:00 resta alle 15:00.
 const pad2 = (n) => String(n).padStart(2, '0');
 function ymd(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
 function hm(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
@@ -250,11 +223,9 @@ function daDt(s) {
 function piuGiorni(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, d.getHours(), d.getMinutes()); }
 function piuMinuti(d, n) { return new Date(d.getTime() + n * 60000); }
 function inizioGiorno(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
-/** Lunedì della settimana di d (la settimana parte di lunedì). */
 function lunedi(d) { const g = (d.getDay() + 6) % 7; return piuGiorni(inizioGiorno(d), -g); }
 function stessoGiorno(a, b) { return ymd(a) === ymd(b); }
 function oggi() { return inizioGiorno(new Date()); }
-// v0.17: i formattatori si creano una volta sola per combinazione di opzioni (crearli è costoso)
 const FORMATI = new Map();
 function fmt(d, o) {
     const k = JSON.stringify(o);
@@ -269,7 +240,6 @@ const GIORNI_BREVI = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
 function maiuscola(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function dataLunga(d) { return maiuscola(fmt(d, { weekday: 'long', day: 'numeric', month: 'long' })); }
 function dataBreve(d) { return fmt(d, { weekday: 'short', day: 'numeric', month: 'short' }); }
-/** "Oggi", "Domani", "Ieri" oppure data breve. */
 function dataRelativa(d) {
     const diff = Math.round((inizioGiorno(d).getTime() - oggi().getTime()) / 86400000);
     if (diff === 0)
@@ -280,9 +250,8 @@ function dataRelativa(d) {
         return 'Ieri';
     return dataBreve(d);
 }
-// ---------- Markdown minimale (sicuro: prima escape, poi sostituzioni) ----------
 function esc(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); // v0.57: anche ' (attributi tra apici singoli)
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function mdInline(s) {
     return esc(s)
@@ -320,7 +289,6 @@ function md(src) {
         out.push('</ul>');
     return out.join('');
 }
-/** v0.37: SVG «puliti» prima di metterli nella pagina: niente script, eventi on*, link javascript:, oggetti incorporati. */
 const SVG_PULITI = new Map();
 function svgSicuro(svg) {
     if (!svg)
@@ -330,7 +298,6 @@ function svgSicuro(svg) {
         return c;
     let out = '';
     try {
-        // parser HTML (tollerante come innerHTML): lo stesso albero che il browser costruirebbe
         const doc = new DOMParser().parseFromString('<body>' + svg, 'text/html'), r = doc.body.firstElementChild;
         if (r && r.nodeName.toLowerCase() === 'svg' && doc.body.children.length === 1) {
             r.querySelectorAll('script,foreignObject,iframe,object,embed,use[href^="http"],animate,set').forEach(n => n.remove());
@@ -349,21 +316,12 @@ function svgSicuro(svg) {
     SVG_PULITI.set(svg, out);
     return out;
 }
-/** Mescola in modo uniforme (Fisher–Yates); sort con Math.random è sbilanciato. */
 function mescolaU(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
 } return a; }
-/** Normalizza per la ricerca: minuscole e senza accenti. */
 function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
 
-// ============================================================
-// 02-db.ts — Salvataggio locale (local-first).
-// Un solo "tavolo" di record: ogni record ha id (UUID), type, updatedAt,
-// deleted (soft delete / tombstone). È lo stesso formato che la Fase 2
-// sincronizza su Drive (merge per record, vince l'ultima modifica).
-// Se IndexedDB non è disponibile si ripiega su localStorage, poi memoria.
-// ============================================================
 const DB = (() => {
     const NOME = 'il-mio-calendario';
     const CHIAVE_LS = 'imc-records';
@@ -383,11 +341,10 @@ const DB = (() => {
         try {
             localStorage.setItem(CHIAVE_LS, JSON.stringify(Object.values(mem)));
         }
-        catch (_) { /* pieno o vietato */ }
+        catch (_) { }
     }
     return {
         get modo() { return modo; },
-        /** Apre il database e restituisce tutti i record. */
         async apri() {
             try {
                 idb = await apriIdb();
@@ -413,7 +370,6 @@ const DB = (() => {
                 }
             }
         },
-        /** Salva (inserisce o sovrascrive) uno o più record. */
         salva(recs) {
             if (modo === 'idb' && idb) {
                 return new Promise((ok, ko) => {
@@ -423,7 +379,7 @@ const DB = (() => {
                         st.put(r);
                     tx.oncomplete = () => ok();
                     tx.onerror = () => ko(tx.error);
-                    tx.onabort = () => ko(tx.error || new Error('scrittura annullata (spazio esaurito?)')); // v0.56.2: mai una promessa appesa
+                    tx.onabort = () => ko(tx.error || new Error('scrittura annullata (spazio esaurito?)'));
                 });
             }
             for (const r of recs)
@@ -432,7 +388,6 @@ const DB = (() => {
                 scriviLs();
             return Promise.resolve();
         },
-        /** v0.17: rimuove definitivamente dei record (solo per lapidi vecchie senza valore). */
         rimuovi(ids) {
             if (!ids.length)
                 return Promise.resolve();
@@ -455,11 +410,6 @@ const DB = (() => {
     };
 })();
 
-// ============================================================
-// 03-modello.ts — Tipi dei dati, stato in memoria, ricorrenze.
-// ============================================================
-// ---------- Stato ----------
-/** Dati di partenza di un dispositivo nuovo (updatedAt = 1: alla prima sincronizzazione vincono quelli su Drive). */
 function predefiniti() {
     return [
         { id: 'impostazioni', type: 'impostazioni', updatedAt: 1, tema: 'auto', accento: '#6c8cff', vistaIniziale: 'oggi' },
@@ -471,11 +421,11 @@ function predefiniti() {
 }
 const Stato = (() => {
     const rec = new Map();
-    const TIPI_SERVIZIO = new Set(['notifica']); // v0.17: lapidi ripulibili dopo 7 giorni
+    const TIPI_SERVIZIO = new Set(['notifica']);
     const lapideScaduta = (r) => TIPI_SERVIZIO.has(r.type) && (r.updatedAt || 0) < Date.now() - 7 * 86400000;
-    const inCorso = new Set(); // v0.56.1: scritture IndexedDB non ancora confermate
+    const inCorso = new Set();
     const traccia = (p) => { const q = p.catch(e => { console.warn('DB.salva', e); }); inCorso.add(q); q.then(() => inCorso.delete(q)); return q; };
-    let ver = 0, cacheVer = -1; // v0.17: versione dei dati e cache per tipo
+    let ver = 0, cacheVer = -1;
     const perTipo = new Map();
     const ascoltatori = [];
     let inAttesa = false;
@@ -493,8 +443,6 @@ const Stato = (() => {
             for (const r of await DB.apri())
                 rec.set(r.id, r);
             ver++;
-            // Primo avvio: categorie e impostazioni di partenza.
-            // updatedAt = 1 così, alla prima sincronizzazione, vincono sempre i dati già su Drive.
             if (!rec.has('impostazioni')) {
                 const nuovi = predefiniti();
                 for (const r of nuovi)
@@ -504,9 +452,7 @@ const Stato = (() => {
                 await DB.salva(nuovi);
             }
         },
-        /** Tutti i record non eliminati di un tipo. */
         tutti(type) {
-            // v0.17: indice per tipo, ricostruito solo dopo una modifica (ver). Restituisce sempre una copia.
             if (cacheVer !== ver) {
                 perTipo.clear();
                 cacheVer = ver;
@@ -520,10 +466,6 @@ const Stato = (() => {
             }
             return l.slice();
         },
-        /**
-         * v0.17: rimuove le lapidi scadute dei tipi "di servizio" (registro notifiche): non servono più alla
-         * sincronizzazione e ingrandirebbero dati.json. I dati dell'utente (eventi, schede…) non si toccano.
-         */
         pulisci() {
             const via = [];
             rec.forEach(r => { if (r.deleted && lapideScaduta(r))
@@ -538,36 +480,31 @@ const Stato = (() => {
             }
             return via.length;
         },
-        /** Numero di versione dei dati: cambia a ogni salvataggio/unione (per le cache). */
         get ver() { return ver; },
         prendi(id) {
             const r = rec.get(id);
             return r && !r.deleted ? r : undefined;
         },
-        /** Salva un record aggiornando updatedAt (serve alla sincronizzazione). */
         salva(r, silenzioso = false) {
             r.updatedAt = Date.now();
-            // v0.44 privacy: ogni dato porta l'account a cui appartiene (serve a non mescolare mai gli account)
             try {
                 const em = JSON.parse(localStorage.getItem('imc-email') || '""');
                 if (em)
                     r.acc = String(em).toLowerCase();
             }
-            catch (_) { /* */ }
+            catch (_) { }
             rec.set(r.id, r);
             ver++;
-            const p = traccia(DB.salva([r])); // v0.56.1: promise risolta solo a transazione IndexedDB completata (oncomplete)
+            const p = traccia(DB.salva([r]));
             if (!silenzioso)
-                notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
+                notifica();
             if (typeof Drive !== 'undefined')
                 Drive.programma();
             if (typeof GCal !== 'undefined' && (r.type === 'evento' || r.type === 'task'))
                 GCal.programma();
             return p;
         },
-        /** v0.56.1: si risolve quando tutte le scritture IndexedDB avviate finora sono confermate (oncomplete). */
         scritto() { return Promise.all(Array.from(inCorso)).then(() => undefined); },
-        /** Eliminazione "morbida": il record resta come lapide per la sync. */
         elimina(id) {
             const r = rec.get(id);
             if (!r)
@@ -575,16 +512,14 @@ const Stato = (() => {
             r.deleted = true;
             this.salva(r);
         },
-        /** Unisce record esterni (backup/Drive): vince l'updatedAt più recente. */
         unisci(esterni) {
             const cambiati = [];
             for (const e of esterni) {
                 if (!e || !e.id || !e.type)
                     continue;
                 if (e.deleted && lapideScaduta(e) && !rec.has(e.id))
-                    continue; // v0.17: lapidi vecchie già ripulite
+                    continue;
                 const mio = rec.get(e.id);
-                // v0.48: statistiche per domanda = contatore per dispositivo (si sommano, non vince l'ultimo)
                 const m = mio && e.type === 'statq' && mio.type === 'statq' ? StatQC.unisci(mio, e) : null;
                 if (m) {
                     if (!StatQC.uguali(m, mio)) {
@@ -607,10 +542,8 @@ const Stato = (() => {
             return cambiati.length;
         },
         esporta() { return Array.from(rec.values()); },
-        /** v0.44: cancella TUTTI i dati locali di questo dispositivo (quelli su Drive restano dove sono). */
         async svuotaLocale() { const ids = Array.from(rec.keys()); rec.clear(); const p = predefiniti(); for (const r of p)
             rec.set(r.id, r); ver++; await DB.rimuovi(ids); await DB.salva(p); notifica(); },
-        /** v0.44: rimuove davvero dal dispositivo (senza lapide) i record indicati. */
         async togliLocale(ids) { for (const id of ids)
             rec.delete(id); ver++; await DB.rimuovi(ids); notifica(); },
     };
@@ -631,7 +564,6 @@ const StatQC = {
     },
     canon(x) { return x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, k) => { o[k] = StatQC.canon(x[k]); return o; }, {}) : x; },
     uguali(a, b) { return JSON.stringify(StatQC.canon(a)) === JSON.stringify(StatQC.canon(b)); },
-    /** null = unione classica (manca `c` da una parte, o lapide). */
     unisci(a, b) {
         if (!a.c || !b.c || a.deleted || b.deleted)
             return null;
@@ -661,8 +593,6 @@ function categoriaVisibile(id) {
     const c = Stato.prendi(id);
     return !c || c.visibile;
 }
-// ---------- Ricorrenze ----------
-/** Genera in ordine le date di inizio di una serie (max 3000 passi). */
 function* dateSerie(inizio, rr) {
     const intervallo = Math.max(1, rr.interval || 1);
     const fino = rr.until ? piuGiorni(daYmd(rr.until), 1) : null;
@@ -703,19 +633,18 @@ function* dateSerie(inizio, rr) {
         else if (rr.freq === 'M') {
             d = new Date(inizio.getFullYear(), inizio.getMonth() + i * intervallo, inizio.getDate(), H, M);
             if (d.getDate() !== inizio.getDate())
-                continue; // es. il 31 nei mesi corti: si salta
+                continue;
         }
         else {
             d = new Date(inizio.getFullYear() + i * intervallo, inizio.getMonth(), inizio.getDate(), H, M);
             if (d.getMonth() !== inizio.getMonth())
-                continue; // 29 febbraio
+                continue;
         }
         if (finita(d))
             return;
         yield* emetti(d);
     }
 }
-/** Occorrenze di un evento che toccano l'intervallo [da, a). */
 function occorrenze(ev, da, a) {
     const inizio = daDt(ev.inizio);
     const durata = Math.max(0, daDt(ev.fine).getTime() - inizio.getTime());
@@ -740,7 +669,6 @@ function occorrenze(ev, da, a) {
     }
     return out;
 }
-/** Tutte le occorrenze visibili in [da, a), ordinate. */
 function occorrenzeTra(da, a) {
     let out = [];
     for (const ev of Stato.tutti('evento')) {
@@ -754,7 +682,6 @@ function occorrenzeDelGiorno(g) {
     const da = inizioGiorno(g), a = piuGiorni(da, 1);
     return occorrenzeTra(da, a).filter(o => o.fine > da || stessoGiorno(o.inizio, da));
 }
-/** Testo leggibile di una ricorrenza. */
 function testoRicorrenza(rr) {
     if (!rr)
         return '';
@@ -769,7 +696,6 @@ function testoRicorrenza(rr) {
         s += ', ' + rr.count + ' volte';
     return s;
 }
-// ---------- Promemoria/Task ----------
 function scadenzaTask(t) { return t.scadenza ? daDt(t.scadenza) : null; }
 function taskScaduto(t) {
     if (t.fatto || !t.scadenza)
@@ -777,7 +703,6 @@ function taskScaduto(t) {
     const d = daDt(t.scadenza);
     return t.scadenza.length > 10 ? d < new Date() : d < oggi();
 }
-/** Spunta un promemoria; se è ricorrente lo sposta alla prossima scadenza. */
 function spuntaTask(t) {
     if (!t.fatto && t.rrule && t.scadenza) {
         const base = daDt(t.scadenza);
@@ -807,10 +732,6 @@ function ordinaTask(a, b) {
     return b.priorita - a.priorita;
 }
 
-// ============================================================
-// 04-componenti.ts — Pezzi riusabili dell'interfaccia:
-// foglio (modale), dialogo di scelta, avviso (toast), campo ricorrenza.
-// ============================================================
 const ICONE = {
     oggi: '<path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/>',
     cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
@@ -828,7 +749,7 @@ const ICONE = {
     campana: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
 };
-const MODELLI_ICONA = new Map(); // v0.17: ogni icona si costruisce una volta e poi si clona
+const MODELLI_ICONA = new Map();
 function icona(nome, dim = 22) {
     const k = nome + '|' + dim;
     let m = MODELLI_ICONA.get(k);
@@ -839,7 +760,6 @@ function icona(nome, dim = 22) {
     }
     return m.cloneNode(true);
 }
-/** Foglio modale a tutta altezza su telefono, centrato su PC. */
 function foglio(opz) {
     let chiuso = false;
     const chiudi = () => { if (chiuso)
@@ -856,8 +776,6 @@ function foglio(opz) {
     document.addEventListener('keydown', tasto);
     return { chiudi };
 }
-/** Dialogo di scelta (al posto di confirm/alert, che su iOS in PWA danno problemi).
- *  v0.57 (A11): <dialog>.showModal() → focus intrappolato, Esc = Annulla, sfondo inerte; il focus torna dov'era. */
 function chiedi(titolo, scelte, testo) {
     return new Promise(ok => {
         const prima = document.activeElement;
@@ -881,7 +799,7 @@ function chiedi(titolo, scelte, testo) {
         const idT = 'dlg-' + Math.random().toString(36).slice(2, 8);
         const d = h('dialog.dialogo-sfondo', { 'aria-labelledby': idT, onclick: (e) => { if (e.target === d)
                 fine(null); } }, h('div.dialogo', { role: 'document' }, h('div.dialogo-titolo', { id: idT }, titolo), testo ? h('div.dialogo-testo', null, testo) : null, scelte.map(s => h('button.btn' + (s.pericolo ? '.pericolo' : ''), { type: 'button', onclick: () => fine(s.valore) }, s.testo)), h('button.btn.neutro', { type: 'button', onclick: () => fine(null) }, 'Annulla')));
-        d.addEventListener('cancel', e => { e.preventDefault(); fine(null); }); // Esc
+        d.addEventListener('cancel', e => { e.preventDefault(); fine(null); });
         document.body.appendChild(d);
         try {
             d.showModal();
@@ -895,7 +813,6 @@ function chiedi(titolo, scelte, testo) {
             primo.focus();
     });
 }
-/** Avviso temporaneo in alto. */
 function avviso(testo, durataMs = 4000, alTocco) {
     let zona = document.getElementById('avvisi');
     if (!zona) {
@@ -908,7 +825,6 @@ function avviso(testo, durataMs = 4000, alTocco) {
     if (durataMs > 0)
         setTimeout(() => el.remove(), durataMs);
 }
-/** Riga di modulo con etichetta. */
 function riga(etichetta, ...campo) {
     return h('label.riga', null, h('span.riga-eti', null, etichetta), h('span.riga-campo', null, campo));
 }
@@ -919,7 +835,6 @@ function selettore(opzioni, valore, onchange) {
     s.value = valore;
     return s;
 }
-/** Campo ricorrenza completo (frequenza, intervallo, giorni, fine). */
 function campoRicorrenza(iniziale, giornoBase) {
     const rr = iniziale ? JSON.parse(JSON.stringify(iniziale)) : null;
     const freq = selettore([['', 'Mai'], ['D', 'Ogni giorno'], ['W', 'Ogni settimana'], ['M', 'Ogni mese'], ['Y', 'Ogni anno']], rr ? rr.freq : '', () => aggiorna());
@@ -1000,13 +915,6 @@ function tendina(icona, voci, titolo = 'Altro') {
     return b;
 }
 
-// ============================================================
-// 04-simboli.ts — v0.34: niente emoji nell'interfaccia.
-// Gli emoji usati nei testi dei pulsanti/titoli vengono sostituiti al volo
-// da icone vettoriali (stesso tratto delle icone della barra), così l'app
-// ha un aspetto coerente e professionale. I testi scritti dall'utente
-// (campi, note, appunti) non vengono toccati.
-// ============================================================
 Object.assign(ICONE, {
     ai: '<path d="M12 3.5l1.7 4.6 4.6 1.7-4.6 1.7L12 16.1l-1.7-4.6L5.7 9.8l4.6-1.7z"/><path d="M18.5 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
     cervello: '<path d="M9.5 4.5A2.5 2.5 0 0 0 7 7a3 3 0 0 0-2 5.2A3 3 0 0 0 7.5 17 2.5 2.5 0 0 0 12 18.5v-12a2.5 2.5 0 0 0-2.5-2z"/><path d="M14.5 4.5A2.5 2.5 0 0 1 17 7a3 3 0 0 1 2 5.2 3 3 0 0 1-2.5 4.8 2.5 2.5 0 0 1-4.5 1.5"/>',
@@ -1057,7 +965,6 @@ Object.assign(ICONE, {
     pausa: '<path d="M8.5 5v14M15.5 5v14" stroke-width="2.6"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
     carica: '<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M4.5 14.5v5h15v-5"/>',
-    // v0.41.1: icone delle nuove funzioni (blocco note, audio, calcoli, menu)
     microfono: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5M9 20.5h6"/>',
     righello: '<path d="M3.5 15.5l12-12 5 5-12 12z"/><path d="M7 12l1.8 1.8M9.8 9.2l1.2 1.2M12.6 6.4l1.8 1.8M15.4 3.6"/>',
     calcolo: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 14.5v3" stroke-width="2.2"/>',
@@ -1085,7 +992,6 @@ Object.assign(ICONE, {
     espandi: '<path d="M14 4.5h5.5V10M10 19.5H4.5V14M19.5 4.5L13.5 10.5M4.5 19.5l6-6"/>',
     riduci: '<path d="M19.5 10H14V4.5M4.5 14H10v5.5M14 10l5.5-5.5M10 14l-5.5 5.5"/>',
 });
-/** emoji → icona (null = l'emoji viene solo tolto, es. le faccine dei voti). */
 const SIMBOLI = {
     '✨': 'ai', '🧠': 'cervello', '⚠': 'avvertenza', '📝': 'quiz', '☁': 'nuvola', '✅': 'fatto', '🧊': 'ghiaccio',
     '✏': 'matita', '✍': 'matita', '🗑': 'cestino', '🎉': 'traguardo', '🗣': 'voce', '➕': 'piu', '🎲': 'dado', '⏰': 'sveglia',
@@ -1098,7 +1004,6 @@ const SIMBOLI = {
     '😵': null, '😕': null, '😐': null, '🙂': null, '🔥': null, '😌': null,
 };
 const RE_SIMBOLI = new RegExp('(' + Object.keys(SIMBOLI).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\uFE0F?\\s?', 'gu');
-/** Dove NON sostituire: testo dell'utente. */
 const ZONE_UTENTE = 'textarea, input, [contenteditable], .md, .testo-utente, .nota-estratto, .cornell-testo, pre, code';
 function sostituisciSimboli(radice) {
     const el = radice.nodeType === 1 ? radice : radice.parentElement;
@@ -1142,7 +1047,6 @@ function sostituisciSimboli(radice) {
         }
         if (ultimo < v.length)
             fr.appendChild(document.createTextNode(v.slice(ultimo)));
-        // pulsante che era solo un emoji: gli do un nome accessibile dal title
         const btn = p.closest('button');
         if (btn && !btn.getAttribute('aria-label') && btn.getAttribute('title') && !(btn.textContent || '').replace(RE_SIMBOLI, '').trim())
             btn.setAttribute('aria-label', btn.getAttribute('title'));
@@ -1162,13 +1066,6 @@ function attivaSimboli() {
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
 }
 
-// ============================================================
-// 04-tocco.ts — v0.34: riscontro al tocco.
-// - Suono di tap: un "clic" morbido e cortissimo generato al volo con
-//   Web Audio (niente file). Su tocchi di pulsanti e mentre si scrive.
-//   Si spegne da Altro › Aspetto. Su iPhone parte dopo il primo tocco.
-// - Numeri che "contano" fino al valore (classe .conta).
-// ============================================================
 const Tocco = (() => {
     let ctx = null;
     let rumore = null;
@@ -1183,7 +1080,6 @@ const Tocco = (() => {
             return null;
         try {
             ctx = new C();
-            // 12 ms di rumore che decade in fretta: suona come un clic smorzato
             const n = Math.floor(ctx.sampleRate * 0.012);
             rumore = ctx.createBuffer(1, n, ctx.sampleRate);
             const d = rumore.getChannelData(0);
@@ -1195,13 +1091,12 @@ const Tocco = (() => {
         }
         return ctx;
     }
-    /** forte: 1 = pulsante, 0.6 = tasto della tastiera */
     function clic(forte = 1) {
         if (!attivo())
             return;
         const adesso = performance.now();
         if (adesso - ultimo < 30)
-            return; // niente raffiche
+            return;
         ultimo = adesso;
         const c = prepara();
         if (!c || !rumore)
@@ -1222,7 +1117,7 @@ const Tocco = (() => {
             g.connect(c.destination);
             s.start();
         }
-        catch (_) { /* niente */ }
+        catch (_) { }
     }
     const TOCCABILI = 'button, a[href], .chip, select, summary, label.interruttore, input[type=checkbox], input[type=radio], [role=button], [role=tab]';
     function attiva() {
@@ -1244,7 +1139,6 @@ const Tocco = (() => {
                 clic(0.6);
         }, { capture: true, passive: true });
     }
-    // ---------- Numeri che contano ----------
     const visti = new WeakSet();
     function conta(radice) {
         if (matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -1270,9 +1164,6 @@ const Tocco = (() => {
     return { clic, attiva, conta };
 })();
 
-// ============================================================
-// 05-editor.ts — Fogli di creazione/modifica: evento, promemoria, nota.
-// ============================================================
 const PROMEMORIA_OPZ = [
     [0, "All'ora dell'evento"], [5, '5 minuti prima'], [10, '10 minuti prima'], [30, '30 minuti prima'],
     [60, '1 ora prima'], [120, '2 ore prima'], [1440, '1 giorno prima'], [2880, '2 giorni prima'],
@@ -1281,7 +1172,6 @@ function testoPromemoria(min) {
     const t = PROMEMORIA_OPZ.find(p => p[0] === min);
     return t ? t[1] : min + ' minuti prima';
 }
-/** Apre l'editor evento. `occ` = occorrenza toccata (per le serie); `preset` = nuovo evento. */
 function apriEvento(esistente, occ, preset) {
     const nuovo = !esistente;
     const base = preset ? preset.inizio : new Date();
@@ -1297,7 +1187,6 @@ function apriEvento(esistente, occ, preset) {
     else {
         iniz0 = new Date(base);
         if (!preset || (iniz0.getHours() === 0 && iniz0.getMinutes() === 0 && !preset.tuttoIlGiorno)) {
-            // nessuna ora indicata: prossima ora piena
             const ora = new Date();
             iniz0.setHours(Math.min(23, ora.getHours() + 1), 0, 0, 0);
         }
@@ -1314,7 +1203,6 @@ function apriEvento(esistente, occ, preset) {
     const oInizio = h('input', { type: 'time', value: hm(iniz0) });
     const dFine = h('input', { type: 'date', value: ymd(fine0) });
     const oFine = h('input', { type: 'time', value: hm(fine0) });
-    // Spostando l'inizio, la fine mantiene la durata.
     let durata = fine0.getTime() - iniz0.getTime();
     const leggi = () => ({ i: daDt(dInizio.value + 'T' + (tutto.checked ? '00:00' : oInizio.value || '00:00')), f: daDt(dFine.value + 'T' + (tutto.checked ? '23:59' : oFine.value || '00:00')) });
     const inizioCambiato = () => {
@@ -1342,7 +1230,6 @@ function apriEvento(esistente, occ, preset) {
     const luogo = h('input', { type: 'text', placeholder: 'Aggiungi luogo', value: ev.luogo || '' });
     const cat = selettoreCategoria(ev.categoriaId);
     const note = h('textarea', { rows: 4, placeholder: 'Note (markdown: **grassetto**, - elenco, # titolo)', value: ev.note || '' });
-    // Promemoria multipli
     const prom = new Set(ev.promemoria || []);
     const zonaProm = h('div.chips');
     const selProm = selettore([['', '+ Aggiungi promemoria']].concat(PROMEMORIA_OPZ.map(p => [String(p[0]), p[1]])), '', () => {
@@ -1357,7 +1244,6 @@ function apriEvento(esistente, occ, preset) {
         Array.from(prom).sort((a, b) => a - b).forEach(m => zonaProm.appendChild(h('button.chip.attivo', { type: 'button', title: 'Tocca per togliere', onclick: () => { prom.delete(m); disegnaProm(); } }, testoPromemoria(m), ' ✕')));
     }
     disegnaProm();
-    // Checklist interna
     const voci = (ev.checklist || []).map(v => ({ ...v }));
     const zonaCheck = h('div.checklist');
     const nuovaVoce = h('input', { type: 'text', placeholder: 'Aggiungi voce…', onkeydown: (e) => {
@@ -1373,7 +1259,6 @@ function apriEvento(esistente, occ, preset) {
         voci.forEach((v, i) => zonaCheck.appendChild(h('div.voce', null, h('input', { type: 'checkbox', checked: v.fatto, onchange: (e) => { v.fatto = e.target.checked; } }), h('input', { type: 'text', value: v.testo, oninput: (e) => { v.testo = e.target.value; } }), h('button.btn-ico', { type: 'button', 'aria-label': 'Togli voce', onclick: () => { voci.splice(i, 1); disegnaCheck(); } }, icona('x', 18)))));
     }
     disegnaCheck();
-    // Allegati Drive: carico un file nella cartella dell'app oppure collego un file esistente col Picker.
     const allegati = (ev.allegati || []).map(a => ({ ...a }));
     const zonaAll = h('div.allegati');
     function disegnaAll() {
@@ -1451,12 +1336,10 @@ function apriEvento(esistente, occ, preset) {
                 Stato.salva(r);
                 return;
             }
-            // Evento ricorrente: solo questa occorrenza o tutta la serie?
             chiedi('Evento ricorrente', [{ testo: 'Solo questo evento', valore: 'uno' }, { testo: 'Tutta la serie', valore: 'tutti' }]).then(scelta => {
                 if (!scelta)
                     return;
                 if (scelta === 'uno') {
-                    // escludo il giorno dalla serie e creo un evento singolo modificato
                     const orig = Stato.prendi(esistente.id);
                     orig.exdate = (orig.exdate || []).concat([occ.chiave]);
                     Stato.salva(orig);
@@ -1464,7 +1347,6 @@ function apriEvento(esistente, occ, preset) {
                     Stato.salva(singolo);
                 }
                 else {
-                    // applico lo spostamento a tutta la serie mantenendo il giorno di partenza
                     const delta = daDt(r.inizio).getTime() - occ.inizio.getTime();
                     const dur = daDt(r.fine).getTime() - daDt(r.inizio).getTime();
                     const i0 = new Date(daDt(esistente.inizio).getTime() + delta);
@@ -1498,7 +1380,6 @@ function apriEvento(esistente, occ, preset) {
         setTimeout(() => { if (!document.activeElement || document.activeElement === document.body)
             titolo.focus(); }, 50);
 }
-/** Editor promemoria/task. */
 function apriTask(esistente, preset) {
     const nuovo = !esistente;
     const t = esistente ? JSON.parse(JSON.stringify(esistente)) : {
@@ -1540,7 +1421,6 @@ function apriTask(esistente, preset) {
         setTimeout(() => { if (!document.activeElement || document.activeElement === document.body)
             titolo.focus(); }, 50);
 }
-/** Editor nota (con anteprima markdown). */
 function apriNota(esistente, preset) {
     const nuovo = !esistente;
     const n = esistente ? JSON.parse(JSON.stringify(esistente)) : {
@@ -1584,7 +1464,6 @@ function apriNota(esistente, preset) {
         setTimeout(() => { if (!document.activeElement || document.activeElement === document.body)
             testo.focus(); }, 50);
 }
-/** Menu del pulsante "+": cosa vuoi creare? */
 function apriNuovo(giorno) {
     const g = giorno || oggi();
     chiedi('Nuovo', [
@@ -1601,37 +1480,12 @@ function apriNuovo(giorno) {
     });
 }
 
-// ============================================================
-// 06-drive.ts — Google: login (Google Identity Services), Drive API v3,
-// Picker, sincronizzazione, backup, allegati. Nessun backend.
-//
-// COME FUNZIONA LA SYNC
-// - Su Drive, nella cartella dell'app, c'è `dati/dati.json`: l'elenco di
-//   TUTTI i record (anche le lapidi `deleted`). È la fonte di verità.
-// - Sync = scarico dati.json → Stato.unisci (vince updatedAt più alto) →
-//   se ho modifiche locali più nuove, ricarico il file unito.
-// - Le modifiche locali vengono accodate (coda offline = tutti i record con
-//   updatedAt > ultimoSyncRiuscito) e spedite al prossimo sync.
-// - Una volta al giorno, prima di sovrascrivere, copio il file in
-//   `backup/dati-YYYY-MM-DD.json` e tengo gli ultimi 30.
-// - L'app NON elimina mai file di Drive: al massimo li sposta in
-//   `_cestino app/` dentro la sua cartella.
-// ============================================================
 const G_CLIENT_ID = '1032464441107-ccv99btse1o2497kckfia1ps074n1h0c.apps.googleusercontent.com';
 const G_API_KEY = 'AIzaSyD3-PbIu4U4jmAIru6C8wwGIboFcGKY4tk';
 const G_APP_ID = '1032464441107';
-// drive.file: scrive solo i file creati dall'app. drive.readonly: LEGGE le cartelle di studio (quiz HTML, PDF dei libri,
-// pacchetti creati da Claude). L'app non può modificare né eliminare nulla fuori dalla sua cartella.
 const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly openid email';
-// Privacy "solo mia": l'app accetta solo questi account (oltre al blocco lato Google: progetto in Testing con soli utenti di test).
-// v0.26: due account ammessi. Il proprietario vede anche il programma pubblicato col sito (Medicina);
-// il secondo account parte vuoto e riceve i suoi pacchetti dalla sua cartella Drive.
-// v0.57 (U4/A12): nel sito pubblico solo l'hash SHA-256 dell'email minuscola, mai l'indirizzo in chiaro.
-// Per ammettere un account: `node -e "console.log(require('crypto').createHash('sha256').update('<gmail minuscolo>').digest('hex'))"`,
-// aggiungere l'hash qui e l'account tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
 const HASH_PROPRIETARIO = 'aa6b55d11a786b1b08a4606d7b72587a231c199a5f5ef22f1dc231635fca545e';
 const HASH_AMMESSI = [HASH_PROPRIETARIO, 'fce4085ef1d95714e8c92ca2a8fe1ec0080ebcdb6538af6c4fac8e0d06138a1d'];
-/** SHA-256 esadecimale (FIPS 180-4) di una stringa UTF-8. Sincrono: eProprietario() deve sempre riflettere l'email attuale. */
 function sha256Hex(testo) {
     const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
         0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -1671,10 +1525,8 @@ function sha256Hex(testo) {
     }
     return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
 }
-/** Hash dell'email (minuscola, senza spazi) con cui si confrontano gli account ammessi. */
 const hashEmail = (email) => sha256Hex(String(email || '').trim().toLowerCase());
 const CARTELLA_APP = 'Calendario personale';
-/** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
 function scopeAttuale() { try {
     return G_SCOPE + (imp().gcal ? ' https://www.googleapis.com/auth/calendar.app.created' : '') + (imp().gcalLeggiPrimary ? ' ' + GCAL_SCOPE_LETTURA : '');
 }
@@ -1686,7 +1538,7 @@ const Drive = (() => {
     let token = '';
     let scadenzaToken = 0;
     let client = null;
-    let cartelle = {}; // nome → id (cache in localStorage)
+    let cartelle = {};
     let idDati = '';
     let timerSync = 0;
     let inCorso = false;
@@ -1703,7 +1555,7 @@ const Drive = (() => {
         set(k, v) { try {
             localStorage.setItem('imc-' + k, JSON.stringify(v));
         }
-        catch (_) { /* niente */ } },
+        catch (_) { } },
     };
     cartelle = LS.get('cartelle', {});
     idDati = LS.get('idDati', '');
@@ -1724,7 +1576,6 @@ const Drive = (() => {
             document.head.appendChild(s);
         });
     }
-    /** Ottiene un token. interattivo=false prova in silenzio (sessione Google già attiva). */
     async function accedi(interattivo) {
         await script('https://accounts.google.com/gsi/client');
         return new Promise(ok => {
@@ -1748,8 +1599,6 @@ const Drive = (() => {
             }
         });
     }
-    /** v0.56.1: consenso incrementale (es. calendar.events.readonly per il wizard BP4). Chiede a Google lo scope attuale
-     *  con popup; se l'utente rifiuta, il token Drive già valido resta quello di prima (accedi lo sostituisce solo in caso di successo). */
     function ampliaPermessi() { return accedi(true); }
     async function tokenValido(interattivo = false) {
         if (token && Date.now() < scadenzaToken)
@@ -1760,7 +1609,6 @@ const Drive = (() => {
             return token;
         return '';
     }
-    /** Chiamata REST a Drive. Rilancia l'errore con testo leggibile. */
     async function api(percorso, opz = {}, base = 'https://www.googleapis.com/drive/v3/') {
         const t = await tokenValido(false);
         if (!t)
@@ -1779,7 +1627,7 @@ const Drive = (() => {
             throw new Error('Drive ' + r.status + ': ' + txt.slice(0, 200));
         }
         if ((opz.query && opz.query.alt === 'media') || percorso.endsWith('/export'))
-            return r; // download: restituisco la Response grezza
+            return r;
         const ct = r.headers.get('content-type') || '';
         return ct.includes('json') ? r.json() : r;
     }
@@ -1787,7 +1635,6 @@ const Drive = (() => {
         const r = await api('', {}, 'https://www.googleapis.com/oauth2/v3/userinfo');
         return r.email || '';
     }
-    /** Trova (o crea) una cartella per nome dentro `parent`. */
     async function cartella(nome, parent) {
         const q = "name = '" + nome.replace(/'/g, "\\'") + "' and mimeType = 'application/vnd.google-apps.folder' and '" + parent + "' in parents and trashed = false";
         const r = await api('files', { query: { q, fields: 'files(id,name)', spaces: 'drive' } });
@@ -1807,7 +1654,6 @@ const Drive = (() => {
         LS.set('cartelle', cartelle);
     }
     function idCartella(n) { return cartelle[n]; }
-    /** v0.21: sottocartella dell'app creata al bisogno (es. «Appunti»), ricordata in locale. */
     async function sottocartella(nome) {
         await preparaCartelle();
         if (!cartelle[nome]) {
@@ -1816,7 +1662,6 @@ const Drive = (() => {
         }
         return cartelle[nome];
     }
-    /** Carica (crea o aggiorna) un file; contenuto testo o Blob. Ritorna l'id. */
     async function carica(nome, parent, contenuto, mime, idEsistente) {
         const meta = idEsistente ? { name: nome } : { name: nome, parents: [parent] };
         const form = new FormData();
@@ -1842,7 +1687,6 @@ const Drive = (() => {
         const r = await api('files', { query: { q: "'" + parent + "' in parents and trashed = false" + extra, fields: 'files(id,name,mimeType,size,modifiedTime,webViewLink)', orderBy: 'name', pageSize: '200' } });
         return r.files || [];
     }
-    /** Elenco completo (tutte le pagine) dei file di una cartella. */
     async function elencaTutti(parent) {
         const out = [];
         let pageToken = '';
@@ -1856,9 +1700,7 @@ const Drive = (() => {
         } while (pageToken);
         return out;
     }
-    /** Cerca file nel Drive (sola lettura): per nome, opzionalmente per tipo. Più recenti prima. */
     async function cerca(testo, mime) {
-        // v0.18: con mime = cartella cerca solo cartelle (import di mazzi), altrimenti solo file
         let q = "trashed = false";
         q += mime ? " and mimeType = '" + mime + "'" : " and mimeType != 'application/vnd.google-apps.folder'";
         if (testo.trim())
@@ -1866,7 +1708,6 @@ const Drive = (() => {
         const r = await api('files', { query: { q, fields: 'files(id,name,mimeType,webViewLink,modifiedTime)', orderBy: 'modifiedTime desc', pageSize: '40' } });
         return r.files || [];
     }
-    /** v0.18: contenuto di una cartella con tipo e data (sottocartelle incluse), per importare i mazzi. */
     async function elencaCompleti(parent) {
         const out = [];
         let pageToken = '';
@@ -1880,41 +1721,32 @@ const Drive = (() => {
         } while (pageToken);
         return out;
     }
-    /** v0.11: cerca cartelle per nome (sola lettura). */
     async function cercaCartelle(testo) {
         const q = "trashed = false and mimeType = 'application/vnd.google-apps.folder' and name contains '" + testo.replace(/'/g, "\\'") + "'";
         const r = await api('files', { query: { q, fields: 'files(id,name)', pageSize: '20' } });
         return r.files || [];
     }
-    /** Esporta un Google Sheet (primo foglio) come CSV. */
     async function esportaCsv(id) { const r = await api('files/' + id + '/export', { query: { mimeType: 'text/csv' } }); return r.text(); }
-    /** Mai eliminare: sposta nel cestino dell'app. */
     async function cestinaApp(id, daParent) {
         await api('files/' + id, { method: 'PATCH', query: { addParents: cartelle['_cestino app'], removeParents: daParent, fields: 'id' } });
     }
-    // ---------- Backup giornaliero ----------
     async function backupSeServe(testoAttuale) {
         const oggiK = ymd(new Date());
         if (LS.get('ultimoBackup', '') === oggiK)
             return;
         const dir = idCartella('backup');
-        // un altro dispositivo può averlo già fatto oggi: controllo su Drive
         if (await trovaFile('dati-' + oggiK + '.json', dir)) {
             LS.set('ultimoBackup', oggiK);
             return;
         }
         await carica('dati-' + oggiK + '.json', dir, testoAttuale, 'application/json');
         LS.set('ultimoBackup', oggiK);
-        // conservo gli ultimi 30: i più vecchi vanno in _cestino app (mai eliminati)
         const tutti = (await elenca(dir, " and name contains 'dati-'")).sort((a, b) => a.name < b.name ? 1 : -1);
         for (const f of tutti.slice(30))
             await cestinaApp(f.id, dir);
     }
-    // ---------- Sincronizzazione ----------
-    /** v0.49: schema dei dati che questa app sa scrivere (nell'involucro di dati.json, accanto a versione:1). */
     const SCHEMA = 2;
     let avvisatoVersione = false;
-    /** Firma del file su Drive: cambia a ogni scrittura, di qualunque dispositivo. */
     async function firmaDati(id) {
         const m = await api('files/' + id, { query: { fields: 'version,modifiedTime' } });
         return String(m.version || '') + '|' + String(m.modifiedTime || '');
@@ -1938,11 +1770,10 @@ const Drive = (() => {
                     try {
                         google.accounts.oauth2.revoke(token, () => { });
                     }
-                    catch (_) { /* niente */ }
+                    catch (_) { }
                     token = '';
                     throw new Error('Questa app è privata: l\'account ' + email + ' non è autorizzato.');
                 }
-                // v0.44 privacy: se su questo dispositivo c'erano i dati di un altro account, si cancellano PRIMA di unire
                 await Privacy.primaDiUnire(email);
                 stato.email = email;
                 LS.set('email', stato.email);
@@ -1962,9 +1793,7 @@ const Drive = (() => {
                 }
             }
             let solaLettura = false;
-            // v0.49: scarica → unisci → (prima di caricare) ricontrollo che il file non sia cambiato nel frattempo, max 3 giri
             for (let giro = 0;; giro++) {
-                // 1. scarico il file remoto, con la sua «firma» (version + modifiedTime di Drive)
                 let remoti = [];
                 let testoRemoto = '', firma = '';
                 if (idDati) {
@@ -1991,12 +1820,9 @@ const Drive = (() => {
                         throw new Error('Il file dati.json su Drive non è leggibile: non lo sovrascrivo.');
                     }
                     remoti = Array.isArray(j) ? j : j.records || [];
-                    // file scritto da un'app più nuova: lo leggo ma non lo sovrascrivo mai
                     if (!Array.isArray(j) && Number(j.schemaVersion) > SCHEMA)
                         solaLettura = true;
                 }
-                // 2. unisco (vince l'updatedAt più alto, per record)
-                // v0.44 privacy: mai unire record di un altro account; dispositivo riconosciuto; pulizia di ciò che non è suo
                 if (Privacy.accLocale() !== stato.email.toLowerCase())
                     await Privacy.primaDiUnire(stato.email);
                 remoti = remoti.filter(r => !r.acc || r.acc === stato.email.toLowerCase());
@@ -2004,7 +1830,6 @@ const Drive = (() => {
                 if (!(await Privacy.dispositivo(stato.email)))
                     return;
                 await Privacy.pulisciAltrui(stato.email);
-                // v0.57 (A14): immagini incorporate → archivio allegati (prima di ricaricare dati.json, così il file resta leggero)
                 if (giro === 0 && typeof Allegati !== 'undefined') {
                     try {
                         await Allegati.migra();
@@ -2017,13 +1842,11 @@ const Drive = (() => {
                 }
                 if (solaLettura)
                     break;
-                // 3. se ho qualcosa di più nuovo del remoto, ricarico
                 const remotiMap = new Map(remoti.map(r => [r.id, r.updatedAt || 0]));
                 const miei = Stato.esporta();
                 const daSpedire = miei.some(r => (r.updatedAt || 0) > (remotiMap.get(r.id) || 0));
                 if (!daSpedire && idDati)
                     break;
-                // un altro dispositivo ha scritto dopo il mio download? riscarico e riunisco invece di sovrascriverlo
                 if (idDati && firma && giro < 3 && await firmaDati(idDati) !== firma)
                     continue;
                 if (testoRemoto)
@@ -2062,7 +1885,6 @@ const Drive = (() => {
             inCorso = false;
         }
     }
-    /** Sync "a breve": dopo una modifica aspetto 3 s per raggruppare. */
     function programma() {
         if (!stato.email)
             return;
@@ -2071,14 +1893,12 @@ const Drive = (() => {
             cambia('attesa');
         timerSync = window.setTimeout(() => sincronizza(false), 3000);
     }
-    /** Precarica la libreria Google, così al tocco il popup si apre subito. */
     function precarica() {
         script('https://accounts.google.com/gsi/client').then(() => {
             if (!client)
                 client = google.accounts.oauth2.initTokenClient({ client_id: G_CLIENT_ID, scope: G_SCOPE, callback: () => { } });
         }).catch(() => { });
     }
-    /** DA CHIAMARE DIRETTAMENTE DAL TOCCO (niente await prima): apre il popup Google. */
     function login() {
         if (!client) {
             precarica();
@@ -2104,14 +1924,13 @@ const Drive = (() => {
             : 'Finestra di Google chiusa.');
         client.requestAccessToken({ prompt: primaVolta ? 'select_account' : '', scope: scopeAttuale(), login_hint: stato.email || undefined });
     }
-    /** v0.57 (A6): al cambio account le cartelle e dati.json in cache sono dell'account precedente. */
     function dimenticaCartelle() { cartelle = {}; idDati = ''; LS.set('cartelle', {}); LS.set('idDati', ''); }
     function logout() {
         if (token) {
             try {
                 google.accounts.oauth2.revoke(token, () => { });
             }
-            catch (_) { /* niente */ }
+            catch (_) { }
         }
         token = '';
         stato.email = '';
@@ -2120,7 +1939,6 @@ const Drive = (() => {
         LS.set('ultimoSync', 0);
         cambia('spento');
     }
-    // ---------- Allegati ----------
     async function caricaAllegato(file, parent) {
         if (!await tokenValido(true))
             throw new Error('Accedi a Google per caricare allegati.');
@@ -2128,7 +1946,6 @@ const Drive = (() => {
         const id = await carica(file.name, parent || idCartella('allegati'), file, file.type || 'application/octet-stream');
         return { id: uid(), nome: file.name, driveId: id, mime: file.type, url: 'https://drive.google.com/file/d/' + id + '/view' };
     }
-    /** Google Picker per scegliere un file esistente (lo rende accessibile all'app). */
     async function scegliConPicker(opz = {}) {
         const t = await tokenValido(true);
         if (!t)
@@ -2167,19 +1984,15 @@ const Drive = (() => {
         caricaAllegato, scegliConPicker, dimenticaCartelle, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
         elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle, api,
         get collegato() { return !!stato.email; },
-        /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
-        eProprietario() { return stato.email ? hashEmail(stato.email) === HASH_PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); }, // v0.26.2: senza account solo in prova locale
-        /** true se c'è un token valido adesso (senza aprire finestre). */
+        eProprietario() { return stato.email ? hashEmail(stato.email) === HASH_PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); },
         get pronto() { return !!token && Date.now() < scadenzaToken; },
     };
 })();
-/** Apre un allegato: link Drive in una nuova scheda (il viewer in-app arriva con la Fase 3). */
 function apriAllegato(a) {
     const url = a.url || (a.driveId ? 'https://drive.google.com/file/d/' + a.driveId + '/view' : '');
     if (url)
         window.open(url, '_blank', 'noopener');
 }
-/** Testo e colore dell'indicatore di stato sync. */
 function descrSync() {
     const s = Drive.stato;
     switch (s.sync) {
@@ -2191,10 +2004,6 @@ function descrSync() {
         default: return { testo: 'Errore sync: ' + s.messaggio, cls: 'sync-errore' };
     }
 }
-/**
- * Selettore di file del Drive dentro l'app (sostituisce il Google Picker, che richiede la chiave API).
- * Usa solo il login: cerca per nome tra i tuoi file. Restituisce i file scelti (vuoto se annulli).
- */
 function scegliFileDrive(opz = {}) {
     return new Promise(ok => {
         const scelti = new Map();
@@ -2239,7 +2048,6 @@ function scegliFileDrive(opz = {}) {
         const fs = foglio({ titolo: opz.titolo || 'Scegli dal Drive', corpo: h('div.modulo', null, campo, lista),
             etichettaSalva: opz.multi ? 'Aggiungi' : undefined,
             salva: opz.multi ? () => { fine(Array.from(scelti.values())); } : undefined });
-        // chiusura con Annulla / tocco fuori: risolvo con vuoto
         const oss = new MutationObserver(() => { if (!document.body.contains(lista)) {
             oss.disconnect();
             fine([]);
@@ -2250,21 +2058,7 @@ function scegliFileDrive(opz = {}) {
     });
 }
 
-// ============================================================
-// 06-gcal.ts — Specchio su Google Calendar + import/export .ics.
-//
-// SPECCHIO (Livello 2 delle notifiche): gli eventi (e i promemoria con ora)
-// delle categorie scelte vengono copiati in un calendario Google DEDICATO,
-// "Il mio calendario – app", creato dall'app. Così le notifiche arrivano
-// native dall'app Google Calendar / Calendario di iOS.
-// - Scope: calendar.app.created → l'app vede e modifica SOLO i calendari che
-//   ha creato lei, non gli altri tuoi calendari.
-// - Id evento Google = UUID del record senza trattini (deterministico): niente
-//   doppioni anche se lo specchio gira da due dispositivi.
-// - Si invia solo ciò che è cambiato (mappa id → updatedAt in localStorage).
-// ============================================================
 const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
-/** v0.55 (BP4): sola lettura degli eventi, usata SOLO su `primary` dal pianificatore (opt-in imp().gcalLeggiPrimary). */
 const GCAL_SCOPE_LETTURA = 'https://www.googleapis.com/auth/calendar.events.readonly';
 const GCAL_NOME = 'Il mio calendario – app';
 const GCal = (() => {
@@ -2279,7 +2073,7 @@ const GCal = (() => {
     const salvaInviati = (m) => { try {
         localStorage.setItem(LSK, JSON.stringify(m));
     }
-    catch (_) { /* niente */ } };
+    catch (_) { } };
     const attivo = () => !!imp().gcal;
     async function chiama(percorso, opz = {}) {
         const t = await Drive.tokenValido(false);
@@ -2295,7 +2089,6 @@ const GCal = (() => {
         }
         return r.json();
     }
-    /** Trova o crea il calendario dedicato; l'id è salvato nelle impostazioni (condiviso tra dispositivi). */
     async function calendario() {
         const i = imp();
         if (i.gcalId) {
@@ -2313,7 +2106,6 @@ const GCal = (() => {
         Stato.salva(i);
         return c.id;
     }
-    /** Id evento valido per Google (esadecimale, 32 caratteri) ricavato da una stringa. */
     function hashHex(s) {
         let out = '';
         for (let k = 0; k < 4; k++) {
@@ -2338,7 +2130,6 @@ const GCal = (() => {
             r += ';COUNT=' + rr.count;
         return r;
     }
-    /** Converte un record nella risorsa evento Google (null = non va nello specchio). */
     function risorsa(r) {
         const cats = imp().gcalCategorie || [];
         if (r.deleted || (cats.length && !cats.includes(r.categoriaId || '')))
@@ -2367,7 +2158,7 @@ const GCal = (() => {
         if (r.type === 'task') {
             const t = r;
             if (t.fatto || !t.scadenza || t.scadenza.length <= 10)
-                return null; // solo promemoria con ora
+                return null;
             const fine = dtStr(piuMinuti(daDt(t.scadenza), 15));
             return { id: idGoogle(t.id), summary: '☑ ' + t.titolo, description: (t.note || '') + '\n\n(promemoria da Il mio calendario)',
                 start: { dateTime: dtG(t.scadenza), timeZone: 'Europe/Rome' }, end: { dateTime: dtG(fine), timeZone: 'Europe/Rome' },
@@ -2376,13 +2167,12 @@ const GCal = (() => {
         return null;
     }
     let corrente = null;
-    /** Se un allineamento è già in corso, aspetta che finisca e poi ne fa un altro (così nulla va perso). */
     async function allinea(tutto = false) {
         while (corrente) {
             try {
                 await corrente;
             }
-            catch (_) { /* niente */ }
+            catch (_) { }
         }
         corrente = allineaOra(tutto);
         try {
@@ -2437,7 +2227,6 @@ const GCal = (() => {
                     console.warn('specchio', r.id, e);
                 }
             }
-            // Blocchi del piano di studio (un evento per voce, id derivato da piano+step: stabile).
             const vivi = new Set();
             if (imp().gcalStudio)
                 for (const p of [...Studio.pianiAttivi(), ...Studio.pianiVirtuali()])
@@ -2481,7 +2270,6 @@ const GCal = (() => {
                                     throw e;
                             }
                         }
-            // Studio disattivato (o voce sparita): tolgo i blocchi copiati prima
             for (const chiave of Object.keys(nuovi))
                 if (chiave.startsWith('piano:') && !vivi.has(chiave)) {
                     try {
@@ -2501,10 +2289,7 @@ const GCal = (() => {
             inCorso = false;
         }
     }
-    /** Id del calendario specchio (nei blueprint: gcalMirrorCalendarId). Le scritture vanno solo lì. */
     const gcalMirrorCalendarId = () => imp().gcalId || '';
-    /** v0.55 (BP4): impegni di `primary` tra due date (SOLA LETTURA, metodo GET). Gli eventi dello specchio sono esclusi
-     *  (anti-loop) da Pianificatore.occupatoDaEventi. Senza consenso o senza accesso → nessun impegno. */
     async function occupatoPrimary(da, a) {
         if (!imp().gcalLeggiPrimary)
             return [];
@@ -2521,7 +2306,6 @@ const GCal = (() => {
         return; clearTimeout(timer); timer = window.setTimeout(() => allinea().catch(() => { }), 5000); }
     return { allinea, programma, attivo, GCAL_NOME, gcalMirrorCalendarId, occupatoPrimary };
 })();
-// ---------- .ics ----------
 function icsEsc(s) { return s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;'); }
 function icsData(s, tutto) { return tutto ? ';VALUE=DATE:' + s.slice(0, 10).replace(/-/g, '') : ';TZID=Europe/Rome:' + s.replace(/-/g, '').replace(':', '') + '00'; }
 function esportaIcs() {
@@ -2550,7 +2334,6 @@ function esportaIcs() {
         r = ' ' + r.slice(74);
     } out.push(r); return out.join('\r\n'); }).join('\r\n') + '\r\n';
 }
-/** Importa VEVENT da un file .ics. Gli eventi già importati (stesso UID) vengono aggiornati, non duplicati. */
 function importaIcs(testo, categoriaId) {
     const righe = testo.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').split(/\r?\n/);
     const de = (s) => s.replace(/\\n/gi, '\n').replace(/\\([,;\\])/g, '$1');
@@ -2574,7 +2357,6 @@ function importaIcs(testo, categoriaId) {
             continue;
         if (riga === 'END:VEVENT') {
             if (ev.inizio) {
-                // un .ics esportato da questa app torna sullo stesso evento (niente doppioni)
                 const proprio = String(ev.uid || '').match(/^([0-9a-f-]{36}|ics-[A-Za-z0-9-]+)@il-mio-calendario$/);
                 const id = proprio ? proprio[1] : 'ics-' + String(ev.uid || uid()).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 60);
                 let fine = ev.fine || ev.inizio;
@@ -2639,23 +2421,9 @@ function importaIcs(testo, categoriaId) {
     return n;
 }
 
-// 06-notifiche.ts — Notifiche sul telefono tramite ntfy (Livello A del piano, docs/aggiornamento/06-NOTIFICHE.md).
-//
-// Come funziona: l'app calcola le notifiche delle prossime 72 ore e le manda SUBITO al server ntfy
-// con l'orario di consegna (`delay` = timestamp Unix). Il server le consegna all'ora giusta all'app
-// ntfy dell'iPhone, iscritta allo stesso codice segreto (topic). Su ntfy.sh si programma al massimo
-// 3 giorni avanti: per questo a ogni apertura/modifica l'app riprogramma la finestra.
-//
-// Non mandare doppioni: ogni notifica ha una chiave stabile (es. 'ev:<occorrenza>:<minuti>') e un
-// record 'notifica' sincronizzato (id 'ntf-<hash chiave>') con orario e impronta del contenuto.
-// Anche se l'app è aperta su più dispositivi, una notifica già registrata non si rimanda.
-//
-// Limite di ntfy: una notifica programmata non si può annullare sul server. Se un evento cambia o
-// sparisce, l'app manda, 5 secondi dopo il vecchio orario, un messaggio silenzioso con lo stesso
-// sequence_id che SOSTITUISCE quella vecchia ("Annullato" / "Spostato alle …").
 const Notifiche = (() => {
-    const FINESTRA = 72 * 3600000; // 3 giorni (limite di ntfy.sh)
-    const MAX_PER_GIRO = 40; // sotto il limite di raffica del server pubblico
+    const FINESTRA = 72 * 3600000;
+    const MAX_PER_GIRO = 40;
     const PRED = { mattino: '08:00', sera: '21:30', silDa: '23:00', silA: '07:30' };
     let timer = 0, inCorso = false;
     const server = () => (imp().ntfyServer || 'https://ntfy.sh').replace(/\/+$/, '');
@@ -2671,7 +2439,6 @@ const Notifiche = (() => {
         crypto.getRandomValues(b);
         return 'imc-' + Array.from(b, x => 'abcdefghijklmnopqrstuvwxyz0123456789'[x % 36]).join('');
     }
-    /** Orari silenziosi: se l'orario cade dentro, slitta alla fine del silenzio. */
     function fuoriSilenzio(t) {
         const i = imp(), da = minDi(i.ntfySilenzioDa || PRED.silDa), a = minDi(i.ntfySilenzioA || PRED.silA);
         const d = new Date(t), m = d.getHours() * 60 + d.getMinutes();
@@ -2680,7 +2447,7 @@ const Notifiche = (() => {
             return t;
         const fine = alle(d, i.ntfySilenzioA || PRED.silA);
         if (m >= da && da > a)
-            fine.setDate(fine.getDate() + 1); // es. 23:30 → 07:30 del giorno dopo
+            fine.setDate(fine.getDate() + 1);
         return fine.getTime();
     }
     function privata(catId) { return !!catId && (imp().ntfyPrivate || []).includes(catId); }
@@ -2688,7 +2455,6 @@ const Notifiche = (() => {
     function testoVoci(g) {
         return vociStudio(g).map(x => x.v.speciale ? x.v.t : Studio.etichetta(x.v.k)).join(' + ');
     }
-    /** Tutte le notifiche desiderate tra adesso e adesso+72h. */
     function calcola(adesso = Date.now()) {
         const fine = adesso + FINESTRA, T = tipi(), i = imp(), out = [];
         const metti = (d) => { d.at = fuoriSilenzio(d.at); if (d.at > adesso + 15000 && d.at <= fine)
@@ -2709,7 +2475,6 @@ const Notifiche = (() => {
                 metti({ chiave: 'task:' + t.id + ':' + t.scadenza, at: daDt(t.scadenza).getTime(), titolo: priv ? 'Promemoria' : t.titolo, testo: 'Scade adesso', tag: 'ballot_box_with_check' });
             }
         }
-        // Giorni della finestra (oggi compreso)
         for (let g = oggi(); g.getTime() <= fine; g = new Date(g.getFullYear(), g.getMonth(), g.getDate() + 1)) {
             const k = ymd(g), voci = testoVoci(g);
             const rip = typeof Ripassi === 'undefined' ? 0 : Ripassi.delGiorno(k).oggi.length;
@@ -2730,7 +2495,6 @@ const Notifiche = (() => {
         }
         return out;
     }
-    /** Invio a ntfy. mode 'no-cors': la richiesta parte anche se il server non manda le intestazioni CORS. */
     async function invia(m) {
         const corpo = { topic: imp().ntfyTopic, title: m.titolo, message: m.testo, click: linkApp(), sequence_id: 'imc' + hash(m.chiave) };
         if (m.tag)
@@ -2743,7 +2507,6 @@ const Notifiche = (() => {
     }
     const impronta = (d) => hash(d.at + '|' + d.titolo + '|' + d.testo);
     const idReg = (chiave) => 'ntf-' + hash(chiave);
-    /** Allinea il server ntfy con le notifiche desiderate. Restituisce quante ne ha mandate. */
     async function allinea() {
         if (!attive() || inCorso || !navigator.onLine)
             return 0;
@@ -2758,7 +2521,6 @@ const Notifiche = (() => {
                 visti.add(id);
                 if (reg && !reg.deleted && reg.h === h)
                     continue;
-                // Cambiata e la vecchia è ancora in attesa: subito dopo il vecchio orario la sostituisco in silenzio.
                 if (reg && !reg.deleted && reg.at > adesso && reg.at !== d.at) {
                     await invia({ chiave: d.chiave, at: reg.at + 5000, titolo: '↪ ' + reg.titolo, testo: 'Spostato: ' + dataRelativa(new Date(d.at)).toLowerCase() + ' alle ' + hm(new Date(d.at)), prio: 1 });
                     inviati++;
@@ -2767,7 +2529,6 @@ const Notifiche = (() => {
                 inviati++;
                 Stato.salva({ id, type: 'notifica', updatedAt: 0, at: d.at, h, titolo: d.titolo }, true);
             }
-            // Notifiche registrate in futuro che non servono più: annullo (sostituzione silenziosa) e chiudo il registro.
             for (const reg of Stato.tutti('notifica')) {
                 if (visti.has(reg.id))
                     continue;
@@ -2777,7 +2538,7 @@ const Notifiche = (() => {
                     Stato.elimina(reg.id);
                 }
                 else if (reg.at < adesso - 86400000)
-                    Stato.elimina(reg.id); // vecchie: pulizia
+                    Stato.elimina(reg.id);
             }
         }
         catch (e) {
@@ -2788,14 +2549,13 @@ const Notifiche = (() => {
         }
         return inviati;
     }
-    /** Programma un allineamento tra qualche secondo (le modifiche ravvicinate si accorpano). */
     function programma() { if (!attive())
         return; clearTimeout(timer); timer = setTimeout(() => { allinea(); }, 4000); }
     function attiva() { const i = imp(); if (!i.ntfyTopic)
         i.ntfyTopic = nuovoTopic(); i.ntfy = true; Stato.salva(i); return i.ntfyTopic; }
     function rigenera() {
         for (const r of Stato.tutti('notifica'))
-            Stato.elimina(r.id); // il nuovo topic riparte da zero
+            Stato.elimina(r.id);
         const i = imp();
         i.ntfyTopic = nuovoTopic();
         Stato.salva(i);
@@ -2805,23 +2565,6 @@ const Notifiche = (() => {
     return { calcola, allinea, programma, attiva, rigenera, prova, attive, server, PRED, nuovoTopic, fuoriSilenzio };
 })();
 
-// =====================================================================
-// 06-privacy.ts — v0.44 I DATI DI UN ACCOUNT NON FINISCONO MAI IN UN ALTRO
-// Problema: i dati del proprietario ricomparivano nell'app di un altro account (es. dispositivo usato
-// prima da lui, programma del sito, pacchetti trovati nel Drive condiviso) e, una volta uniti, venivano
-// risalvati nel Drive dell'altro → ricomparivano a ogni sincronizzazione.
-// Rimedio (identità = account Google, già con login: nessuna password nuova da ricordare):
-//  1) ogni record porta l'account a cui appartiene («acc»), stampato a ogni salvataggio;
-//  2) il dispositivo ricorda di chi sono i dati locali («accLocale»): se accede un ALTRO account, i dati
-//     locali si cancellano PRIMA di unirli (quelli del proprietario restano al sicuro nel suo Drive);
-//  3) a ogni sincronizzazione di un account non proprietario si eliminano (con lapide, quindi anche dal
-//     suo Drive e dagli altri suoi dispositivi) i record di un altro account e quelli derivati dal programma
-//     del proprietario (pacchetti del sito, progressi, statistiche e modifiche delle sue schede);
-//  4) la ricerca dei pacchetti guarda solo i file DI PROPRIETÀ dell'account (non quelli condivisi con lui);
-//  5) «Dispositivi riconosciuti»: ogni dispositivo si registra (nome, ultimo accesso). Da Altro → Dati
-//     si può scollegare un dispositivo: alla prossima apertura cancella i dati locali ed esce dall'account.
-//     Uscendo dall'account si può anche cancellare subito tutto da questo dispositivo.
-// =====================================================================
 const Privacy = (() => {
     const KLOC = 'imc-accLocale', KDEV = 'imc-dispositivo';
     const accLocale = () => { try {
@@ -2833,19 +2576,19 @@ const Privacy = (() => {
     const setAcc = (e) => { try {
         localStorage.setItem(KLOC, JSON.stringify(e.toLowerCase()));
     }
-    catch (_) { /* */ } };
+    catch (_) { } };
     function idDispositivo() {
         let id = '';
         try {
             id = localStorage.getItem(KDEV) || '';
         }
-        catch (_) { /* */ }
+        catch (_) { }
         if (!id) {
             id = 'dev-' + uid();
             try {
                 localStorage.setItem(KDEV, id);
             }
-            catch (_) { /* */ }
+            catch (_) { }
         }
         return id;
     }
@@ -2855,12 +2598,8 @@ const Privacy = (() => {
         const br = /Edg\//.test(u) ? 'Edge' : /CriOS|Chrome/.test(u) ? 'Chrome' : /FxiOS|Firefox/.test(u) ? 'Firefox' : /Safari/.test(u) ? 'Safari' : '';
         return tipo + (br ? ' · ' + br : '');
     }
-    // v0.57 (A6): l'isolamento vale anche per localStorage e Cache Storage, non solo per i record.
-    // SENSIBILI = segreti e tracce dell'account (via anche con «Esci soltanto»); al cambio account o con
-    // «Esci e cancella» va via tutto tranne le preferenze del dispositivo in TIENI.
     const SENSIBILI = ['imc-ai-keys', 'imc-groq-chiave', 'imc-gemini-chiave', 'imc-ai-uso', 'imc-gcal-inviati'];
     const TIENI = new Set([KDEV, 'imc-records', 'pref-mano', 'imc-quiz-modo']);
-    /** Toglie da localStorage le chiavi dell'account. tutto=false: solo SENSIBILI. Restituisce quante ne ha tolte. */
     function pulisciLocalStorage(tutto) {
         const via = [];
         try {
@@ -2876,7 +2615,6 @@ const Privacy = (() => {
         }
         return via.length;
     }
-    /** Cancella anche i PDF dei libri in Cache Storage (sono file del Drive dell'account precedente). */
     async function pulisciCache() {
         try {
             if (typeof caches !== 'undefined')
@@ -2886,7 +2624,6 @@ const Privacy = (() => {
             console.warn('Privacy: cache PDF non cancellata', e);
         }
     }
-    /** Tutto ciò che appartiene all'account precedente, su questo dispositivo. */
     async function svuotaAccount() {
         await Stato.svuotaLocale();
         pulisciLocalStorage(true);
@@ -2896,7 +2633,6 @@ const Privacy = (() => {
         if (typeof Drive !== 'undefined' && Drive.dimenticaCartelle)
             Drive.dimenticaCartelle();
     }
-    /** Chiamata appena si conosce l'account del login, PRIMA di unire i dati remoti. */
     async function primaDiUnire(email) {
         const e = email.toLowerCase(), prec = accLocale();
         let svuotato = false;
@@ -2905,7 +2641,6 @@ const Privacy = (() => {
             svuotato = true;
         }
         else if (!prec) {
-            // dispositivo di una versione precedente: tolgo i record marcati con un altro account
             const altrui = Stato.esporta().filter(r => r.acc && r.acc !== e).map(r => r.id);
             if (altrui.length)
                 await Stato.togliLocale(altrui);
@@ -2913,7 +2648,6 @@ const Privacy = (() => {
         setAcc(e);
         return svuotato;
     }
-    /** Id delle schede, dei sotto-step e dei pacchetti del programma del proprietario (dal sito). */
     let idSito = null;
     function caricaIdSito() {
         if (!idSito)
@@ -2940,18 +2674,17 @@ const Privacy = (() => {
                             }
                     }
                 }
-                catch (_) { /* offline */ }
+                catch (_) { }
                 if (!pk.size)
-                    idSito = null; // offline: riprovo la prossima volta
+                    idSito = null;
                 return { pk, voci, titoli };
             })();
         return idSito;
     }
-    /** Per un account NON proprietario: elimina (con lapide → anche dal suo Drive) ciò che è del proprietario. */
     async function pulisciAltrui(email) {
         const e = email.toLowerCase();
         if (!e || hashEmail(e) === HASH_PROPRIETARIO)
-            return 0; // v0.57: confronto su hash dell'email ricevuta (non dell'account in sessione)
+            return 0;
         const s = await caricaIdSito();
         let n = 0;
         const togli = (r) => { Stato.elimina(r.id); n++; };
@@ -2966,7 +2699,7 @@ const Privacy = (() => {
                     n++;
                 }
                 continue;
-            } // mai senza impostazioni
+            }
             if (r.acc && r.acc !== e) {
                 togli(r);
                 continue;
@@ -2993,7 +2726,6 @@ const Privacy = (() => {
         }
         return n;
     }
-    /** Registra/aggiorna questo dispositivo; se è stato scollegato, cancella tutto ed esce. */
     async function dispositivo(email) {
         const id = idDispositivo(), d = Stato.rec.get(id);
         if (d && !d.deleted && d.revocato) {
@@ -3008,7 +2740,6 @@ const Privacy = (() => {
         void email;
         return true;
     }
-    /** Uscita sicura: scollega l'account e (se scelto) cancella tutto da questo dispositivo. */
     async function esci(cancella) {
         if (cancella) {
             try {
@@ -3020,12 +2751,11 @@ const Privacy = (() => {
             await svuotaAccount();
         }
         else
-            pulisciLocalStorage(false); // A6: le chiavi AI non restano a chi usa il dispositivo dopo
+            pulisciLocalStorage(false);
         Drive.logout();
         if (cancella)
             location.reload();
     }
-    /** Altro → I miei dati: dispositivi riconosciuti. */
     function sezione() {
         const mio = idDispositivo();
         const lista = Stato.tutti('dispositivo').sort((a, b) => b.ultimo < a.ultimo ? -1 : 1);
@@ -3039,21 +2769,8 @@ const Privacy = (() => {
     return { primaDiUnire, pulisciAltrui, dispositivo, esci, sezione, idDispositivo, accLocale, pulisciLocalStorage, svuotaAccount };
 })();
 
-// =====================================================================
-// 06-trova.ts — v0.42 RICERCA UNIVERSALE SUL DRIVE (per chiunque usi l'app)
-// Non dipende da cartelle fisse: cerca in TUTTO il Drive dell'utente (scope drive.readonly) e ordina i
-// risultati con un punteggio, come farebbe una persona che conosce le sue cartelle:
-//   1) contenuto: Drive indicizza il testo di JSON/PDF/Docs → «fullText contains» trova i pacchetti
-//      anche se hanno un nome qualunque (cerca la firma "pacchetto-studio");
-//   2) nome del file: parole chiave del tipo cercato (step, piano, quiz, scheda, materie…);
-//   3) cartelle: il nome della cartella e del suo genitore (es. «materiale studio», «fisica quiz»,
-//      «Calendario personale») e le cartelle dove l'app ha già trovato roba (impara da sola);
-//   4) materie e corsi dell'utente (dai pacchetti già presenti e dalle sue parole);
-//   5) recenza e dimensione ragionevole.
-// Ogni risultato porta il «perché» del punteggio, così è verificabile.
-// =====================================================================
 const Trova = (() => {
-    const KCART = 'trova-cartelle'; // cartelle dove l'app ha già trovato cose utili (si impara)
+    const KCART = 'trova-cartelle';
     const nomiCartelle = new Map();
     const norm2 = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     const esc = (s) => s.replace(/\\/g, '').replace(/'/g, "\\'");
@@ -3071,7 +2788,7 @@ const Trova = (() => {
         try {
             localStorage.setItem(KCART, JSON.stringify(c));
         }
-        catch (_) { /* privato */ }
+        catch (_) { }
     }
     async function cartella(id) {
         if (!nomiCartelle.has(id))
@@ -3089,7 +2806,6 @@ const Trova = (() => {
             return [];
         }
     }
-    /** Parole che descrivono il mondo dell'utente: materie, corsi, step già presenti. */
     function contesto() {
         const o = new Set(['studio', 'materiale', 'quiz', 'schede', 'piano', 'step', 'calendario', 'corso', 'esame', 'lezioni', 'universita']);
         try {
@@ -3107,11 +2823,10 @@ const Trova = (() => {
                 if (c.nome)
                     o.add(norm2(c.nome));
         }
-        catch (_) { /* senza dati */ }
+        catch (_) { }
         ['chimica', 'biologia', 'fisica', 'matematica', 'anatomia', 'fisiologia', 'istologia', 'biochimica', 'genetica', 'statistica'].forEach(x => o.add(x));
         return Array.from(o).filter(x => x && x.length > 2);
     }
-    /** Punteggio di un file rispetto alle parole chiave (con il «perché»). */
     async function punteggio(f, parole, extra) {
         const perche = [];
         let p = 0;
@@ -3167,17 +2882,13 @@ const Trova = (() => {
         }
         return { ...f, punti: Math.round(p), perche, cartella: cart };
     }
-    /** PACCHETTI (piani, step, corsi): ovunque nel Drive.
-     *  v0.43 memoria: dopo una ricerca completa, per 7 giorni cerca solo i file MODIFICATI da allora
-     *  e riaggiunge quelli già noti (MemoriaIA, tipo «pacchetto»): molte meno chiamate al Drive. */
     async function pacchetti(completa = false) {
         let ultima = 0;
         try {
             ultima = +(localStorage.getItem('trova-ultima') || 0);
         }
-        catch (_) { /* */ }
+        catch (_) { }
         const incr = !completa && Date.now() - ultima < 7 * 864e5 ? " and modifiedTime > '" + new Date(ultima - 36e5).toISOString() + "'" : '';
-        // v0.44 privacy: solo file DI PROPRIETÀ dell'account (mai i pacchetti di altri condivisi con lui)
         const firma = await query("'me' in owners and fullText contains 'pacchetto-studio'" + incr, 300);
         const json = await query("'me' in owners and (mimeType = 'application/json' or name contains '.json')" + incr, 400);
         if (incr) {
@@ -3189,7 +2900,7 @@ const Trova = (() => {
             try {
                 localStorage.setItem('trova-ultima', String(Date.now()));
             }
-            catch (_) { /* */ }
+            catch (_) { }
         }
         const visti = new Map();
         for (const f of firma)
@@ -3207,9 +2918,6 @@ const Trova = (() => {
         }
         return out.sort((a, b) => b.punti - a.punti);
     }
-    /** FILE PER UN ARGOMENTO (fonti di studio: PDF, Documenti, slide, testi).
-     *  v0.43 memoria: prima guarda «dove stava cosa» (argomenti simili già cercati e usati con successo):
-     *  se la memoria è buona basta UNA ricerca nel Drive invece di sei. */
     async function fonti(argomento, extraParole = [], max = 12) {
         const ricordati = MemoriaIA.migliori('ricerca', 'posto', 3, argomento).filter(x => MemoriaIA.simile(argomento, x.k) >= .5);
         const daMemoria = [];
@@ -3223,7 +2931,6 @@ const Trova = (() => {
             return [];
         const tipiQ = "(mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'text/plain' or mimeType = 'text/markdown')";
         const visti = new Map();
-        // una ricerca per ogni parola (nel testo) + una con tutte insieme (più precisa)
         const qs = [chiavi.map(w => "fullText contains '" + esc(w) + "'").join(' and '), ...(memBuona ? [] : chiavi.slice(0, 5).map(w => "fullText contains '" + esc(w) + "'"))];
         for (let i = 0; i < qs.length; i++)
             for (const f of await query(qs[i] + ' and ' + tipiQ, i ? 40 : 60)) {
@@ -3250,12 +2957,10 @@ const Trova = (() => {
         }
         return out.sort((a, b) => b.punti - a.punti).slice(0, max);
     }
-    /** Ricorda dove stava cosa: argomento → file usati (con pagine utili). */
     function ricordaPosto(argomento, files) {
         if (files.length)
             MemoriaIA.nota('ricerca', 'posto', argomento, { files: files.map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, cartella: f.cartella || '', modifiedTime: '' })) });
     }
-    /** Un file per nome (es. una scheda quiz) quando la cartella indicata dal pacchetto non esiste. */
     async function perNome(parti, tipo) {
         const q = parti.filter(Boolean).map(x => "name contains '" + esc(x) + "'").join(' and ') + (tipo ? " and mimeType = '" + tipo + "'" : '');
         const r = await query(q, 20);
@@ -3269,15 +2974,6 @@ const Trova = (() => {
     return { pacchetti, fonti, perNome, impara, contesto, ricordaPosto };
 })();
 
-// =====================================================================
-// 07-aigen.ts — Quiz Studio Q5: domande nuove generate dall'AI (Groq)
-// 1) l'AI scrive domande SOLO dalle citazioni del libro presenti nella scheda;
-// 2) un secondo passaggio le risolve "alla cieca" (opzioni mescolate, senza
-//    sapere la giusta): se sbaglia o le trova ambigue, la domanda è scartata;
-// 3) controlli automatici (formato, doppioni, lunghezza della corretta);
-// 4) le superstiti vanno nella coda «Da approvare»: entrano nella banca
-//    (record 'modq' nuova) solo quando l'utente le approva.
-// =====================================================================
 const AIGen = (() => {
     const N = 5;
     const parole = (s) => new Set(s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 3));
@@ -3293,7 +2989,6 @@ const AIGen = (() => {
     function hash(s) { let x = 5381; for (let i = 0; i < s.length; i++)
         x = ((x << 5) + x + s.charCodeAt(i)) | 0; return (x >>> 0).toString(36); }
     const proposte = (sk) => Stato.tutti('propq').filter(r => !r.deleted && (!sk || r.sk === sk));
-    /** Controlli automatici: null se va bene, altrimenti il motivo dello scarto. */
     function controlla(d, esistenti) {
         if (!d || typeof d.q !== 'string' || d.q.trim().length < 15)
             return 'testo mancante';
@@ -3327,7 +3022,6 @@ const AIGen = (() => {
             + 'Formato: {"domande":[{"lv":"…","q":"…","o":["corretta","d1","d2","d3","d4"],"ew":["…","…","…","…"],"e":["…","…","…"],"cit":"…"}]}';
         return [{ role: 'system', content: sys }, { role: 'user', content: u }];
     }
-    /** Esame alla cieca: restituisce per ogni domanda se il risolutore ha trovato la corretta senza ambiguità. */
     async function esame(dom, mat, cit) {
         const L = 'ABCDE';
         const mesc = dom.map(d => { const ord = mescolaU([0, 1, 2, 3, 4]); return { ord, testo: d.q + '\n' + ord.map((k, i) => L[i] + ') ' + d.o[k]).join('\n') }; });
@@ -3351,7 +3045,6 @@ const AIGen = (() => {
             return { ok: true, motivo: '' };
         });
     }
-    /** Genera e mette in coda le domande per una scheda. Ritorna quante sono entrate in coda e gli scarti. */
     async function genera(pk, m, micro, s, passo = () => { }) {
         passo('Leggo la scheda…');
         const B = await Banca.scheda(pk, m, micro, s);
@@ -3409,7 +3102,6 @@ const AIGen = (() => {
         }
         return { inCoda: 0, scarti };
     }
-    /** Scheda con il peggior rapporto errori (dai quiz nell'app; poi punteggio basso). */
     function piuDebole() {
         const agg = new Map();
         for (const r of QuizApp.stat()) {
@@ -3433,7 +3125,6 @@ const AIGen = (() => {
         }
         return peggio >= 0 ? best : null;
     }
-    /** Avvia la generazione con avvisi e apre la coda. */
     async function avvia(pk, m, micro, s) {
         if (!navigator.onLine) {
             avviso('Serve la connessione.');
@@ -3450,7 +3141,6 @@ const AIGen = (() => {
             avviso(e.message || 'Errore', 7000);
         }
     }
-    /** Coda «Da approvare». */
     function coda(sk) {
         const corpo = h('div.modulo');
         const f = foglio({ titolo: 'Domande AI da approvare', corpo });
@@ -3475,7 +3165,6 @@ const AIGen = (() => {
         disegnaCoda();
         void f;
     }
-    /** Riquadro in Studio → Errori. */
     function sezione() {
         const n = proposte().length, x = piuDebole();
         return h('section.card', null, h('h2.card-titolo', null, '🤖 Domande nuove con l\'AI'), h('div.tenue.piccolo', null, 'L\'AI scrive domande dalle citazioni del libro, le controlla risolvendole alla cieca e le mette qui: entrano nei quiz solo se le approvi.'), h('div.bottoni', null, n ? h('button.btn', { onclick: () => coda() }, 'Da approvare (' + n + ')') : null, x ? h('button.btn.neutro', { onclick: () => avvia(x.pk, x.mat.m, x.mi.n, x.s) }, 'Genera per il punto più debole') : null), x ? h('div.tenue.piccolo', null, 'Punto più debole ora: ' + x.mi.n + ' · ' + x.s.titolo) : null);
@@ -3483,25 +3172,14 @@ const AIGen = (() => {
     return { genera, avvia, coda, sezione, controlla, esame, piuDebole, proposte };
 })();
 
-// ============================================================
-// 07-allegati.ts — v0.57 (BP6 · A14): immagini dei fogli a mano FUORI da dati.json.
-// Prima ogni pagina PDF/foto/risultato finiva come data-URL dentro il record → dati.json da ~7 MB a ogni sync.
-// Ora: il record tiene solo un riferimento «imc-img:<hash>»; i byte stanno in IndexedDB
-// ('imc-allegati') e, per gli altri dispositivi, su Drive in «Calendario personale/Allegati app/<hash>.img».
-// - Migrazione automatica e retrocompatibile (schemaVersion resta 2): un data-URL viene sostituito dal
-//   riferimento SOLO dopo che la scrittura in IndexedDB è riuscita. Se fallisce, il record resta com'era.
-// - Un'app vecchia che riceve un riferimento vede l'immagine mancante ma lo conserva così com'è: nessuna perdita.
-// - Mai eliminazioni su Drive: si caricano solo file nuovi (nome = hash del contenuto, quindi immutabili).
-// ============================================================
 const Allegati = (() => {
     const PREFISSO = 'imc-img:';
     const NOME_DB = 'imc-allegati';
     const CARTELLA = 'Allegati app';
     const CHIAVE_ATTESA = 'imc-allegati-attesa';
-    const mem = new Map(); // rif → data-URL (cache di sessione)
+    const mem = new Map();
     const inArrivo = new Map();
     let dbp = null;
-    /** Hash sincrono a 64 bit (due FNV-1a) + lunghezza: stesso contenuto → stesso riferimento. */
     function hash(s) {
         let a = 0x811c9dc5, b = 0x01000193 ^ s.length;
         for (let i = 0; i < s.length; i++) {
@@ -3579,7 +3257,6 @@ const Allegati = (() => {
     catch (e) {
         console.warn('Allegati: coda non salvata', e);
     } }
-    /** Mette un data-URL nell'archivio. Ritorna il riferimento, o null se l'archivio non è scrivibile. */
     async function metti(dataUrl) {
         const rif = rifDi(dataUrl);
         if (mem.get(rif) === dataUrl)
@@ -3590,9 +3267,7 @@ const Allegati = (() => {
         salvaAttesa([...attesa(), rif]);
         return rif;
     }
-    /** Data-URL già in memoria (sincrono, per il disegno). */
     const subito = (rif) => mem.get(rif);
-    /** Data-URL di un riferimento: memoria → IndexedDB → Drive (se collegato). Stringa vuota se introvabile. */
     function risolvi(rif) {
         const m = mem.get(rif);
         if (m)
@@ -3630,7 +3305,6 @@ const Allegati = (() => {
         inArrivo.set(rif, p);
         return p;
     }
-    /** Sostituisce i data-URL di un foglio a mano con riferimenti. true se ha cambiato qualcosa. */
     async function esternalizzaMano(m) {
         if (!m || !m.im || !m.im.length)
             return false;
@@ -3647,7 +3321,6 @@ const Allegati = (() => {
         return cambiato;
     }
     const haIncorporate = (m) => !!(m && m.im && m.im.some(x => typeof x.s === 'string' && x.s.startsWith('data:')));
-    /** Alleggerisce un record (appunto con foglio a mano): data-URL → riferimenti, poi salva. */
     async function alleggerisci(id) {
         const a = Stato.prendi(id);
         if (!a || !a.mano || !haIncorporate(a.mano))
@@ -3662,7 +3335,6 @@ const Allegati = (() => {
         Stato.salva(r, true);
         return true;
     }
-    /** Migrazione all'avvio: tutti gli appunti con immagini incorporate. Ritorna quanti record sono stati alleggeriti. */
     async function migra() {
         let n = 0;
         for (const a of Stato.tutti('appunto'))
@@ -3670,7 +3342,6 @@ const Allegati = (() => {
                 n++;
         return n;
     }
-    /** Carica su Drive gli allegati in attesa (solo file nuovi: niente sovrascritture né eliminazioni). */
     async function caricaInAttesa() {
         const l = attesa();
         if (!l.length || typeof Drive === 'undefined' || !Drive.stato.email)
@@ -3682,7 +3353,7 @@ const Allegati = (() => {
             try {
                 const dato = mem.get(rif) || await leggiIdb(rif);
                 if (!dato)
-                    continue; // sparito in locale: niente da caricare
+                    continue;
                 if (!await Drive.trovaFile(nomeFile(rif), cart)) {
                     await Drive.carica(nomeFile(rif), cart, dato, 'text/plain');
                     n++;
@@ -3696,7 +3367,6 @@ const Allegati = (() => {
         salvaAttesa(resto);
         return n;
     }
-    /** Logout / cambio account: l'archivio locale appartiene all'account precedente. */
     async function svuota() {
         mem.clear();
         inArrivo.clear();
@@ -3721,21 +3391,8 @@ const Allegati = (() => {
     return { eRif, rifDi, metti, subito, risolvi, esternalizzaMano, alleggerisci, migra, caricaInAttesa, svuota, attesa, PREFISSO, CARTELLA };
 })();
 
-// 07-appunti.ts — Appunti (v0.28, fase 1).
-//
-// Ispirazione (scouting 13/11): RemNote (appunti e flashcard sono la stessa cosa: «domanda :: risposta»
-// scritta nel testo), Obsidian + plugin FSRS (contesto della carta = titolo › sezione; completamenti
-// {{…}}), metodo Cornell (spunti / testo / riassunto: arriva nella fase 2), app con AI (generano domande
-// dagli appunti: qui le prepara Claude leggendo la copia .md su Drive, senza costi).
-// Neuroscienza: appunti con parole proprie (elaborazione generativa) + recupero (le righe-domanda
-// diventano carte con ripasso FSRS) + collegamento allo step (interleaving con quiz e piano).
-//
-// Dati: record 'appunto' (id 'ap-…'). Le carte nascono al salvataggio nel mazzo 'mz-ap-<id>' (figlio di
-// 'mz-appunti'), collegato allo stesso sotto-step; una riga cancellata toglie la sua carta.
-// Drive: copia «titolo.md» in «Calendario personale/Appunti», SOLO dopo conferma nell'app.
 const Appunti = (() => {
     const tutti = () => Stato.tutti('appunto').sort((a, b) => b.updatedAt - a.updatedAt);
-    /** Carte contenute nel testo: «domanda :: risposta» e righe con {{completamenti}}; contesto = titoli sopra. */
     function estraiCarte(testo) {
         const out = [], titoli = [];
         for (const riga of testo.split('\n')) {
@@ -3757,7 +3414,6 @@ const Appunti = (() => {
         }
         return out;
     }
-    /** Allinea il mazzo dell'appunto alle righe-carta attuali. Restituisce [nuove, tolte]. */
     function sincronizzaCarte(a) {
         const lista = estraiCarte(a.testo), idM = 'mz-ap-' + a.id.replace(/^ap-/, '');
         const esistenti = Carte.carte().filter(c => c.mazzo === idM);
@@ -3797,14 +3453,12 @@ const Appunti = (() => {
         }
         Stato.salva(a);
         if (a.mano && a.mano.im && a.mano.im.length)
-            Allegati.alleggerisci(a.id).catch(e => console.warn('Allegati: alleggerimento rimandato', e)); // v0.57 (A14)
+            Allegati.alleggerisci(a.id).catch(e => console.warn('Allegati: alleggerimento rimandato', e));
         return sincronizzaCarte(a);
     }
     function nuovo(extra = {}) { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', creato: ymd(new Date()), ...extra }; }
-    /** Domande sbagliate dei quiz dello stesso sotto-step, ancora aperte. */
     function errori(a) { if (!a.sub)
         return []; return Domande.aperte().filter(d => { const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId); return !!t && t.k === a.sub; }); }
-    /** Importa file .md/.txt da Drive (o una cartella, ricorsiva): un file = un appunto; reimportare aggiorna lo stesso. */
     async function importaDrive(voci, percorso = '') {
         let n = 0;
         for (const v of voci) {
@@ -3842,12 +3496,11 @@ const Appunti = (() => {
         Stato.elimina('mz-ap-' + a.id.replace(/^ap-/, ''));
         Stato.elimina(a.id);
     }
-    /** Copia Markdown su Drive (crea o aggiorna lo stesso file). */
     async function suDrive(a) {
         const cart = await Drive.sottocartella('Appunti');
         const nome = (a.titolo || 'Appunto').replace(/[\\/:*?"<>|]/g, '-') + '.md';
         const corpo = '# ' + a.titolo + '\n\n' + (a.sub ? '_Step: ' + Studio.etichetta(a.sub) + (a.micro ? ' · ' + a.micro : '') + '_\n\n' : '') + a.testo + '\n' + (a.riassunto ? '\n---\n**Riassunto:** ' + a.riassunto + '\n' : '');
-        if (!manoVuota(a.mano)) { // v0.31: anche la pagina a mano, come PNG
+        if (!manoVuota(a.mano)) {
             await caricaImmaginiMano(a.mano);
             const png = await (await fetch(immagineMano(a.mano, 1400))).blob();
             a.manoPng = await Drive.carica(nome.replace(/\.md$/, '.png'), cart, png, 'image/png', a.manoPng);
@@ -3857,8 +3510,6 @@ const Appunti = (() => {
         Stato.salva(a);
     }
     const daSalvareSuDrive = (a) => !a.drive || a.drive.h !== Carte.hash(a.titolo + '\n' + a.testo + (a.riassunto || '') + (a.mano ? a.mano.t.length + ':' + a.mano.t.join('').length : ''));
-    // ---------- Fase 2: sezioni Cornell e ripasso dell'appunto ----------
-    /** Divide l'appunto in sezioni (dai titoli); spunti = titolo + domande «::» + righe che finiscono con «?». */
     function sezioni(a) {
         const out = [];
         let cur = { titolo: a.titolo || 'Appunto', righe: [] };
@@ -3900,14 +3551,11 @@ const Appunti = (() => {
         d.setDate(d.getDate() + iv);
         Stato.salva({ id, type: 'memoria', updatedAt: 0, er: 'appunto:' + a.id + ':' + s, d: st.d, s: st.s, due: ymd(d), ultimo: oggiK, n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g]]).slice(-30) });
     }
-    /** Sezioni da ripassare oggi (mai ripassate o scadute). */
-    /** Sezioni da ripassare oggi: scadute, oppure mai ripassate se l'appunto è di ieri o prima (un giorno di distanza aiuta il ricordo). */
     function daRipassare(a, oggiK = ymd(new Date())) {
         const nato = a.creato || ymd(new Date(a.updatedAt || Date.now()));
         return sezioni(a).filter(s => { const m = Stato.prendi(idMemS(a, s.id)); return m ? m.due <= oggiK : nato < oggiK; });
     }
     const appuntiDaRipassare = () => tutti().filter(a => daRipassare(a).length);
-    /** v0.32: sezione dell'appunto che parla di più di un testo (parole in comune, pesate per lunghezza). */
     function sezionePer(a, testo) {
         const parole = (s) => new Set(norm(s).split(/[^a-z0-9àèéìòù]+/).filter(w => w.length > 3));
         const q = parole(testo);
@@ -3924,19 +3572,16 @@ const Appunti = (() => {
         }
         return punti >= 2 ? best : null;
     }
-    /** Aggiunge una riga-carta in fondo, sotto «## Dagli errori dei quiz». */
     function aggiungiRiga(a, riga) {
         if (a.testo.includes(riga))
             return;
         a.testo = /^## Dagli errori dei quiz$/m.test(a.testo) ? a.testo.replace(/\s*$/, '') + '\n' + riga + '\n' : a.testo.replace(/\s*$/, '') + '\n\n## Dagli errori dei quiz\n' + riga + '\n';
         salva(a);
     }
-    /** Appunti che citano questo con [[titolo]]. */
     function citatoDa(a) { const t = norm(a.titolo); return tutti().filter(x => x.id !== a.id && (x.testo.match(/\[\[([^\]]+)\]\]/g) || []).some(l => norm(l.slice(2, -2)) === t || t.includes(norm(l.slice(2, -2))))); }
     function trova(titolo) { const t = norm(titolo); return tutti().find(x => norm(x.titolo) === t) || tutti().find(x => norm(x.titolo).includes(t)); }
     return { sezionePer, aggiungiRiga, citatoDa, trova, errori, importaDrive, sezioni, valutaSezione, daRipassare, appuntiDaRipassare, idMemS, tutti, estraiCarte, sincronizzaCarte, salva, nuovo, elimina, suDrive, daSalvareSuDrive };
 })();
-/** Chiede conferma e salva la copia su Drive (regola: niente su Drive senza conferma). */
 async function chiediDrive(a, forza = false) {
     if (!Drive.collegato || !Appunti.daSalvareSuDrive(a)) {
         if (forza && !Drive.collegato)
@@ -3956,7 +3601,6 @@ async function chiediDrive(a, forza = false) {
         avviso('Drive: ' + (e.message || e), 6000);
     }
 }
-// ---------- Editor ----------
 function apriAppunto(a, extra = {}, alRiassunto = false) {
     const ap = a ? { ...a } : Appunti.nuovo(extra);
     let cambiato = false;
@@ -3968,7 +3612,6 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     const testo = h('textarea.appunto-testo', { placeholder: 'Scrivi con parole tue.\n\n# Titolo  ·  - punto  (rientro = sotto-punto)\nDomanda :: risposta  → diventa una flashcard\nIl {{mitocondrio}} produce ATP  → completamento', spellcheck: 'true' }, ap.testo);
     const riass = h('textarea.appunto-riassunto', { rows: 3, placeholder: 'Riassunto (facoltativo): 2-3 frasi con parole tue, senza guardare sopra. È il passaggio che fissa di più.' }, ap.riassunto || '');
     const stato = h('div.appunto-stato.tenue.piccolo');
-    // v0.31: modalità a mano (Pencil) o testo; la pagina a mano sta sopra, il testo (anche trascritto) sotto
     let modo = !manoVuota(ap.mano) ? 'mano' : (imp().modoAppunti === 'mano' ? 'mano' : 'testo');
     const zonaMano = h('div.mano-zona');
     let pagina = null, sfondoModello;
@@ -3992,7 +3635,6 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
     function fine() {
         clearTimeout(timer);
         const r = salvaOra();
-        // richiesta gentile, non obbligo: solo per appunti lunghi senza riassunto, una volta per appunto
         const x0 = Stato.prendi(ap.id);
         if (x0 && !x0.riassunto && x0.testo.length > 400 && !x0.riassChiesto) {
             x0.riassChiesto = 1;
@@ -4076,7 +3718,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
                 v.chiudi();
                 CreaQuiz.leggero({ titolo: x.titolo, appunto: x.id });
             }
-        } // v0.58 (Q5)
+        }
         if (s === 'carte') {
             salvaOra();
             avviaCarte(['mz-ap-' + ap.id.replace(/^ap-/, '')], ap.titolo);
@@ -4105,7 +3747,6 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
             avviso('✓ Testo aggiunto' + (n ? ' · 🃏 ' + n + ' carte' : ''));
         });
     };
-    // v0.36: tutto schermo (come Note di iPad) con il pannello del testo a scomparsa
     let pieno = false, testoAperto = false;
     const pannello = h('div.mano-pannello');
     const segnaBarra = document.createComment('barra'), segnaTesto = document.createComment('testo');
@@ -4199,7 +3840,6 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
                 i.modoAppunti = k;
                 Stato.salva(i, true);
                 mostraModo();
-                // v0.41.4 tablet: passando a «A mano» la barra della penna va in cima e il foglio occupa lo schermo
                 if (k === 'mano' && innerWidth >= 700)
                     setTimeout(() => zonaMano.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
             } }, t)));
@@ -4209,7 +3849,6 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
         testo.placeholder = modo === 'mano' ? 'Testo dell\'appunto: scrivilo qui, oppure tocca ✨ nella barra della penna per trascrivere la pagina.' : testo.placeholder;
     }
     mostraModo();
-    // v0.33: modelli di pagina (solo per un appunto nuovo e vuoto)
     const modelli = a || ap.testo ? null : h('div.chips.appunto-modelli', null, h('span.tenue.piccolo', null, 'Modello:'), MODELLI_APPUNTO.map(md => h('button.chip' + (md.id === 'vuoto' ? '.attivo' : ''), { title: md.sotto, onclick: (e) => {
             modelli.querySelectorAll('.chip').forEach(c => c.classList.toggle('attivo', c === e.currentTarget));
             if (!testo.value.trim() || MODELLI_APPUNTO.some(x => x.testo === testo.value))
@@ -4229,9 +3868,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
         return; el.focus(); if (alRiassunto)
         el.scrollIntoView({ block: 'center' }); }, 80);
 }
-// ---------- Vista «Appunti» ----------
 const MINIATURE = new Map();
-/** v0.36: miniatura della pagina a mano (cache per versione dell'appunto). */
 function miniaturaMano(a) {
     const k = a.id + ':' + a.updatedAt;
     let u = MINIATURE.get(k);
@@ -4277,14 +3914,11 @@ function vistaAppunti() {
             : h('section.card', null, h('h2.card-titolo', null, g + ' · ' + l.length), l.map(voce)))]
         : h('section.card', null, h('div.vuoto', null, q ? 'Nessun appunto trovato.' : 'Ancora nessun appunto. Tocca «Nuovo appunto».')));
 }
-/** Nel sotto-step: appunti collegati + nuovo appunto già collegato. */
 function rigaAppunti(k) {
     const l = Appunti.tutti().filter(a => a.sub === k);
     const t = Studio.trovaSotto(k);
     return h('div.bottoni', null, l.slice(0, 3).map(a => h('button.btn.neutro', { onclick: () => apriAppunto(a) }, '📝 ' + a.titolo.slice(0, 28))), h('button.btn.neutro', { onclick: () => apriAppunto(undefined, { titolo: Studio.etichetta(k) + (t ? ' ' + t.sub.titolo : ''), sub: k }) }, '＋ Appunto'));
 }
-// ---------- Fase 2: vista Cornell + «copri e ricorda» ----------
-/** Vista Cornell: spunti a sinistra, testo a destra, riassunto in fondo; con «copri» il testo è nascosto. */
 function apriCornell(a, copri = false) {
     const v = visore((copri ? '🧠 Copri e ricorda · ' : '📑 ') + (a.titolo || 'Appunto'), () => disegna());
     const sez = copri ? Appunti.daRipassare(a) : Appunti.sezioni(a);
@@ -4320,15 +3954,11 @@ function apriCornell(a, copri = false) {
     v.corpo.append(h('div.cornell', null, !manoVuota(a.mano) ? h('img.cornell-mano', { src: immagineMano(a.mano, 1200), alt: 'Pagina a mano' }) : null, righe, err.length ? h('div.cornell-riassunto', null, h('b', null, '⚠️ Sbagliate nei quiz di ' + Studio.etichetta(a.sub) + ' (' + err.length + ')'), err.slice(0, 8).map(d => h('details.dom-voce', null, h('summary', null, d.q), h('div', null, h('b', null, 'Risposta: '), d.giusta), d.spieg ? h('div.tenue.piccolo', null, d.spieg) : null, h('button.btn-testo', { onclick: (e) => { Appunti.aggiungiRiga(a, '- ' + d.q.replace(/\s::\s/g, ' ') + ' :: ' + d.giusta); e.target.textContent = '✓ aggiunta come flashcard'; } }, '➕ Aggiungi all\'appunto come flashcard'))), h('div.tenue.piccolo', null, 'Se una manca dall\'appunto, aggiungila come riga «domanda :: risposta».')) : null, (() => { const c = Appunti.citatoDa(a); return c.length ? h('div.cornell-riassunto', null, h('b', null, '🔗 Citato in'), c.map(x => h('button.btn-testo', { onclick: () => { v.chiudi(); apriCornell(x); } }, x.titolo))) : null; })(), h('div.cornell-riassunto', null, h('b', null, 'Riassunto'), a.riassunto ? h('div', null, a.riassunto)
         : h('button.btn-testo', { onclick: () => { v.chiudi(); apriAppunto(a, {}, true); } }, '✍️ Scrivilo in 2-3 frasi con parole tue: fissa più di una rilettura'))));
 }
-// ---------- AI (Groq) sugli appunti ----------
-/** Propone domande-flashcard dal testo dell'appunto; scegli quali tenere: diventano righe «::». */
-/** fuoco (v0.37): testo di un PDF/slide appena inserito → carte su QUEL testo, non sull'inizio dell'appunto. */
 async function aiDomande(a, dopo, fuoco) {
     if (!a.testo.trim() && !fuoco) {
         avviso('Scrivi prima qualcosa.');
         return;
     }
-    // v0.44 locale: prima le carte che si ricavano con regole (definizioni, «Termine: …», formule); l'AI solo se ne servono altre
     const locali = Locale.carteDaTesto(fuoco ? fuoco.testo : a.testo);
     if (locali.length >= 4 && !aiDomande._forza) {
         mostraProposte(locali, dopo, () => { aiDomande._forza = true; aiDomande(a, dopo, fuoco).finally(() => { aiDomande._forza = false; }); });
@@ -4359,7 +3989,6 @@ function mostraProposte(lista, dopo, altreAI) {
         salva: () => { const r = lista.filter((_x, i) => scelte[i]).map(x => '- ' + x.q.replace(/\s::\s/g, ' ') + ' :: ' + x.r.replace(/\n/g, ' ')); if (r.length)
             dopo(r); } });
 }
-/** Riscontro sul riassunto: cosa manca o è impreciso rispetto all'appunto (non lo riscrive). */
 async function aiRiassunto(a) {
     if (!(a.riassunto || '').trim()) {
         avviso('Scrivi prima il riassunto: l\'AI ti dice cosa manca, non lo scrive al posto tuo.');
@@ -4367,7 +3996,6 @@ async function aiRiassunto(a) {
     }
     avviso('✨ Leggo il riassunto…', 15000);
     try {
-        // v0.44 locale: concetti dell'appunto assenti nel riassunto trovati con regole; all'AI solo le frasi pertinenti
         const mancaLoc = Locale.concettiMancanti(a.testo, a.riassunto || '');
         const testoAI = a.testo.length > 4000 ? Locale.frasiChiave(a.testo, (a.riassunto || '').split(/\s+/).concat(mancaLoc), 4000) || a.testo.slice(0, 4000) : a.testo;
         const d = await Spiega.chat([{ role: 'system', content: 'Sei un tutor per il semestre filtro di Medicina. Confronti il riassunto dello studente con il suo appunto. NON riscrivere il riassunto. Rispondi in italiano, con il tu, in JSON: {"ok":"cosa va bene (1 frase)","manca":["concetto chiave mancante", ...],"errori":["affermazione imprecisa e correzione", ...]}' },
@@ -4395,14 +4023,12 @@ async function importaAppunti() {
     }
     disegna();
 }
-/** Riquadro in Oggi. */
 function widgetAppunti() {
     const l = Appunti.appuntiDaRipassare();
     if (!l.length)
         return null;
     return scheda('Appunti da ripassare', h('div.tenue.piccolo', null, l.length + (l.length === 1 ? ' appunto' : ' appunti') + ' · copri, ricorda, scopri'), l.slice(0, 3).map(a => h('button.voce-lista', { onclick: () => apriCornell(a, true) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo), h('span.voce-sotto', null, Appunti.daRipassare(a).length + ' sezioni')))));
 }
-// ---------- v0.32: collegamenti [[…]] ----------
 function conLink(html) { return html.replace(/\[\[([^\]]+)\]\]/g, (_t, x) => '<a href="#" class="ap-link" data-ap="' + esc(x) + '">' + esc(x) + '</a>'); }
 function attivaLink(el, prima) {
     el.querySelectorAll('a.ap-link').forEach(l => l.addEventListener('click', e => {
@@ -4417,8 +4043,6 @@ function attivaLink(el, prima) {
         apriCornell(x);
     }));
 }
-// ---------- v0.32: «Spiegamelo» (metodo Feynman) ----------
-/** Spieghi la sezione con parole tue (scritte o dettate); l'AI confronta con l'appunto e dà un voto, che entra nel ripasso. */
 function spiegamelo(a, s) {
     const campo = h('textarea.appunto-testo', { style: { minHeight: '30vh' }, placeholder: 'Spiega «' + s.titolo + '» come a un amico che non ne sa nulla, senza guardare l\'appunto. Puoi dettare con il microfono della tastiera.' });
     const fs = foglio({ titolo: '🗣 Spiegami: ' + s.titolo, etichettaSalva: '✨ Valuta', corpo: h('div.modulo', null, s.spunti.length ? h('div.tenue.piccolo', null, 'Spunti: ' + s.spunti.slice(0, 4).join(' · ')) : null, campo),
@@ -4449,7 +4073,6 @@ function spiegamelo(a, s) {
     setTimeout(() => campo.focus(), 80);
     void fs;
 }
-/** v0.32: sotto una domanda sbagliata, la sezione del tuo appunto che ne parla + «aggiungi come flashcard». */
 function rigaAppuntoErrore(d) {
     const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId);
     if (!t)
@@ -4469,7 +4092,6 @@ function rigaAppuntoErrore(d) {
     return h('div.dom-appunto', null, best ? h('details', null, h('summary', null, '📝 Nel tuo appunto: ' + best.a.titolo + ' › ' + best.s.titolo), (() => { const el = h('div.tenue.piccolo'); el.innerHTML = htmlCarta(best.s.testo.replace(/\s::\s/g, ' → '), 'mostra'); return el; })())
         : h('div.tenue.piccolo', null, '📝 Il tuo appunto «' + a0.titolo + '» non sembra parlarne.'), h('button.btn-testo', { onclick: (e) => { Appunti.aggiungiRiga(a0, '- ' + d.q.replace(/\s::\s/g, ' ') + ' :: ' + d.giusta); e.target.textContent = '✓ aggiunta a «' + a0.titolo + '»'; } }, '➕ Aggiungi all\'appunto come flashcard'));
 }
-// ---------- v0.33: modelli di pagina ----------
 const MODELLI_APPUNTO = [
     { id: 'vuoto', nome: 'Vuoto', sotto: 'Pagina libera', testo: '', sf: 'quadretti' },
     { id: 'lezione', nome: 'Lezione', sotto: 'Concetti → domande → collegamenti', testo: '# Concetti chiave\n- \n\n# Domande\n- domanda :: risposta\n\n# Collegamenti\n- vedi [[ ]]\n', sf: 'righe' },
@@ -4479,15 +4101,6 @@ const MODELLI_APPUNTO = [
     { id: 'confronto', nome: 'Confronto', sotto: 'A vs B: somiglianze e differenze', testo: '# A\n- \n\n# B\n- \n\n# Differenze chiave\n- Differenza tra A e B :: \n', sf: 'righe' },
 ];
 
-// =====================================================================
-// 07-assistente.ts — v0.42 ASSISTENTE DELLA HOME: coordina tutta l'app da una frase.
-// Prima prova il riconoscimento locale (07-rapido: eventi e promemoria con data/ora, offline e immediato);
-// se la frase chiede altro, l'AI «veloce» la traduce in AZIONI tipizzate che l'app esegue con le sue
-// funzioni (mai codice libero): evento, promemoria, appunto, quiz da creare, flashcard, ricerca, apertura
-// di una vista, «studia ora», lezione audio, oppure una risposta sull'uso dell'app.
-// Le azioni che creano qualcosa si confermano con un tocco (si possono togliere); aprire/cercare è immediato.
-// =====================================================================
-/** il dialogo di scelta globale (dentro Assistente «chiedi» è la funzione dell'assistente) */
 const scegliTra = (t, o, sotto) => chiedi(t, o, sotto);
 const Assistente = (() => {
     const VISTE = {
@@ -4530,7 +4143,6 @@ const Assistente = (() => {
             case 'risposta': return '💬 ' + a.testo;
         }
     }
-    /** Esegue un'azione con le funzioni dell'app. */
     function esegui(a) {
         switch (a.tipo) {
             case 'evento':
@@ -4600,7 +4212,6 @@ const Assistente = (() => {
         + '- risposta {testo} = solo per domande su come si usa l\'app o se la richiesta non è un\'azione (rispondi in italiano, breve).\n'
         + 'Regole: date sempre assolute calcolate dal contesto; «stasera» = oggi 20:00 se manca l\'ora; più azioni se la frase ne chiede più di una; titoli brevi in italiano con l\'iniziale maiuscola; non inventare dettagli non detti.';
     async function capisci(frase) {
-        // v0.43 memoria: frase già vista con azioni senza date → la rifaccio senza chiamare l'AI
         const uguale = MemoriaIA.migliori('assistente', 'esempio', 1, frase).find(x => norm(x.k) === norm(frase) && x.n >= 2 && (x.v.azioni || []).every((a) => !['evento', 'promemoria'].includes(a.tipo)));
         if (uguale)
             return uguale.v.azioni;
@@ -4609,8 +4220,6 @@ const Assistente = (() => {
         const r = await IA.chiedi([{ role: 'system', content: SISTEMA + MemoriaIA.linee('assistente', 5) + esempi + '\n\n' + contesto() }, { role: 'user', content: frase }], 'veloce', { temp: 0 });
         return normalizza(r.j);
     }
-    // v0.44: i modelli a volte rispondono con nomi diversi ({"actions":…}, "type", "title", un elenco nudo…):
-    // tutto viene ricondotto ai nostri tipi, così una risposta valida non viene più scartata.
     const SIN = { event: 'evento', evento: 'evento', appuntamento: 'evento', reminder: 'promemoria', task: 'promemoria', todo: 'promemoria', promemoria: 'promemoria',
         note: 'appunto', nota: 'appunto', appunto: 'appunto', quiz: 'quiz', crea_quiz: 'quiz', test: 'quiz', flashcard: 'carte', flashcards: 'carte', cards: 'carte', carte: 'carte', card: 'carte',
         search: 'cerca', cerca: 'cerca', ricerca: 'cerca', open: 'apri', apri: 'apri', vai: 'apri', naviga: 'apri', answer: 'risposta', reply: 'risposta', risposta: 'risposta', messaggio: 'risposta',
@@ -4651,12 +4260,10 @@ const Assistente = (() => {
         }
         return out.slice(0, 6);
     }
-    /** Mostra le azioni capite e le esegue: subito quelle innocue, con un tocco quelle che creano qualcosa. */
     async function chiedi(frase) {
         const pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), h('span.audio-stato', null, 'Capisco «' + frase.slice(0, 40) + '»…'));
         document.body.appendChild(pill);
         let az = [], errore = '';
-        // v0.44: prima gli algoritmi locali (zero token, immediati); l'AI solo per il resto
         const loc = Locale.capisci(frase);
         if (loc)
             az = loc;
@@ -4672,7 +4279,6 @@ const Assistente = (() => {
         }
         pill.remove();
         if (!az.length) {
-            // mai un vicolo cieco: propongo le interpretazioni più probabili con un tocco
             const f = frase.replace(/^(crea(mi)?|fammi|voglio|vorrei)\s+/i, '');
             const s = await scegliTra(errore ? 'L\'AI non ha risposto (' + errore.slice(0, 80) + '). Cosa vuoi fare?' : 'Cosa vuoi fare con «' + frase.slice(0, 60) + '»?', [{ testo: '✨ Crea un quiz su «' + f.slice(0, 40) + '»', valore: 'quiz' }, { testo: '🔎 Cerca «' + f.slice(0, 40) + '»', valore: 'cerca' }, { testo: '🔔 Promemoria «' + f.slice(0, 40) + '»', valore: 'prom' }, { testo: '📝 Nuovo appunto', valore: 'app' }]);
             const scelta = s === 'quiz' ? { tipo: 'quiz', argomento: f } : s === 'cerca' ? { tipo: 'cerca', testo: f } : s === 'prom' ? { tipo: 'promemoria', titolo: f } : s === 'app' ? { tipo: 'appunto', titolo: f } : null;
@@ -4700,7 +4306,6 @@ const Assistente = (() => {
                     if (r)
                         fatti.push(r);
                 } });
-                // v0.43 memoria: le azioni confermate diventano un esempio; quelle tolte, una lezione
                 const conf = fare.filter((_, i) => scelte[i]);
                 if (conf.length)
                     MemoriaIA.nota('assistente', 'esempio', frase, { data: ymd(new Date()), azioni: conf });
@@ -4711,7 +4316,6 @@ const Assistente = (() => {
                 disegna();
             } });
     }
-    /** Una frase è «da calendario veloce» se ha una data o un orario chiari (la gestisce 07-rapido, offline). */
     function eRapida(f) {
         const n = norm(f), r = interpreta(f);
         if (!r)
@@ -4723,23 +4327,12 @@ const Assistente = (() => {
     return { chiedi, capisci, esegui, descrivi, eRapida };
 })();
 
-// 07-audio.ts — v0.41: lezioni audio (registra o carica) trascritte dall'AI con autocorrezione.
-// Scouting: Groq offre Whisper (large-v3-turbo e large-v3) gratis con la stessa chiave: 25 MB a file,
-// ~8 ore di audio al giorno. Notability/GoodNotes legano l'audio agli appunti; Otter evidenzia le parti incerte.
-// Processo in 3 passaggi:
-//   1) Whisper turbo trascrive, con un «prompt» di contesto (titolo, step, termini dell'appunto) per i nomi tecnici;
-//   2) l'AI testuale controlla la COERENZA con argomento e contesto e indica i segmenti dubbi
-//      (aiutata dalla confidenza di Whisper: avg_logprob basso, compressione anomala);
-//   3) l'audio viene ritrascritto con Whisper large-v3 (più preciso) usando il glossario trovato; per ogni
-//      segmento dubbio l'AI confronta le due versioni ASCOLTATE (non inventa) e sceglie/riscrive.
-// Ogni correzione resta visibile con ▶ per riascoltare quel punto e decidere.
 const Lezioni = (() => {
     const MAX = 24 * 1024 * 1024;
     async function whisper(b, nome, modello, prompt) {
-        const j = await IA.trascrivi(b, { nome, modello, prompt }); // v0.46: dal gateway IA
+        const j = await IA.trascrivi(b, { nome, modello, prompt });
         return (j.segments || [{ start: 0, end: j.duration || 0, text: j.text || '' }]).map((x) => ({ s: x.start, e: x.end, t: String(x.text || '').trim(), lp: x.avg_logprob, cr: x.compression_ratio }));
     }
-    /** File troppo grandi: decodifica, porta a 16 kHz mono e divide in pezzi WAV da 10 minuti (< 25 MB). */
     async function pezzi(b) {
         if (b.size <= MAX)
             return [{ b, da: 0, nome: 'lezione.' + ((b.type.split('/')[1] || 'm4a').split(';')[0].replace('mpeg', 'mp3').replace('x-m4a', 'm4a')) }];
@@ -4756,7 +4349,7 @@ const Lezioni = (() => {
             try {
                 ac.close();
             }
-            catch (_) { /* */ }
+            catch (_) { }
         }
         const off = new Ctx(1, Math.ceil(buf.duration * 16000), 16000), src = off.createBufferSource();
         src.buffer = buf;
@@ -4796,29 +4389,23 @@ const Lezioni = (() => {
         return out.filter(x => x.t);
     }
     const mmss = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
-    /** Il processo completo. Restituisce i segmenti finali e le correzioni fatte. */
     async function processa(b, contesto, passo) {
         const prompt = 'Lezione universitaria in italiano (semestre filtro di Medicina: chimica, biologia, fisica). Argomento: ' + contesto.titolo + (contesto.step ? ' (' + contesto.step + ')' : '') + '. ' + contesto.testo.replace(/\s+/g, ' ').slice(0, 300);
-        // v0.43 memoria: i termini già incontrati entrano nel «prompt» di Whisper, che li usa durante il
-        // riconoscimento dei suoni (così una parola corretta più volte viene riconosciuta giusta la volta dopo)
         const noti = MemoriaIA.migliori('audio', 'termine', 40).map(x => x.k);
         const promptM = prompt + (noti.length ? ' Termini: ' + noti.join(', ') + '.' : '');
         passo('1/3 Trascrivo…');
         const seg = await trascrivi(b, promptM, 'whisper-large-v3-turbo', t => passo('1/3 Trascrivo ' + t));
         if (!seg.length)
             throw new Error('non ho sentito parole nell\'audio');
-        // correzioni confermate più volte: applicate subito, senza chiedere all'AI (meno token)
         const daMemoria = [];
-        seg.forEach(x => { x.t = Locale.pulisciParlato(x.t); }); // v0.44 locale: intercalari e ripetizioni via (meno token)
+        seg.forEach(x => { x.t = Locale.pulisciParlato(x.t); });
         seg.forEach((x, i) => { const c = MemoriaIA.correggi('audio', x.t); if (c.cambi.length) {
             daMemoria.push({ i, prima: x.t, dopo: c.testo, nota: 'dalla memoria: ' + c.cambi.map(z => z.prima + ' → ' + z.dopo).join(', '), ok: true });
             x.t = c.testo;
             x.lp = 0;
         } });
-        // 2) controllo di coerenza (blocchi da ~120 segmenti per restare nei limiti)
         passo('2/3 Controllo la coerenza del testo…');
         const dubbi = new Map(), termini = new Set();
-        // v0.44 locale: nelle lezioni lunghe all'AI vanno solo i segmenti dubbi (con il vicino prima e dopo)
         const glossario = noti.concat(contesto.testo.split(/\W+/).filter(w => w.length > 6)).slice(0, 80);
         const scelti = new Set();
         if (seg.length <= 40)
@@ -4848,14 +4435,13 @@ const Lezioni = (() => {
             dubbi.set(i, 'audio poco chiaro'); });
         if (!dubbi.size)
             return { seg, corr: daMemoria };
-        // 3) ritrascrizione accurata con il glossario e scelta, solo sui punti dubbi
         passo('3/3 Riascolto i punti dubbi (' + dubbi.size + ')…');
         let seg2 = [];
         termini.forEach(t => MemoriaIA.nota('audio', 'termine', t, null, .3));
         try {
             seg2 = await trascrivi(b, promptM + ' ' + Array.from(termini).join(', '), 'whisper-large-v3', t => passo('3/3 Riascolto ' + t));
         }
-        catch (_) { /* resta la prima versione */ }
+        catch (_) { }
         const idx = Array.from(dubbi.keys()), corr = [];
         for (let a = 0; a < idx.length; a += 25) {
             const casi = idx.slice(a, a + 25).map(i => {
@@ -4873,7 +4459,6 @@ const Lezioni = (() => {
         }
         return { seg, corr: daMemoria.concat(corr.filter(c => !daMemoria.some(z => z.i === c.i))) };
     }
-    /** Testo Markdown: paragrafi di circa un minuto con il minuto della lezione. */
     function inMarkdown(seg, titolo) {
         const par = [];
         let cur = '', da = 0;
@@ -4886,7 +4471,6 @@ const Lezioni = (() => {
     }
     return { processa, inMarkdown, mmss };
 })();
-/** Interfaccia: registra o carica, trascrivi, rivedi le correzioni con ▶, aggiungi all'appunto. */
 async function lezioneAudio(contesto, aggiungi) {
     if (!await Spiega.pronta()) {
         avviso('Serve la chiave Groq (gratuita): Altro → Spiegazioni AI.', 6000);
@@ -4918,13 +4502,12 @@ async function lezioneAudio(contesto, aggiungi) {
     const rec = new MediaRecorder(st, { ...(tipo ? { mimeType: tipo } : {}), audioBitsPerSecond: 32000 }), pezzi = [];
     rec.ondataavailable = e => { if (e.data.size)
         pezzi.push(e.data); };
-    // v0.41.1: registrazione IN BACKGROUND: una pillola fissa in alto, puoi continuare a scrivere appunti
     const t0 = Date.now(), orologio = h('span.audio-orologio', null, '0:00'), punto = h('span.audio-punto');
     let wake = null;
     try {
         wake = await navigator.wakeLock?.request('screen');
     }
-    catch (_) { /* non supportato */ }
+    catch (_) { }
     let pausa = false, inPausa = 0, daPausa = 0;
     const tic = setInterval(() => { orologio.textContent = Lezioni.mmss(((pausa ? daPausa : Date.now()) - t0 - inPausa) / 1000); }, 500);
     const bPausa = h('button', { type: 'button', title: 'Pausa', 'aria-label': 'Pausa', onclick: () => { if (pausa) {
@@ -4956,7 +4539,7 @@ async function lezioneAudio(contesto, aggiungi) {
         try {
             wake && wake.release();
         }
-        catch (_) { /* */ }
+        catch (_) { }
         rec.onstop = () => { st.getTracks().forEach(t => t.stop()); if (usa)
             elabora(new Blob(pezzi, { type: rec.mimeType || 'audio/mp4' }), 'Lezione ' + new Date().toLocaleDateString('it-IT')); };
         rec.stop();
@@ -4964,7 +4547,6 @@ async function lezioneAudio(contesto, aggiungi) {
     rec.start(10000);
     avviso('🎙 Registro in sottofondo: continua pure a scrivere. Tocca «Fine» in basso quando la lezione finisce.', 5000);
     async function elabora(b, nome) {
-        // la trascrizione lavora in sottofondo (pillola), poi un avviso apre la revisione
         const stato = h('span.audio-stato', null, 'Preparo…'), pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), stato);
         document.body.appendChild(pill);
         try {
@@ -4972,12 +4554,12 @@ async function lezioneAudio(contesto, aggiungi) {
             try {
                 Tocco.clic(1);
             }
-            catch (_) { /* */ }
+            catch (_) { }
             if (navigator.vibrate)
                 navigator.vibrate([10, 60, 10]);
             svuota(pill);
             pill.classList.remove('lavora');
-            pill.classList.add('pronta'); // resta finché non la apri
+            pill.classList.add('pronta');
             pill.append(h('button.audio-fine', { type: 'button', onclick: () => { pill.remove(); rivedi(b, nome, r); } }, '✓ Trascrizione pronta' + (r.corr.length ? ' · ' + r.corr.length + ' correzioni' : '') + ' — Rivedi'));
         }
         catch (e) {
@@ -4997,7 +4579,6 @@ async function lezioneAudio(contesto, aggiungi) {
                     avviso('Drive: ' + (e && e.message || e), 6000);
                 } } }, '☁︎ Salva anche l\'audio su Drive')),
             salva: () => {
-                // v0.43 memoria: ogni correzione accettata insegna «come suona → come si scrive»; quelle rifiutate la indeboliscono
                 for (const c of r.corr)
                     for (const d of MemoriaIA.differenze(c.prima, c.dopo)) {
                         if (c.ok) {
@@ -5017,10 +4598,6 @@ async function lezioneAudio(contesto, aggiungi) {
     }
 }
 
-// 07-calcolo.ts — v0.41: calcoli dopo «=» come le Note di iOS (Math Notes).
-// Scouting: Math Notes calcola quando scrivi «=», con variabili definite più sopra («m=2») che aggiornano
-// i calcoli successivi; risultato suggerito e confermato con Invio. Qui: valutatore proprio, SENZA eval
-// (sicuro), offline. Trigonometria in GRADI (come nei problemi di fisica); «rad» per i radianti.
 const Calcolo = (() => {
     const FUN = {
         sqrt: Math.sqrt, rad: x => x, abs: Math.abs, ln: Math.log, log: Math.log10,
@@ -5065,7 +4642,6 @@ const Calcolo = (() => {
         }
         return o;
     }
-    /** Valuta un'espressione (numeri con virgola o punto, + - * / ^ %, parentesi, funzioni, variabili). */
     function valuta(espr, vars = {}) {
         const tk = tokens(espr);
         let p = 0;
@@ -5083,7 +4659,7 @@ const Calcolo = (() => {
                     x = op === '*' ? x * y : x / y;
                 }
                 else if (inizioFattore())
-                    x *= unario(); // moltiplicazione implicita: 2(3+1), 3m, 2pi
+                    x *= unario();
                 else
                     return x;
             }
@@ -5132,7 +4708,6 @@ const Calcolo = (() => {
             throw new Error('risultato non finito');
         return x;
     }
-    /** Variabili definite nelle righe precedenti: «nome = valore» (come Math Notes: valgono sotto la riga). */
     function variabili(righe) {
         const v = {};
         for (const r of righe) {
@@ -5142,11 +4717,10 @@ const Calcolo = (() => {
             try {
                 v[m[1]] = valuta(m[2], v);
             }
-            catch (_) { /* non è una definizione */ }
+            catch (_) { }
         }
         return v;
     }
-    /** Numero all'italiana: virgola decimale, al massimo 6 cifre significative, notazione ·10^n se serve. */
     function formatta(x) {
         if (x === 0)
             return '0';
@@ -5157,7 +4731,6 @@ const Calcolo = (() => {
         }
         return String(+x.toPrecision(6)).replace('.', ',');
     }
-    /** Se la riga finisce con «=», restituisce il risultato (con le variabili delle righe sopra). */
     function suggerisci(testo, cursore) {
         const ini = testo.lastIndexOf('\n', cursore - 1) + 1, riga = testo.slice(ini, cursore);
         const m = /^(?:\s*[-*]\s*)?(.*?)=\s*$/.exec(riga);
@@ -5166,11 +4739,11 @@ const Calcolo = (() => {
         let espr = m[1];
         const def = /^\s*[A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_]*\s*=(.*)$/.exec(espr);
         if (def)
-            espr = def[1]; // «F = m*a =»
+            espr = def[1];
         if (!/\d|[A-Za-z]/.test(espr) || /^\s*[A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_ ]*$/.test(espr) && !/^\s*(pi|π)\s*$/i.test(espr))
-            return null; // solo un nome: è una definizione
+            return null;
         if (!/[-+*/^×·÷%()√²³]|\b(sqrt|sin|cos|tan|log|ln)\b/.test(espr) && !/[A-Za-z]/.test(espr))
-            return null; // un numero solo
+            return null;
         try {
             return formatta(valuta(espr, variabili(testo.slice(0, ini).split('\n'))));
         }
@@ -5180,7 +4753,6 @@ const Calcolo = (() => {
     }
     return { valuta, variabili, formatta, suggerisci };
 })();
-/** Aggancia i calcoli dopo «=» a una textarea: suggerimento sopra il campo, Invio o tocco per inserirlo. */
 function calcoliInTesto(campo, dopo) {
     const bolla = h('button.calcolo-bolla', { hidden: true, type: 'button', 'aria-label': 'Inserisci il risultato' });
     let ris = null;
@@ -5188,7 +4760,7 @@ function calcoliInTesto(campo, dopo) {
         return; const c = campo.selectionStart; campo.setRangeText(' ' + ris, c, c, 'end'); ris = null; bolla.hidden = true; try {
         Tocco.clic(.6);
     }
-    catch (_) { /* */ } dopo(); };
+    catch (_) { } dopo(); };
     const aggiorna = () => {
         ris = campo.selectionStart === campo.selectionEnd ? Calcolo.suggerisci(campo.value, campo.selectionStart) : null;
         bolla.hidden = !ris;
@@ -5205,41 +4777,20 @@ function calcoliInTesto(campo, dopo) {
         bolla.hidden = true; });
     campo.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== bolla)
         bolla.hidden = true; }, 150));
-    bolla.addEventListener('pointerdown', e => e.preventDefault()); // non toglie il fuoco al testo
+    bolla.addEventListener('pointerdown', e => e.preventDefault());
     bolla.addEventListener('click', metti);
     return bolla;
 }
 
-// 07-carte.ts — Flashcard (v0.18, F3).
-//
-// Ispirazione (ricerca 12/11): Anki (FSRS, 4 tasti con l'intervallo scritto, import da testo con
-// intestazioni "#separator:tab"), Quizlet (export "termine TAB definizione", una carta per riga; modalità
-// scelta multipla e scrivi), Mochi (Markdown con "---" tra i lati, completamenti {{…}}, una cartella di
-// file = un mazzo), Kahoot (opzioni con colore + forma), app moderne (tocca per girare, scorri per giudicare,
-// ma sempre anche i pulsanti).
-//
-// Dati: 'mazzo' (id 'mz-…', nome, padre?, sub? = sotto-step collegato, micro?, fonte Drive?) e 'carta'
-// (id 'cr-<hash mazzo+fronte>' così una reimportazione non perde i ripassi). Memoria FSRS per carta (e per
-// il verso inverso) in record 'memoria' con id 'mem-cr-<id>' / 'mem-cr-<id>-r'.
-//
-// Formati importati (file dal telefono, file Drive, cartella Drive = mazzo con sotto-mazzi):
-//  - testo / CSV / TSV: "fronte<sep>retro[<sep>tag]" per riga; separatore tab, ";" o "," (rilevato o da
-//    "#separator:"); righe che iniziano con "#" ignorate; cloze di Anki {{c1::testo}} → {{testo}};
-//  - Markdown: carte separate da una riga "===" (o "***"), lati separati da "---"; oppure righe
-//    "domanda :: risposta"; un file .md senza "===" e con un solo "---" = una carta (stile Mochi);
-//  - JSON: { "tipo": "carte", "mazzo": "…", "micro": "2.2.4", "carte": [ { "f": "…", "r": "…" } ] } o un array.
-// Immagini: "![testo](nome.png)" se nome.png è nella cartella Drive importata → "![testo](drive:ID)".
 const Carte = (() => {
     function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++)
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
     const mazzi = () => Stato.tutti('mazzo').sort((a, b) => a.nome.localeCompare(b.nome, 'it', { numeric: true }));
     const carte = () => Stato.tutti('carta');
     const figli = (id) => mazzi().filter(m => m.padre === id);
-    /** Il mazzo e tutti i suoi sotto-mazzi. */
     function albero(id) { const out = [id]; for (const f of figli(id))
         out.push(...albero(f.id)); return out; }
     const carteDi = (idMazzo) => { const set = new Set(albero(idMazzo)); return carte().filter(c => set.has(c.mazzo)); };
-    // ---------- Lettura dei formati ----------
     const isCloze = (s) => /\{\{[^}]+\}\}/.test(s);
     const pulisciCloze = (s) => s.replace(/\{\{c\d+::([^}]*?)(?:::[^}]*)?\}\}/g, '{{$1}}');
     function csvRiga(riga, sep) {
@@ -5298,7 +4849,7 @@ const Carte = (() => {
     }
     function daMarkdown(txt) {
         const t = txt.replace(/\r/g, '').trim();
-        if (/^.+\s::\s.+$/m.test(t) && !/^\s*---\s*$/m.test(t)) // stile RemNote: "domanda :: risposta"
+        if (/^.+\s::\s.+$/m.test(t) && !/^\s*---\s*$/m.test(t))
             return t.split('\n').map(r => /^(.+?)\s::\s(.+)$/.exec(r.trim())).filter(Boolean).map(m => ({ f: m[1].trim(), r: m[2].trim() }));
         const blocchi = /^\s*(===+|\*\*\*+)\s*$/m.test(t) ? t.split(/^\s*(?:===+|\*\*\*+)\s*$/m) : [t];
         return blocchi.map(b => b.trim()).filter(Boolean).map(b => {
@@ -5311,7 +4862,6 @@ const Carte = (() => {
         const arr = Array.isArray(d) ? d : (d.carte || d.cards || []);
         return { nome: d.mazzo || d.nome, micro: d.micro, carte: arr.map((x) => ({ f: pulisciCloze(String(x.f ?? x.fronte ?? x.front ?? x.term ?? '')), r: String(x.r ?? x.retro ?? x.back ?? x.definition ?? ''), tag: x.tag })).filter((x) => x.f) };
     }
-    /** Legge un file qualsiasi (dal nome capisce il formato). */
     function leggi(nome, txt) {
         if (/\.json$/i.test(nome))
             return daJson(txt);
@@ -5319,7 +4869,6 @@ const Carte = (() => {
             return { carte: daMarkdown(txt) };
         return { carte: daTesto(txt) };
     }
-    /** Collega un mazzo a un microstep/sotto-step dal nome (es. "2.2.4 Calore" o "Chimica 2.2"). */
     function collega(nome, percorso = '') {
         const m = /(?:^|\s)(\d+\.\d+(?:\.\d+)?)(?=\s|$|[-_·])/.exec(nome);
         if (!m)
@@ -5338,7 +4887,6 @@ const Carte = (() => {
                         if (mi.n === m[1])
                             cand.push({ sub: s.k, micro: mi.n });
                 }
-        // v0.31.2: se lo step non ha ancora schede ma è nel piano (es. «Chi 5.2»), collega alla voce del piano
         if (!cand.length && mat) {
             const k = mat + m[1].split('.').slice(0, 2).join('.');
             if (Studio.pkPiani().some(p => p.giorni.some(g => g.voci.some(v => v.k === k))))
@@ -5346,7 +4894,6 @@ const Carte = (() => {
         }
         return cand.length === 1 ? cand[0] : {};
     }
-    /** Crea/aggiorna le carte di un mazzo. Stessa domanda = stessa carta (i ripassi restano). */
     function riempi(idMazzo, lista, immagini) {
         let n = 0;
         for (const x of lista) {
@@ -5372,11 +4919,10 @@ const Carte = (() => {
         if (!m.sub && pa && pa.sub) {
             m.sub = pa.sub;
             m.micro = pa.micro;
-        } // il sotto-mazzo eredita il collegamento
+        }
         Stato.salva(m, true);
         return m;
     }
-    /** Importa un file Drive come mazzo (o aggiorna il mazzo che già lo rappresenta). */
     async function importaFileDrive(id, nome, padre, immagini, percorso = '') {
         const txt = await Drive.scaricaTesto(id);
         const d = leggi(nome, txt);
@@ -5386,7 +4932,6 @@ const Carte = (() => {
             m = nuovoMazzo(nomeM, padre, { fonte: { id, tipo: 'file' }, ...(d.micro ? collega(d.micro + ' ' + nomeM, percorso) : collega(nomeM, percorso)) });
         return riempi(m.id, d.carte, immagini);
     }
-    /** Importa una cartella Drive: la cartella è un mazzo, le sottocartelle sotto-mazzi, ogni file un mazzo. */
     async function importaCartellaDrive(id, nome, padre, percorso = '') {
         let m = mazzi().find(x => x.fonte && x.fonte.id === id);
         if (!m)
@@ -5435,14 +4980,12 @@ const Carte = (() => {
     function mem(v) { return Stato.prendi(idMem(v)); }
     const nuovePerGiorno = () => imp().carteNuove || 20;
     const ripassiPerGiorno = () => imp().carteRipassi || 150;
-    /** Coda di oggi: carte scadute (prima le più a rischio) + nuove fino al limite, mescolate tra mazzi. */
     function coda(ids, oggiK = ymd(new Date())) {
         const tutte = voci(ids);
         const scad = tutte.map(v => ({ v, m: mem(v) })).filter(x => x.m && x.m.due <= oggiK && x.m.ultimo !== oggiK)
             .map(x => ({ v: x.v, r: Ripassi.recuperabilita(Math.max(0, giorni(x.m.ultimo, oggiK)), x.m.s) })).sort((a, b) => a.r - b.r).slice(0, ripassiPerGiorno()).map(x => x.v);
         const giaNuove = Stato.tutti('memoria').filter(m => m.er.startsWith('carta:') && m.log && m.log[0] && m.log[0][0] === oggiK).length;
         const nuove = tutte.filter(v => !mem(v)).slice(0, Math.max(0, nuovePerGiorno() - giaNuove));
-        // alternanza: una nuova ogni 3 ripassi; mai due carte di fila dello stesso mazzo se evitabile
         const out = [];
         let i = 0, j = 0;
         while (i < scad.length || j < nuove.length) {
@@ -5471,7 +5014,6 @@ const Carte = (() => {
         }
         return { nuove: Math.min(nuove, nuovePerGiorno()), ripasso: Math.min(ripasso, ripassiPerGiorno()), totale: tutte.length };
     }
-    /** Prossimo intervallo (giorni) per ogni voto, da scrivere sui tasti. */
     function anteprima(v) {
         const m = mem(v), oggiK = ymd(new Date()), t = m && m.ultimo ? giorni(m.ultimo, oggiK) : 0;
         return [1, 2, 3, 4].map(g => g === 1 ? 0 : Ripassi.intervallo(Ripassi.passo(m && m.ultimo ? { d: m.d, s: m.s } : null, g, t).s, Ripassi.ritenzione(oggiK)));
@@ -5485,11 +5027,6 @@ const Carte = (() => {
         Stato.salva({ id: idMem(v), type: 'memoria', updatedAt: 0, er: 'carta:' + v.c.id + (v.rev ? ':r' : ''), d: st.d, s: st.s, due: ymd(d), ultimo: oggiK,
             n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g, undefined, sec]]).slice(-50) }, true);
     }
-    /**
-     * v0.20.3: le domande sbagliate dei quiz diventano flashcard in automatico, nel mazzo «⚠️ Errori dei quiz»
-     * con un sotto-mazzo per sotto-step (collegato: entra nei ripassi e in «Studia ora»). Stessa domanda =
-     * stessa carta. Restituisce gli id delle carte NUOVE (per l'Annulla).
-     */
     function daErrori(lista) {
         if (imp().carteDaErrori === false)
             return [];
@@ -5518,7 +5055,6 @@ const Carte = (() => {
     }
     return { daErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
 })();
-// ---------- Rendering di una faccia (Markdown minimale, completamenti, immagini da Drive) ----------
 const immaginiDrive = new Map();
 function htmlCarta(s, cloze = 'no') {
     let x = md(s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '\u0001$2\u0002$1\u0003'));
@@ -5530,7 +5066,6 @@ function htmlCarta(s, cloze = 'no') {
         x = x.replace(/\{\{([^}]+)\}\}/g, (_t, c) => cloze === 'nascondi' ? '<span class="cloze-buco">[ … ]</span>' : '<span class="cloze-vista">' + c + '</span>');
     return x;
 }
-/** Carica le immagini Drive mancanti dentro un elemento. */
 function caricaImmagini(el) {
     el.querySelectorAll('img[data-drive]:not([src])').forEach(async (img) => {
         const id = img.dataset.drive;
@@ -5548,7 +5083,6 @@ const rispostaDi = (c, rev) => c.tipo === 'cloze' ? (c.f.match(/\{\{([^}]+)\}\}/
 const domandaDi = (c, rev) => c.tipo === 'cloze' ? htmlCarta(c.f, 'nascondi') : htmlCarta(rev ? c.r : c.f);
 const testoPiano = (s) => s.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
 const normRisp = (s) => norm(testoPiano(s)).replace(/[.;:!?]+$/, '').replace(/,/g, '.').replace(/\s+/g, ' ').trim();
-// ---------- Sessione di ripasso ----------
 function avviaCarte(ids, titolo = 'Flashcard') {
     const coda = Carte.coda(ids);
     if (!coda.length) {
@@ -5606,7 +5140,7 @@ function avviaCarte(ids, titolo = 'Flashcard') {
         };
         const giustaS = rispostaDi(c, x.rev);
         const altreS = modo === 'scelta' ? Array.from(new Set(Carte.voci([c.mazzo]).concat(Carte.voci()).filter(y => y.c.id !== c.id).map(y => rispostaDi(y.c, x.rev)).filter(r => r && normRisp(r) !== normRisp(giustaS)))) : [];
-        const modoQui = modo === 'scelta' && altreS.length < 2 ? 'gira' : modo; // poche carte simili: questa si gira
+        const modoQui = modo === 'scelta' && altreS.length < 2 ? 'gira' : modo;
         if (modoQui === 'gira') {
             const sotto = h('div.carte-sotto', null, h('button.btn.carte-mostra', { onclick: () => { gira(); svuota(sotto); sotto.appendChild(voti()); } }, 'Mostra risposta'));
             carta.addEventListener('click', () => { if (!girata) {
@@ -5614,7 +5148,6 @@ function avviaCarte(ids, titolo = 'Flashcard') {
                 svuota(sotto);
                 sotto.appendChild(voti());
             } });
-            // scorri: destra = Bene, sinistra = Di nuovo (dopo aver girato)
             let x0 = 0, dx = 0;
             carta.addEventListener('pointerdown', e => { x0 = e.clientX; dx = 0; });
             carta.addEventListener('pointermove', e => { if (!girata || !x0)
@@ -5661,7 +5194,6 @@ function avviaCarte(ids, titolo = 'Flashcard') {
     }
     mostra();
 }
-/** Piccola celebrazione (rispetta "riduci movimento"). */
 function festa() {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches)
         return;
@@ -5685,7 +5217,6 @@ function festa() {
         cv.remove(); };
     requestAnimationFrame(passo);
 }
-// ---------- Viste ----------
 function editorCarta(idMazzo, c) {
     const f = h('textarea.campo', { rows: 3, placeholder: 'Fronte (domanda). Completamento: scrivi {{parola}} per nasconderla.' }, c ? c.f : '');
     const r = h('textarea.campo', { rows: 3, placeholder: 'Retro (risposta). Immagini: ![](https://…)' }, c ? c.r : '');
@@ -5707,7 +5238,7 @@ function editorCarta(idMazzo, c) {
                 Stato.salva(nc);
             }
             if (!c)
-                setTimeout(() => editorCarta(idMazzo), 50); // pronta la prossima (creare deve essere veloce)
+                setTimeout(() => editorCarta(idMazzo), 50);
         } });
 }
 async function importaCarte(padre) {
@@ -5830,7 +5361,6 @@ function vistaMazzo(m) {
         return h('button.voce-lista', { onclick: () => editorCarta(c.mazzo, c) }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, testoPiano(c.f.replace(/\{\{([^}]+)\}\}/g, '[$1]')).slice(0, 120)), h('span.voce-sotto', null, testoPiano(c.r).slice(0, 90) || (c.tipo === 'cloze' ? 'completamento' : ''), me ? ' · 🧠 ' + Math.round(Ripassi.recuperabilita(Math.max(0, Math.round((inizioGiorno(new Date()).getTime() - inizioGiorno(daDt(me.ultimo)).getTime()) / 86400000)), me.s) * 100) + '%' : ' · nuova')));
     }), cc.length > 200 ? h('div.tenue.piccolo', null, '… e altre ' + (cc.length - 200)) : null));
 }
-/** Nel sotto-step: carte collegate. */
 function rigaCarte(k) {
     const mz = Carte.mazzi().filter(m => m.sub === k);
     if (!mz.length)
@@ -5843,7 +5373,6 @@ function rigaCarte(k) {
     const n = Carte.conta(mz.map(m => m.id));
     return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaCarte(mz.map(m => m.id), Studio.etichetta(k)) }, '🃏 Flashcard di ' + Studio.etichetta(k) + ' (' + (n.nuove + n.ripasso) + ' oggi / ' + n.totale + ')'));
 }
-/** Riquadro in Oggi. */
 function widgetCarte() {
     if (!Carte.mazzi().length)
         return null;
@@ -5853,20 +5382,6 @@ function widgetCarte() {
     return scheda('Flashcard di oggi', h('div.tenue.piccolo', null, n.ripasso + ' da ripassare + ' + n.nuove + ' nuove · circa ' + Math.max(2, Math.round((n.ripasso + n.nuove) * 0.2)) + ' min'), h('div.bottoni', null, h('button.btn', { onclick: () => avviaCarte(undefined, 'Tutti i mazzi') }, '▶ Ripassa')));
 }
 
-// 07-cattura.ts — Lettura automatica del risultato dei quiz HTML (F3 ridotta, tattica T12).
-//
-// I file dei quiz su Drive NON vengono mai modificati: quando l'app apre un quiz, aggiunge alla copia
-// scaricata (solo in memoria, nell'iframe) un piccolo "osservatore" che guarda la schermata finale del
-// motore dei quiz e manda all'app: percentuale, giuste/totale, righe "Per tipo di domanda", punto debole
-// e se era "Rifai solo gli errori".
-//
-// Decisioni dell'utente (11/11): salvataggio automatico con avviso "tocca per annullare" (8 s);
-// "Rifai solo gli errori" NON cambia il punteggio: si annota nella nota della scheda.
-//
-// Selettori del motore dei quiz (schermata finale): .score .big ("12 / 16"), .score .pct ("75% di
-// risposte corrette"), .lvrow (tipo, barra, "ok/tot"), .weak ("Punto debole: …"), .stat durante il
-// quiz ("Domanda 1 di 3 · ripasso errori"). Se un quiz ha un formato diverso, non succede nulla:
-// il punteggio si scrive a mano come prima.
 const Cattura = (() => {
     const SPIA = '<script>(function(){var retry=false,inviato=null;function leggi(){try{'
         + 'var st=document.querySelector(".stat");if(st&&/Domanda\\s+1\\s+di/.test(st.textContent)){retry=/ripasso errori/i.test(st.textContent)}'
@@ -5879,7 +5394,6 @@ const Cattura = (() => {
         + 'var firma=m[1]+"|"+(gm?gm[0]:"")+"|"+retry;if(firma===inviato)return;inviato=firma;'
         + 'parent.postMessage({imc:"quiz-risultato",pct:+m[1],giuste:gm?+gm[1]:null,totale:gm?+gm[2]:null,livelli:liv,debole:deb,errori:retry,sbagliate:sb},"*")'
         + '}catch(e){}}new MutationObserver(leggi).observe(document.documentElement,{childList:true,subtree:true,characterData:true})})();<\/script>';
-    /** Aggiunge l'osservatore alla copia del quiz (in fondo al body). */
     function inietta(html) { return /<\/body>/i.test(html) ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, SPIA + '</body>') : html + SPIA; }
     let ctx = null;
     let ascolto = false;
@@ -5901,14 +5415,13 @@ const Cattura = (() => {
         else
             salva(ctx.schedaId, d);
     }
-    /** Salva il risultato; restituisce la funzione per annullare. */
     function salva(id, d) {
         const oggiK = ymd(new Date());
         const p0 = Studio.prog(id), primaProg = p0 ? JSON.parse(JSON.stringify(p0)) : null;
         const t = trovaScheda(id), idMem = t ? 'mem-sub-' + t.k : '';
         const m0 = idMem ? Stato.prendi(idMem) : undefined, primaMem = m0 ? JSON.parse(JSON.stringify(m0)) : null;
         const quanto = d.giuste != null && d.totale != null ? d.giuste + '/' + d.totale : d.pct + '%';
-        const annullaDom = typeof Domande !== 'undefined' ? Domande.registra(id, t ? Studio.etichetta(t.k) + ' ' + t.micro + ' · ' + t.s.titolo : id, d) : () => { }; // v0.16
+        const annullaDom = typeof Domande !== 'undefined' ? Domande.registra(id, t ? Studio.etichetta(t.k) + ' ' + t.micro + ' · ' + t.s.titolo : id, d) : () => { };
         let testo;
         if (d.errori) {
             const riga = 'Errori rifatti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
@@ -5939,12 +5452,6 @@ const Cattura = (() => {
     return { inietta, osserva, salva, SPIA };
 })();
 
-// 07-chiusura.ts — Chiusura serale della giornata in 2 minuti (v0.13, tattica T28).
-//
-// Dalle 19:00 compare in cima a Oggi il riquadro "Chiudi la giornata" (finché non la chiudi).
-// Tre tocchi: step di oggi (fatti / da spostare a domani), ripasso serale fatto, concentrazione 1–5
-// e ore di sonno della notte scorsa. Si salva nel record 'giorno' (id 'g-YYYY-MM-DD').
-// Gli step lasciati indietro si spostano con Studio.sposta (i progressi restano).
 const Giornata = {
     rec(k = ymd(new Date())) { return Stato.prendi('g-' + k) || { id: 'g-' + k, type: 'giorno', updatedAt: 0, data: k }; },
     oraDiChiudere() { const d = new Date(); return d.getHours() >= 19 && !Giornata.rec().chiuso; },
@@ -5956,7 +5463,6 @@ function widgetChiusura() {
 }
 function apriChiusura() {
     const k = ymd(new Date()), g = Giornata.rec(k), domani = ymd(new Date(Date.now() + 86400000));
-    // step di oggi + quelli che questa chiusura aveva già spostato a domani (per poterli riportare)
     const voci = Studio.vociDelGiorno(oggi()).concat(Studio.vociDelGiorno(daDt(domani)).filter(x => (g.spostati || []).includes(x.v.k)))
         .filter(x => !x.v.speciale && x.p.modo !== 'raffinamento');
     const sposta = new Set(g.spostati || []);
@@ -5996,7 +5502,6 @@ function apriChiusura() {
             avviso('🌙 Buonanotte. Domani: ' + (dom.length ? dom.join(' + ') : 'niente dal piano') + '.', 7000);
         } });
 }
-/** Statistiche: sonno e concentrazione rispetto ai punteggi dei quiz fatti lo stesso giorno. */
 function sezioneSonno() {
     const giorni = Stato.tutti('giorno').filter(g => g.sonno || g.focus);
     if (giorni.length < 3)
@@ -6012,26 +5517,6 @@ function sezioneSonno() {
     return h('section.card', null, h('h2.card-titolo', null, 'Sonno, concentrazione e risultati'), h('div.numeri', null, numero(pocoSonno != null ? pocoSonno + '%' : '—', 'con < 7 h di sonno'), numero(sonnoOk != null ? sonnoOk + '%' : '—', 'con ≥ 7 h')), h('div.numeri', null, numero(focusBasso != null ? focusBasso + '%' : '—', 'concentrazione 1–2'), numero(focusAlto != null ? focusAlto + '%' : '—', 'concentrazione 4–5')), h('div.tenue.piccolo', null, 'Media dei punteggi dei quiz fatti in quei giorni (' + giorni.length + ' giornate chiuse). È una correlazione sui tuoi dati, non una prova: più giornate chiudi, più è affidabile.'));
 }
 
-// =====================================================================
-// 07-creaquiz.ts — v0.42 QUIZ «CREATI IN APP» (quando Claude non c'è)
-// Replica il metodo delle schede fatte da Claude (file DIRETTIVE, punti 3-7), in 6 fasi controllabili:
-//   1) RICHIESTA guidata: argomento + materia + cosa vuoi (teoria/problemi/trabocchetti/misto) + parole
-//      chiave facoltative (sinonimi, capitolo, autore del libro, nome del docente, «slide», «UD3»…).
-//   2) FONTI: Trova.fonti cerca in TUTTO il Drive (testo dei PDF, Documenti, Presentazioni) e propone le
-//      migliori con il perché; l'utente può togliere/aggiungere. Dai PDF si leggono solo le pagine
-//      pertinenti (parole chiave per pagina), con il numero di pagina.
-//   3) GENERAZIONE (modello «genera»): 12 multiple A–E + 6 completamenti, tipi Sbarramento/Applicativo/
-//      Trabocchetto/Problema/Completamento, correzione passo-passo (Cosa chiede → Il concetto → Passaggi →
-//      In sintesi), «perché è sbagliata» per ogni distrattore, citazioni VERBATIM con file e pagina.
-//   4) CONTROLLI AUTOMATICI (codice, non AI): formato, 5 opzioni distinte, corretta MAI la più lunga,
-//      completamenti digitabili da tastiera, citazioni davvero presenti nella fonte (parola per parola),
-//      niente doppioni (anche con la banca esistente).
-//   5) REVISIONE INDIPENDENTE (modello DIVERSO): risolve ogni domanda «alla cieca» con le opzioni mescolate,
-//      segnala errori di contenuto, ambiguità, numeri/unità e italiano (ortografia, grammatica) e propone
-//      correzioni. Le domande non superate si rigenerano (max 2 giri), poi si scartano.
-//   6) SALVATAGGIO come scheda «✨ creata in app» (record 'qcreato'): si apre col motore quiz dell'app,
-//      con statistiche, «Rifai gli errori», spiegazione AI. Le schede di Claude restano distinte.
-// =====================================================================
 const CreaQuiz = (() => {
     const LV = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
     const n2 = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[«»"“”‘’']/g, '').replace(/\s+/g, ' ').trim();
@@ -6040,7 +5525,6 @@ const CreaQuiz = (() => {
         return 0; let c = 0; A.forEach(w => { if (B.has(w))
         c++; }); return c / (A.size + B.size - c); }
     const tutti = () => Stato.tutti('qcreato').filter(r => !r.deleted).sort((a, b) => b.creato < a.creato ? -1 : 1);
-    /** Lezioni che la memoria ricava dai problemi trovati (così il generatore non li ripete). */
     const LEZIONE = [
         [/corretta è la più lunga/, 'Scrivi l\'opzione corretta breve quanto i distrattori: mai la più lunga né la più dettagliata.'],
         [/contenuta in un distrattore/, 'Il testo della corretta non deve comparire dentro un distrattore.'],
@@ -6065,7 +5549,6 @@ const CreaQuiz = (() => {
                 }
     }
     async function leggi(f, chiavi, budget, passo, argomento = '') {
-        // v0.43 memoria: pagine che in passato hanno dato citazioni buone per argomenti simili
         const utili = new Set();
         for (const x of MemoriaIA.migliori('ricerca', 'pagine', 5, argomento))
             if (x.k.startsWith(f.id + '|'))
@@ -6073,7 +5556,7 @@ const CreaQuiz = (() => {
                     if (+p)
                         utili.add(+p);
         if (utili.size >= 2)
-            budget = Math.round(budget * .65); // so già dove guardare: mando meno testo all'AI
+            budget = Math.round(budget * .65);
         try {
             if (f.mimeType === 'application/pdf') {
                 const L = await caricaPdfJs();
@@ -6086,7 +5569,6 @@ const CreaQuiz = (() => {
                     const tc = await (await doc.getPage(i)).getTextContent();
                     grezze.push({ i, t: tc.items.map((x) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').trim() });
                 }
-                // v0.44 locale: via intestazioni/piè di pagina ripetuti e righe spezzate (meno token), radici e sinonimi per trovare le pagine
                 const pulite = Locale.pulisciPagine(grezze.map(x => x.t)), rad = Locale.espandi(chiavi).map(Locale.radice);
                 const pag = [];
                 grezze.forEach((g0, k) => {
@@ -6116,7 +5598,6 @@ const CreaQuiz = (() => {
                 return { nome: f.name.replace(/\.pdf$/i, ''), id: f.id, pagine: tieni.map(x => x.i).join(','), testo: tieni.map(x => '[[' + f.name.replace(/\.pdf$/i, '') + ', p. ' + x.i + ']]\n' + x.t).join('\n\n') };
             }
             const ex = f.mimeType.startsWith('application/vnd.google-apps.') ? await (await Drive.api('files/' + f.id + '/export', { query: { mimeType: 'text/plain' } })).text() : await Drive.scaricaTesto(f.id);
-            // documenti lunghi: tengo i paragrafi con le parole chiave
             const par = ex.split(/\n\s*\n/).map((t, i) => ({ t: t.trim(), i, s: chiavi.reduce((a, w) => a + (n2(t).includes(w) ? 1 : 0), 0) })).filter((x) => x.t);
             const best = par.filter((x) => x.s).sort((a, b) => b.s - a.s);
             const tieni = [];
@@ -6137,7 +5618,6 @@ const CreaQuiz = (() => {
             return null;
         }
     }
-    // ---------- 3) generazione ----------
     const REGOLE = [
         'Stile: test di ammissione / semestre filtro di Medicina italiano. Italiano corretto, frasi chiare, nessun refuso.',
         'Usa SOLO le informazioni delle FONTI: niente dati, numeri o fatti che non ci sono. Se un calcolo serve, i dati devono essere nel testo della domanda.',
@@ -6155,14 +5635,11 @@ const CreaQuiz = (() => {
                     + (gia.length ? '\n\nDOMANDE GIÀ PRESENTI (non ripeterle):\n- ' + gia.slice(0, 40).join('\n- ') : '') + (feedback ? '\n\nCORREGGI QUESTI PROBLEMI:\n' + feedback : '')
                     + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }];
     }
-    // ---------- 4) controlli automatici ----------
     const NON_DIGITABILE = /[²³¹⁰⁴-⁹⁻⁺·×÷Δδπ→←↔≈≠≤≥√∞°µ±_^]/;
     function controlla(d, fontiTesto, altre) {
         const p = [];
         if (!d || typeof d.q !== 'string' || d.q.trim().length < 15)
             return ['testo mancante'];
-        // v0.44 correzioni locali (zero token) prima di giudicare: corretta accorciata, risposte rese digitabili,
-        // citazioni sostituite con la frase vera della fonte più simile
         Locale.accorciaCorretta(d);
         if (d.t === 'fill' && Array.isArray(d.a))
             d.a = Locale.digitabili(d.a.map(String));
@@ -6203,7 +5680,6 @@ const CreaQuiz = (() => {
         }
         else
             p.push('tipo sconosciuto');
-        // citazioni: devono esserci davvero nella fonte (confronto senza spazi/maiuscole/virgolette)
         const ft = n2(fontiTesto).replace(/[^a-z0-9]/g, '');
         d.cit = (Array.isArray(d.cit) ? d.cit : []).filter((c) => c && typeof c.t === 'string' && c.t.length > 20 && ft.includes(n2(c.t).replace(/[^a-z0-9]/g, '')));
         if (!d.cit.length)
@@ -6212,7 +5688,6 @@ const CreaQuiz = (() => {
             p.push('quasi uguale a un\'altra domanda');
         return p;
     }
-    // ---------- 5) revisione indipendente ----------
     async function revisiona(ds, fonti, evita) {
         const L = 'ABCDE', ordini = ds.map(d => d.t === 'mcq' ? mescolaU([0, 1, 2, 3, 4]) : []);
         const elenco = ds.map((d, i) => d.t === 'mcq' ? i + ') ' + d.q + '\n' + ordini[i].map((k, j) => '   ' + L[j] + ') ' + d.o[k]).join('\n') : i + ') [completamento] ' + d.q);
@@ -6244,7 +5719,6 @@ const CreaQuiz = (() => {
     }
     const normR = (s) => n2(s).replace(',', '.').replace(/[^a-z0-9.\- ]/g, '').trim();
     function giustaR(v, a) { const x = normR(v); return a.some(y => { const z = normR(y); return x === z || (!!z && x.startsWith(z + ' ')) || (!isNaN(+x.split(' ')[0]) && +x.split(' ')[0] === +z.split(' ')[0] && /\d/.test(z)); }); }
-    // ---------- l'intero processo ----------
     async function crea(o, passo) {
         const chiavi = Array.from(new Set((o.argomento + ' ' + o.extra).split(/[\s,;:/()«»"]+/).map(n2).filter(w => w.length > 3))).slice(0, 12);
         const budget = IA.gemini ? 120000 : 22000, fonti = [];
@@ -6323,7 +5797,6 @@ const CreaQuiz = (() => {
         const rec = { id, type: 'qcreato', updatedAt: 0, titolo: o.argomento.charAt(0).toUpperCase() + o.argomento.slice(1), materia: o.materia, argomento: o.argomento, cosa: o.cosa,
             fonti: fonti.map(f => ({ nome: f.nome, id: f.id, pagine: f.pagine })), domande, creato: new Date().toISOString(), modelli: Array.from(modelli), scartate };
         Stato.salva(rec);
-        // v0.43 memoria: dove stava cosa (argomento → file) e quali pagine hanno dato citazioni buone
         Trova.ricordaPosto(o.argomento, o.fonti.filter(f => fonti.some(x => x.id === f.id)));
         for (const f of fonti) {
             const pp = new Set();
@@ -6345,7 +5818,6 @@ const CreaQuiz = (() => {
         const p = /p\.\s*(\d+)/.exec(f);
         return 'https://drive.google.com/file/d/' + x.id + '/view' + (p ? '#page=' + p[1] : '');
     }
-    // ---------- interfaccia ----------
     function apri(r) {
         const pk = { tipo: 'step', id: 'qc', step: 0, titolo: '', aggiornato: '', risorse: { libri: {}, quiz: {} }, materie: [] };
         const s = { id: r.id, k: 1, n: 1, titolo: r.titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' };
@@ -6365,7 +5837,6 @@ const CreaQuiz = (() => {
             avviso('Serve una chiave AI gratuita: Altro → Spiegazioni AI.', 6000);
             return;
         }
-        // v0.57.1 (D2): materie fisse solo per il proprietario; per gli altri solo dai propri dati (corsi + pacchetti)
         const materie = Array.from(new Set((Drive.eProprietario() ? ['Chimica', 'Biologia', 'Fisica'] : Stato.tutti('materia').map(m => m.nome)).concat(Stato.tutti('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m) => m.nome))).filter(Boolean)));
         if (!materie.length)
             materie.push('Studio');
@@ -6420,22 +5891,19 @@ const CreaQuiz = (() => {
             try {
                 Tocco.clic(1);
             }
-            catch (_) { /* */ }
+            catch (_) { }
         }
         catch (e) {
             stato.textContent = '⚠️ ' + (e.message || e);
             pill.append(h('button', { type: 'button', 'aria-label': 'Chiudi', onclick: () => pill.remove() }, '✕'));
         }
     }
-    // ---------- v0.54 (BP3 §3): Creaquiz Leggero — 3 click, zero attrito, zero token per import/cloze/dedup ----------
-    /** Tutte le domande già in archivio (quiz creati in app), per la deduplicazione. */
     const archivio = () => tutti().flatMap(r => r.domande || []);
     const statoPipe = (stepId) => {
         const r = Stato.prendi('ps-' + stepId);
         return r && !r.deleted ? r : { id: 'ps-' + stepId, type: 'pipestep', updatedAt: 0, stepId, schedaProlissa: 'bozza', schedaCondensata: 'bozza' };
     };
     const ICONA_PIPE = { bozza: '✏️ bozza', pronta: '✅ pronta', verificata: '🔒 verificata' };
-    /** BP3 §3.2: indicatori della pipeline di uno step (scheda prolissa → condensata → quiz bank con copertura Bloom). */
     function pannelloPipeline(stepId) {
         const box = h('div.gruppo.cq-pipe');
         const disegna = () => {
@@ -6505,7 +5973,6 @@ const CreaQuiz = (() => {
             }
             mostra(c, ['✂️ ' + c.length + ' completamenti dalle frasi chiave (senza AI)']);
         };
-        // Livello 3 (circuit breaker): oltre 15 domande niente chiamate multiple dall'app → prompt per Gemini e incolla
         const nAI = h('input.campo', { type: 'number', min: 1, max: 60, value: 10, style: { width: '6em' } });
         const breaker = h('div');
         const generaAI = async () => {
@@ -6560,7 +6027,6 @@ const CreaQuiz = (() => {
                 aggiornaPipe();
             } daCloze(a.testo); } }, '✂️ Dai punti chiave')), badge, anteprima, h('div.chips', null, h('span.piccolo', null, 'Oppure con l\'AI:'), nAI, h('button.chip', { type: 'button', onclick: generaAI }, '✨ Genera domande')), breaker, h('div.bottoni', null, h('button.btn', { type: 'button', onclick: salva }, '💾 Salva e apri il quiz'), h('button.btn.neutro', { type: 'button', onclick: () => { pronte = []; badge.textContent = ''; anteprima.textContent = 'Svuotato.'; } }, 'Svuota')), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Esporta dall\'archivio (appunti + .imcpack)'), h('div.chips', null, ...[['errori', 'Solo errori'], ['illusione', 'Illusioni di competenza'], ['bloom3', 'Bloom ≥ 3']].map(([f, n]) => h('button.chip', { type: 'button', onclick: () => QuizApp.esporta(archivio(), f, 'Quiz creati in app', Dominio.archetipoMateria(materia.value.trim())) }, n)))), pipe));
         aggiornaPipe();
-        // v0.58 (Q5): «🎯 Quiz da questo appunto» dal menu ⋯ dell'appunto → completamenti già pronti dai suoi punti chiave
         if (pre.appunto) {
             const a = app.find(x => x.id === pre.appunto) || Stato.prendi(pre.appunto);
             if (a && !a.deleted) {
@@ -6577,21 +6043,11 @@ const CreaQuiz = (() => {
     return { nuovo, elenco, apri, tutti, controlla, crea, leggero };
 })();
 
-// 07-domande.ts — Errori ricorrenti, domanda per domanda (v0.16).
-//
-// L'osservatore dei quiz (07-cattura) legge dalla schermata finale la sezione «Da rivedere»: per ogni
-// domanda sbagliata testo, risposta corretta e spiegazione. Qui diventano record 'domanda'
-// (id 'dom-<hash scheda+testo>') con quante volte è stata sbagliata e com'è andata l'ultima volta.
-// - quiz intero: le domande già note di quella scheda che NON sono tra le sbagliate contano come giuste;
-// - «rifai solo gli errori»: aggiorna solo quelle ancora aperte;
-// - le prove a freddo non contano (lì sbagliare è normale).
-// In Studio → Errori: elenco con «mostra risposta» (prima prova a ricordare) e «la sapevo / non la sapevo».
 const Domande = (() => {
     function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++)
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
     const norm = (q) => q.replace(/\s+/g, ' ').trim().toLowerCase();
     const tutte = () => Stato.tutti('domanda');
-    /** Registra l'esito di un quiz; restituisce la funzione per annullare. */
     const Domande_aperte = () => tutte().filter(x => x.esito === 'sbagliata');
     function registra(schedaId, titolo, d) {
         const oggiK = ymd(new Date()), sb = d.sbagliate || [];
@@ -6611,22 +6067,19 @@ const Domande = (() => {
                 Stato.salva({ id, type: 'domanda', updatedAt: 0, schedaId, titolo, q, giusta, spieg: spieg || undefined, volte: 1, giuste: 0, ultima: oggiK, esito: 'sbagliata' }, true);
             }
         }
-        // Le domande note che stavolta non sono tra le sbagliate: giuste (nel ripasso errori, solo quelle aperte)
-        // (solo se il quiz ha mostrato «Da rivedere» o è tutto giusto: un formato diverso non deve «risolvere» nulla)
         if (sb.length || d.pct === 100)
             for (const r of mie) {
                 if (sbagliateId.has(r.id) || (d.errori && r.esito !== 'sbagliata'))
                     continue;
                 Stato.salva(Object.assign(r, { giuste: r.giuste + 1, ultima: oggiK, esito: 'giusta' }), true);
             }
-        const carteNuove = Carte.daErrori(Domande_aperte()); // v0.20.3: errori → flashcard (anche quelli vecchi ancora aperti)
+        const carteNuove = Carte.daErrori(Domande_aperte());
         Stato.notifica();
         return () => { for (const r of prima)
             Stato.salva(r, true); for (const id of nuove)
             Stato.elimina(id); for (const id of carteNuove)
             Stato.elimina(id); };
     }
-    /** Aperte = ultimo esito sbagliato; ricorrenti = sbagliate almeno 2 volte e ancora aperte. */
     const aperte = () => tutte().filter(x => x.esito === 'sbagliata');
     const ricorrenti = () => aperte().filter(x => x.volte >= 2);
     function segna(id, sapevo) {
@@ -6638,13 +6091,11 @@ const Domande = (() => {
     return { registra, aperte, ricorrenti, tutte, segna };
 })();
 function gruppoDomanda(x) { return x.schedaId.startsWith('sim:') ? 'Simulazioni' : nomeMateria(materiaDi(x.schedaId)); }
-/** Sezione in Studio → Errori. */
 function sezioneDomande() {
     const filtro = UI.domFiltro || 'ricorrenti';
     const elenco = (filtro === 'ricorrenti' ? Domande.ricorrenti() : filtro === 'aperte' ? Domande.aperte() : Domande.tutte().filter(x => x.esito === 'giusta'))
         .sort((a, b) => b.volte - a.volte || (a.ultima < b.ultima ? 1 : -1));
     const nR = Domande.ricorrenti().length, nA = Domande.aperte().length, nG = Domande.tutte().length - nA;
-    // v0.57 (BP6 · INP): primo disegno con 20 domande (prima 60 → ~730 nodi nel solo Registro errori); le altre su richiesta
     const quante = UI.domTutte ? 60 : 20;
     const voce = (x) => {
         const risp = h('div.dom-risposta', { hidden: true }, h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'), x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null, rigaAppuntoErrore(x), x.esito === 'sbagliata' ? h('div.bottoni', null, h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'), h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);
@@ -6654,20 +6105,6 @@ function sezioneDomande() {
             avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null, elenco.length ? elenco.slice(0, quante).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'), elenco.length > quante && quante < 60 ? h('button.btn.neutro', { onclick: () => { UI.domTutte = true; disegna(); } }, 'Mostra altre ' + (Math.min(60, elenco.length) - quante)) : null);
 }
 
-// 07-dominio.ts — BP2 (v0.52): architettura multidominio universale e profili utente.
-//
-// 1. Profili cognitivi: 'owner' (il proprietario, Medicina → universita_concorsi) oppure 'ospite' (qualsiasi
-//    altro account: cartella Drive pulita + Wizard di benvenuto). La modalità scelta è il record 'profilo'
-//    (id fisso, porta `acc` come ogni record → mai unito tra account diversi; LWW tra dispositivi).
-// 2. Sei archetipi disciplinari: ogni materia ne ha uno (record 'materia'.archetipo, oppure dedotto dal nome,
-//    oppure la mappa storica F/C/B). Guidano catena AI, tono del tutor e diagnostica locale a zero token.
-// 3. Pacchetti di scambio `.imcpack.json` (formato 'imcpack-v1'): programma + domande + flashcard, senza
-//    alcun dato personale (niente statistiche, FSRS, chiavi, account). Le domande importate diventano
-//    record 'bancaimc' (id 'bq-<id scheda>') letti da Banca.scheda; o[0] resta sempre la risposta giusta.
-// 4. CreaPianoUniversale: indice del libro (testo, PDF o foto) + data d'esame → corso proprio con i
-//    sotto-step distribuiti sui giorni entro il tetto giornaliero.
-// 5. «100% senza AI»: senza alcuna chiave si nascondono solo i pulsanti AI; il resto funziona offline.
-// Tutto additivo: nessun cambio di SCHEMA (record e campi nuovi facoltativi).
 const PRESET_COGNITIVI = {
     medie_biennio: { modalita: 'medie_biennio', ritenzioneTarget: 0.85, dimensioneMicroLotto: 5, mostraMetricheFSRS: false, attivaHypercorrection: false, tonoSpiegazioneAI: 'semplice_esempi' },
     superiori_maturita: { modalita: 'superiori_maturita', ritenzioneTarget: 0.88, dimensioneMicroLotto: 6, mostraMetricheFSRS: true, attivaHypercorrection: true, tonoSpiegazioneAI: 'didattico_chiaro' },
@@ -6694,7 +6131,6 @@ const ARCHETIPI_DISCIPLINARI = {
 };
 const ICONE_ARCHETIPO = { stem_calcolo: '📐', scienze_sperimentali: '🧪', umanistico_storico: '🏛', giuridico_economico: '⚖️', lingue_letteratura: '🗣', informatica_coding: '💻' };
 const eArchetipo = (x) => typeof x === 'string' && Object.prototype.hasOwnProperty.call(ARCHETIPI_DISCIPLINARI, x);
-/** Regola di risoluzione: esplicito > mappa storica (F/C/B) > scienze_sperimentali. */
 function risolviArchetipoMateria(codiceMateria, archetipoEsplicito) {
     if (archetipoEsplicito && eArchetipo(archetipoEsplicito))
         return archetipoEsplicito;
@@ -6706,9 +6142,7 @@ const Dominio = (() => {
     const TIPI = ['mcq', 'fill', 'sequenza', 'abbinamento', 'risposta_aperta_rubrica'];
     const hash = (s) => { let x = 5381; for (let i = 0; i < s.length; i++)
         x = ((x << 5) + x + s.charCodeAt(i)) | 0; return (x >>> 0).toString(36); };
-    // ---------- §1 Ruolo e profilo cognitivo ----------
     const ruolo = () => Drive.eProprietario() ? 'owner' : 'ospite';
-    /** Profilo attivo: preset della modalità scelta (record 'profilo'); senza scelta, owner → universita_concorsi. */
     function profilo(r = ruolo()) {
         const rec = Stato.prendi(ID_PROFILO);
         const mod = rec && PRESET_COGNITIVI[rec.modalita] ? rec.modalita : r === 'owner' ? 'universita_concorsi' : 'superiori_maturita';
@@ -6720,9 +6154,7 @@ const Dominio = (() => {
         const r = Stato.prendi(ID_PROFILO);
         Stato.salva({ ...(r || { id: ID_PROFILO, type: 'profilo', updatedAt: 0 }), modalita: m, benvenuto: true });
     }
-    /** Ritenzione FSRS desiderata: quella scelta a mano nelle impostazioni, altrimenti quella del profilo. */
     const ritenzioneProfilo = () => profilo().ritenzioneTarget;
-    // ---------- §2 Archetipi ----------
     const REGOLE = [
         ['informatica_coding', /informat|programm|coding|javascript|typescript|python|\bjava\b|\bsql\b|database|basi di dati|sistemi operativi|algoritm|software|reti di calc|sviluppo web/],
         ['lingue_letteratura', /ingles|frances|spagnol|tedesc|latin|grec[oa]|letteratur|italiano|lingu|grammatic|russo|cinese|giappones|portoghes|english|deutsch|espanol/],
@@ -6731,7 +6163,6 @@ const Dominio = (() => {
         ['stem_calcolo', /fisic|matemat|analisi|calcolo|geometr|algebra|statist|ingegner|meccanic|elettro|termodin|trigonom/],
         ['scienze_sperimentali', /chimic|biolog|anatom|fisiolog|biochim|genetic|medic|farmac|scienz|microbio|istolog|patolog|botanic|ecolog|infermier/],
     ];
-    /** Deduce l'archetipo dal nome della materia (null se non si capisce). */
     function indovinaArchetipo(nome) {
         const t = norm(nome || '');
         for (const [a, re] of REGOLE)
@@ -6739,7 +6170,6 @@ const Dominio = (() => {
                 return a;
         return null;
     }
-    /** Archetipo di una materia: scelto (record 'materia'), storico (C/B/F), dedotto dal nome, predefinito. */
     function archetipoMateria(codice) {
         const r = Stato.prendi('mat-' + codice);
         if (r && eArchetipo(r.archetipo))
@@ -6753,7 +6183,6 @@ const Dominio = (() => {
         const r = Stato.prendi('mat-' + codice), inf = infoMateria(codice);
         Stato.salva({ ...(r || { id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome: inf.nome, colore: inf.colore }), archetipo: a });
     }
-    /** Ordine dei fornitori preferito dall'archetipo (solo nomi; il gateway tiene quelli che conosce). */
     const catenaPreferita = (a) => eArchetipo(a) ? ARCHETIPI_DISCIPLINARI[a].catenaProviderPreferita : [];
     const TONI = {
         semplice_esempi: 'Usa parole semplici, frasi brevi ed esempi della vita quotidiana, come per uno studente di 12-15 anni.',
@@ -6768,7 +6197,6 @@ const Dominio = (() => {
         lingue_letteratura: 'Spiega la regola grammaticale o lessicale e dai un esempio d\'uso corretto.',
         informatica_coding: 'Ragiona sul codice riga per riga; segnala casi limite e errori off-by-one.',
     };
-    /** Prompt del tutor: per il proprietario (Medicina) resta identico a prima; per gli altri dipende da archetipo e tono. */
     function promptTutor(materia, archetipo) {
         const p = profilo(), a = eArchetipo(archetipo) ? archetipo : null;
         if (p.ruolo === 'owner' && p.modalita === 'universita_concorsi' && (!a || a === 'stem_calcolo' || a === 'scienze_sperimentali'))
@@ -6776,7 +6204,6 @@ const Dominio = (() => {
         return 'Sei un tutor di ' + materia + (a ? ' (' + ARCHETIPI_DISCIPLINARI[a].etichetta + ')' : '') + '. Rispondi in italiano corretto, rivolgendoti allo studente con il tu. '
             + TONI[p.tonoSpiegazioneAI] + ' ' + (a ? STILE_ARCH[a] + ' ' : '');
     }
-    // ---------- §5 «100% senza AI» ----------
     function senzaAI() {
         try {
             const k = IA.tutteChiavi();
@@ -6786,12 +6213,10 @@ const Dominio = (() => {
             return true;
         }
     }
-    // ---------- §4 Pacchetti .imcpack.json ----------
     const LV_DIFF = { Base: 'Sbarramento', Trabocchetto: 'Trabocchetto', Problema: 'Problema' };
     const DIFF_LV = { Sbarramento: 'Base', Trabocchetto: 'Trabocchetto', Problema: 'Problema' };
     const str = (x) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
     const lista = (x) => Array.isArray(x) ? x.map(str).filter(Boolean) : [];
-    /** Converte una domanda del pacchetto (schema universale o DomB dell'app) in DomB; null se non è valida. */
     function normalizzaDomanda(x, sk, arch, i = 0) {
         if (!x || typeof x !== 'object')
             return null;
@@ -6804,7 +6229,6 @@ const Dominio = (() => {
             e: Array.isArray(x.e) ? lista(x.e) : str(x.e), archetipo: eArchetipo(x.archetipo) ? x.archetipo : arch };
         let o = lista(x.o);
         if (tipo === 'mcq') {
-            // invariante: o[0] è la risposta corretta (se il pacchetto indica `c` = indice giusto, la sposto in testa)
             const c = Number.isInteger(x.c) && x.c > 0 && x.c < o.length ? x.c : 0;
             if (c)
                 o = [o[c]].concat(o.filter((_, k) => k !== c));
@@ -6858,7 +6282,6 @@ const Dominio = (() => {
             d.linguaCodice = str(x.linguaCodice);
         return d;
     }
-    /** Controlla il formato; restituisce '' se va bene, altrimenti il motivo. */
     function valida(j) {
         if (!j || typeof j !== 'object')
             return 'File non valido.';
@@ -6872,7 +6295,6 @@ const Dominio = (() => {
             return 'Programma non valido.';
         return '';
     }
-    /** Importa un pacchetto: corso proprio (materia con archetipo) + domande + flashcard. */
     function importa(j) {
         const err = valida(j);
         if (err)
@@ -6883,7 +6305,6 @@ const Dominio = (() => {
         const codice = vecchio && vecchio.materie[0] ? vecchio.materie[0].m : nuovoCodice(titolo);
         if (!Stato.prendi('mat-' + codice))
             Stato.salva({ id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome: titolo, colore: coloreMateria(codice), archetipo: arch }, true);
-        // programma: dal pacchetto; le domande con sk fuori programma finiscono in un gruppo «Altro»
         const prog = (Array.isArray(j.programma) ? j.programma : []).map((g) => ({ titolo: str(g && g.titolo) || 'Parte', sottostep: (g && Array.isArray(g.sottostep) ? g.sottostep : []).filter((s) => s && str(s.sk)).map((s) => ({ sk: str(s.sk), titolo: str(s.titolo) || str(s.sk) })) }));
         const noti = new Set(prog.flatMap(g => g.sottostep.map(s => s.sk)));
         const extra = Object.keys(j.domande).filter(sk => !noti.has(sk));
@@ -6906,7 +6327,6 @@ const Dominio = (() => {
                 nuoveSchede.add(id);
             }
         }));
-        // banche di una versione precedente del pacchetto non più presenti
         for (const r of Stato.tutti('bancaimc'))
             if (r.pk === idPk && !nuoveSchede.has(r.sk))
                 Stato.elimina(r.id);
@@ -6914,7 +6334,6 @@ const Dominio = (() => {
             descrizione: str(j.descrizione) || undefined, risorse: { libri: {}, quiz: {} }, materie: [mat] };
         pk.imc = { archetipo: arch, livello: PRESET_COGNITIVI[j.livelloConsigliato] ? j.livelloConsigliato : undefined };
         salvaPacchetto(pk);
-        // flashcard → un mazzo col nome del pacchetto (reimportare aggiorna le stesse carte, i ripassi restano)
         let nc = 0;
         const fc = (Array.isArray(j.flashcard) ? j.flashcard : []).filter((c) => c && str(c.fronte) && str(c.retro));
         if (fc.length) {
@@ -6924,7 +6343,6 @@ const Dominio = (() => {
         Stato.notifica();
         return { pk, domande: nd, scartate: scart, carte: nc };
     }
-    /** Esporta un corso proprio come .imcpack: SOLO contenuti didattici (niente statistiche, FSRS, chiavi, account). */
     function esporta(pk) {
         const arch = (pk.imc && eArchetipo(pk.imc.archetipo)) ? pk.imc.archetipo : archetipoMateria(pk.materie[0] ? pk.materie[0].m : '');
         const out = { formato: 'imcpack-v1', titolo: pk.titolo, descrizione: pk.descrizione || '', archetipo: arch, livelloConsigliato: profilo().modalita, dataCreazione: ymd(new Date()), programma: [], domande: {}, flashcard: [] };
@@ -6950,7 +6368,6 @@ const Dominio = (() => {
             out.flashcard = Carte.carteDi(mz.id).map(c => ({ sk: '', fronte: c.f, retro: c.r, tag: c.tag ? c.tag.split(/\s+/) : undefined }));
         return out;
     }
-    /** DomB dell'app → schema universale (o[0] corretta; per fill o[0] = risposta). */
     function universale(d) {
         const tipo = (d.t || 'mcq');
         const u = { id: d.id, t: d.q, o: tipo === 'mcq' ? (d.o || []).slice() : tipo === 'fill' ? (d.a || []).slice() : tipo === 'sequenza' ? (d.sequenzaOk || []).slice() : [], tipoDomanda: tipo };
@@ -6977,7 +6394,6 @@ const Dominio = (() => {
             u.linguaCodice = d.linguaCodice;
         return u;
     }
-    /** Domande importate di una scheda (null se non ce ne sono). */
     function domandeDi(sk) { const r = Stato.prendi('bq-' + sk); return r && Array.isArray(r.domande) && r.domande.length ? r.domande : null; }
     const haDomande = (sk) => !!domandeDi(sk);
     function scegliFile(accetta) {
@@ -7007,7 +6423,6 @@ const Dominio = (() => {
         a.click();
         setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     }
-    /** Estrae i capitoli da un indice (righe «1.2 Titolo ..... 34», «Capitolo 3 – Titolo 51», «Titolo 12»). */
     function estraiCapitoli(testo) {
         const out = [];
         for (const r0 of String(testo || '').split(/\r?\n/)) {
@@ -7025,17 +6440,13 @@ const Dominio = (() => {
             if (p)
                 out.push({ num: String(out.length + 1), titolo: p[1].replace(/[\s.·…_-]+$/, '').trim(), pagina: parseInt(p[2], 10), ore: 0 });
         }
-        // solo il livello più fine se ci sono sia capitoli che paragrafi (1, 1.1, 1.2 → 1.1, 1.2)
         const foglie = out.filter((c, i) => !(out[i + 1] && out[i + 1].num.startsWith(c.num + '.')));
-        // ore stimate dalle pagine (circa 8 pagine all'ora, tra 0,5 e 6 ore), altrimenti 1,5 ore
         foglie.forEach((c, i) => {
             const succ = foglie.slice(i + 1).find(x => x.pagina != null), pp = c.pagina != null && succ && succ.pagina > c.pagina ? succ.pagina - c.pagina : 0;
             c.ore = pp ? Math.max(0.5, Math.min(6, Math.round(pp / 8 * 2) / 2)) : 1.5;
         });
         return foglie;
     }
-    /** Distribuisce i capitoli da `inizio` al giorno prima dell'esame (lasciando gli ultimi giorni al ripasso),
-     *  senza superare `oreGiorno` ore né il tetto di argomenti al giorno (come il generatore di piani: max 4). */
     function distribuisci(cap, inizio, esame, oreGiorno, maxArg = 4) {
         const avvisi = [];
         const g0 = daYmd(inizio), gE = daYmd(esame);
@@ -7068,14 +6479,12 @@ const Dominio = (() => {
             avvisi.push('Ultimi ' + ripasso + (ripasso === 1 ? ' giorno lasciato' : ' giorni lasciati') + ' al ripasso.');
         return { capitoli: cap, avvisi };
     }
-    /** Crea il corso proprio con i sotto-step datati (compaiono nel calendario, in Oggi e nei ritardi) e l'esame. */
     function creaPiano(o) {
         const cap = estraiCapitoli(o.testo);
         if (!cap.length)
             throw new Error('Non trovo capitoli nell\'indice: una riga per capitolo, es. «1.2 Titolo .... 34».');
         const d = distribuisci(cap, o.inizio || ymd(new Date()), o.esame, Math.max(0.5, o.oreGiorno || 2));
         const nome = o.nome.trim() || 'Nuova materia';
-        // v0.57 (A17): stesso nome di un corso proprio già creato → lo aggiorno invece di crearne un doppione
         const esiste = Studio.pkStep().find(p => p.proprio && p.titolo.trim().toLowerCase() === nome.toLowerCase() && p.materie.length === 1);
         const codice = esiste ? esiste.materie[0].m : nuovoCodice(nome);
         const arch = o.archetipo || indovinaArchetipo(nome) || 'scienze_sperimentali';
@@ -7165,7 +6574,6 @@ const Dominio = (() => {
                 }
             } });
     }
-    // ---------- §1 Wizard di benvenuto (solo ospiti, una volta) ----------
     let wizardAperto = false;
     function serveBenvenuto() {
         if (navigator.webdriver || wizardAperto || ruolo() !== 'ospite' || !Drive.collegato)
@@ -7190,7 +6598,6 @@ const Dominio = (() => {
             wizardAperto = false;
         }
     }
-    // ---------- Impostazioni (Altro → Studio) ----------
     function codiciMaterie() {
         const s = new Set([...Object.keys(MATERIE_BASE).filter(() => ruolo() === 'owner'), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
         return Array.from(s).filter(Boolean);
@@ -7208,21 +6615,11 @@ const Dominio = (() => {
         estraiCapitoli, distribuisci, creaPiano, wizardPiano, serveBenvenuto, benvenuto, sezione, NOMI_MODALITA };
 })();
 
-// ============================================================
-// 07-extra.ts — Studio "versatile":
-// - corsi di studio creati dall'utente (qualsiasi materia, esame, certificazione…)
-// - registro errori (schede da rifare)
-// - timer di studio (Pomodoro) e sessioni registrate
-// - statistiche per materia
-// - esami con conto alla rovescia
-// ============================================================
 function sogliaErrori() { const v = imp().sogliaErrori; return typeof v === 'number' ? v : 70; }
-/** Una scheda è "da rifare" se segnata a mano o se il punteggio è sotto la soglia. */
 function daRifare(id) {
     const p = Studio.prog(id);
     return !!p && (!!p.daRifare || (p.punteggio != null && p.punteggio < sogliaErrori()));
 }
-/** Tutte le schede (di tutti i corsi) con il loro contesto. */
 function tutteLeSchede() {
     const out = [];
     for (const pk of Studio.pkStep())
@@ -7233,7 +6630,6 @@ function tutteLeSchede() {
                         out.push({ pk, mat, sub, mi, s });
     return out;
 }
-// ---------- Registro errori ----------
 function vistaErrori() {
     const lista = tutteLeSchede().filter(x => daRifare(x.s.id));
     const perMat = new Map();
@@ -7247,8 +6643,7 @@ function vistaErrori() {
             i.sogliaErrori = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 70));
             Stato.salva(i);
         } });
-    return h('div.vista-errori', null, // v0.57 (BP6 · INP): le card fuori schermo non vengono impaginate (content-visibility)
-    sezioneDomande(), Regole.sezioneTipici(), AIGen.sezione(), h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
+    return h('div.vista-errori', null, sezioneDomande(), Regole.sezioneTipici(), AIGen.sezione(), h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
         const p = Studio.prog(x.s.id);
         return h('button.voce-lista', { onclick: () => apriScheda(x.pk, x.mat.m, x.mi.n, x.s) }, h('span.barra', { style: { background: coloreMateria(m) } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.mi.n + ' · ' + x.s.titolo), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (p.punteggio != null ? p.punteggio + '%' : 'segnata a mano') + (p.data ? ' · ' + fmt(daYmd(p.data), { day: 'numeric', month: 'short' }) : '') + (p.nota ? ' · ' + p.nota.slice(0, 60) : ''))));
     }))));
@@ -7274,7 +6669,7 @@ const Timer = (() => {
         else
             localStorage.removeItem(CH);
     }
-    catch (_) { /* niente */ } };
+    catch (_) { } };
     const durate = () => { const i = imp(); return { studio: i.pomodoro || 25, pausa: i.pausa || 5 }; };
     function trascorsi(t) { return ((t.pausaDa || Date.now()) - t.inizio) / 1000; }
     function restano(t) { return Math.max(0, t.durata * 60 - trascorsi(t)); }
@@ -7288,7 +6683,7 @@ const Timer = (() => {
         const t = leggi();
         if (t)
             registra(t, trascorsi(t) / 60);
-        scrivi({ inizio: Date.now(), fase: 'studio', ...o, durata: o.durata || durate().studio }); // v0.15: durata scelta da «Studia ora»
+        scrivi({ inizio: Date.now(), fase: 'studio', ...o, durata: o.durata || durate().studio });
         avviso('▶ Timer avviato: ' + durate().studio + ' minuti' + (o.titolo ? ' · ' + o.titolo : ''));
         aggiorna();
         disegna();
@@ -7315,7 +6710,6 @@ const Timer = (() => {
         aggiorna();
         disegna();
     }
-    /** Controlla la scadenza (anche dopo che l'app è stata in background) e aggiorna la barra. */
     function aggiorna() {
         const t = leggi();
         let bar = document.getElementById('timer-barra');
@@ -7330,7 +6724,7 @@ const Timer = (() => {
                 try {
                     navigator.vibrate && navigator.vibrate([200, 100, 200]);
                 }
-                catch (_) { /* niente */ }
+                catch (_) { }
                 avviso('⏰ Fine sessione: ' + t.durata + ' minuti di studio registrati. Pausa di ' + durate().pausa + ' minuti.', 12000);
                 scrivi({ ...t, inizio: t.inizio + t.durata * 60000, durata: durate().pausa, fase: 'pausa' });
                 Stato.notifica();
@@ -7367,7 +6761,6 @@ function widgetTimer() {
     const st = Studio.vociDelGiorno(g).filter(x => !x.v.speciale);
     return scheda('Timer e tempo di studio', h('div.numeri', null, numero(durata(oggiMin), 'oggi'), numero(durata(sett), 'questa settimana')), h('div.chips', { style: { marginTop: '8px' } }, st.map(x => h('button.chip', { style: { borderLeft: '4px solid ' + coloreChiave(x.v.k) }, onclick: () => Timer.avvia({ m: materiaDi(x.v.k), k: x.v.k, titolo: Studio.etichetta(x.v.k) }) }, '▶ ' + Studio.etichetta(x.v.k))), h('button.chip', { onclick: () => Timer.avvia({ titolo: 'Studio libero' }) }, '▶ Studio libero')), h('div.tenue.piccolo', null, 'Sessioni da ' + Timer.durate().studio + ' min + pausa ' + Timer.durate().pausa + ' (si cambia in Altro → Studio).'));
 }
-// ---------- Statistiche ----------
 function vistaStatistiche() {
     const g = oggi(), schede = tutteLeSchede();
     const codici = Array.from(new Set([...schede.map(x => x.mat.m), ...Stato.tutti('sessione').map(s => s.m || '').filter(Boolean)]));
@@ -7379,7 +6772,6 @@ function vistaStatistiche() {
             media: punti.length ? Math.round(punti.reduce((a, b) => a + b, 0) / punti.length) : null, err: mie.filter(x => daRifare(x.s.id)).length,
             min7: minutiStudio(piuGiorni(g, -6), g, m), rit: ritardo.filter(v => materiaDi(v.k) === m).length };
     });
-    // ultimi 14 giorni: minuti per giorno, divisi per materia
     const giorni = Array.from({ length: 14 }, (_, i) => piuGiorni(g, i - 13));
     const ses = Stato.tutti('sessione');
     const perGiorno = giorni.map(d => { const k = ymd(d), o = {}; for (const s of ses)
@@ -7389,7 +6781,6 @@ function vistaStatistiche() {
     const peggiore = righe.filter(r => r.rit > 0).sort((a, b) => b.rit - a.rit)[0];
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('h2.card-titolo', null, 'Tempo di studio'), h('div.numeri', null, numero(durata(minutiStudio(g, g)), 'oggi'), numero(durata(minutiStudio(piuGiorni(g, -6), g)), 'ultimi 7 giorni'), numero(durata(minutiStudio(piuGiorni(g, -29), g)), 'ultimi 30')), h('div.grafico', { role: 'img', 'aria-label': 'Minuti di studio negli ultimi 14 giorni' }, perGiorno.map((o, i) => h('div.colonna', { title: dataBreve(giorni[i]) + ': ' + durata(Object.values(o).reduce((a, b) => a + b, 0)) }, h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))), h('span', null, String(giorni[i].getDate()))))), ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')), sezionePuntiDeboli(), sezioneSottostepDeboli(), sezioneSonno(), peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null, righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)), h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')), barra(r.fatte, r.tot, coloreMateria(r.m)), h('div.tenue.piccolo', null, durata(r.min7) + ' negli ultimi 7 giorni · ' + r.err + ' da rifare' + (r.rit ? ' · ' + r.rit + ' step in ritardo' : '')))));
 }
-// ---------- Esami ----------
 function giorniA(data) { return Math.round((daYmd(data).getTime() - oggi().getTime()) / 86400000); }
 function testoCountdown(d) { return d === 0 ? 'oggi!' : d === 1 ? 'domani' : d < 0 ? 'passato' : 'tra ' + d + ' giorni'; }
 function vistaEsami() {
@@ -7404,7 +6795,6 @@ function widgetEsami() {
     const prossimi = Stato.tutti('esame').filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 2);
     if (!prossimi.length)
         return null;
-    // v0.34: dati raccolti in tessere (giorni agli esami + step in ritardo)
     const apri = () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); };
     const rit = Studio.pkPiani().length ? Studio.inRitardo().length : 0;
     return h('div.tessere', { 'aria-label': 'Prossimi esami' }, prossimi.map((e, i) => {
@@ -7433,13 +6823,8 @@ function editorEsame(es) {
         setTimeout(() => { if (!document.activeElement || document.activeElement === document.body)
             nome.focus(); }, 50);
 }
-// ---------- Corsi di studio creati dall'utente ----------
-// Un corso è un pacchetto (stesso formato v1) con proprio: true, salvato come record 'pacchetto'
-// e quindi sincronizzato su Drive come tutto il resto. Argomenti = sotto-step (con data facoltativa:
-// compaiono nel calendario e nel ritardo). Schede = qualsiasi cosa da fare, con file Drive collegato.
 function pacchettoRec(pk) { return Stato.rec.get('pk-' + pk.id); }
 function salvaPacchetto(pk) {
-    // v0.58.2: gli innesti Drive sono applicati in lettura: non finiscono mai dentro il corso salvato
     if (pk.id.startsWith('drv-ud-'))
         return;
     pk.materie = pk.materie.filter(m => !m.sottostep.length || m.sottostep.some(x => !x.innesto)).map(m => ({ ...m, sottostep: m.sottostep.filter(x => !x.innesto).map(x => x.microstep.some(z => z.innesto) ? { ...x, microstep: x.microstep.filter(z => !z.innesto) } : x) }));
@@ -7588,16 +6973,8 @@ function editorSchedaPropria(pk0, mat0, sub0, s0) {
             titolo.focus(); }, 50);
 }
 
-// 07-freddo.ts — Prova a freddo (v0.14, tattica T6 "effetto pretest").
-//
-// Prima di studiare uno step nuovo (nessuna prioritaria fatta) si fa la PRIMA scheda prioritaria
-// senza aver letto niente. Il risultato NON è il punteggio della scheda, non entra nei ripassi né nelle
-// statistiche: si salva a parte (record 'pretest', id 'pre-<k>'). Provare a rispondere prima, anche
-// sbagliando, migliora quanto si impara dopo. Quando poi la stessa scheda si fa "sul serio", l'avviso
-// mostra il confronto (es. "prova a freddo 40% → 85%").
 const Freddo = {
     rec(k) { const r = Stato.prendi('pre-' + k); return r && !r.deleted ? r : undefined; },
-    /** Lo step si presta alla prova a freddo: ha prioritarie e nessuna è ancora fatta. */
     possibile(k) {
         const t = Studio.trovaSotto(k);
         if (!t)
@@ -7606,7 +6983,6 @@ const Freddo = {
         return P.length > 0 && !P.some(x => Studio.fatta(x.id));
     },
     scheda(k) { const t = Studio.trovaSotto(k); return t ? Studio.schedeDi(t.sub).find(x => x.tipo === 'P') || null : null; },
-    /** Testo di confronto per l'avviso quando la scheda della prova a freddo viene fatta sul serio. */
     confronto(schedaId, pct) {
         const t = trovaScheda(schedaId);
         const r = t ? Freddo.rec(t.k) : undefined;
@@ -7632,14 +7008,12 @@ async function avviaProvaAFreddo(k) {
         avviso('🧊 Prova a freddo: ' + d.pct + '%. Non conta: ora studia lo step. Alla fine rifai questa scheda e guarda quanto sei migliorato.', 10000);
     });
 }
-/** Pulsanti "Prova a freddo" per gli step di oggi non ancora iniziati (riquadro Studio di oggi). */
 function bottoniFreddo(voci) {
     const ks = voci.filter(x => !x.v.speciale && x.p.modo !== 'raffinamento' && Freddo.possibile(x.v.k) && !Freddo.rec(x.v.k)).map(x => x.v.k);
     if (!ks.length)
         return null;
     return h('div', null, h('div.tenue.piccolo', { style: { margin: '8px 0 4px' } }, 'Prima di leggere: 5–10 min a freddo sulla prima scheda (non conta, aiuta a ricordare).'), h('div.chips', null, ks.map(k => h('button.chip', { onclick: () => avviaProvaAFreddo(k) }, '🧊 Prova a freddo · ' + Studio.etichetta(k)))));
 }
-/** Riga nella scheda del sotto-step: pulsante o risultato. */
 function rigaFreddo(k) {
     const r = Freddo.rec(k);
     if (r)
@@ -7649,21 +7023,9 @@ function rigaFreddo(k) {
     return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaProvaAFreddo(k) }, '🧊 Prova a freddo (prima di studiare)'));
 }
 
-// 07-generatore.ts — Generatore di piani di studio (v0.19, F5).
-//
-// Ispirazione (ricerca 12/11): i planner per esami (StudySmarter, Exam Study Planner, Notion/Shovel)
-// chiedono data dell'esame, argomenti e ore disponibili e producono un calendario che si adatta; la
-// letteratura sul ripasso suggerisce tre fasi — basi → applicazione → prestazione (simulazioni a tempo) —
-// con argomenti alternati tra materie (interleaving) e un secondo passaggio distanziato sui deboli.
-//
-// Il piano generato è un pacchetto 'piano' con id 'gen-…': affianca gli altri (non li sostituisce),
-// compare in Oggi, nel calendario e nel ritardo, e si ripianifica con lo stesso pulsante.
-// Le opzioni restano nel piano (campo 'generato') così «Rigenera» lo ricostruisce con i dati di oggi.
 const Generatore = (() => {
     const piu = (k, n) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
     const tra = (a, b) => Math.round((daDt(b).getTime() - daDt(a).getTime()) / 86400000);
-    /** Quanto è debole un sotto-step (0 = solido, 1 = da rifare): punteggi, schede da rifare, ricordo. */
-    /** Ha dati veri (punteggi o ripassi)? Senza, la debolezza è una stima neutra (0.6). */
     function haDati(k) {
         const t = Studio.trovaSotto(k);
         if (!t)
@@ -7683,7 +7045,6 @@ const Generatore = (() => {
             w += (.8 - r) * .5;
         return Math.max(0, Math.min(1, w));
     }
-    /** Tutti i sotto-step disponibili, con materia e debolezza. */
     function catalogo() {
         const out = [];
         for (const pk of Studio.pkStep())
@@ -7693,7 +7054,6 @@ const Generatore = (() => {
         return out;
     }
     const capienza = (o) => Math.max(1, Math.min(4, Math.floor(o.ore * 60 / o.minArg)));
-    /** Ordine degli argomenti: alternati tra materie; nel raffinamento (o se chiesto) prima i più deboli. */
     function ordina(o) {
         const cat = new Map(catalogo().map(x => [x.k, x]));
         const lista = o.argomenti.map((k, i) => { const c = cat.get(k); return { k, t: c ? c.t : (o.testi || {})[k] || k, m: c ? c.m : 'TXT', w: c ? c.w : .5, dati: c ? c.dati : false, i }; });
@@ -7712,25 +7072,21 @@ const Generatore = (() => {
                     out.push(c.shift());
         return out;
     }
-    /** Costruisce il piano. Non salva nulla. */
     function genera(o) {
         const cap = capienza(o), avvisi = [];
         const giorni = new Map();
         const metti = (d, v) => { if (!giorni.has(d))
             giorni.set(d, { data: d, voci: [] }); giorni.get(d).voci.push(v); };
-        // 1) giorni disponibili prima dell'esame
         const tutti = [];
         for (let d = o.inizio; d < o.esame; d = piu(d, 1))
             if (o.giorniSett.includes(daDt(d).getDay()))
                 tutti.push(d);
         let liberi = tutti.slice();
-        // 2) coda: vigilia di riposo, ripasso finale
         if (o.riposo && liberi.length && liberi[liberi.length - 1] === piu(o.esame, -1)) {
             metti(liberi.pop(), { k: 'RIPOSO', t: '😌 Riposo pre-esame', d: 'Niente teoria nuova: una passeggiata, formule a colpo d\'occhio, a letto presto.', speciale: true });
         }
         for (let i = o.finale; i > 0 && liberi.length; i--)
             metti(liberi.pop(), { k: 'FINALE-' + i, t: '📚 Ripasso finale ' + (o.finale - i + 1) + '/' + o.finale, d: 'Tabelle, formule ed errori ricorrenti. Ripassi e flashcard di oggi.', speciale: true });
-        // 3) simulazioni nella fase "prestazione" (ultimo 40% dei giorni rimasti), ognuna seguita dalla revisione
         const sim = [];
         if (o.simulazioni > 0 && liberi.length > 4) {
             const da = Math.floor(liberi.length * .6), span = liberi.length - da;
@@ -7742,20 +7098,16 @@ const Generatore = (() => {
             sim.forEach((d, i) => metti(d, { k: 'SIM-' + (i + 1), t: '⏱ Simulazione ' + (i + 1), d: 'A tempo, come all\'esame. Poi registra il punteggio.', speciale: true }));
             liberi = liberi.filter(d => !sim.includes(d));
         }
-        // 4) riserve: un giorno ogni N giorni utili resta vuoto (assorbe i ritardi)
         if (o.riservaOgni > 1) {
             const ris = liberi.filter((_d, i) => (i + 1) % o.riservaOgni === 0);
             ris.forEach((d, i) => metti(d, { k: 'RISERVA-' + (i + 1), t: '🛟 Riserva', d: 'Recupera i ritardi; se sei in pari, ripassi e flashcard.', speciale: true }));
             liberi = liberi.filter(d => !ris.includes(d));
         }
-        // 5) posti per gli argomenti: revisione della simulazione il giorno utile dopo (occupa 1 posto)
         const posti = new Map(liberi.map(d => [d, cap]));
         sim.forEach((s, i) => { const d = liberi.find(x => x > s); if (d) {
             metti(d, { k: 'REV-' + (i + 1), t: '🔎 Revisione simulazione ' + (i + 1), d: 'Rifai le domande sbagliate, annota l\'errore.', speciale: true });
             posti.set(d, posti.get(d) - 1);
         } });
-        // 6) primo giro (fase «basi»): distribuito in modo uniforme sul primo ~65% dei giorni utili, così
-        //    restano giorni per il secondo giro e le simulazioni; se non basta, usa tutti i giorni a pieno carico.
         const ord = ordina(o), fuori = [], quando = new Map();
         const nBasi = Math.max(1, Math.ceil(liberi.length * (o.secondoGiro || o.simulazioni ? .65 : 1)));
         const carico = Math.min(cap, Math.ceil(ord.length / nBasi));
@@ -7780,7 +7132,6 @@ const Generatore = (() => {
             posti.set(liberi[gi], posti.get(liberi[gi]) - 1);
             limite.set(liberi[gi], limite.get(liberi[gi]) - 1);
         }
-        // 7) secondo giro sui deboli, distanziato di almeno 7 giorni (o 3 se manca spazio)
         if (o.secondoGiro) {
             const deboli = ord.filter(x => x.m !== 'TXT' && x.dati && x.w >= .4 && quando.has(x.k)).sort((a, b) => b.w - a.w);
             let saltati = 0;
@@ -7813,11 +7164,9 @@ const Generatore = (() => {
     function elimina(id) { Stato.elimina('pk-' + id); }
     return { debolezza, catalogo, capienza, ordina, genera, salva, elimina };
 })();
-// ---------- Procedura guidata ----------
 function apriGeneratore(base, sostituisci) {
     const oggiK = ymd(new Date()), esami = Stato.tutti('esame').filter(e => e.data > oggiK).sort((a, b) => a.data < b.data ? -1 : 1);
     const cat = Generatore.catalogo();
-    // Proposta iniziale: con due appelli futuri → raffinamento tra il primo e il secondo, prima i deboli.
     const due = esami.length >= 2;
     const o = {
         titolo: due ? 'Raffinamento verso ' + esami[1].nome : esami.length ? 'Piano per ' + esami[0].nome : 'Nuovo piano',
@@ -7897,7 +7246,7 @@ function apriGeneratore(base, sostituisci) {
                 } passo++; disegnaPasso(); } }, 'Avanti ›')
             : h('button.btn', { onclick: () => {
                     const r = corpo._r;
-                    if (sostituisci) { // i giorni già passati del vecchio piano restano (storico e ritardi)
+                    if (sostituisci) {
                         const vecchio = Studio.pkPiani().find(x => x.id === sostituisci), oggiK2 = ymd(new Date());
                         r.piano.id = sostituisci;
                         if (vecchio) {
@@ -7923,7 +7272,6 @@ function apriGeneratore(base, sostituisci) {
     }
     disegnaPasso();
 }
-/** v0.57 (BP6 · T7-3): UN solo ingresso «＋ Crea piano» che offre le tre modalità (prima erano tre pulsanti sparsi). */
 async function scegliPiano() {
     const m = await chiedi('＋ Crea piano', [
         { testo: '✨ Genera un piano dalle tue schede', valore: 'gen' },
@@ -7937,30 +7285,19 @@ async function scegliPiano() {
     else if (m === 'libro')
         Dominio.wizardPiano();
 }
-/** Pulsanti nella vista Piano: crea (ingresso unico), e per i piani generati rigenera/elimina. */
 function bottoniGeneratore(p) {
     const gen = p && /^gen-/.test(p.id) ? p : null;
     const nas = !!p && Studio.nascosto(p.id);
-    return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null, h('button.btn', { onclick: () => scegliPiano() }, '＋ Crea piano'), PianiAI.bottoni(p), // v0.55 (BP4): Pausa / Ricalcola / Elimina dei piani ai_neuro (la creazione passa da scegliPiano)
-    p && Studio.pkPiani().length > 1 ? h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '👁 Mostra di nuovo' : '🙈 Nascondi') : null, gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null, gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') {
+    return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null, h('button.btn', { onclick: () => scegliPiano() }, '＋ Crea piano'), PianiAI.bottoni(p), p && Studio.pkPiani().length > 1 ? h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '👁 Mostra di nuovo' : '🙈 Nascondi') : null, gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null, gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') {
             Generatore.elimina(gen.id);
             UI.studioPiano = '';
             disegna();
         } } }, '🗑 Elimina') : null));
 }
 
-// 07-genesercizi.ts — Quiz Studio Q3 (v0.24): esercizi numerici generati a regole, offline.
-//
-// Ogni modello ha: dati casuali entro intervalli realistici, la formula del risultato e 4+ distrattori
-// calcolati con formule che riproducono un errore preciso (unità non convertite, rapporto invertito,
-// fattore dimenticato…), ciascuno con il suo «perché è sbagliato». Idee da Moodle «calculated multichoice».
-// Le domande generate hanno id fisso per modello ('g-<modello>'): le statistiche (record statq) si
-// accumulano per modello e, per i distrattori, per TIPO di errore (chiave dk) — è la base di Q4.
-// Per aggiungere un modello: un oggetto in MODELLI (m = C/B/F, micro = microstep dove compare).
 const Generatori = (() => {
     const rnd = (a, b, p = 1) => { const n = Math.round((b - a) / p); return +(a + p * Math.floor(Math.random() * (n + 1))).toFixed(6); };
     const scegli = (a) => a[Math.floor(Math.random() * a.length)];
-    /** Numero all'italiana con 3 cifre significative; notazione scientifica per valori molto grandi o piccoli. */
     function fN(x, cifre = 3) {
         if (!isFinite(x))
             return '—';
@@ -7980,7 +7317,6 @@ const Generatori = (() => {
     const G = 9.81, NA = 6.02e23;
     const rad = (g) => g * Math.PI / 180;
     const MODELLI = [
-        // ---------------- CHIMICA ----------------
         { id: 'c-moli', m: 'C', micro: ['3.1.5', '3.1.6'], lv: 'Problema', titolo: 'Moli da massa',
             dati: () => { const [f, M] = scegli([['H₂O', 18.0], ['NaCl', 58.5], ['CO₂', 44.0], ['glucosio (C₆H₁₂O₆)', 180], ['NaOH', 40.0], ['CaCO₃', 100]]); return { f, M, m: rnd(5, 250, 5) }; },
             r: v => v.m / v.M, u: 'mol',
@@ -8107,7 +7443,6 @@ const Generatori = (() => {
                 ['soloh', v => Math.abs(v.H), 'Quello è solo |ΔH|, non la barriera.'],
                 ['somma', v => v.Ea + Math.abs(v.H) * 2, 'Hai contato ΔH due volte.']],
             passi: (v, r) => ['Ea(inversa) = Ea(diretta) − ΔH', '= ' + fN(v.Ea) + ' − (' + fN(v.H) + ')', 'Risultato: ' + fN(r) + ' kJ/mol'] },
-        // ---------------- FISICA ----------------
         { id: 'f-mru', m: 'F', micro: ['2.1.1', '2.1.2'], lv: 'Problema', titolo: 'Moto rettilineo uniforme',
             dati: () => ({ v: scegli([18, 36, 54, 72, 90, 108, 126]), t: rnd(2, 30, 1) }),
             r: v => v.v / 3.6 * v.t * 60, u: 'm',
@@ -8243,7 +7578,6 @@ const Generatori = (() => {
                 ['cm3', v => 1000 * G * v.V / 1e6, 'Conversione sbagliata: 1 dm³ = 10^{-3} m³, non 10^{-6}.'],
                 ['meta', v => 1000 * G * v.V / 2000, 'L\'oggetto è tutto immerso: conta tutto il volume.']],
             passi: (v, r) => ['V = ' + fN(v.V) + ' dm³ = ' + fN(v.V / 1000) + ' m³', 'S = ρ · g · V', 'S = 1000 × 9,81 × ' + fN(v.V / 1000) + ' = ' + fN(r) + ' N'] },
-        // ---------------- BIOLOGIA ----------------
         { id: 'b-cromosomi', m: 'B', micro: ['2.3.3', '2.3.4', '2.3.5', '2.3.6'], lv: 'Applicativo', titolo: 'Cromosomi e cromatidi',
             dati: () => {
                 const [sp, dn] = scegli([['l\'uomo', 46], ['il cane', 78], ['il gatto', 38], ['il moscerino della frutta', 8], ['il mais', 20], ['lo scimpanzé', 48]]);
@@ -8273,14 +7607,12 @@ const Generatori = (() => {
     ];
     const SINGOLO = (u, x) => u === 'molecole' && x === 1 ? 'molecola' : u;
     const conUnita = (x, u) => fN(x) + (u ? ' ' + SINGOLO(u, x) : '');
-    /** Una domanda dal modello; null se non riesce a costruire 4 distrattori distinti. */
     function genera(M, tentativi = 8) {
         for (let t = 0; t < tentativi; t++) {
             const v = M.dati(), r = M.r(v), u = typeof M.u === 'function' ? M.u(v) : M.u;
             if (!isFinite(r))
                 continue;
             const giusta = conUnita(r, u), viste = new Set([giusta]), valori = [r];
-            // scarta i valori troppo vicini (entro il 3%) a uno già presente: sembrerebbero arrotondamenti
             const vicino = (x) => valori.some(y => Math.abs(x - y) <= 0.03 * Math.max(Math.abs(x), Math.abs(y)));
             const o = [giusta], ew = [], dk = [];
             for (const [k, f, p] of M.d) {
@@ -8294,7 +7626,7 @@ const Generatori = (() => {
                 if (!isFinite(x) || (r > 0 && x <= 0) || (r < 0 && x === 0))
                     continue;
                 if (Number.isInteger(r) && u === '' && !Number.isInteger(x))
-                    continue; // conteggi: solo interi
+                    continue;
                 const s = conUnita(x, u);
                 if (viste.has(s) || vicino(x))
                     continue;
@@ -8331,12 +7663,11 @@ const Generatori = (() => {
         return null;
     }
     const per = (m, micro) => MODELLI.filter(x => x.m === m && x.micro.includes(micro));
-    /** Serie di esercizi per un microstep: ogni modello almeno una volta, fino a n domande. */
     function serie(m, micro, n = 8) {
         const ms = per(m, micro);
         if (!ms.length)
             return [];
-        const out = [], scelti = Regole.scegliModelli(ms, n * 2); // Q4: quota ai modelli dove sbagli
+        const out = [], scelti = Regole.scegliModelli(ms, n * 2);
         for (let i = 0; out.length < n && i < scelti.length; i++) {
             const d = genera(scelti[i]);
             if (d)
@@ -8354,43 +7685,17 @@ const Generatori = (() => {
     return { MODELLI, genera, per, serie, fN, titoloMicro };
 })();
 
-// =====================================================================
-// 07-ia.ts — GATEWAY AI UNICO (v0.46, router v0.47 — BP1 §4)
-// Tutte le chiamate ai fornitori AI passano da qui: chat JSON (`chiedi`/`json`), testo libero e visione
-// (`testo`), trascrizione audio (`trascrivi`). Nessun altro file chiama direttamente i domini dei fornitori.
-// Chiavi: localStorage['imc-ai-keys'] = { v:2, chiavi:{ groq, gemini } }. In 0.46 restano rispecchiate anche
-// nelle vecchie voci 'imc-groq-chiave' / 'imc-gemini-chiave' (rollback a 0.44 funzionante).
-// Modelli: nessun ID fisso. GET /models (ricordato 12 ore) e scelta per PATTERN di ruolo; a parità vince la
-// versione più alta, le «preview/exp» solo se non c'è alternativa stabile. Senza elenco: modelli di riserva.
-//   «veloce»    assistente e comandi        groq → gemini
-//   «genera»    quiz, testi, spiegazioni    gemini → groq
-//   «revisiona» controllo indipendente      groq → gemini (con `evita` = modello che ha generato)
-//   «lungo»     fonti lunghe                gemini
-//   «visione»   scrittura a mano, immagini  gemini → groq
-// v0.47 (BP1 §4.4–4.5): router con controllo preventivo (token stimati vs limite del modello), lettura delle
-// intestazioni x-ratelimit-*, pause dopo 429 / 5xx, chiave rifiutata (401/403) non più riprovata finché non
-// cambia, massimo 2 richieste in volo per fornitore. Fornitori facoltativi: xkiro, Cohere, Requesty
-// (chiavi solo in 'imc-ai-keys').
-// v0.51 (BP1 §11): PROVIDER_FREE_QUOTAS con soglia di guardia all'85% e contatori locali a finestra mobile
-// ('imc-ai-uso'), perché via CORS le intestazioni x-ratelimit-* spesso non arrivano. Gemini parte da flash-lite.
-// Opzioni in 'imc-ai-opzioni': strictPrivacy (salta i fornitori con trainsOnFreeTier), xkiroTelegramVerified.
-// v0.53: tolti Mistral e OpenRouter; nuovo fornitore nativo xkiro (OpenAI Chat Completions, Bearer), subito dopo
-// Gemini e Groq in ogni catena. Chiavi/opzioni/contatori salvati che li citano ancora vengono ignorati e ripuliti.
-// =====================================================================
 const IA = (() => {
     const PROVS = ['groq', 'gemini', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
     const ALTRI = ['xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'];
     const NOMI = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty', cerebras: 'Cerebras', sambanova: 'SambaNova' };
-    /** Fornitori tolti (v0.53): le loro chiavi, opzioni e contatori salvati si ignorano e si ripuliscono in silenzio. */
     const RITIRATI = ['mistral', 'openrouter'];
     const eProv = (p) => PROVS.includes(p);
     const BASE = {
         groq: 'https://api.groq.com/openai/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai', xkiro: 'https://api.xkiro.com/v1',
         cohere: 'https://api.cohere.ai/compatibility/v1', requesty: 'https://router.requesty.ai/v1',
-        // v0.54 (BP3): due fornitori veloci in coda a ogni catena (OpenAI-compatibili, Bearer)
         cerebras: 'https://api.cerebras.ai/v1', sambanova: 'https://api.sambanova.ai/v1'
     };
-    // ---- Chiavi (BP1 §4.1) ----
     const KK = 'imc-ai-keys', LEG = { groq: 'imc-groq-chiave', gemini: 'imc-gemini-chiave' };
     const ls = (k) => { try {
         return localStorage.getItem(k);
@@ -8404,7 +7709,7 @@ const IA = (() => {
         else
             localStorage.removeItem(k);
     }
-    catch (_) { /* */ } };
+    catch (_) { } };
     function archivio() {
         try {
             const j = JSON.parse(ls(KK) || 'null');
@@ -8414,8 +7719,6 @@ const IA = (() => {
             return null;
         }
     }
-    /** Allinea 'imc-ai-keys' alle vecchie voci (che in 0.46 restano la copia di riferimento per groq/gemini).
-     *  La prima volta è la migrazione: crea 'imc-ai-keys' dalle chiavi già salvate. Idempotente. */
     function allinea() {
         const a = archivio(), ch = { ...(a ? a.chiavi : {}) };
         let cambiato = !a;
@@ -8423,7 +7726,7 @@ const IA = (() => {
             if (!eProv(p)) {
                 delete ch[p];
                 cambiato = true;
-            } // v0.53: fornitori ritirati
+            }
         for (const p of ['groq', 'gemini']) {
             const v = ls(LEG[p]) || '';
             if (v !== (ch[p] || '')) {
@@ -8441,7 +7744,7 @@ const IA = (() => {
     const chiave = (p) => allinea()[p] || '';
     function impostaChiave(p, v) {
         if (!eProv(p))
-            return; // v0.53: fornitore ritirato (es. chiave Mistral recuperata da Drive) → ignorato
+            return;
         v = String(v || '').replace(/\s+/g, '');
         const leg = LEG[p];
         if (leg)
@@ -8462,24 +7765,18 @@ const IA = (() => {
         azzera(p);
     }
     const tutteChiavi = () => ({ ...allinea() });
-    /** Avviso (non blocco) sul formato della chiave. */
     const FORMATO = { groq: /^gsk_/, gemini: /^(AIza|AQ\.)/ };
     const formatoOk = (p, v) => { const re = FORMATO[p]; return !v || !re || re.test(v); };
-    // ---- Discovery per pattern (BP1 §4.3) ----
     const PATTERN = {
         groq: { micro: [/gpt-oss-20b/, /gpt-oss/, /8b-instant/], genera: [/gpt-oss-120b/, /gpt-oss/], revisiona: [/gpt-oss-120b/, /gpt-oss/], veloce: [/gpt-oss-20b/, /gpt-oss/], visione: [/qwen.*(vl|\d\.\d+-\d+b)/, /scout|maverick|vision/] },
-        // v0.51: flash-lite di base (500 richieste/giorno gratis contro le 20 di flash); flash resta come riserva
         gemini: { micro: [/flash-lite/], genera: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], veloce: [/flash-lite/, /flash/], lungo: [/flash-lite/, /gemini-\d.*flash(?!-lite)/, /pro/], visione: [/flash-lite/, /gemini-\d.*flash(?!-lite)/], revisiona: [/hydrogen|pro/, /flash(?!-lite)/] },
-        // xkiro: solo ID con prefisso vendor («vendor/modello»), vedi `scegli`
         xkiro: { micro: [/nemotron/, /deepseek/], genera: [/deepseek-v\d.*pro/, /kimi/, /nemotron/], revisiona: [/kimi/, /deepseek/], veloce: [/nemotron/, /deepseek/], lungo: [/kimi/, /deepseek/], visione: [/nemotron.*-vl/, /-vl\b/] },
         cohere: { genera: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/, /command/], revisiona: [/command-a(?!.*(vision|reasoning|translate))/, /command-r-plus/] },
         requesty: { genera: [/gemini.*flash(?!-lite)/, /gpt-.*mini/, /llama/], veloce: [/flash-lite|mini|small/] },
         cerebras: { genera: [/gpt-oss-120b/, /qwen-3.*(235b|480b)/, /llama/], revisiona: [/gpt-oss-120b/, /qwen-3/], veloce: [/llama.*8b|gpt-oss/, /qwen-3/], lungo: [/gpt-oss-120b/, /qwen-3/] },
         sambanova: { genera: [/gpt-oss-120b/, /deepseek-v3/i, /llama-3.3/i], revisiona: [/deepseek/i, /gpt-oss/], veloce: [/llama.*8b/i, /gpt-oss/], lungo: [/deepseek/i, /llama-3.3/i], visione: [/llama-4|vision/i] },
     };
-    /** Modelli gratuiti consigliati su xkiro (ID sempre con prefisso vendor obbligatorio). */
     const XKIRO_FREE = ['deepseek/deepseek-v4-pro-0813', 'moonshotai/kimi-k3-agent', 'nvidia/nemotron-3.5-super-vl'];
-    /** Usati solo se /models non risponde e non c'è nulla in memoria. */
     const RISERVA = {
         groq: { micro: ['openai/gpt-oss-20b', 'llama-3.1-8b-instant'], genera: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], revisiona: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], veloce: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], visione: ['qwen/qwen3.8-27b'] },
         gemini: { micro: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'], genera: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], veloce: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], lungo: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], visione: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'], revisiona: ['gemini-4-hydrogen', 'gemini-3.8-flash'] },
@@ -8492,19 +7789,17 @@ const IA = (() => {
     const CATENA = {
         veloce: ['groq', 'gemini', 'xkiro', 'requesty', 'cerebras', 'sambanova'], genera: ['gemini', 'groq', 'xkiro', 'cohere', 'requesty', 'cerebras', 'sambanova'],
         revisiona: ['groq', 'gemini', 'xkiro', 'cohere', 'cerebras', 'sambanova'], lungo: ['gemini', 'xkiro', 'cerebras', 'sambanova'], visione: ['gemini', 'groq', 'xkiro', 'sambanova'],
-        // v0.54 (BP3 §2, imbuto livello 2): micro-spiegazione ≤350 token, solo fascia veloce
         micro: ['gemini', 'groq', 'xkiro']
     };
     const ESCLUSI = /guard|whisper|tts|orpheus|playai|embed|imagen|veo|image|audio|live|aqa|learnlm|compound|moderation|ocr|rerank/i;
     const versione = (id) => { const m = /(\d+(?:\.\d+)?)/.exec(id.replace(/^.*\//, '')); return m ? parseFloat(m[1]) : 0; };
     const instabile = (id) => /preview|exp/i.test(id);
-    /** Sceglie fino a 3 modelli per il ruolo, nell'ordine dei pattern; a parità la versione più alta. */
     function scegli(p, r, lista) {
         const pat = PATTERN[p][r];
         if (!pat)
             return [];
         if (p === 'xkiro' && lista)
-            lista = lista.filter(m => m.includes('/')); // prefisso vendor obbligatorio
+            lista = lista.filter(m => m.includes('/'));
         if (!lista || !lista.length)
             return (RISERVA[p][r] || []).slice();
         const out = [];
@@ -8536,7 +7831,7 @@ const IA = (() => {
         try {
             const r = await richiesta(p, '/models', k, undefined);
             if (!r.ok)
-                return c ? c.m : null; // anche scaduto: meglio di niente
+                return c ? c.m : null;
             const j = await r.json();
             const m = (j.data || j.models || []).map(x => String(x.id || x.name || '').replace(/^models\//, '')).filter(Boolean);
             const v = { t: Date.now(), m };
@@ -8544,14 +7839,13 @@ const IA = (() => {
             try {
                 localStorage.setItem('imc-modelli-' + cl, JSON.stringify(v));
             }
-            catch (_) { /* */ }
+            catch (_) { }
             return m;
         }
         catch (_) {
             return c ? c.m : null;
         }
     }
-    /** Le chiavi Gemini nuove (prefisso «AQ.», oltre alle vecchie «AIza») si accettano tutte: provo Bearer e, se rifiutato, l'intestazione x-goog-api-key. */
     async function richiesta(p, perc, k, corpo) {
         const gem = p === 'gemini', base = BASE[p], form = typeof FormData !== 'undefined' && corpo instanceof FormData;
         const tipo = corpo && !form ? { 'Content-Type': 'application/json' } : {};
@@ -8567,8 +7861,6 @@ const IA = (() => {
         }
         return r;
     }
-    /** v0.52 (BP2 §2): con un archetipo disciplinare i fornitori del ruolo si riordinano secondo la sua catena preferita
-     *  (solo quelli che il gateway conosce; gli altri restano dopo, nell'ordine di sempre). Senza archetipo nulla cambia. */
     function ordinePerArchetipo(lista, archetipo) {
         const pref = archetipo ? Dominio.catenaPreferita(archetipo) : [];
         if (!pref.length)
@@ -8577,7 +7869,7 @@ const IA = (() => {
         return lista.map((p, i) => ({ p, i })).sort((x, y) => pos(x.p) - pos(y.p) || x.i - y.i).map(x => x.p);
     }
     async function catena(r, evita, archetipo) {
-        const priv = !!opzioni().strictPrivacy; // v0.51: con Strict Privacy si saltano i fornitori che addestrano sui dati gratuiti
+        const priv = !!opzioni().strictPrivacy;
         const provs = ordinePerArchetipo(CATENA[r], archetipo).filter(p => chiave(p) && !(priv && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier));
         const liste = await Promise.all(provs.map(p => disponibili(p)));
         const out = [];
@@ -8586,10 +7878,8 @@ const IA = (() => {
                 out.push({ nome: NOMI[p] + ' ' + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' }); });
         return out;
     }
-    // v0.45 (BP1 §4.6) → v0.57 (A15): il parser è uno solo, in 01-json.ts.
     const parseJsonSicuro = (raw) => JsonAI.parseSicuro(raw);
     const json = parseJsonSicuro;
-    /** Accorcia i messaggi di testo più lunghi finché il totale sta sotto `lim` caratteri (i brevi restano interi; immagini intatte). */
     function accorcia(msgs, lim) {
         const len = (x) => typeof x.content === 'string' ? x.content.length : 0;
         const tot = msgs.reduce((s, x) => s + len(x), 0);
@@ -8613,16 +7903,11 @@ const IA = (() => {
         }
         return out;
     }
-    // ---- Router (BP1 §4.4–4.5, v0.47) ----
-    /** Limiti di partenza (token/minuto e contesto); `tpm` si aggiorna dalle intestazioni x-ratelimit-limit-tokens e dopo un 413. */
     const LIMITI = {
         groq: { tpm: 8000, ctx: 131072 }, gemini: { tpm: 250000, ctx: 1e6 }, xkiro: { tpm: 100000, ctx: 128000 },
         cohere: { tpm: 20000, ctx: 128000 }, requesty: { tpm: 20000, ctx: 32000 }, cerebras: { tpm: 60000, ctx: 65536 }, sambanova: { tpm: 20000, ctx: 32768 }
     };
-    /** Token di risposta attesi per ruolo: contano solo nel budget (non si inviano: i token di ragionamento li consumerebbero). */
     const USCITA = { genera: 1500, revisiona: 1000, veloce: 500, visione: 4096, lungo: 3000, micro: 350 };
-    /** Limiti gratuiti noti. `perModello`: la quota è di ogni modello (Gemini, Groq), altrimenti dell'intero account.
-     *  Il router si ferma a `SOGLIA` (85%) e passa al fornitore seguente; il resto si usa solo se non c'è alternativa. */
     const PROVIDER_FREE_QUOTAS = {
         gemini: { perModello: true, base: { rpm: 5, rpd: 20, tpm: 250000 }, modelli: [
                 { re: /flash-lite/, q: { rpm: 12, rpd: 500, tpm: 250000 } }, { re: /flash/, q: { rpm: 5, rpd: 20, tpm: 250000 } }
@@ -8630,7 +7915,6 @@ const IA = (() => {
         xkiro: { base: { rpm: 20, tpd: 500000 }, potenziata: { opz: 'xkiroTelegramVerified', q: { rpm: 20, tpd: 1000000 } } },
         cohere: { base: { rpm: 20, rpd: 33 } },
         requesty: { base: { rpm: 20, rpd: 200 } },
-        // v0.54: quote gratuite prudenti (da verificare dal vivo)
         cerebras: { base: { rpm: 30, rpd: 14400, tpd: 1000000 } },
         sambanova: { base: { rpm: 20, rpd: 1000 } },
         groq: { perModello: true, base: { rpm: 30, rpd: 1000 }, modelli: [
@@ -8640,7 +7924,6 @@ const IA = (() => {
     const SOGLIA = 0.85;
     const OPZ_NOTE = ['strictPrivacy', 'xkiroTelegramVerified'];
     const KO = 'imc-ai-opzioni', KU = 'imc-ai-uso';
-    /** Solo le opzioni note (v0.53: es. `openrouterHasCredits10Usd` salvata da versioni vecchie si ignora). */
     function opzioni() {
         try {
             const j = JSON.parse(ls(KO) || '{}'), o = {};
@@ -8662,7 +7945,6 @@ const IA = (() => {
             delete o[n];
         lsScrivi(KO, Object.keys(o).length ? JSON.stringify(o) : '');
     }
-    /** Quota e chiave dei contatori per «fornitore:modello» (o solo «fornitore» se la quota è dell'account). */
     function quota(p, m) {
         const Q = PROVIDER_FREE_QUOTAS[p], x = Q.modelli && Q.modelli.find(e => e.re.test(m));
         const q = Q.potenziata && opzioni()[Q.potenziata.opz] ? Q.potenziata.q : x ? x.q : Q.base;
@@ -8694,16 +7976,13 @@ const IA = (() => {
             const x = tutto[k];
             if ((x.g !== g && !(x.q && x.q > ora)) || RITIRATI.includes(k.split(':')[0]))
                 delete tutto[k];
-        } // via i giorni passati e i fornitori ritirati
+        }
         lsScrivi(KU, JSON.stringify(tutto));
     }
-    /** Vero se la prossima richiesta porterebbe un contatore oltre `lim` (0,85 = soglia di guardia; 1 = limite vero). */
     function quotaPiena(p, m, tok, lim = SOGLIA) {
         const { id, q } = quota(p, m), c = contatori(id);
         return c.rpm60s + 1 > q.rpm * lim || (!!q.rpd && c.rpdToday + 1 > q.rpd * lim) || (!!q.tpm && c.tpm60s + tok > q.tpm * lim) || (!!q.tpd && c.tpdToday + tok > q.tpd * lim);
     }
-    /** Intestazioni di limite lette solo se esistono (`get(...) !== null`): via CORS molti fornitori non le espongono
-     *  e allora valgono i contatori locali. Durate in millisecondi. */
     function parseRateLimitInfo(res) {
         const g = (n) => { try {
             return res.headers.get(n);
@@ -8717,7 +7996,6 @@ const IA = (() => {
         return { remainingRequests: num('x-ratelimit-remaining-requests'), remainingTokens: num('x-ratelimit-remaining-tokens'), limitTokens: num('x-ratelimit-limit-tokens'),
             resetRequests: tempo('x-ratelimit-reset-requests'), resetTokens: tempo('x-ratelimit-reset-tokens'), retryAfter: tempo('retry-after') };
     }
-    /** `retryDelay` nel corpo di un 429 di Gemini (error.details[].retryDelay, es. «37s»); anche nella forma ad array. */
     function ritardoCorpo(j) {
         const e = Array.isArray(j) ? j[0] && j[0].error : j && j.error, d = e && Array.isArray(e.details) ? e.details : [];
         for (const x of d)
@@ -8725,9 +8003,9 @@ const IA = (() => {
                 return dur(String(x.retryDelay));
         return 0;
     }
-    let RM = {}; // per «fornitore:modello»
-    let RP = {}; // pausa dell'intero fornitore
-    let NO = {}; // impronta della chiave rifiutata
+    let RM = {};
+    let RP = {};
+    let NO = {};
     const impronta = (k) => k.slice(-6) + k.length;
     function sm(p, m) { const id = p + ':' + m; return RM[id] || (RM[id] = { finoA: 0, k: 0, tpm: LIMITI[p].tpm }); }
     function azzera(p) {
@@ -8737,14 +8015,14 @@ const IA = (() => {
             NO = {};
             lsScrivi(KU, '');
             return;
-        } // azzeramento completo: anche i contatori
+        }
         delete RP[p];
         delete NO[p];
         for (const k of Object.keys(RM))
             if (k.startsWith(p + ':'))
                 delete RM[k];
         const t = tuttoUso();
-        let c = false; // chiave nuova: via le pause salvate (i conteggi restano)
+        let c = false;
         for (const k of Object.keys(t))
             if ((k === p || k.startsWith(p + ':')) && t[k].q) {
                 delete t[k].q;
@@ -8753,11 +8031,9 @@ const IA = (() => {
         if (c)
             lsScrivi(KU, JSON.stringify(t));
     }
-    /** Stima: 3,5 caratteri per token; delle immagini conta solo il testo. */
     const stimaTok = (msgs) => Math.ceil(msgs.reduce((s, x) => s + (typeof x.content === 'string' ? x.content.length
         : Array.isArray(x.content) ? x.content.reduce((a, c) => a + (c && typeof c.text === 'string' ? c.text.length : 0), 0) : 0), 0) / 3.5);
     const budget = (p, m, out) => Math.min(LIMITI[p].ctx, Math.floor(0.7 * sm(p, m).tpm)) - out;
-    /** Motivo per cui il modello va saltato ora ('' = utilizzabile). */
     function bloccato(p, m, serve, k) {
         const ora = Date.now(), P = RP[p], s = sm(p, m);
         if (NO[p] && NO[p] === impronta(k))
@@ -8771,10 +8047,9 @@ const IA = (() => {
         if (contatori(quota(p, m).id).finoA > ora)
             return 'in pausa';
         if (quotaPiena(p, m, serve))
-            return 'quota'; // oltre l'85%: si preferisce un altro fornitore
+            return 'quota';
         return '';
     }
-    /** Durate delle intestazioni: «7.66s», «2m59.56s», «120ms», «1h2m», «30» (secondi) o data HTTP → millisecondi. */
     function dur(v) {
         if (!v)
             return 0;
@@ -8793,7 +8068,6 @@ const IA = (() => {
         }
         return t;
     }
-    /** Legge le intestazioni e aggiorna lo stato dopo ogni risposta. */
     async function esito(p, m, res, tok, k) {
         const ri = parseRateLimitInfo(res), s = sm(p, m), ora = Date.now(), { id, q } = quota(p, m);
         if (ri.limitTokens && ri.limitTokens > 0)
@@ -8803,13 +8077,12 @@ const IA = (() => {
         if (ri.remainingRequests === 0)
             s.finoA = Math.max(s.finoA, ora + Math.min(ri.resetRequests || 6e4, 6 * 36e5));
         if (res.status !== 429)
-            aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); u.t = (u.t || 0) + tok; }); // il 429 non consuma quota
+            aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); u.t = (u.t || 0) + tok; });
         if (res.ok) {
             s.k = 0;
             return;
         }
         if (res.status === 429) {
-            // retry-after → retryDelay nel corpo (Gemini) → reset delle intestazioni → 65 s, o fino a mezzanotte se la quota del giorno è quasi finita
             let att = ri.retryAfter || 0;
             if (!att)
                 att = ritardoCorpo(await res.clone().json().catch(() => null));
@@ -8825,7 +8098,7 @@ const IA = (() => {
         if (p === 'requesty' && (res.status === 404 || res.status === 410 || (res.status === 400
             && /expired|deprecat|not.?found|no longer|retired/i.test(JSON.stringify(await res.clone().json().catch(() => '')))))) {
             s.finoA = ora + 24 * 36e5;
-            return; // modello sparito o scaduto su Requesty: si passa subito al seguente
+            return;
         }
         if (res.status === 413) {
             if (tok)
@@ -8836,20 +8109,18 @@ const IA = (() => {
         else if (res.status >= 500)
             RP[p] = { finoA: ora + 30e3, motivo: 'non raggiungibile' };
     }
-    // al massimo 2 richieste in volo per fornitore
     const inVolo = {}, attesa = {};
     async function slot(p) {
         if ((inVolo[p] || 0) >= 2) {
             await new Promise(r => (attesa[p] = attesa[p] || []).push(r));
             return;
-        } // il posto viene passato da `libera`
+        }
         inVolo[p] = (inVolo[p] || 0) + 1;
     }
     function libera(p) { const q = attesa[p], n = q && q.shift(); if (n)
         n();
     else
         inVolo[p] = Math.max(0, (inVolo[p] || 0) - 1); }
-    /** Una richiesta passando dal router: posto libero, esito registrato, errori di rete → fornitore in pausa 30 s. */
     async function manda(p, m, perc, k, corpo, tok) {
         await slot(p);
         let res;
@@ -8867,7 +8138,6 @@ const IA = (() => {
         return res;
     }
     const ora2 = (t) => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-    /** Stato dei fornitori per le impostazioni. */
     function stato() {
         const out = {}, ora = Date.now();
         for (const p of PROVS) {
@@ -8904,7 +8174,6 @@ const IA = (() => {
     }
     const errore = (j, stato) => { const e = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + stato); e.stato = stato; return e; };
     const contenuto = (j) => String(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '');
-    /** Un tentativo con un modello (più l'eventuale riprova senza modalità JSON / per JSON illeggibile). */
     async function tenta(f, m2, o, comeJson, tok) {
         const k = chiave(f.prov);
         const corpo = { model: f.modello, temperature: o.temp == null ? .3 : o.temp, messages: m2 };
@@ -8916,7 +8185,7 @@ const IA = (() => {
         if (res.status === 400 && corpo.response_format && !(f.prov === 'requesty' && sm(f.prov, f.modello).finoA > Date.now())) {
             delete corpo.response_format;
             res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
-        } // modello senza modalità JSON
+        }
         const j = await res.json().catch(() => ({}));
         if (!res.ok)
             throw errore(j, res.status);
@@ -8930,8 +8199,7 @@ const IA = (() => {
         try {
             return { testo: t, j: json(t), prov: f.prov, modello: f.modello };
         }
-        catch (_) { /* una sola riprova, sotto */ }
-        // v0.45: JSON illeggibile → una riprova con lo stesso modello chiedendo solo JSON valido
+        catch (_) { }
         corpo.messages = [...m2, { role: 'assistant', content: String(t).slice(0, 2000) }, { role: 'user', content: 'Rispondi solo con JSON valido, senza testo prima o dopo. Nelle stringhe scrivi i backslash del LaTeX doppi (\\\\frac).' }];
         const res2 = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok), j2 = await res2.json().catch(() => ({}));
         if (!res2.ok)
@@ -8939,8 +8207,6 @@ const IA = (() => {
         const t2 = contenuto(j2);
         return { testo: t2, j: json(t2), prov: f.prov, modello: f.modello };
     }
-    /** Cuore del gateway: 1° giro sui modelli in cui il testo sta per intero; 2° giro (salvo `tronca:false`) accorciando il testo
-     *  per i modelli più piccoli. Salta i modelli in pausa o con chiave rifiutata. */
     async function invia(msgs, r, o, comeJson) {
         await Spiega.pronta();
         const forn = await catena(r, o.evita, o.archetipo);
@@ -8987,7 +8253,6 @@ const IA = (() => {
                 if (x)
                     return x;
             }
-        // ultimo giro: nessun altro ha risposto → si usa il 15% di quota tenuto da parte
         for (const f of quasiPieni) {
             if (quotaPiena(f.prov, f.modello, tok + out, 1) || tok > budget(f.prov, f.modello, out))
                 continue;
@@ -9009,14 +8274,11 @@ const IA = (() => {
             throw new Error('Limite gratuito raggiunto su tutti i modelli: riprova tra qualche minuto.');
         throw new Error(navigator.onLine === false ? 'Sei offline.' : 'Nessun modello ha risposto. ' + errori.slice(0, 3).join(' · '));
     }
-    /** Chiede JSON al primo modello disponibile del ruolo. Restituisce anche chi ha risposto. */
     async function chiedi(msgs, r, o = {}) {
         const x = await invia(msgs, r, o, true);
         return { j: x.j, modello: x.modello, prov: x.prov };
     }
-    /** Testo libero (spiegazioni) o visione (content con image_url). */
     const testo = (msgs, r, o = {}) => invia(msgs, r, o, false);
-    /** Trascrizione audio con Whisper di Groq. Restituisce la risposta grezza (verbose_json: segments, duration…). */
     async function trascrivi(b, o = {}) {
         await Spiega.pronta();
         const k = chiave('groq');
@@ -9045,7 +8307,6 @@ const IA = (() => {
             throw errore(j, r.status);
         return j;
     }
-    /** Campo per la chiave Gemini (facoltativa) dentro Altro → Spiegazioni AI. */
     function campoGemini() {
         const inp = h('input', { type: 'text', placeholder: 'AQ.… oppure AIza… (facoltativa)', value: chiave('gemini'), autocomplete: 'off', autocapitalize: 'none', spellcheck: false, style: { fontFamily: 'monospace' } });
         const salva = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; impostaChiave('gemini', v); avviso(v ? (formatoOk('gemini', v) ? 'Chiave Gemini salvata su questo dispositivo (vanno bene sia le nuove «AQ.» sia le vecchie «AIza»).' : 'Salvata, ma non sembra una chiave Gemini (inizia con AQ. o AIza).') : 'Chiave Gemini rimossa.', 5000); };
@@ -9061,7 +8322,6 @@ const IA = (() => {
         } };
         return h('div.gruppo', null, h('div.tenue.piccolo', null, 'Facoltativa: chiave gratuita di Google AI Studio (aistudio.google.com → «Get API key», senza carta). Serve per leggere PDF lunghi quando l\'app crea i quiz; senza, si usa Groq.'), h('div.riga', null, h('span', null, 'Chiave Gemini'), inp), h('div.bottoni', null, h('button.btn.neutro', { onclick: salva }, 'Salva'), h('button.btn.neutro', { onclick: prova }, 'Prova')));
     }
-    /** Altri fornitori facoltativi + stato di tutti i fornitori (Altro → Spiegazioni AI). */
     function campoAltri() {
         const DOVE = { xkiro: 'api.xkiro.com (modelli gratuiti «vendor/modello»)', cohere: 'dashboard.cohere.com (chiave di prova)', requesty: 'requesty.ai', cerebras: 'cloud.cerebras.ai (chiave gratuita)', sambanova: 'cloud.sambanova.ai (chiave gratuita)' };
         const elenco = h('div.tenue.piccolo', null);
@@ -9096,7 +8356,6 @@ const IA = (() => {
         aggiorna();
         return h('div.gruppo', null, h('details', null, h('summary', null, 'Altri fornitori AI (facoltativi)'), h('div.tenue.piccolo', null, 'Usati solo se Groq e Gemini sono in pausa o mancano. Chiavi salvate solo su questo dispositivo.'), ...righe, PROVS.some(p => PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier) ? spunta('strictPrivacy', 'Strict Privacy: non usare fornitori che addestrano i modelli sui dati del piano gratuito') : null, spunta('xkiroTelegramVerified', 'Account xkiro verificato con Telegram (1.000.000 token al giorno invece di 500.000)')), h('div.piccolo', null, 'Stato dei fornitori'), elenco, h('div.bottoni', null, h('button.btn.neutro', { onclick: aggiorna }, 'Aggiorna stato')));
     }
-    /** v0.53: pulizia silenziosa una tantum dei dati dei fornitori ritirati (chiavi, opzioni, contatori, elenchi modelli). */
     (function ripulisci() {
         try {
             allinea();
@@ -9120,7 +8379,7 @@ const IA = (() => {
             }
             via.forEach(k => localStorage.removeItem(k));
         }
-        catch (_) { /* localStorage non disponibile: nulla da pulire */ }
+        catch (_) { }
     })();
     return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro,
         chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
@@ -9128,24 +8387,10 @@ const IA = (() => {
         get gemini() { return !!chiave('gemini'); } };
 })();
 
-// ============================================================
-// v0.58.3 — Quiz da Drive A PARTI + controllo qualità locale (zero token).
-//   Gemini consegna uno step in più file nella stessa cartella «… quiz»:
-//     parte    { "parte": "<materia>-<step>-s<n>-<m>", "quiz": [...] }          (2 schede = 36 domande)
-//     chiusura { meta, programmaCalendario, conteggi }  (meta.stepId + pianoStrutturato, senza «quiz»; nome libero)
-//   Il tipo si riconosce dal CONTENUTO, non dal nome. Le parti dello stesso stepId diventano UNA voce;
-//   unisci() le fonde in un pacchetto unico che ImportaDrive.traduci() legge come un file intero.
-//   Duplicati tra parti: vince il file più recente (segnalato). Duplicati nella stessa parte, opzioni ≠ 4,
-//   esatta fuori 0..3: BLOCCANTI, saltano solo quella domanda. JSON illeggibile: salta solo quella parte.
-//   valida(): avvisi su distribuzioni (livelli, posizione dell'esatta, corretta più lunga, gemelle, fonti).
-//   Modulo puro (nessun DOM, nessun Drive): testato nella suite Node insieme a 07-importadrive.ts.
-// ============================================================
 const ImportaParti = (() => {
     const s = (x) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
     const ogg = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
-    /** «biologia-3.3-S05», «S5», 5 → 5 (0 se manca). */
     const numScheda = (x) => { const v = s(x), m = /(?:^|[^A-Za-z0-9])S(\d+)$/i.exec(v) || /^S?(\d+)$/i.exec(v); return m ? Number(m[1]) : 0; };
-    /** «biologia-3.3-s1-2» → { step: 'biologia-3.3', da: 1, a: 2 }. */
     function nomeParte(p) {
         const m = /^(.+?)-s(\d+)(?:-(\d+))?$/i.exec(s(p));
         if (!m)
@@ -9166,7 +8411,6 @@ const ImportaParti = (() => {
             return 'chiusura';
         return 'ignoto';
     }
-    /** Lo stepId («biologia-3.3»): dal meta, dal nome della parte o dalla prima domanda. */
     function stepDi(j) {
         const m = j.meta || {};
         if (s(m.stepId))
@@ -9180,7 +8424,6 @@ const ImportaParti = (() => {
         return s(m.sottoStep) ? (s(m.materia) || s(m.codiceMateria)).toLowerCase() + '-' + s(m.sottoStep) : '';
     }
     const piuVecchio = (a, b) => (a.modificato < b.modificato ? -1 : a.modificato > b.modificato ? 1 : 0) || a.name.localeCompare(b.name, 'it', { numeric: true });
-    /** File letti → voci dell'elenco. I file interi restano voci a sé; parti e chiusure si raggruppano per stepId. */
     function raggruppa(files) {
         const out = [], perStep = new Map();
         for (const f of files) {
@@ -9229,7 +8472,6 @@ const ImportaParti = (() => {
         }
         return out;
     }
-    /** Blocchi per una singola domanda (vuoto = valida). */
     function bloccantiDomanda(q) {
         const b = [], o = Array.isArray(q.opzioni) ? q.opzioni : [];
         if (!s(q.domanda))
@@ -9241,10 +8483,6 @@ const ImportaParti = (() => {
             b.push('«esatta» fuori da 0..3');
         return b;
     }
-    /**
-     * Parti (+ chiusura) → un pacchetto unico come un file intero. Le parti si applicano dalla più vecchia alla
-     * più recente: un id già visto viene sostituito (vince il più recente). Le domande bloccate non entrano.
-     */
     function unisci(g) {
         const perId = new Map(), duplicati = [], bloccanti = [];
         const fonti = g.tipo === 'intero' ? g.files : g.parti;
@@ -9286,7 +8524,6 @@ const ImportaParti = (() => {
     const pct = (n, tot) => tot ? Math.round(n * 100 / tot) : 0;
     const LIV_ATTESI = [25, 35, 25, 15];
     const livelloDi = (q) => { const n = Number(s(q.livelloCognitivo).replace(/^L/i, '')) || Number(s(q.livello).replace(/^L/i, '')); return n >= 1 && n <= 4 ? n : 0; };
-    /** Controllo qualità locale (zero token): gli avvisi non bloccano, si vedono prima di «Importa» e restano nel rapporto. */
     function valida(p, extra = {}) {
         const quiz = (p.quiz || []).filter(q => q && typeof q === 'object'), tot = quiz.length;
         const bloccanti = (extra.bloccanti || []).slice(), avvisi = [], righe = [];
@@ -9294,7 +8531,6 @@ const ImportaParti = (() => {
             avvisi.push(extra.duplicati.length + ' domande ripetute tra parti: tengo la più recente (' + extra.duplicati.slice(0, 3).join('; ') + (extra.duplicati.length > 3 ? '…' : '') + ')');
         if (!tot)
             return { bloccanti, avvisi, righe: ['Nessuna domanda valida'] };
-        // schede
         const perScheda = new Map();
         for (const q of quiz) {
             const n = numScheda(q.scheda);
@@ -9311,7 +8547,6 @@ const ImportaParti = (() => {
         }
         else
             righe.push(tot + ' domande');
-        // livelli
         const liv = [0, 0, 0, 0];
         for (const q of quiz) {
             const l = livelloDi(q);
@@ -9322,7 +8557,6 @@ const ImportaParti = (() => {
         righe.push('Livelli L1–L4: ' + lp.join('/') + '% (attesi 25/35/25/15)');
         if (lp.some((x, i) => Math.abs(x - LIV_ATTESI[i]) > 3))
             avvisi.push('Livelli fuori soglia (±3): ' + lp.join('/') + '% invece di 25/35/25/15');
-        // posizione dell'esatta e corretta più lunga
         const pos = [0, 0, 0, 0];
         let lunga = 0;
         for (const q of quiz) {
@@ -9338,7 +8572,6 @@ const ImportaParti = (() => {
             avvisi.push('Posizione dell\'esatta sbilanciata: ' + pp.join('/') + '% (attesa ~25% ciascuna)');
         if (pct(lunga, tot) > 25)
             avvisi.push('La corretta è la più lunga nel ' + pct(lunga, tot) + '% delle domande (attesa ≤ 25%): si indovina dalla lunghezza');
-        // coppie gemelle
         const gem = new Map();
         for (const q of quiz) {
             const g = s(q.coppiaGemellaId);
@@ -9352,7 +8585,6 @@ const ImportaParti = (() => {
             avvisi.push('Coppie gemelle: ' + coppie + ' (attese ≥ ' + attese + ', una ogni 3 schede)');
         if (sole.length)
             avvisi.push(sole.length + ' gemelle senza l\'altra metà: ' + sole.slice(0, 3).join(', ') + (sole.length > 3 ? '…' : ''));
-        // campi
         const senzaErrore = quiz.filter(q => !s(q.erroreTipico)).length;
         if (senzaErrore)
             avvisi.push(senzaErrore + ' domande senza «erroreTipico»');
@@ -9363,7 +8595,6 @@ const ImportaParti = (() => {
         const daVerificare = quiz.filter(q => /da verificare|p\.\s*_{2,}/i.test(s(q.fonte))).length;
         if (daVerificare)
             avvisi.push(daVerificare + ' fonti «da verificare» o senza pagina');
-        // ripassi e durate (chiusura)
         const ps = (p.programmaCalendario && p.programmaCalendario.pianoStrutturato) || {};
         const brac = (Array.isArray(ps.sottoSchede) ? ps.sottoSchede : Array.isArray(p.sottoSchede) ? p.sottoSchede : []).map(x => Number(x && (x.durataBracMin || x.durataMin)) || 0).filter(Boolean);
         if (brac.some(m => m < 45 || m > 50))
@@ -9373,21 +8604,6 @@ const ImportaParti = (() => {
     return { classifica, stepDi, nomeParte, numScheda, raggruppa, unisci, valida, bloccantiDomanda };
 })();
 
-// ============================================================
-// v0.58.1 — «📥 Importa quiz da Drive»: elenca i .json delle cartelle «<materia> quiz».
-// v0.58.2 — INNESTI: un pacchetto quiz non crea più un percorso a parte «a caso». Si riconosce dove va
-//   (riconosci: corso con lo stesso sotto-step o la stessa UD, piano che lo prevede già o con lo step che lo
-//   precede) e si INNESTA lì: record 'innesto' (id 'inn-<chiave>') con il sotto-step, il corso e il piano
-//   di destinazione e il giorno. Studio applica gli innesti in lettura (applicaCorsi / applicaPiani):
-//   i pacchetti originali non vengono toccati, quindi un aggiornamento dal sito non li cancella e il
-//   percorso si può CAMBIARE quando si vuole (sposta) senza duplicare nulla. Id scheda invariati.
-//   Schemi letti: «schemaVersion 2» (meta.sottoStep, pianoStrutturato.sottoSchede) e «versioneSchema 0.58»
-//   (meta.stepId, sottoSchede[].rangeId, quiz[].categoria).
-// v0.58.3 — formato AMPLIATO (per domanda: scheda «biologia-3.3-S05», sottoStep, categoria, livello «L1».."L4",
-//   spiegazioneDistrattori[3], distractorTypes[3], sourceRef) e import A PARTI (07-importadrive-parti.ts).
-//   Una SCHEDA Gemini (18 domande) = una scheda dell'app: id «<cod>-<sottoStep>-<n>» con n = numero della
-//   scheda nello step (S05 → 5), stabile qualunque parte arrivi prima. Opzioni ≠ 4 o esatta fuori 0..3: scartata.
-// ============================================================
 const ImportaDrive = (() => {
     const s = (x) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
     const hash = (t) => { let x = 5381; for (let i = 0; i < t.length; i++)
@@ -9395,10 +8611,8 @@ const ImportaDrive = (() => {
     const LV = { 1: 'Sbarramento', 2: 'Applicativo', 3: 'Applicativo', 4: 'Problema' };
     const TIPI_D = ['misconception', 'inversione_causa', 'confusione_termine', 'caso_limite', 'plausibile_generico'];
     const CORSO_DRV = 'drv-ud-', PIANO_DRV = 'drv-piano';
-    const nomeDi = (cod) => typeof nomeMateria === 'function' ? nomeMateria(cod) : cod; // nei test Node la funzione può mancare
-    /** È un pacchetto quiz+calendario? (per nome: anche «…_quiz_e_calendario_v058.json») */
+    const nomeDi = (cod) => typeof nomeMateria === 'function' ? nomeMateria(cod) : cod;
     const eNomeQuiz = (nome) => /_quiz_e_calendario(_v[\w.-]+)?\.json$/i.test(nome);
-    /** «3.3» < «3.10» < «4.1»: confronto per numeri. */
     function cmpNum(a, b) {
         const x = a.split('.').map(Number), y = b.split('.').map(Number);
         for (let i = 0; i < Math.max(x.length, y.length); i++) {
@@ -9412,9 +8626,7 @@ const ImportaDrive = (() => {
     const udDi = (sotto) => Number(sotto.split('.')[0]) || 0;
     const piuGiorni = (data, n) => { const d = new Date(data + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d); };
     const breve = (d) => d ? d.slice(8, 10) + '/' + d.slice(5, 7) : '';
-    /** «+1g», «+3 g», «+2s» (settimane) → giorni. */
     function giorniIntervallo(t) { const m = /\+?\s*(\d+)\s*([gs])/i.exec(t); return m ? Number(m[1]) * (m[2].toLowerCase() === 's' ? 7 : 1) : 0; }
-    /** «Mer 18/11» → la data più vicina a oggi con quel giorno/mese. */
     function dataDa(t, oggiK) {
         const m = /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/.exec(t);
         if (!m)
@@ -9426,9 +8638,7 @@ const ImportaDrive = (() => {
         const dist = (d) => Math.abs(new Date(d + 'T12:00:00').getTime() - new Date(oggiK + 'T12:00:00').getTime());
         return cand.sort((x, y) => dist(x) - dist(y))[0];
     }
-    /** 3, "3", "L3" → 3 (0 se non è 1–4). */
     const livello = (x) => { const n = Number(s(x).replace(/^L/i, '')); return n >= 1 && n <= 4 ? n : 0; };
-    /** «Campbell, cap. 5, p. 112» → { libro, capitolo, pagina }. */
     function rifFonte(x, k) {
         if (x && typeof x === 'object') {
             const o = x, r = {};
@@ -9444,7 +8654,6 @@ const ImportaDrive = (() => {
         const libro = s(t.split(/[,;]|\bcap/i)[0]);
         return { ...(libro ? { libro } : {}), ...(cap ? { capitolo: cap[1] } : {}), ...(pag ? { pagina: pag[1].replace(/\s/g, '') } : {}), stepId: k };
     }
-    /** I 3 valori «per distrattore» (array nell'ordine delle opzioni sbagliate, o oggetto per indice ORIGINALE) → indici in o (1..3). */
     function perDistrattore(v, es) {
         const out = {};
         if (Array.isArray(v))
@@ -9458,7 +8667,6 @@ const ImportaDrive = (() => {
             }
         return Object.keys(out).length ? out : null;
     }
-    /** domanda → q, opzioni → o (la corretta per prima), esatta → o[0], spiegazione → e, fonte → r; campi neuro (07-neuro). */
     function domanda(x, sk, k) {
         const opz = Array.isArray(x.opzioni) ? x.opzioni.map(s) : [];
         const es = Number(x.esatta);
@@ -9495,7 +8703,6 @@ const ImportaDrive = (() => {
         return d;
     }
     function falla(msg) { throw new Error(msg); }
-    /** Traduzione pura (nessun salvataggio, nessuna destinazione): testata nella suite Node. */
     function traduci(j, oggiK = ymd(oggi())) {
         if (!j || typeof j !== 'object')
             return falla('Il file non è un oggetto JSON.');
@@ -9515,7 +8722,7 @@ const ImportaDrive = (() => {
         const nome = (mat.length > 4 ? mat.charAt(0).toUpperCase() + mat.slice(1) : '') || nomeDi(cod);
         const titolo = s(meta.titolo) || gc[2] || sotto;
         const quiz = j.quiz.filter(q => q && typeof q === 'object');
-        if (quiz.some(q => ImportaParti.numScheda(q.scheda))) { // v0.58.3: formato ampliato, una scheda Gemini = una scheda dell'app
+        if (quiz.some(q => ImportaParti.numScheda(q.scheda))) {
             const r = perSchede(quiz, sez0, cod, k, sotto, titolo, Number(meta.ripartizioneSchede && meta.ripartizioneSchede.totale) || 0);
             return { k, cod, nome, sotto, ud: s(meta.unitaDidattica || meta.unita) || gc[1] || '', titolo, min: Number(ps.durataTotaleMin) || r.min, dataPacchetto: gc.length ? dataDa(gc[gc.length - 1], oggiK) : '',
                 sub: { k, n: sotto, titolo, posizione: '', microstep: r.micro, innesto: true }, banche: r.banche, ripassi: ripassiDi(ps, r.mappa), domande: r.banche.reduce((a, b) => a + b.domande.length, 0), scartate: r.scartate };
@@ -9541,7 +8748,6 @@ const ImportaDrive = (() => {
         const raff = (id) => /raffin/i.test(s((perId.get(id) || {}).categoria));
         const micro = [];
         let min = 0;
-        // prima passata: gli elenchi espliciti (rangeId / schedePrioritarie) vincono sul campo sottoStep della domanda
         const elenchi = sez0.map(x => {
             const range = (x.rangeId || []).map(s);
             return { x, n: s(x.codice || x.sottoStep), idsP: [...(x.schedePrioritarie || []).map(s), ...range.filter(id => !raff(id))], idsR: [...(x.schedeRaffinamento || []).map(s), ...range.filter(raff)] };
@@ -9564,7 +8770,6 @@ const ImportaDrive = (() => {
             micro.push({ n, schede });
             min += Number(x.durataMin || x.durataBracMin) || 0;
         }
-        // domande non assegnate a nessuna sotto-scheda: nella prima scheda P (o in una scheda unica)
         const resto = [...perId.keys()].filter(id => !usate.has(id));
         if (resto.length) {
             if (!micro.length) {
@@ -9581,7 +8786,6 @@ const ImportaDrive = (() => {
         return { k, cod, nome, sotto, ud: s(meta.unitaDidattica || meta.unita) || gc[1] || '', titolo, min: Number(ps.durataTotaleMin) || min, dataPacchetto: gc.length ? dataDa(gc[gc.length - 1], oggiK) : '',
             sub, banche: piene, ripassi, domande: piene.reduce((a, b) => a + b.domande.length, 0), scartate: scart };
     }
-    /** Ripassi FSRS dagli ancoraggi (+1g/+3g/+7g); target = schede (id Gemini «…-S05» → id app «B-3.3.1-5»). */
     function ripassiDi(ps, mappa) {
         const out = [];
         for (const a of Array.isArray(ps.ancoraggiRipassoFSRS) ? ps.ancoraggiRipassoFSRS : []) {
@@ -9599,11 +8803,6 @@ const ImportaDrive = (() => {
         }
         return out.sort((x, y) => x.giorni - y.giorni);
     }
-    /**
-     * Formato ampliato: ogni domanda dice la sua scheda («biologia-3.3-S05»). Il microstep viene dagli elenchi della
-     * chiusura (schedePrioritarie/schedeRaffinamento con id di SCHEDE), altrimenti dal sottoStep della domanda;
-     * P/R dagli elenchi, altrimenti dalla categoria. id app = <cod>-<microstep>-<n>: non dipende dall'ordine delle parti.
-     */
     function perSchede(quiz, sez, cod, k, sotto, titolo, totale) {
         const daElenco = new Map(), titoloMicro = new Map();
         let min = 0;
@@ -9663,12 +8862,7 @@ const ImportaDrive = (() => {
         const micro = [...perMicro.keys()].sort(cmpNum).map(n => ({ n, schede: perMicro.get(n) }));
         return { micro, banche, mappa, scartate, min };
     }
-    // ---------- Riconoscimento: dove va? ----------
     const vociDi = (p) => p.giorni.flatMap(g => g.voci.filter(v => !v.speciale).map(v => ({ v, data: g.data })));
-    /**
-     * Corsi e piani candidati, il migliore per primo, ciascuno con il perché. Puro: riceve i corsi e i piani
-     * (già con gli innesti applicati) e il giorno di oggi. id '' = «da Drive» (corso della UD / piano a parte).
-     */
     function riconosci(t, corsi, piani, oggiK = ymd(oggi())) {
         const ud = udDi(t.sotto), idDrv = CORSO_DRV + ud, c = [];
         let drv = null;
@@ -9729,9 +8923,7 @@ const ImportaDrive = (() => {
         const ord = (a, b) => b.punti - a.punti;
         return { corsi: c.sort(ord), piani: p.sort(ord) };
     }
-    // ---------- Innesti: applicati in lettura da Studio ----------
     const innesti = () => Stato.tutti('innesto').filter(x => x && x.sub && x.k).sort((a, b) => cmpNum(numeroK(a.k), numeroK(b.k)));
-    /** I corsi con dentro i sotto-step innestati (copie: i pacchetti salvati non cambiano). */
     function applicaCorsi(base) {
         const inn = innesti();
         if (!inn.length)
@@ -9760,7 +8952,7 @@ const ImportaDrive = (() => {
             }
             const mat = pk.materie[mi] = { ...pk.materie[mi], sottostep: pk.materie[mi].sottostep.slice() };
             const j = mat.sottostep.findIndex(z => z.k === x.k);
-            if (j >= 0) { // il sotto-step c'è già: aggiungo solo i microstep che mancano (le domande vanno comunque sulle schede per id)
+            if (j >= 0) {
                 const es = mat.sottostep[j], nuovi = x.sub.microstep.filter(m => !es.microstep.some(e => e.n === m.n));
                 if (nuovi.length)
                     mat.sottostep[j] = { ...es, microstep: [...es.microstep, ...nuovi.map(m => ({ ...m, innesto: true }))] };
@@ -9772,7 +8964,6 @@ const ImportaDrive = (() => {
         }
         return out.sort((a, b) => a.step - b.step);
     }
-    /** I piani con le voci innestate (lo step il giorno scelto + i ripassi del pacchetto). */
     function applicaPiani(base) {
         const inn = innesti();
         if (!inn.length)
@@ -9807,14 +8998,11 @@ const ImportaDrive = (() => {
         }
         return out;
     }
-    // ---------- Salvataggio e spostamento ----------
     const pianoSalvato = (pid) => { const r = pid ? Stato.rec.get('pk-' + pid) : undefined; return r && !r.deleted && r.contenuto && r.contenuto.tipo === 'piano' ? r.contenuto : null; };
     const giaNelPiano = (p, k) => { if (!p)
         return ''; for (const g of p.giorni)
         if (g.voci.some(v => v.k === k && !v.speciale))
             return g.data; return ''; };
-    /** Mette (o rimette) l'innesto nel corso/piano/giorno scelti. Se il piano prevedeva già lo step in un altro
-     *  giorno lo SPOSTA (record 'spostamento', come a mano) invece di duplicarlo. */
     function applicaScelta(x, sc) {
         const corsoReale = sc.corso && !sc.corso.startsWith(CORSO_DRV) && Stato.rec.get('pk-' + sc.corso) ? sc.corso : '';
         const pianoReale = sc.piano && pianoSalvato(sc.piano) ? sc.piano : '';
@@ -9832,7 +9020,6 @@ const ImportaDrive = (() => {
         x.aggiornato = ymd(new Date());
         Stato.salva(x);
     }
-    /** Banca: una scheda già con domande di un altro pacchetto le tiene, e riceve anche le nostre. */
     function salvaBanche(idInn, banche, vecchie) {
         const nuove = new Set(banche.map(b => b.sk));
         for (const b of banche) {
@@ -9860,7 +9047,6 @@ const ImportaDrive = (() => {
         r.domande = (r.domande || []).filter(d => !String(d.id).startsWith('q-drv-'));
         Stato.salva(r, true);
     }
-    /** v0.58.1 → v0.58.2: il corso 'drv-<m>-<n>' e il piano 'drv-piano-<m>-<n>' a parte spariscono (le banche passano all'innesto). */
     function togliVecchio(cod, sotto, idInn) {
         const c = 'drv-' + cod.toLowerCase() + '-' + sotto;
         for (const r of Stato.tutti('bancaimc'))
@@ -9873,8 +9059,6 @@ const ImportaDrive = (() => {
         if (Stato.prendi('pk-drv-piano-' + cod.toLowerCase() + '-' + sotto))
             Stato.elimina('pk-drv-piano-' + cod.toLowerCase() + '-' + sotto);
     }
-    /** Importa: salva l'innesto (stesso id a ogni reimportazione: aggiorna, non duplica) e lo mette nel posto scelto. */
-    /** v0.58.3 (a parti): tiene le schede già importate che questa volta mancano (parte spostata/non ancora rilevata). */
     function accumula(t, prima) {
         const nuove = new Set(t.banche.map(b => b.sk)), tenute = (prima.banche || []).filter(sk => !nuove.has(sk) && Stato.prendi('bq-' + sk));
         if (!tenute.length)
@@ -9917,10 +9101,8 @@ const ImportaDrive = (() => {
         Stato.notifica();
         return x;
     }
-    /** Cambia percorso a un innesto già importato. */
     function sposta(k, sc) { const x = Stato.prendi('inn-' + k); if (!x)
         return false; applicaScelta(x, sc); Stato.notifica(); return true; }
-    /** Toglie un innesto (le sue domande spariscono; i progressi restano, come sempre). */
     function rimuovi(k) {
         const x = Stato.prendi('inn-' + k);
         if (!x)
@@ -9932,7 +9114,6 @@ const ImportaDrive = (() => {
         Stato.elimina(x.id);
         Stato.notifica();
     }
-    /** I pacchetti a parte della v0.58.1 diventano innesti (corso/piano «da Drive», giorno di prima). */
     function migraVecchi() {
         let n = 0;
         for (const r of Stato.tutti('pacchetto')) {
@@ -9953,7 +9134,6 @@ const ImportaDrive = (() => {
             Stato.notifica();
         return n;
     }
-    /** I .json nelle cartelle «… quiz» (biologia quiz, fisica quiz, chimica quiz…), con la data di modifica. */
     async function elenca() {
         const cartelle = (await Drive.cercaCartelle('quiz')).filter(c => /(^|\s)quiz$/i.test(c.name.trim()));
         const out = [];
@@ -9963,7 +9143,6 @@ const ImportaDrive = (() => {
                     out.push({ id: f.id, name: f.name, cartella: c.name, modificato: f.modifiedTime || '' });
         return out.sort((a, b) => (Number(eNomeQuiz(b.name)) - Number(eNomeQuiz(a.name))) || a.name.localeCompare(b.name, 'it', { numeric: true }));
     }
-    /** Scarica e riconosce dal CONTENUTO (intero / parte / chiusura). Un JSON illeggibile resta in elenco con l'errore. */
     async function leggiTutti(files) {
         const out = new Array(files.length);
         let i = 0;
@@ -9985,7 +9164,6 @@ const ImportaDrive = (() => {
         return out;
     }
     async function leggiFile(f) { return traduci(JsonAI.leggiFile(await Drive.scaricaTesto(f.id))); }
-    /** Una voce dell'elenco → traduzione + rapporto di qualità (puro, testato in Node). */
     function preparaGruppo(g, oggiK = ymd(oggi())) {
         const u = ImportaParti.unisci(g);
         const rapporto = ImportaParti.valida(u.pacchetto, { bloccanti: u.bloccanti, duplicati: u.duplicati, completo: g.tipo === 'intero' || g.stato === 'completo' });
@@ -9998,15 +9176,11 @@ const ImportaDrive = (() => {
             rapporto.avvisi.push(t.scartate + ' domande scartate (opzioni ≠ 4 o «esatta» fuori 0..3)');
         return { t, rapporto };
     }
-    /** Destinazioni proposte per un pacchetto, sui corsi e piani attuali. */
     const proponi = (t) => riconosci(t, Studio.pkStep(), Studio.pianiAttivi());
-    /** Importa con la destinazione riconosciuta (la migliore), senza chiedere: per test e automatismi. */
     async function importaFile(f) { const t = await leggiFile(f), d = proponi(t); return salva(t, { corso: d.corsi[0].id, piano: d.piani[0].id, data: d.piani[0].data || ymd(oggi()) }, f.name); }
-    // ---------- Interfaccia ----------
     const nomeCorso = (x) => { const p = x.corso && Studio.pkStep().find(c => c.id === x.corso); return p ? p.titolo : 'Step ' + udDi(numeroK(x.k)) + ' · da Drive'; };
     const nomePiano = (x) => { const p = x.piano && Studio.pkPiani().find(c => c.id === x.piano); return p ? p.titolo : '📥 Importati da Drive'; };
     const dove = (x) => nomeCorso(x) + ' · ' + nomePiano(x) + ', ' + (x.data === ymd(oggi()) ? 'oggi' : breve(x.data));
-    /** Il pannello «Dove lo metto?»: corso e piano riconosciuti (cambiabili), giorno, conferma. */
     function pannelloScelta(k, titolo, d, iniziale, etichetta, ok) {
         const opz = (l) => l.map((x, i) => [x.id, (i === 0 ? '★ ' : '') + x.titolo]);
         const motivoC = h('div.tenue.piccolo'), motivoP = h('div.tenue.piccolo');
@@ -10025,7 +9199,6 @@ const ImportaDrive = (() => {
         aggiorna(false);
         return h('div.innesto-scelta', { style: { margin: '8px 0', padding: '8px', border: '1px solid var(--bordo, #8884)', borderRadius: '10px' } }, h('div.forte.piccolo', null, 'Dove lo metto? ' + titolo), riga('Corso', sc), motivoC, riga('Piano', sp), motivoP, riga('Giorno', giorno), h('div.bottoni', null, h('button.btn', { 'aria-label': etichetta + ' ' + k, onclick: () => ok({ corso: sc.value, piano: sp.value, data: giorno.value || ymd(oggi()) }) }, '✓ ' + etichetta)));
     }
-    /** Gli innesti già fatti, con «Cambia percorso» e «Togli». */
     function listaInnesti(cont) {
         svuota(cont);
         const l = innesti();
@@ -10054,7 +9227,6 @@ const ImportaDrive = (() => {
             cont.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', null, Studio.etichetta(x.k) + ' · ' + x.titolo), info, zona), h('div.bottoni', null, cambia, togli)));
         }
     }
-    /** Foglio senza Drive: solo i percorsi dei quiz già importati. */
     function gestisci() {
         migraVecchi();
         const cont = h('div');
@@ -10065,7 +9237,6 @@ const ImportaDrive = (() => {
     }
     const pad2 = (n) => String(n).padStart(2, '0');
     const nomeStep = (step) => { const m = /^(.+?)-(\d+(?:\.\d+)*)$/.exec(step); return m ? m[1].charAt(0).toUpperCase() + m[1].slice(1) + ' ' + m[2] : step; };
-    /** Riga di testo di una voce a parti: «Biologia 3.3 · 19 schede · 342 domande · 8/10 parti». */
     function rigaGruppo(g) {
         const titolo = nomeStep(g.step) + ' · ' + g.totaleSchede + ' schede · ' + g.domande + ' domande · ' + g.parti.length + '/' + (g.partiAttese || '?') + ' parti';
         const stato = g.stato === 'completo' ? '✅ Completo'
@@ -10073,12 +9244,10 @@ const ImportaDrive = (() => {
                 : '🧩 Mancano parti' + (g.mancanti.length ? ': schede ' + g.mancanti.map(n => 'S' + pad2(n)).join(', ') : g.domandeAttese ? ' (' + g.domande + '/' + g.domandeAttese + ' domande)' : '');
         return { titolo, stato };
     }
-    /** Il riepilogo di qualità (zero token): bloccanti in rosso, avvisi, misure. */
     function riepilogo(r) {
         const n = r.bloccanti.length, a = r.avvisi.length;
         return h('details.drv-qualita', null, h('summary.piccolo', null, n ? '⛔ ' + n + ' bloccanti (saltati) · ' + a + ' avvisi' : a ? '⚠️ ' + a + ' avvisi di qualità' : '✓ Controllo qualità superato'), h('ul.piccolo', { style: { margin: '4px 0', paddingLeft: '18px' } }, ...r.bloccanti.slice(0, 12).map(x => h('li', { style: { color: 'var(--rosso, #c0392b)' } }, x)), ...r.avvisi.map(x => h('li', null, x)), ...r.righe.map(x => h('li.tenue', null, x))));
     }
-    /** Il foglio: una voce per pacchetto intero o per step a parti; «Importa» riconosce il posto e lo propone. */
     function apri() {
         if (serveGoogle())
             return;
@@ -10146,25 +9315,9 @@ const ImportaDrive = (() => {
     return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
 })();
 
-// =====================================================================
-// 07-locale.ts — v0.44 ALGORITMI LOCALI (zero token): tutto ciò che si può fare senza AI si fa qui.
-// Ogni assistente prova prima questi; chiama l'AI solo per ciò che resta (e le manda meno testo).
-//  A. ASSISTENTE: riconoscitore di intenzioni in italiano (aprire, cercare, quiz, carte, appunti, studia ora,
-//     lezione audio, pacchetti, quiz creati, guida d'uso), più frasi divise in pezzi («… e …», «poi»).
-//  B. TESTI: pulizia delle fonti (intestazioni/piè di pagina ripetuti, numeri di pagina, righe spezzate),
-//     radici delle parole e sinonimi di studio per cercare meglio le pagine, frasi chiave per densità.
-//  C. QUIZ: correzioni automatiche senza rigenerare (corretta troppo lunga → si accorcia; citazione non
-//     verbatim → si sostituisce con la frase vera più simile della fonte; risposte con simboli → digitabili).
-//  D. AUDIO: pulizia del parlato (intercalari, parole ripetute, maiuscole), segmenti dubbi decisi in locale
-//     (solo quelli vanno all'AI), parole quasi uguali a termini noti (distanza di modifica).
-//  E. FLASHCARD: carte estratte dal testo con regole (definizioni «X è…», «Termine: …», grassetti, formule).
-//  F. SPIEGAZIONE BREVE: dalla correzione passo-passo già scritta (Il concetto + In sintesi), senza AI.
-//  G. RIASSUNTO: concetti chiave dell'appunto che mancano nel riassunto (prima del controllo AI).
-// =====================================================================
 const Locale = (() => {
     const n2 = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
     const STOP = new Set('il lo la i gli le un una uno di da in con su per tra fra del dello della dei degli delle al allo alla ai agli alle dal dallo dalla dai dagli dalle nel nello nella nei negli nelle sul sullo sulla sui sugli sulle e ed o od ma che chi cui non si come piu anche se sono e era essere ha hanno ho questo questa questi queste quello quella quelli quelle mi ti ci vi ne me te lui lei noi voi loro mio mia tuo tua suo sua cosa quale quali quando dove perche molto poco tutto tutti ogni fare fa fanno puo possono deve devono viene vengono stato stata'.split(' '));
-    /** Radice semplice italiana (per confrontare «leve», «leva», «leveraggio» → «lev»). */
     const radice = (w) => { w = n2(w).replace(/[^a-z0-9]/g, ''); return w.length > 6 ? w.slice(0, w.length - 2) : w.length > 4 ? w.slice(0, w.length - 1) : w; };
     const SINONIMI = {
         leva: ['fulcro', 'braccio', 'momento'], momento: ['torcente', 'coppia', 'braccio'], forza: ['newton', 'dinamica'], energia: ['lavoro', 'potenza', 'joule'],
@@ -10184,8 +9337,6 @@ const Locale = (() => {
         }
         return Array.from(o);
     }
-    // ---------- B. testi ----------
-    /** Toglie da un testo diviso in pagine le righe che si ripetono (intestazioni, piè di pagina, diciture). */
     function pulisciPagine(pagine) {
         const conta = new Map();
         const righe = pagine.map(p => p.split('\n').map(r => r.trim()).filter(Boolean));
@@ -10195,7 +9346,6 @@ const Locale = (() => {
         return righe.map(rr => rr.filter(r => { const k = n2(r).replace(/\d+/g, '#'); return !(conta.get(k) >= soglia && r.length < 120) && !/^(pag(ina)?\.?\s*)?\d{1,4}$/i.test(r) && !/volume concesso in uso/i.test(r); })
             .join('\n').replace(/(\w)-\n(\w)/g, '$1$2').replace(/([^.:;!?\n])\n(?=[a-zà-ù])/g, '$1 '));
     }
-    /** Le frasi più dense di parole chiave (per mandare all'AI solo il necessario). */
     function frasiChiave(testo, chiavi, maxCar) {
         const rad = new Set(espandi(chiavi).map(radice));
         const frasi = testo.split(/(?<=[.!?])\s+|\n+/).map((t, i) => ({ t: t.trim(), i, s: t.split(/\s+/).reduce((a, w) => a + (rad.has(radice(w)) ? 1 : 0), 0) })).filter(x => x.t.length > 20);
@@ -10209,8 +9359,6 @@ const Locale = (() => {
         }
         return scelte.sort((a, b) => a.i - b.i).map(x => x.t).join(' ');
     }
-    // ---------- C. quiz ----------
-    /** La corretta è più lunga dei distrattori: prova ad accorciarla togliendo parentesi e incisi finali. */
     function accorciaCorretta(d) {
         if (!d || d.t !== 'mcq' || !Array.isArray(d.o) || d.o.length !== 5)
             return false;
@@ -10228,7 +9376,6 @@ const Locale = (() => {
         }
         return false;
     }
-    /** Citazione non verbatim: la sostituisce con la frase vera della fonte più simile (se lo è abbastanza). */
     function citazioneVera(c, fonte) {
         const P = new Set(n2(c).split(/\W+/).filter(w => w.length > 3));
         if (P.size < 4)
@@ -10250,9 +9397,7 @@ const Locale = (() => {
         }
         return bs >= .6 && best.length > 20 ? best : null;
     }
-    // esponenti solo dopo un'unità (m² → m2); dopo un numero (10²) cambierebbe il valore: resta e il controllo la scarta
     const SIMBOLI = [[/([a-zA-Z])²/g, '$12'], [/([a-zA-Z])³/g, '$13'], [/[·×]/g, '*'], [/÷/g, '/'], [/Δ|δ/g, 'delta'], [/π/g, 'pi'], [/[→←↔]/g, ''], [/µ/g, 'micro'], [/°/g, ' gradi'], [/±/g, '+-'], [/√/g, 'radice di ']];
-    /** Rende digitabili le risposte dei completamenti (aggiunge la variante senza simboli). */
     function digitabili(a) { const o = new Set(); for (const x of a) {
         let y = x;
         for (const [re, s] of SIMBOLI)
@@ -10261,7 +9406,6 @@ const Locale = (() => {
         if (y)
             o.add(y);
     } return Array.from(o); }
-    // ---------- D. audio ----------
     const INTERCALARI = /\b(ehm+|eh+|uhm+|mmh+|cioè cioè|diciamo|ok ok|allora allora)\b[,.]?\s*/gi;
     function pulisciParlato(t) {
         return t.replace(INTERCALARI, '').replace(/\b(\w+)(\s+\1\b)+/gi, '$1').replace(/\s+([,.;:!?])/g, '$1').replace(/\s{2,}/g, ' ').trim().replace(/^[a-zà-ù]/, c => c.toUpperCase());
@@ -10277,7 +9421,6 @@ const Locale = (() => {
                 d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
         return d[a.length][b.length];
     }
-    /** Parole quasi uguali a un termine noto (es. «entalpa» ~ «entalpia»): candidati a errore di ascolto. */
     function quasiTermini(t, termini) {
         const T = termini.filter(x => x.length >= 6).map(x => ({ x, n: n2(x) })), o = [];
         for (const w of t.split(/[^\p{L}]+/u)) {
@@ -10295,11 +9438,9 @@ const Locale = (() => {
         }
         return o;
     }
-    /** Segmento dubbio deciso in locale (confidenza del riconoscitore, compressione, termini quasi uguali). */
     function segmentoDubbio(s, termini) {
         return (s.lp != null && s.lp < -.6) || (s.cr || 0) > 2.4 || s.t.length < 3 || quasiTermini(s.t, termini).length > 0 || /(\b\w+\b)(?:\s+\1\b){2,}/i.test(s.t);
     }
-    // ---------- E. flashcard ----------
     function carteDaTesto(testo, max = 12) {
         const o = [], visti = new Set();
         const add = (q, r) => { q = q.trim().replace(/\s+/g, ' '); r = r.trim().replace(/\s+/g, ' ').replace(/[.;]$/, ''); const k = n2(q); if (q.length < 8 || r.length < 2 || r.length > 140 || visti.has(k))
@@ -10326,7 +9467,6 @@ const Locale = (() => {
         }
         return o.slice(0, max);
     }
-    // ---------- F. spiegazione breve ----------
     function spiegazioneBreve(e) {
         const passi = (Array.isArray(e) ? e : [e]).map(String);
         const conc = passi.find(x => /^il concetto:/i.test(x)), sint = passi.find(x => /^in sintesi:/i.test(x));
@@ -10334,7 +9474,6 @@ const Locale = (() => {
             return null;
         return [conc, sint].filter(Boolean).map(x => x.replace(/^[^:]+:\s*/, '')).join('\n\n');
     }
-    // ---------- G. riassunto ----------
     function concettiMancanti(appunto, riassunto, max = 8) {
         const r = new Set(n2(riassunto).split(/\W+/).map(radice));
         const cand = new Map();
@@ -10351,7 +9490,6 @@ const Locale = (() => {
             cand.set(w, (cand.get(w) || 0) + n); });
         return Array.from(cand.entries()).filter(([t]) => !n2(t).split(/\W+/).filter(w => w.length > 3).every(w => r.has(radice(w))) ? true : false).sort((a, b) => b[1] - a[1]).map(x => x[0]).slice(0, max);
     }
-    // ---------- A. assistente ----------
     const VISTE = [[/statistic/, 'statistiche'], [/\bpiano\b|programma/, 'piano'], [/\b(carte|flashcard|card)\b/, 'carte'], [/errori/, 'errori'], [/esami|appell/, 'esami'], [/syllabus/, 'syllabus'], [/tabell/, 'tabelle'],
         [/appunt/, 'appunti'], [/calendari|settimana|mese/, 'calendario'], [/\boggi\b|home/, 'oggi'], [/promemoria|cose da fare|to ?do/, 'promemoria'], [/\bnote\b/, 'note'], [/impostazion|preferenz/, 'impostazioni'], [/studio|schede/, 'studio']];
     const MAT = [[/chimic|mol[ae]|acid|ph\b|redox|entalp|entrop|reazion|legam|atom|orbital|soluzion|gas\b/, 'Chimica'], [/biolog|cellul|dna|rna|protein|mitosi|meiosi|gene|enzim|membran|organell/, 'Biologia'], [/fisic|forz|lev[ae]\b|momento|cinemat|dinamic|energi|onda|fluid|pression|elettr|ottic|termodin/, 'Fisica']];
@@ -10364,7 +9502,6 @@ const Locale = (() => {
         [/^(come|dove)\b(?=.*\b(chiave|groq|gemini))/, 'Altro → Studio e AI → Spiegazioni AI: incolla la chiave Groq (e, se vuoi, quella Gemini).'],
         [/^(come|dove)\b(?=.*\b(dispositiv|esc|scolleg))/, 'Altro → Dati e backup → Google Drive: «Scollega» per uscire (anche cancellando i dati da qui) e «Dispositivi riconosciuti» per scollegarne altri.'],
     ];
-    /** Una frase (anche con più richieste) → azioni, oppure null se serve l'AI. */
     function capisci(frase) {
         const pezzi = frase.split(/\s*(?:;|\.\s|\be poi\b|\bpoi\b|,\s*e\s+|\s+e\s+(?=(?:crea|fa|apri|vai|mostra|cerca|trova|ricord|aggiung|registr|studia|aggiorna|metti|segna)\w*\b))\s*/i).map(x => x.trim()).filter(Boolean);
         const out = [];
@@ -10411,7 +9548,6 @@ const Locale = (() => {
             if (v)
                 return [{ tipo: 'apri', vista: v[1] }];
         }
-        // eventi e promemoria: il riconoscitore del calendario (07-rapido), solo se la frase chiede UNA cosa
         if (/\b(e|ed|poi|anche)\s+(ricord|crea|fa|apri|cerca|aggiung|metti|segna|registr)\w*/.test(n))
             return null;
         const r = interpreta(p);
@@ -10422,7 +9558,6 @@ const Locale = (() => {
         return null;
     }
     const taglia = (x) => String(x == null ? '' : x).slice(0, 400);
-    /** Primo numero di un testo (accetta 1,2·10^3, 1.2e-3, 3×10⁻⁵, 1 200). */
     function numero(t) {
         const sup = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁻': '-' };
         const x = t.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+/g, m => '^' + m.split('').map(c => sup[c]).join('')).replace(/(\d)\s(?=\d{3}\b)/g, '$1').replace(/−/g, '-');
@@ -10445,7 +9580,6 @@ const Locale = (() => {
             return '⚠️ Ordine di grandezza: fattore 10^' + k + ' (controlla conversione unità SI).' + (s * g < 0 ? ' Anche il segno è invertito.' : '');
         return null;
     }
-    /** H2SO4 → H₂SO₄ (indici in pedice dopo un elemento o una parentesi). */
     const formula = (t) => t.replace(/([A-Z][a-z]?|\))(\d+)/g, (_, a, n) => a + n.split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[+d]).join(''));
     const COPPIE_OPPOSTE = [['ossidazion', 'riduzion'], ['ossida', 'riduc'], ['anabol', 'catabol'], ['esocitosi', 'endocitosi'], ['parasimpatic', 'simpatic'], ['antagonist', 'agonist'],
         ['esotermic', 'endotermic'], ['esoergonic', 'endoergonic'], ['meiosi', 'mitosi'], ['efferent', 'afferent'], ['espirazion', 'inspirazion'], ['diastole', 'sistole'], ['ipotonic', 'ipertonic'],
@@ -10464,7 +9598,6 @@ const Locale = (() => {
             return '🧪 Formula: stessi elementi ma indici diversi (' + formula(fs[0]) + ' invece di ' + formula(fg[0]) + ').';
         return null;
     }
-    /** Anno citato: 1848, 2001, «XV sec» (→ metà secolo). */
     function anno(t) {
         const m = /\b(1\d{3}|20\d{2}|[IVX]+\s*sec)/i.exec(t);
         if (!m)
@@ -10499,7 +9632,6 @@ const Locale = (() => {
             return '⚖️ Trappola normativa: la risposta giusta prevede un\'eccezione o un termine che la tua non considera.';
         return null;
     }
-    /** Damerau-Levenshtein (trasposizioni adiacenti), sensibile ad accenti, insensibile alle maiuscole. */
     function damerau(a, b) {
         a = a.toLowerCase().trim().slice(0, 120);
         b = b.toLowerCase().trim().slice(0, 120);
@@ -10526,7 +9658,6 @@ const Locale = (() => {
             return '✍️ Quasi esatto (distanza ' + k + (k === 1 ? ' carattere' : ' caratteri') + '): controlla la desinenza/accento.';
         return null;
     }
-    /** Pronuncia (sintesi vocale del browser, offline): utile nelle lingue straniere. */
     function pronuncia(testo, lingua = 'it-IT') {
         try {
             if (!('speechSynthesis' in window))
@@ -10541,7 +9672,6 @@ const Locale = (() => {
             return false;
         }
     }
-    /** Prima riga dove le parentesi/virgolette si sbilanciano (0 = bilanciato). */
     function rigaSbilanciata(t) {
         const pila = [], ap = { ')': '(', ']': '[', '}': '{' };
         let riga = 1, str = null;
@@ -10596,7 +9726,7 @@ const Locale = (() => {
                 continue;
             const op = (t) => t.replace(/<=/g, '<').replace(/>=/g, '>').replace(/\s+/g, '');
             if (op(a) === op(b))
-                return msg(i + 1); // < invece di <= (o viceversa): classico off-by-one
+                return msg(i + 1);
             const na = a.match(/-?\d+/g), nb = b.match(/-?\d+/g);
             if ((ls.length > 1 || lg.length > 1) || (na && nb && na.length === nb.length && na.some((x, k) => Math.abs(+x - +nb[k]) === 1)))
                 return msg(i + 1);
@@ -10605,7 +9735,6 @@ const Locale = (() => {
         return null;
     }
     const PLUGIN = { diagnosticaStemDimensionale, diagnosticaScienzeCompartimenti, diagnosticaCronologiaCausalita, diagnosticaNormativaEccezioni, diagnosticaMorfologiaLevenshtein, diagnosticaSintassiAST };
-    /** Diagnostica locale dell'errore secondo l'archetipo della materia (null = nessuna osservazione utile). */
     function diagnosticaPerArchetipo(archetipo, c) {
         const def = ARCHETIPI_DISCIPLINARI[archetipo];
         const f = def && PLUGIN[def.pluginLocaleId];
@@ -10618,7 +9747,6 @@ const Locale = (() => {
             return null;
         }
     }
-    /** Valuta una risposta aperta su una rubrica di punti chiave (sovrapposizione delle radici, pesata IDF tipo BM25). */
     function rubrica(testo, punti) {
         const parole = (t) => n2(t).split(/\W+/).filter(w => w.length > 3 && !STOP.has(w)).map(radice);
         const r = new Set(parole(testo)), docs = punti.map(p => new Set(parole(p)));
@@ -10641,18 +9769,7 @@ const Locale = (() => {
         formula, damerau, pronuncia, diagnosticaPerArchetipo, rubrica, PLUGIN };
 })();
 
-// 07-mano.ts — Scrittura a mano negli appunti (v0.31; v0.39 penne, forme, stabilizzazione: scouting Freenotes/GoodNotes/Notability).
-//
-// Scouting 13/11: GoodNotes / Notability (pagine a quadretti o righe, penna sensibile alla pressione,
-// evidenziatore, gomma, scrittura → testo → quiz e flashcard con l'AI); web: Pointer Events danno
-// pressione e inclinazione della Pencil su Safari iPad; Scribble di iPadOS può «mangiare» tratti sulle
-// tele → blocchiamo i touch dello stilo sulla pagina; riconoscimento: modello visivo di Groq (Llama 4 Scout),
-// gratuito con la stessa chiave, SOLO quando premi ✨, e il testo si controlla prima di usarlo.
-//
-// Dati: Appunto.mano = { t: tratti, h: altezza, sf: sfondo }. Coordinate su una larghezza logica di 1000.
-// Tratto compatto: "colore|spessore|tipo|x,y,p x,y,p …" (tipo: p = penna, e = evidenziatore).
-const LARG = 1000, PAGINA = 1414; // v0.39.1: pagine A4 (1000 × 1414) una sotto l'altra
-// v0.41.2: cache dei tratti già decodificati (+ riquadro) — lo scorrimento non riparsa più ogni tratto a ogni frame
+const LARG = 1000, PAGINA = 1414;
 const CACHE_TR = new Map();
 function trattoCache(s) {
     let t = CACHE_TR.get(s);
@@ -10677,7 +9794,6 @@ function decodTratto(s) {
     return { c, w: +w, k, p: (pts || '').split(' ').filter(Boolean).map(x => x.split(',').map(Number)), ...(f ? { f } : {}) };
 }
 function codTratto(c, w, k, p, f) { return c + '|' + w + '|' + k + '|' + p.map(q => q.join(',')).join(' ') + (f ? '|' + f : ''); }
-// ---------- v0.39: riconoscimento forme (disegna e tieni premuto, o forma automatica) ----------
 const lungTratto = (p) => { let l = 0; for (let i = 1; i < p.length; i++)
     l += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); return l; };
 function rdp(p, eps) {
@@ -10717,7 +9833,6 @@ function formaDa(k, a, b) {
         return [[(x0 + x1) / 2, y0, 50], [x1, y1, 50], [x0, y1, 50], [(x0 + x1) / 2, y0, 50]];
     return ellissePunti((x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2, (y1 - y0) / 2);
 }
-/** Riconosce una forma pulita dal tratto (null = nessuna forma chiara). */
 function riconosciForma(p) {
     if (p.length < 4)
         return null;
@@ -10727,7 +9842,6 @@ function riconosciForma(p) {
     if (L < 12)
         return null;
     if (D / L > .9) {
-        // linea: si aggancia a orizzontale / verticale se quasi tale
         let e = [b[0], b[1]];
         const ang = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI, m = ((ang % 90) + 90) % 90;
         if (m < 6 || m > 84) {
@@ -10738,7 +9852,6 @@ function riconosciForma(p) {
         }
         return { pts: [[a[0], a[1], 50], [e[0], e[1], 50]], chiusa: false, nome: 'linea' };
     }
-    // freccia disegnata in un tratto: linea lunga + piccola punta finale
     const s = rdp(p, diag * .06);
     if (D > diag * .35 && s.length >= 4 && s.length <= 5) {
         const l1 = Math.hypot(s[1][0] - s[0][0], s[1][1] - s[0][1]);
@@ -10746,7 +9859,7 @@ function riconosciForma(p) {
             return { pts: frecciaPunti(s[0], s[1]), chiusa: false, nome: 'freccia' };
     }
     if (D > diag * .25)
-        return null; // aperta e non dritta: resta a mano libera
+        return null;
     const v = rdp(p, diag * .09);
     let n = v.length - 1;
     if (Math.hypot(v[0][0] - v[n][0], v[0][1] - v[n][1]) > diag * .25)
@@ -10757,7 +9870,6 @@ function riconosciForma(p) {
     }
     if (n === 4)
         return { pts: formaDa('rett', [x0, y0], [x1, y1]), chiusa: true, nome: 'rettangolo' };
-    // ellisse / cerchio: distanza dal centro quasi costante
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     let rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
     const err = p.reduce((s2, q) => s2 + Math.abs(Math.hypot((q[0] - cx) / (rx || 1), (q[1] - cy) / (ry || 1)) - 1), 0) / p.length;
@@ -10767,7 +9879,6 @@ function riconosciForma(p) {
         rx = ry = (rx + ry) / 2;
     return { pts: ellissePunti(cx, cy, rx, ry), chiusa: true, nome: rx === ry ? 'cerchio' : 'ellisse' };
 }
-// v0.39: appunti a mano copiati col lazo (anche tra un appunto e l'altro)
 let APPUNTI_MANO = null;
 const PREF_MANO = (() => { const d = { tipo: 'p', w: 1, stab: 4, auto: false, tieni: true, gomma: 'tratto', lazo: 'tutto', forma: 'rett', riempi: false, scarab: false, barraChiusa: false, calcoli: true, extra: [] }; try {
     return { ...d, ...JSON.parse(localStorage.getItem('pref-mano') || '{}') };
@@ -10778,7 +9889,7 @@ catch (_) {
 const salvaPrefMano = () => { try {
     localStorage.setItem('pref-mano', JSON.stringify(PREF_MANO));
 }
-catch (_) { /* privato */ } };
+catch (_) { } };
 const CACHE_IMG = new Map();
 function imgPronta(s, poi) {
     let i = CACHE_IMG.get(s);
@@ -10787,7 +9898,7 @@ function imgPronta(s, poi) {
         i = img;
         CACHE_IMG.set(s, img);
         if (!Allegati.eRif(s))
-            img.src = s; // v0.57 (A14): riferimento all'archivio allegati
+            img.src = s;
         else {
             const u = Allegati.subito(s);
             if (u)
@@ -10811,7 +9922,6 @@ function caricaImmaginiMano(m) {
     else
         setTimeout(r, 4000); }))).then(() => undefined);
 }
-/** Disegna sfondo + allegati + tratti. Con «v» disegna solo la finestra visibile e tiene righe e quadretti di misura fissa sullo schermo. */
 function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
     const W = LARG * scala, H = m.h * scala;
     const ox = v ? v.ox : 0, oy = v ? v.oy : 0, vw = v ? v.w : W, vh = v ? v.h : H;
@@ -10851,7 +9961,7 @@ function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
     }
     g.save();
     g.translate(-ox, -oy);
-    if (!sfondoPieno) { // v0.39.1: separatori di pagina con numero
+    if (!sfondoPieno) {
         g.fillStyle = 'rgba(120,130,160,.55)';
         g.font = Math.round(13 * Math.max(scala, .6)) + 'px system-ui, sans-serif';
         g.textAlign = 'right';
@@ -10866,7 +9976,7 @@ function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
         }
         g.textAlign = 'left';
     }
-    if (m.sf === 'cornell' || m.sf === 'esercizio') { // v0.33: modelli di pagina (le zone seguono il foglio)
+    if (m.sf === 'cornell' || m.sf === 'esercizio') {
         g.strokeStyle = 'rgba(70,100,220,.45)';
         g.lineWidth = 2;
         g.fillStyle = 'rgba(70,100,220,.75)';
@@ -10895,7 +10005,6 @@ function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
                 g.fillText(t, 14 * scala, H * f + 30 * scala);
         }
     }
-    // v0.36: allegati (pagine PDF, slide, foto) sotto l'inchiostro
     for (const im of m.im || []) {
         if ((im.y + im.h) * scala < oy || im.y * scala > oy + vh)
             continue;
@@ -10918,13 +10027,12 @@ function disegnaMano(g, m, scala, sfondoPieno = false, v, poi) {
     for (const s of m.t) {
         const t = trattoCache(s);
         if (v && (t.y1 < y0 || t.y0 > y1))
-            continue; // fuori dalla finestra
-        const tv = v && v.veloce && t.k === 'p' ? { ...t, k: 'b' } : t; // v0.42: durante i gesti tratto unico (più veloce), nitido al rilascio
+            continue;
+        const tv = v && v.veloce && t.k === 'p' ? { ...t, k: 'b' } : t;
         tracciaTratto(g, scuro ? inchiostroScuro(tv) : tv, scala);
     }
     g.restore();
 }
-/** Sul foglio nero l'inchiostro scuro diventa chiaro (i colori vivi restano). */
 const SCURI = new Set(['#1f2a44', '#000000', '#000', '#111111']);
 function inchiostroScuro(t) { return SCURI.has(t.c.toLowerCase()) ? { ...t, c: '#e9edf6' } : t; }
 function tracciaTratto(g, t, scala) {
@@ -10940,7 +10048,7 @@ function tracciaTratto(g, t, scala) {
     }
     g.globalAlpha = t.k === 'e' ? .32 : t.k === 'm' ? .62 : 1;
     g.strokeStyle = t.c;
-    if (t.k !== 'p' && t.p.length > 1) { // tratto a spessore costante: un solo percorso (più veloce, tratteggio continuo)
+    if (t.k !== 'p' && t.p.length > 1) {
         g.lineWidth = Math.max(.6, t.w * scala * (t.k === 'm' ? .8 : t.k === 'e' ? 1 : .95));
         if (t.k === 't')
             g.setLineDash([t.w * scala * 2.5, t.w * scala * 2.2]);
@@ -10959,7 +10067,6 @@ function tracciaTratto(g, t, scala) {
         g.globalAlpha = 1;
         return;
     }
-    // v0.41.2: segmenti consecutivi con spessore quasi uguale in un solo percorso (molti meno stroke() per frame)
     let lw = -1;
     g.beginPath();
     for (let i = 1; i < t.p.length; i++) {
@@ -10976,7 +10083,6 @@ function tracciaTratto(g, t, scala) {
     g.stroke();
     g.globalAlpha = 1;
 }
-/** Immagine PNG (fondo bianco) della pagina, per l'AI o per Drive. */
 function immagineMano(m, larghezza = 1000) {
     const cv = document.createElement('canvas'), s = larghezza / LARG;
     cv.width = larghezza;
@@ -10993,10 +10099,9 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     const foto = () => ({ t: m.t.slice(), im: (m.im || []).slice() });
     const ripristina = (f) => { m.t = f.t; m.im = f.im; };
     let strumento = 'penna', colore = '#1f2a44', dito = !matchMedia('(pointer: fine), (hover: hover)').matches && !('ontouchstart' in window && navigator.maxTouchPoints > 1 && /iPad|Macintosh/.test(navigator.userAgent));
-    let penna = false; // diventa true alla prima Pencil vista: da lì il dito scorre soltanto
+    let penna = false;
     const cv = h('canvas.mano-tela'), g = cv.getContext('2d', { alpha: true });
-    const vivo = h('canvas.mano-vivo'), gv = vivo.getContext('2d'); // v0.41.3: niente «desynchronized»: su Android rende la tela opaca (foglio nero)
-    // la tela è grande quanto la parte visibile (vista «sticky»): nitida a qualunque ingrandimento
+    const vivo = h('canvas.mano-vivo'), gv = vivo.getContext('2d');
     const vista = h('div.mano-vista', null, cv, vivo);
     const box = h('div.mano-box', null, vista);
     const pag = h('div.mano-foglio', null, box);
@@ -11037,18 +10142,12 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         rif = requestAnimationFrame(ridisegna); }, { passive: true });
     const pulisciVivo = () => { gv.setTransform(1, 0, 0, 1, 0, 0); gv.clearRect(0, 0, vivo.width, vivo.height); gv.setTransform(d, 0, 0, d, -pag.scrollLeft * d, -pag.scrollTop * d); };
     let zoomEti = null;
-    // ---------- v0.42 GESTI COME FREENOTES/GOODNOTES ----------
-    // Due dita: zoom e trascinamento INSIEME (il punto del foglio sotto le dita resta sotto le dita), ridisegno
-    // nitido a ogni frame (niente anteprima sfocata), elastico oltre i limiti, inerzia al rilascio.
-    // Un dito (quando scorre): scorrimento nativo con inerzia del sistema; doppio tocco = zoom 2,5× ↔ 100%.
-    // Tocco a due dita = annulla, a tre = ripeti (solo se le dita non si sono mosse).
     const ZMIN = 1;
     let gst = null;
     let rafG = 0, inerzia = 0;
     const centro = (t) => [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2];
     const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     const elastico = (z) => z < ZMIN ? ZMIN - (ZMIN - z) * .35 : z > ZMAX ? ZMAX + (z - ZMAX) * .2 : z;
-    /** Disegno «virtuale» durante il gesto: scala e scorrimento calcolati, senza toccare il layout (60 fps). */
     function disegnaVirtuale(z, sx, sy) {
         const sc = base * z, W = LARG * sc;
         const ox = W < vw ? -(vw - W) / 2 : Math.max(0, Math.min(W - vw, sx));
@@ -11084,7 +10183,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         };
         inerzia = requestAnimationFrame(passo);
     }
-    /** Fissa zoom e scorrimento finali (layout vero), poi ridisegno nitido. */
     function fissa(z, sx, sy) {
         zoom = Math.max(ZMIN, Math.min(ZMAX, z));
         dimensiona();
@@ -11094,7 +10192,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         ridisegna();
         aggiornaBarra();
     }
-    /** Zoom animato verso z, tenendo fermo il punto (cx, cy) dello schermo. */
     function zoomAnimato(z1, cx, cy) {
         fermaInerzia();
         const pr = pag.getBoundingClientRect(), mx = cx - pr.left, my = cy - pr.top, z0 = zoom;
@@ -11171,7 +10268,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
                 ridisegna();
             }
             else if (Math.abs(zf - g0.z) > .01)
-                zoomAnimatoDa(g0.z, g0.sx, g0.sy, zf, c[0], c[1]); // elastico: torna dentro i limiti
+                zoomAnimatoDa(g0.z, g0.sx, g0.sy, zf, c[0], c[1]);
             else {
                 fissa(zf, g0.sx, g0.sy);
                 const v = g0.v;
@@ -11217,7 +10314,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     }
     pag.addEventListener('touchend', fineGesto, { capture: true });
     pag.addEventListener('touchcancel', fineGesto, { capture: true });
-    // doppio tocco con un dito (quando il dito scorre): zoom 2,5× sul punto, di nuovo per tornare al 100%
     let ultimoTap = { t: 0, x: 0, y: 0 };
     pag.addEventListener('touchend', e => {
         if (e.touches.length || e.changedTouches.length !== 1 || (dito && !penna) || gesto)
@@ -11230,12 +10326,10 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         else
             ultimoTap = { t: n, x: t.clientX, y: t.clientY };
     }, { passive: true });
-    // su PC: ctrl/⌘ + rotella (o pizzico sul trackpad); trackpad a due dita = scorre (nativo)
     pag.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey)
         return; e.preventDefault(); impostaZoom(zoom * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); }, { passive: false });
     const salvaStoria = () => { storia.push(foto()); if (storia.length > 60)
         storia.shift(); futuro.length = 0; };
-    // --- v0.39.1: righello (trascina per spostarlo, ⟳ per ruotarlo; la penna lungo il bordo traccia dritto) ---
     const rig = { on: false, x: 150, y: 300, a: 0, L: 700 };
     const righello = h('div.mano-righello', { hidden: true }, h('span.mano-righello-gradi'), h('button.mano-righello-ruota', { 'aria-label': 'Ruota il righello' }, '⟳'));
     box.append(righello);
@@ -11260,7 +10354,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             try {
                 righello.setPointerCapture(id);
             }
-            catch (_) { /* */ }
+            catch (_) { }
             tr = { tipo: e.target.classList.contains('mano-righello-ruota') ? 'ruota' : 'sposta', p0: pf(e), x0: rig.x, y0: rig.y };
         });
         righello.addEventListener('pointermove', e => {
@@ -11278,26 +10372,24 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
                     if (Math.abs(a - k) < .05)
                         a = k;
                 rig.a = a;
-            } // si ferma a 0°, 45°, 90°
+            }
             posRighello();
         });
         const stop = () => { tr = null; id = -1; };
         righello.addEventListener('pointerup', stop);
         righello.addEventListener('pointercancel', stop);
     }
-    /** Se il tratto parte vicino al bordo del righello, lo proietta sul bordo (riga dritta). */
     function lungoRighello(p) {
         if (!rig.on || p.length < 2)
             return null;
         const c = Math.cos(rig.a), si = Math.sin(rig.a), dist = (q) => -(q[0] - rig.x) * si + (q[1] - rig.y) * c, lungo = (q) => (q[0] - rig.x) * c + (q[1] - rig.y) * si;
         const d0 = dist(p[0]);
         if (d0 > 6 / zoom || d0 < -28 / zoom)
-            return null; // a filo del bordo superiore (da fuori)
+            return null;
         const off = -spessore() / 2 - 1, ts = p.map(lungo), a = Math.min(...ts), b = Math.max(...ts);
         const pt = (t) => [arrot(rig.x + t * c - off * si), arrot(rig.y + t * si + off * c), 50];
         return [pt(ts[0] <= ts[ts.length - 1] ? a : b), pt(ts[0] <= ts[ts.length - 1] ? b : a)];
     }
-    // --- v0.39.1: pagine con miniature ---
     const nPagine = () => Math.max(1, Math.ceil(m.h / PAGINA));
     function vaiPagina(k) { pag.scrollTop = k * PAGINA * scala; ridisegna(); }
     function pagine() {
@@ -11329,7 +10421,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             }
         });
     }
-    // --- lazo (seleziona tratti e allegati, sposta, elimina, trasforma in carta) ---
     let sel = new Set(), selIm = new Set(), poligono = null, trascina = null, spost = [0, 0];
     const dentro = (p, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
         const a = poly[i], b = poly[j];
@@ -11415,7 +10506,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             salva: () => { if (!f.value.trim())
                 return false; allaCarta('- ' + f.value.trim() + (rr.value.trim() ? ' :: ' + rr.value.trim() : '')); annullaSel(); } });
     }
-    // --- scarabocchio per cancellare (come GoodNotes): zig-zag rapido sopra dei tratti ---
     function eScarabocchio(p) {
         if (p.length < 12)
             return false;
@@ -11438,7 +10528,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         m.t = m.t.filter(s => decodTratto(s).p.filter(q => q[0] >= r[0] && q[0] <= r[2] && q[1] >= r[1] && q[1] <= r[3]).length < 2);
         return m.t.length !== prima;
     }
-    // --- v0.41: calcoli scritti a mano dopo «=» (come Math Notes): l'AI LEGGE l'espressione, il conto lo fa l'app ---
     let timerUguale = 0;
     const bboxT = (p) => { const xs = p.map(q => q[0]), ys = p.map(q => q[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
     function eUguale(a, b) {
@@ -11492,7 +10581,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
                 catch (_) {
                     return false;
                 }
-                // v0.43 memoria: se l'utente ha corretto la lettura, impara quali segni della sua grafia vengono confusi
                 if (campo.value.replace(/\s/g, '') !== letto.replace(/\s/g, '')) {
                     const a = letto.replace(/\s/g, ''), bb = campo.value.replace(/\s/g, '');
                     if (a.length === bb.length)
@@ -11527,18 +10615,15 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         try {
             Tocco.clic(.7);
         }
-        catch (_) { /* */ }
+        catch (_) { }
     }
-    // --- input ---
     let cur = null, idPuntatore = -1, puntoInizio = null;
     const arrot = (x) => Math.round(x * 10) / 10;
     const punto = (e) => { const r = vivo.getBoundingClientRect(); return [arrot((e.clientX - r.left + pag.scrollLeft) / scala), arrot((e.clientY - r.top + pag.scrollTop) / scala), Math.round((e.pointerType === 'pen' ? (e.pressure || .5) : .5) * 100)]; };
     const scrive = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && dito && !penna);
-    // lo spessore resta uguale sullo schermo: ingrandendo scrivi più fine (come Note e GoodNotes)
     const spessore = () => arrot((strumento === 'evid' ? 22 : 3) * PREF_MANO.w / zoom);
     const tipoK = () => strumento === 'evid' ? 'e' : PREF_MANO.tipo;
     const riempi = () => strumento === 'forma' && PREF_MANO.riempi ? colore : undefined;
-    // tenuta: forma agganciata mentre la penna resta giù (sposta/ridimensiona/ruota attorno al centro)
     let tenuta = null, timerTieni = 0, ultimoGrezzo = [0, 0], liscio = null;
     const inkV = () => m.tm === 'scuro' && SCURI.has(colore) ? '#e9edf6' : colore;
     const mostraVivo = (pts, f) => { pulisciVivo(); gv.lineCap = 'round'; gv.lineJoin = 'round'; tracciaTratto(gv, { c: inkV(), w: spessore(), k: tipoK(), p: pts, ...(f ? { f } : {}) }, scala); };
@@ -11556,7 +10641,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         try {
             Tocco.clic(.7);
         }
-        catch (_) { /* senza audio */ }
+        catch (_) { }
         if (navigator.vibrate)
             navigator.vibrate(8);
     }
@@ -11575,7 +10660,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         try {
             vivo.setPointerCapture(e.pointerId);
         }
-        catch (_) { /* puntatore sintetico */ }
+        catch (_) { }
         idPuntatore = e.pointerId;
         pulisciVivo();
         if (strumento === 'lazo') {
@@ -11607,7 +10692,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
             timerTieni = window.setTimeout(aggancia, 550);
         }
     });
-    // v0.41.4: anteprima della punta quando la penna è sospesa (Lenovo Tab Pen, S Pen, Apple Pencil su M2+): mostra dove cadrà l'inchiostro
     let sospeso = false;
     vivo.addEventListener('pointermove', e => {
         if (e.pointerType !== 'pen' || e.buttons || cur)
@@ -11647,7 +10731,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
                 ultimoGrezzo = grezzo;
                 continue;
             }
-            if (tenuta) { // forma agganciata: ruota e ridimensiona seguendo la penna
+            if (tenuta) {
                 const t = tenuta, v0 = [t.r0[0] - t.c[0], t.r0[1] - t.c[1]], v1 = [grezzo[0] - t.c[0], grezzo[1] - t.c[1]];
                 const k = Math.hypot(v1[0], v1[1]) / (Math.hypot(v0[0], v0[1]) || 1), a = Math.atan2(v1[1], v1[0]) - Math.atan2(v0[1], v0[0]), co = Math.cos(a) * k, si = Math.sin(a) * k;
                 cur = t.base.map(q => { const x = q[0] - t.c[0], y = q[1] - t.c[1]; return [arrot(t.c[0] + x * co - y * si), arrot(t.c[1] + x * si + y * co), 50]; });
@@ -11659,7 +10743,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
                 timerTieni = window.setTimeout(aggancia, 550);
             }
             ultimoGrezzo = grezzo;
-            // stabilizzazione: media mobile esponenziale (0 = nessuna, 10 = molto morbida)
             const f = strumento === 'gomma' ? 1 : 1 - PREF_MANO.stab * .085;
             liscio = liscio ? [liscio[0] + (grezzo[0] - liscio[0]) * f, liscio[1] + (grezzo[1] - liscio[1]) * f] : grezzo.slice();
             const p = [arrot(liscio[0]), arrot(liscio[1]), grezzo[2]];
@@ -11686,7 +10769,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         if (cur[cur.length - 1][1] > m.h - 150) {
             m.h = (Math.floor(m.h / PAGINA) + 1) * PAGINA;
             dimensiona();
-        } // arrivato in fondo: nuova pagina
+        }
     });
     const fine = (e) => {
         if (!cur || e.pointerId !== idPuntatore)
@@ -11738,7 +10821,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         const sulBordo = !tenuta && strumento !== 'gomma' ? lungoRighello(cur) : null;
         if (sulBordo)
             cur = sulBordo;
-        else if (!tenuta && (PREF_MANO.auto || strumento === 'evid') && strumento !== 'gomma') { // forma automatica / evidenziatore dritto
+        else if (!tenuta && (PREF_MANO.auto || strumento === 'evid') && strumento !== 'gomma') {
             const fr = riconosciForma(cur);
             if (fr && (strumento !== 'evid' || fr.nome === 'linea'))
                 cur = fr.pts;
@@ -11756,7 +10839,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     };
     vivo.addEventListener('pointerup', fine);
     vivo.addEventListener('pointercancel', fine);
-    // Scribble di iPadOS: sulla tela i tocchi dello stilo non devono diventare testo né scorrere la pagina
     vivo.addEventListener('touchstart', e => { const t = e.touches[0]; if (e.touches.length === 1 && ((t && t.touchType === 'stylus') || (dito && !penna)))
         e.preventDefault(); }, { passive: false });
     vivo.addEventListener('touchmove', e => { const t = e.touches[0]; if (e.touches.length === 1 && ((t && t.touchType === 'stylus') || (dito && !penna)))
@@ -11764,7 +10846,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     function cancellaVicino(p) {
         const r = 14 * PREF_MANO.w / zoom, vic = (q) => Math.abs(q[0] - p[0]) < r && Math.abs(q[1] - p[1]) < r;
         let cambiato = false;
-        if (PREF_MANO.gomma === 'parziale') { // gomma parziale: taglia solo dove passa
+        if (PREF_MANO.gomma === 'parziale') {
             const nuovi = [];
             for (const s of m.t) {
                 const t = decodTratto(s);
@@ -11796,7 +10878,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         if (cambiato)
             ridisegna();
     }
-    /** v0.36: inserisce immagini (pagine PDF, slide, foto) dove stai guardando, una sotto l'altra. */
     function inserisci(l) {
         if (!l.length)
             return;
@@ -11827,7 +10908,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         ridisegna();
         cambia();
     };
-    // --- barra strumenti ---
     const barra = h('div.mano-barra');
     const COLORI = ['#1f2a44', '#1c7ed6', '#e03131', '#2f9e44', '#f59f00'];
     function aggiornaBarra() {
@@ -11867,7 +10947,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
         ], 'Foglio: sfondo, righello, pagine, incolla'), (zoomEti = h('button.mano-zoom', { title: 'Torna al 100%', 'aria-label': 'Torna al 100%', hidden: zoom === 1, onclick: () => impostaZoom(1) }, Math.round(zoom * 100) + '%')), ...(penna ? [h('span.tenue.piccolo.mano-nota', null, '✏️ Penna attiva: il dito scorre')] : [b('☝️', dito, () => { dito = !dito; pag.classList.toggle('dito', dito); aggiornaBarra(); avviso(dito ? 'Il dito scrive' : 'Il dito scorre la pagina', 1200); }, dito ? 'Il dito scrive (tocca per farlo scorrere)' : 'Il dito scorre (tocca per scrivere col dito)')]), ...(o.extra ? o.extra().filter(Boolean) : []));
         pannello();
     }
-    // v0.39: pannello opzioni (tipo di penna, spessore, stabilizzazione, gomma, forme)
     let opzioni = '';
     const pan = h('div.mano-opzioni');
     function pannello() {
@@ -11896,7 +10975,7 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     pag.classList.toggle('scuro', m.tm === 'scuro');
     aggiornaBarra();
     azioni.hidden = true;
-    contenitore.append(barra, pan, azioni, pag); // v0.36: barra in alto (come Note), mai sopra il testo
+    contenitore.append(barra, pan, azioni, pag);
     requestAnimationFrame(dimensiona);
     let ultimaL = 0, ultimaA = 0;
     const ro = new ResizeObserver(() => { const l = pag.clientWidth, a = pag.clientHeight; if (l && (Math.abs(l - ultimaL) > .5 || Math.abs(a - ultimaA) > .5)) {
@@ -11907,7 +10986,6 @@ function paginaMano(contenitore, iniziale, cambia, sfondo, opz = {}) {
     ro.observe(pag);
     return { dati: () => ({ t: m.t.slice(), h: Math.max(1400, m.h), sf: m.sf, ...(m.tm ? { tm: m.tm } : {}), ...(m.im && m.im.length ? { im: m.im.slice() } : {}) }), ridisegna: dimensiona, inserisci, barra, aggiornaBarra };
 }
-/** ✨ Trascrive la pagina a mano: mostra il testo da controllare, poi lo aggiunge o sostituisce. */
 async function leggiScrittura(m, dopo) {
     if (manoVuota(m)) {
         avviso('Scrivi qualcosa sulla pagina prima.');
@@ -11934,11 +11012,7 @@ async function leggiScrittura(m, dopo) {
     const campo = h('textarea.appunto-testo', { style: { minHeight: '40vh' } }, t);
     const fs = foglio({ titolo: '✨ Controlla la trascrizione', corpo: h('div.modulo', null, h('div.tenue.piccolo', null, 'Correggi dove serve ([?] = illeggibile). Le righe «domanda :: risposta» e i {{completamenti}} diventeranno flashcard.'), campo, h('div.bottoni', null, h('button.btn', { onclick: () => { fs.chiudi(); dopo(campo.value.trim(), 'aggiungi'); } }, 'Aggiungi al testo'), h('button.btn.neutro', { onclick: () => { fs.chiudi(); dopo(campo.value.trim(), 'sostituisci'); } }, 'Sostituisci il testo'))) });
 }
-// ---------- v0.36: allegati (PDF, slide, foto) ----------
-// PDF.js (Mozilla) viene caricato solo la prima volta che inserisci un PDF; le pagine diventano immagini
-// JPEG leggere (larghezza 1000 px) da annotare a mano, e il loro testo va nel testo dell'appunto.
 let pdfjsPronto = null;
-/** v0.43 memoria: suggerimenti sulla grafia dell'utente e sui suoi termini tecnici per l'AI che legge la scrittura a mano. */
 function suggScrittura(ambito) {
     const c = MemoriaIA.migliori(ambito, 'correzione', 8, undefined, 1).map(x => '«' + x.k + '» spesso è «' + x.v + '»');
     const t = MemoriaIA.migliori('audio', 'termine', 25).concat(MemoriaIA.migliori('scrittura', 'termine', 15)).map(x => x.k);
@@ -11978,7 +11052,7 @@ async function pdfInImmagini(f, max = 20) {
             if (t)
                 testi.push('### Pagina ' + i + '\n' + t);
         }
-        catch (_) { /* pagina senza testo (scansione) */ }
+        catch (_) { }
     }
     if (doc.numPages > max)
         avviso('Inserite le prime ' + max + ' pagine su ' + doc.numPages + ' (per non appesantire l\'appunto).', 6000);
@@ -12003,12 +11077,6 @@ function fotoInImmagine(f) {
     });
 }
 
-// ============================================================
-// 07-mediastore.ts — v0.50 (BP1 §7, minimo utile): compressione delle immagini prima dell'invio.
-// - comprimiImmagine: lato lungo ≤ maxLato, WebP 0.82; se il browser restituisce altro (Safari può
-//   dare PNG in silenzio) si rifà in JPEG 0.85.
-// - Limite visione: Groq 20 MB, Gemini inline ~20 MB → oltre, errore chiaro e nessun invio.
-// ============================================================
 const MediaStore = (() => {
     const LIMITE_VISIONE = 20 * 1024 * 1024;
     function tela(c, tipo, q) {
@@ -12025,7 +11093,7 @@ const MediaStore = (() => {
                 const b = await createImageBitmap(file);
                 return { img: b, w: b.width, h: b.height, chiudi: () => b.close() };
             }
-            catch (_) { /* provo con <img> */ }
+            catch (_) { }
         }
         const u = URL.createObjectURL(file);
         try {
@@ -12037,7 +11105,6 @@ const MediaStore = (() => {
             throw e;
         }
     }
-    /** Riduce e ricomprime un'immagine. Restituisce WebP, o JPEG se il browser non sa fare WebP. */
     async function comprimiImmagine(file, maxLato = 1600) {
         const s = await carica(file);
         try {
@@ -12064,7 +11131,6 @@ const MediaStore = (() => {
     function aDataUrl(b) {
         return new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => ko(r.error); r.readAsDataURL(b); });
     }
-    /** Byte reali di un data URL base64 (o di un URL qualsiasi: lunghezza). */
     function byteDataUrl(u) {
         const i = u.indexOf(';base64,');
         if (i < 0)
@@ -12072,7 +11138,6 @@ const MediaStore = (() => {
         const b64 = u.length - i - 8;
         return Math.floor(b64 * 3 / 4) - (u.endsWith('==') ? 2 : u.endsWith('=') ? 1 : 0);
     }
-    /** Errore chiaro se l'immagine supera il limite dei modelli visivi: nessun invio. */
     function controllaVisione(u) {
         const n = byteDataUrl(u);
         if (n > LIMITE_VISIONE)
@@ -12081,19 +11146,6 @@ const MediaStore = (() => {
     return { comprimiImmagine, aDataUrl, byteDataUrl, controllaVisione, LIMITE_VISIONE };
 })();
 
-// 07-memoria.ts — Motore dei ripassi (F2): ripetizione spaziata con FSRS.
-//
-// Ogni scheda fatta ha un record 'memoria' (id 'mem-<idScheda>') con difficoltà D (1–10), stabilità S
-// (giorni) e data del prossimo ripasso. Formule pubbliche di FSRS-5 (open-spaced-repetition), parametri
-// predefiniti: probabilità di ricordare dopo t giorni R = (1 + F·t/S)^-0,5; intervallo = giorni in cui R
-// scende alla ritenzione desiderata (0,90; 0,95 nei 14 giorni prima di un esame).
-//
-// Voto ricavato dal punteggio della scheda: <50 → 1 (Di nuovo), 50–69 → 2 (Difficile), 70–89 → 3 (Bene),
-// ≥90 → 4 (Facile); senza punteggio → 3. Il voto si registra quando cambia la data della scheda
-// (ripasso nuovo) o il punteggio nello stesso giorno (correzione: si riparte dallo stato precedente).
-//
-// "Ripassi di oggi": SOTTO-STEP con data ≤ oggi, prima le più a rischio (R più bassa), con un tetto di
-// minuti al giorno (impostazione ripassoMinuti, predefinito 30) e minuti stimati per scheda (10).
 const Ripassi = (() => {
     const W = [0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621];
     const DECAY = -0.5, F = 19 / 81;
@@ -12105,14 +11157,13 @@ const Ripassi = (() => {
     function intervallo(s, r) { return lim(Math.round(s / F * (Math.pow(r, 1 / DECAY) - 1)), 1, 365); }
     const d0 = (g) => lim(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10);
     function voto(punteggio) { return punteggio == null ? 3 : punteggio < 50 ? 1 : punteggio < 70 ? 2 : punteggio < 90 ? 3 : 4; }
-    /** Un passo di FSRS: nuovo stato dopo un ripasso con voto g, t giorni dopo il precedente. */
     function passo(st, g, t) {
         if (!st)
             return { d: d0(g), s: W[g - 1] };
         const { d, s } = st;
         let s2;
         if (t <= 0)
-            s2 = s * Math.exp(W[17] * (g - 3 + W[18])); // stesso giorno
+            s2 = s * Math.exp(W[17] * (g - 3 + W[18]));
         else {
             const r = recuperabilita(t, s);
             if (g === 1)
@@ -12123,19 +11174,11 @@ const Ripassi = (() => {
         const dd = d - W[6] * (g - 3) * (10 - d) / 9;
         return { d: lim(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), s: lim(s2, 0.1, 36500) };
     }
-    /** v0.57 (A16): UNICA fonte della ritenzione desiderata (carte, appunti, pianificatore).
-     *  Ordine: scelta manuale → profilo cognitivo (Dominio) → minimo richiesto dal chiamante (es. livello
-     *  d'intensità del piano) → 0,95 nei 14 giorni prima di un esame. Sempre in [0,50; 0,99]. */
     function ritenzione(giorno, minimo = 0) {
-        const base = Math.max(imp().ritenzione || Dominio.ritenzioneProfilo(), minimo); // v0.52: senza scelta manuale, la ritenzione del profilo (proprietario: 0,90 come prima)
+        const base = Math.max(imp().ritenzione || Dominio.ritenzioneProfilo(), minimo);
         const vicino = Stato.tutti('esame').some(e => { const g = giorni(giorno, e.data); return g >= 0 && g <= 14; });
         return lim(vicino ? Math.max(base, 0.95) : base, 0.5, 0.99);
     }
-    // ---------- Unità di ripasso: il SOTTO-STEP (decisione dell'utente, 11/11) ----------
-    // Ripassare ogni scheda costerebbe ~150 ore prima dell'esame; per sotto-step ~20 ore. Quando un
-    // sotto-step è in scadenza l'app propone UNA sua scheda (la meno rifatta di recente, poi la più debole).
-    // Il sotto-step entra nei ripassi quando tutte le sue PRIORITARIE sono fatte ("apprendimento").
-    /** Giorno in cui il sotto-step è stato studiato: data del piano se precedente all'ultima spunta. */
     function dataApprendimento(k) {
         const t = Studio.trovaSotto(k);
         if (!t)
@@ -12181,19 +11224,17 @@ const Ripassi = (() => {
             due: piu(giorno, intervallo(st.s, ritenzione(giorno))), ultimo: giorno,
             n: (base ? base.n : 0) + 1, lapsi: (base ? base.lapsi : 0) + (base && base.ultimo && g === 1 ? 1 : 0),
             log: log.slice(-50), prima: base || undefined,
-            schede: scheda ? (prec || []).concat([scheda]).slice(-30) : prec, // schede usate per i ripassi (rotazione)
+            schede: scheda ? (prec || []).concat([scheda]).slice(-30) : prec,
         };
         Stato.salva(m, true);
     }
     function mem(k) { const m = Stato.prendi('mem-sub-' + k); return m && !m.deleted ? m : undefined; }
-    /** Primo ingresso nei ripassi (quando le prioritarie sono tutte fatte) o ricalcolo dell'apprendimento. */
     function apprendi(k) {
         const giorno = dataApprendimento(k);
         if (!giorno)
             return;
         salvaStato(k, null, votoMedio(k), giorno, [[giorno, votoMedio(k)]]);
     }
-    /** Chiamata da Studio.segna: una scheda è stata spuntata o ha un nuovo punteggio. */
     function registra(id, p) {
         const t = trovaScheda(id);
         if (!t || !p)
@@ -12210,10 +11251,10 @@ const Ripassi = (() => {
         if (m.n === 1 && giorno <= (m.ultimo || '')) {
             apprendi(k);
             return;
-        } // correzione dell'apprendimento
+        }
         if (giorno < (m.ultimo || ''))
-            return; // data passata: ignoro
-        if (giorno === m.ultimo) { // correzione del ripasso di oggi
+            return;
+        if (giorno === m.ultimo) {
             const log = (m.log || []).slice(0, -1);
             const sc = (m.schede || []);
             m.schede = sc.slice(0, -1);
@@ -12223,7 +11264,6 @@ const Ripassi = (() => {
         }
         salvaStato(k, { d: m.d, s: m.s, due: m.due, ultimo: m.ultimo, n: m.n, lapsi: m.lapsi }, g, giorno, (m.log || []).concat([[giorno, g]]), id);
     }
-    /** Crea le memorie mancanti dei sotto-step completati (prima installazione o dati arrivati dalla sync). */
     function inizializza() {
         let n = 0;
         for (const pk of Studio.pkStep())
@@ -12235,14 +11275,12 @@ const Ripassi = (() => {
                     }
         return n;
     }
-    /** Probabilità di ricordare oggi un sotto-step (0–1). */
     function ricordo(k, giorno = ymd(new Date())) {
         const m = mem(k);
         if (!m || !m.ultimo)
             return null;
         return recuperabilita(Math.max(0, giorni(m.ultimo, giorno)), m.s);
     }
-    /** Scheda da proporre per il ripasso: una prioritaria non usata negli ultimi ripassi, la più debole (punteggio più basso). */
     function schedaDaProporre(k) {
         const t = Studio.trovaSotto(k);
         if (!t)
@@ -12257,7 +11295,6 @@ const Ripassi = (() => {
         return (cand.length ? cand : P).slice().sort((a, b) => punt(a) - punt(b))[0];
     }
     const quanteAlGiorno = () => Math.max(1, Math.floor((imp().ripassoMinuti || 30) / MIN_SCHEDA));
-    /** Ripassi di un giorno: { oggi (entro il tetto), coda, fatti, minuti }. */
     function delGiorno(giorno = ymd(new Date())) {
         const tutte = Stato.tutti('memoria').filter(m => m.er.startsWith('sub:'));
         const fatti = tutte.filter(m => m.ultimo === giorno && m.n > 1);
@@ -12269,10 +11306,9 @@ const Ripassi = (() => {
     }
     return { W, voto, passo, recuperabilita, intervallo, ritenzione, registra, inizializza, mem, ricordo, delGiorno, quanteAlGiorno, schedaDaProporre, dataApprendimento, MIN_SCHEDA };
 })();
-/** Trova una scheda dei pacchetti dal suo id (per aprirla dai ripassi). */
 let indiceSchede = { v: -1, m: new Map() };
 function trovaScheda(id) {
-    if (indiceSchede.v !== Stato.ver) { // v0.17: indice ricostruito solo quando i dati cambiano
+    if (indiceSchede.v !== Stato.ver) {
         const m = new Map();
         for (const pk of Studio.pkStep())
             for (const mat of pk.materie)
@@ -12285,7 +11321,6 @@ function trovaScheda(id) {
     }
     return indiceSchede.m.get(id) || null;
 }
-/** Colore della probabilità di ricordare (scala unica del piano: corallo → ambra → verde → teal). */
 function coloreRicordo(r) { return r < 0.7 ? '#e8590c' : r < 0.85 ? '#f59f00' : r < 0.95 ? '#2f9e44' : '#0b7285'; }
 function chipRicordo(k) {
     const r = Ripassi.ricordo(k);
@@ -12293,7 +11328,6 @@ function chipRicordo(k) {
         return null;
     return h('span.chip-ricordo', { style: { color: coloreRicordo(r), borderColor: coloreRicordo(r) }, title: 'Probabilità di ricordare questo sotto-step oggi' }, '🧠 ' + Math.round(r * 100) + '%');
 }
-/** Riquadro "Ripassi di oggi" (schermata Oggi). */
 function widgetRipassi() {
     const r = Ripassi.delGiorno();
     if (!r.oggi.length && !r.fatti.length)
@@ -12311,21 +11345,6 @@ function widgetRipassi() {
         : '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.'), r.oggi.map(riga), r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null, primo ? h('div.bottoni', null, h('button.btn', { onclick: () => apriScheda(primo.pk, primo.m, primo.micro, primo.s, true) }, '▶ Inizia')) : null);
 }
 
-// =====================================================================
-// 07-memoriaia.ts — v0.43 MEMORIA DEGLI ASSISTENTI AI (miglioramento progressivo)
-// Un unico algoritmo di memoria usato da TUTTE le AI dell'app, con «ambiti» specifici per mansione
-// e una parte generica (linee guida comuni). Ogni voce ha: tipo, chiave, valore, quante volte è stata
-// confermata (n) e quando (t). Punteggio = conferme × recenza: le voci utili salgono, le vecchie e mai
-// riconfermate scendono e, oltre il tetto per ambito, si dimenticano da sole.
-// Tipi di voce:
-//   correzione  «prima → dopo» (es. trascrizione audio: «in talpa» → «entalpia»; calcoli a mano: «7» → «1»)
-//   termine     parola tecnica che l'utente usa davvero (aiuta Whisper e la lettura della scrittura a mano)
-//   lezione     errore già commesso dall'AI e regola per non ripeterlo (es. «la corretta era la più lunga»)
-//   esempio     frase dell'utente → azioni confermate (l'assistente impara il suo modo di chiedere)
-//   posto       dove si trova cosa nel Drive (argomento → file e pagine utili): meno ricerche e meno token
-// Ambiti: ricerca, quiz, audio, scrittura, calcolo, assistente, spiegazioni, generale.
-// I record (type 'memia') si sincronizzano con gli altri dati, quindi la memoria vale su tutti i dispositivi.
-// =====================================================================
 const MemoriaIA = (() => {
     const TETTO = 300, GIORNO = 864e5;
     const AMBITI = { ricerca: '🔎 Ricerca nel Drive', quiz: '✨ Creazione quiz', audio: '🎙 Trascrizione audio', scrittura: '✍️ Lettura della scrittura a mano',
@@ -12336,8 +11355,7 @@ const MemoriaIA = (() => {
         return 0; let c = 0; A.forEach(w => { if (B.has(w))
         c++; }); return c / Math.min(A.size, B.size); }
     const rec = (ambito) => Stato.prendi('memia-' + ambito) || { id: 'memia-' + ambito, type: 'memia', updatedAt: 0, ambito, voci: [] };
-    const punteggio = (x, ora = Date.now()) => x.n * Math.pow(.5, (ora - x.t) / (45 * GIORNO)); // dimezza ogni 45 giorni senza conferme
-    /** Aggiunge o rinforza una voce. «peso» = quanto vale questa conferma (1 di base). */
+    const punteggio = (x, ora = Date.now()) => x.n * Math.pow(.5, (ora - x.t) / (45 * GIORNO));
     function nota(ambito, tipo, k, v = null, peso = 1) {
         if (!k || !String(k).trim())
             return;
@@ -12357,7 +11375,6 @@ const MemoriaIA = (() => {
         }
         Stato.salva(r, true);
     }
-    /** Indebolisce una voce sbagliata (es. una correzione rifiutata dall'utente). */
     function smentisci(ambito, tipo, k) {
         const r = rec(ambito), kk = n2(k), i = r.voci.findIndex(y => y.tipo === tipo && n2(y.k) === kk);
         if (i < 0)
@@ -12367,19 +11384,16 @@ const MemoriaIA = (() => {
             r.voci.splice(i, 1);
         Stato.salva(r, true);
     }
-    /** Le voci migliori di un tipo; con «testo» privilegia quelle simili (per esempi e posti). */
     function migliori(ambito, tipo, max = 10, testo, minN = 1) {
         const ora = Date.now();
         return rec(ambito).voci.filter(x => x.tipo === tipo && x.n >= minN)
             .map(x => ({ x, s: punteggio(x, ora) * (testo ? (simile(testo, x.k) + .05) : 1) })).filter(o => !testo || o.s > .05 * o.x.n)
             .sort((a, b) => b.s - a.s).slice(0, max).map(o => o.x);
     }
-    /** Linee guida da mettere nel prompt di un'AI: le sue lezioni + quelle generali. */
     function linee(ambito, max = 6) {
         const l = migliori(ambito, 'lezione', max).concat(migliori('generale', 'lezione', 3));
         return l.length ? '\nLEZIONI DALLE VOLTE PRECEDENTI (rispettale):\n- ' + l.map(x => x.v || x.k).join('\n- ') : '';
     }
-    /** Applica le correzioni sicure (confermate almeno «minN» volte) a un testo: restituisce testo e cambi. */
     function correggi(ambito, testo, minN = 2) {
         const cambi = [];
         for (const c of migliori(ambito, 'correzione', 80, undefined, minN)) {
@@ -12394,7 +11408,6 @@ const MemoriaIA = (() => {
         }
         return { testo, cambi };
     }
-    /** Differenze parola per parola tra due versioni (per imparare le correzioni «prima → dopo»). */
     function differenze(a, b) {
         const A = a.split(/\s+/).filter(Boolean), B = b.split(/\s+/).filter(Boolean), out = [];
         let i = 0, j = 0;
@@ -12404,7 +11417,6 @@ const MemoriaIA = (() => {
                 j++;
                 continue;
             }
-            // cerco il prossimo punto di riallineamento
             let ii = -1, jj = -1;
             outer: for (let d = 1; d < 8; d++)
                 for (let x = 0; x <= d; x++) {
@@ -12428,7 +11440,6 @@ const MemoriaIA = (() => {
         return out;
     }
     const tutte = () => Stato.tutti('memia').filter(r => !r.deleted);
-    /** Altro → Spiegazioni AI → «Memoria degli assistenti»: vedere e dimenticare. */
     function sezione() {
         const box = h('div.memia');
         const disegnaM = () => {
@@ -12446,28 +11457,11 @@ const MemoriaIA = (() => {
     return { nota, smentisci, migliori, linee, correggi, differenze, simile, sezione, tutte, AMBITI };
 })();
 
-// 07-neuro.ts — v0.54 (BP3): motore neuroscientifico dei quiz, PURO (nessun effetto all'avvio, niente DOM,
-// niente rete): lo usano 07-quizapp (certezza, interleaving, fatica, imbuto AI) e 07-creaquiz (Creaquiz Leggero).
-//
-// 1. Metadati per domanda (tutti facoltativi, con ripiego sicuro → i quiz v0.51–v0.53 restano validi):
-//    bloomLevel 1–4, distractorTypes {indiceOpzione: tipo}, confidenceLog (ultimi tentativi), sourceRef.
-// 2. Matrice certezza × correttezza (1 = tiro a indovinare, 2 = abbastanza sicuro, 3 = certo):
-//    certo+sbagliata → illusione di competenza (0,5 giorni, ease −0,30, feedback contrastivo obbligatorio);
-//    incerto+giusta → risposta fortunata (max 1 giorno, ease fermo, «da consolidare»);
-//    certo+giusta → padronanza (intervallo ×1,25); incerto+sbagliata → lacuna nota (1 giorno + rimando alla teoria).
-// 3. Interleaving: mai più di 2 domande di fila dello stesso micro-argomento; alternanza Bloom 1–2 / 3–4.
-// 4. Fatica attentiva (zero token): media mobile degli ultimi 5 tempi contro la base della sessione.
-// 5. Imbuto AI a 4 livelli: 0 locale → 1 spiegazioni già pronte/cache → 2 micro-chiamata (≤120 parole,
-//    ≤350 token) → 3 circuit breaker oltre 15 domande (prompt per Gemini web + incolla il JSON).
-// 6. Creaquiz Leggero: template {{var:min:max:step}}, cloze, parser JSON tollerante, deduplicazione, export.
-// 7. Pipeline di studio per step: scheda prolissa → scheda condensata → quiz bank (copertura Bloom).
 const Neuro = (() => {
     const TIPI_DISTR = ['misconception', 'inversione_causa', 'confusione_termine', 'caso_limite', 'plausibile_generico'];
     const MAX_LOG = 10, EASE0 = 2.5, EASE_MIN = 1.3, BREAKER = 15, MAX_PAROLE_MICRO = 120, MAX_TOKEN_MICRO = 350;
     const STATI_PIPE = ['bozza', 'pronta', 'verificata'];
     const str = (x) => typeof x === 'string' ? x : typeof x === 'number' ? String(x) : '';
-    // ---------- 1. metadati ----------
-    /** Livello di Bloom: quello scritto, altrimenti stimato dal livello/tipo della domanda (mai undefined). */
     function bloom(d) {
         const b = Number(d && d.bloomLevel);
         if (b >= 1 && b <= 4 && Math.floor(b) === b)
@@ -12488,7 +11482,6 @@ const Neuro = (() => {
             livelloCertezza: ([1, 2, 3].includes(Number(t.livelloCertezza)) ? Number(t.livelloCertezza) : 2),
             tempoRispostaMs: Math.max(0, Number(t.tempoRispostaMs) || 0) })).slice(-max);
     }
-    /** Copia della domanda con i metadati neuro ripuliti (campi non validi tolti, mai inventati). */
     function normalizza(d) {
         const o = { ...d };
         const b = Number(o.bloomLevel);
@@ -12544,7 +11537,6 @@ const Neuro = (() => {
     const argomentoDi = (d) => stepDi(d) || str(d && d.subtopic) || str(d && d.sk) || '';
     const tipoDistrattore = (d, oi) => d && d.distractorTypes && TIPI_DISTR.includes(d.distractorTypes[oi]) ? d.distractorTypes[oi] : null;
     const NOMI_DISTR = { misconception: 'idea sbagliata diffusa', inversione_causa: 'causa ed effetto invertiti', confusione_termine: 'termine scambiato con un altro', caso_limite: 'caso limite', plausibile_generico: 'risposta plausibile ma generica' };
-    // ---------- 2. matrice certezza × correttezza ----------
     function caso(certezza, corretto) {
         if (certezza === 3)
             return corretto ? 'padronanza' : 'illusione_competenza';
@@ -12553,11 +11545,9 @@ const Neuro = (() => {
         return 'standard';
     }
     const piuGiorni = (oggi, n) => { const d = new Date(oggi + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-    /** Nuovo stato di ripasso della domanda (SM-2 semplificato + correzione metacognitiva della BP3). */
     function pianifica(prev, certezza, corretto, oggi) {
         const p = prev && typeof prev === 'object' ? prev : null;
         const ease0 = p && p.ease > 0 ? p.ease : EASE0, iv0 = p && p.iv > 0 ? p.iv : 0, reps0 = p && p.reps > 0 ? p.reps : 0;
-        // standard
         let iv = corretto ? (iv0 < 1 ? 1 : iv0 < 3 ? 3 : Math.round(iv0 * ease0)) : 1;
         let ease = corretto ? ease0 + 0.1 : Math.max(EASE_MIN, ease0 - 0.2);
         const c = caso(certezza, corretto);
@@ -12588,10 +11578,7 @@ const Neuro = (() => {
             r.daConsolidare = true;
         return r;
     }
-    // ---------- 3. interleaving ----------
     const banda = (b) => b <= 2 ? 'b' : 'a';
-    /** Riordina (indici) con al massimo `maxFila` domande di fila dello stesso argomento e, se `alterna`,
-     *  preferendo l'alternanza Bloom 1–2 ↔ 3–4. Parte dall'ordine dato e lo cambia il meno possibile. */
     function interleave(items, ordine, o = {}) {
         const chiave = o.chiave || argomentoDi, bl = o.bloom || bloom, maxFila = o.maxFila || 2;
         const rest = (ordine || items.map((_, i) => i)).slice(), out = [];
@@ -12633,7 +11620,6 @@ const Neuro = (() => {
         }
         return out;
     }
-    /** La fila più lunga di domande consecutive con la stessa chiave (per i test e per i controlli). */
     function filaMax(items, chiave = argomentoDi) {
         let m = 0, f = 0, u = null;
         for (const d of items) {
@@ -12645,11 +11631,9 @@ const Neuro = (() => {
         }
         return m;
     }
-    // ---------- 4. fatica attentiva ----------
     const media = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
     const mediana = (a) => { if (!a.length)
         return 0; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-    /** tempi e esiti in ordine cronologico. Base = mediana dei tempi prima degli ultimi 5 (o di tutti se pochi). */
     function fatica(tempi, esiti) {
         const t = tempi.filter(x => x > 0), rollingAvgMs = Math.round(media(t.slice(-5)));
         const prima = t.length > 8 ? t.slice(0, -5) : t.slice(0, Math.max(1, t.length - 1));
@@ -12671,8 +11655,6 @@ const Neuro = (() => {
         return r;
     }
     const TESTO_FATICA = 'Calo attentivo rilevato: pausa consigliata di 3 minuti o chiusura sessione';
-    // ---------- 5. imbuto AI ----------
-    /** Livello 1: spiegazione già pronta nel JSON (spiegazione + spiegazioneDistrattori[opzione] o ew). oi = indice nell'array o (0 = corretta). */
     function prontaL1(d, oi) {
         const parti = [];
         if (oi != null && oi > 0) {
@@ -12688,7 +11670,6 @@ const Neuro = (() => {
             parti.push(str(d.spiegazione));
         return parti.length ? parti.join('\n\n') : null;
     }
-    /** Attraversa l'imbuto dal livello 0 al 2: la rete (micro) si usa solo se i livelli 0 e 1 non hanno nulla. */
     async function imbuto(d, oi, dip) {
         if (!dip.forza) {
             const l0 = dip.locale ? dip.locale() : null;
@@ -12710,14 +11691,12 @@ const Neuro = (() => {
     const taglia = (s, n) => { const w = String(s).split(/\s+/).filter(Boolean); return w.length > n ? w.slice(0, n).join(' ') + '…' : w.join(' '); };
     const TONI = { semplice_esempi: 'parole semplici e un esempio concreto', didattico_chiaro: 'tono didattico chiaro', tecnico_accademico: 'lessico tecnico preciso' };
     const LENTI = { stem_quantitativo: 'controlla unità, formule e passaggi numerici', biomedico_clinico: 'collega meccanismo e conseguenza clinica', umanistico_storico: 'contesto, cause e date', giuridico_normativo: 'norma, requisito ed eccezione', lingue_letteratura: 'regola grammaticale o lessicale', informatico_tecnico: 'comportamento del codice o del sistema' };
-    /** Livello 2: prompt ultra-compatto (≤120 parole) per «Spiegami perché ho sbagliato questa opzione». */
     function promptMicro(o) {
         const testa = 'Studente ha sbagliato. In max 80 parole, italiano, ' + (TONI[o.tono || ''] || TONI.didattico_chiaro) + ': perché la sua scelta è sbagliata e perché la corretta è giusta' + (LENTI[o.archetipo || ''] ? ' (' + LENTI[o.archetipo] + ')' : '') + '. Niente preamboli.';
         const corpo = ' Domanda: ' + taglia(o.q, 40) + ' | Scelta: ' + taglia(o.scelta, 15) + ' | Corretta: ' + taglia(o.corretta, 15) + (o.tipoDistr ? ' | Errore tipo: ' + NOMI_DISTR[o.tipoDistr] : '');
         const p = testa + corpo;
         return parole(p) > MAX_PAROLE_MICRO ? taglia(p, MAX_PAROLE_MICRO) : p;
     }
-    /** Livello 3 (circuit breaker): più di 15 domande → niente chiamate multiple dall'app. */
     const serveBreaker = (n) => n > BREAKER;
     function promptGemini(o) {
         return [
@@ -12733,8 +11712,6 @@ const Neuro = (() => {
             o.testo ? 'Testo di partenza:\n"""\n' + o.testo.slice(0, 60000) + '\n"""' : '',
         ].filter(Boolean).join('\n');
     }
-    // ---------- 6a. template parametrici e cloze ----------
-    /** Valuta un'espressione aritmetica (+ − × ÷ ^ parentesi, variabili) senza eval. */
     function calcola(espr, v) {
         const s = espr.replace(/\s+/g, '');
         let i = 0;
@@ -12779,7 +11756,6 @@ const Neuro = (() => {
         return r;
     }
     const arrot = (x) => Math.round(x * 1e6) / 1e6;
-    /** {{nome:min:max:step}} → valore casuale; {{=espressione}} → risultato. Stesso `v` per domanda e risposta. */
     function espandiTemplate(testo, v = {}, rnd = Math.random) {
         let t = String(testo).replace(/\{\{\s*([a-zA-Z_]\w*)\s*:\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*(?::\s*([\d.]+))?\s*\}\}/g, (_, n, a, b, st) => {
             if (!(n in v)) {
@@ -12798,7 +11774,6 @@ const Neuro = (() => {
         return { testo: t, v };
     }
     const haTemplate = (s) => /\{\{\s*[a-zA-Z_]\w*\s*:/.test(String(s || ''));
-    /** n varianti numeriche di una domanda-modello (zero token). */
     function varianti(d, n, rnd = Math.random) {
         const out = [], visti = new Set();
         for (let t = 0; out.length < n && t < n * 6; t++) {
@@ -12815,13 +11790,12 @@ const Neuro = (() => {
                 x.show = espandiTemplate(d.show, v, rnd).testo;
             x.e = Array.isArray(d.e) ? d.e.map((o) => espandiTemplate(o, v, rnd).testo) : espandiTemplate(String(d.e || ''), v, rnd).testo;
             if (Array.isArray(x.o) && new Set(x.o).size !== x.o.length)
-                continue; // due opzioni uguali con questi numeri
+                continue;
             out.push(x);
         }
         return out;
     }
     const STOP = new Set('della delle degli dello dalla dalle dagli nella nelle negli sulla sulle questo questa quello quella perché quando mentre anche ancora sempre molto essere hanno viene sono stato stata tutti tutte altri altre loro come dove però quindi infatti'.split(' '));
-    /** Cloze dalle frasi chiave: **termine** se c'è, altrimenti la parola lunga più rara della frase. */
     function cloze(testo, o = {}) {
         const out = [], visti = new Set(), max = o.max || 8, resto = [];
         const aggiungi = (q, r, lv, e) => {
@@ -12833,8 +11807,6 @@ const Neuro = (() => {
                 d.stepId = o.stepId;
             out.push(d);
         };
-        // v0.57.1 (Q1): sintassi degli appunti prima dell'euristica. «domanda :: risposta» → domanda con la sua risposta;
-        // {{parola}} → completamento con risposta «parola» (le graffe non restano mai visibili). I template {{x:1:9}} / {{=…}} non sono toccati.
         const GRAFFA = /\{\{(?!\s*=)(?![^}]*:)\s*([^}]+?)\s*\}\}/g;
         for (const riga of String(testo || '').replace(/\r/g, '').split('\n')) {
             const x = riga.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '');
@@ -12876,14 +11848,11 @@ const Neuro = (() => {
         return out;
     }
     const n2Cz = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    // ---------- 6b. parser JSON tollerante + alias ----------
-    // v0.57 (A15): un solo parser, in 01-json.ts (qui restano i nomi storici).
     const riparaJson = (t) => JsonAI.riparaJson(t);
     const parseTollerante = (t) => JsonAI.parseTollerante(t);
     const prendi = (x, ...k) => { for (const n of k)
         if (x[n] !== undefined && x[n] !== null && x[n] !== '')
             return x[n]; return undefined; };
-    /** Una domanda in formato qualsiasi (alias it/en) → DomB; null se inutilizzabile. */
     function daAlias(x, sk) {
         if (!x || typeof x !== 'object')
             return null;
@@ -12962,7 +11931,6 @@ const Neuro = (() => {
             return null;
         return n;
     }
-    /** Testo incollato (JSON sporco, pacchetto .imcpack o {domande|questions:[…]}) → domande pulite. */
     function importa(t, sk) {
         const p = parseTollerante(t);
         if (!p.ok)
@@ -12988,7 +11956,6 @@ const Neuro = (() => {
         }
         return { domande, scartate, riparazioni: p.riparazioni };
     }
-    // ---------- 6c. deduplicazione ----------
     function normTesto(s) { let t = String(s || '').toLowerCase(); if (t.normalize)
         t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); return t.replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim(); }
     function hashTesto(s) { const n = normTesto(s); let h = 5381; for (let i = 0; i < n.length; i++)
@@ -13007,7 +11974,6 @@ const Neuro = (() => {
         }
         return { nuove: out, saltate, badge: 'Nuove: ' + out.length + ' | Già presenti saltate: ' + saltate };
     }
-    /** stat: per id domanda → { esito, neuro } (dal record 'statq'). */
     function daEsportare(domande, stat, f) {
         return domande.filter(d => {
             const s = stat[d.id];
@@ -13020,12 +11986,10 @@ const Neuro = (() => {
             return true;
         });
     }
-    /** Formato compatto per il ripasso esterno: «D: … / R: … / Perché: …». */
     function compatto(domande) {
         return domande.map((d, i) => (i + 1) + '. ' + d.q.replace(/\s+/g, ' ') + '\n   R: ' + (d.t === 'mcq' ? d.o[0] : (d.show || (d.a || [''])[0])) + (bloom(d) ? '  [Bloom ' + bloom(d) + ']' : '')
             + ((d.spiegazione || (Array.isArray(d.e) ? d.e[d.e.length - 1] : d.e)) ? '\n   Perché: ' + String(d.spiegazione || (Array.isArray(d.e) ? d.e[d.e.length - 1] : d.e)).replace(/^[^:]{2,20}:\s*/, '').slice(0, 240) : '')).join('\n');
     }
-    // ---------- 7. pipeline di studio ----------
     const statoPipe = (x) => STATI_PIPE.includes(x) ? x : 'bozza';
     function copertura(domande) {
         const b = { 1: 0, 2: 0, 3: 0, 4: 0 };
@@ -13035,7 +11999,6 @@ const Neuro = (() => {
         return { quizBankCount: domande.length, bloom: b, mancanti, pct: Math.round((4 - mancanti.length) * 25) };
     }
     const prossimoStato = (s) => STATI_PIPE[(STATI_PIPE.indexOf(statoPipe(s)) + 1) % 3];
-    /** Pacchetto .imcpack-v1 con le sole domande (niente statistiche, SRS, chiavi o account: confidenceLog tolto). */
     function pacchetto(domande, o) {
         const per = {};
         for (const d of domande) {
@@ -13056,27 +12019,17 @@ const Neuro = (() => {
         normTesto, hashTesto, deduplica, daEsportare, compatto, pacchetto, statoPipe, copertura, prossimoStato };
 })();
 
-// ============================================================
-// 07-pianiai.ts — v0.55 (BP4) Interfaccia del Pianificatore Neuro-Algoritmico Ibrido.
-// Collega il modulo puro Pianificatore (07-pianificatore.ts) a: Google Calendar `primary` (sola lettura, opt-in),
-// Drive (PDF delle fonti), IA (catena «genera», 1 chiamata JSON ≤1800 token), statq (ipercorrezioni), IndexedDB.
-// Opt-in puro: un piano 'ai_neuro' nasce solo da «✨ Crea Piano Intelligente»; gli altri piani non vengono toccati.
-// v0.56 (BP5): intensità 1–5 + questionario 6+3 (6 domande locali, 3 dall'AI con 1 micro-call ≤600 token sulla catena
-// «genera», fallback per archetipo a 0 token), avvisi dei guard-rail biologici, Burnout Circuit Breaker post-quiz (0 token).
-// ============================================================
 const PianiAI = (() => {
     const GIORNI = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
     const eAI = (p) => !!p && p.origine === 'ai_neuro';
     const pianiAI = () => Studio.pkPiani().filter(eAI);
     function codiciMaterie() {
-        // v0.57.1 (D1): le materie del proprietario solo al proprietario, come 07-dominio.ts
         const s = new Set([...Object.keys(MATERIE_BASE).filter(() => Drive.eProprietario()), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
         return Array.from(s).filter(Boolean);
     }
-    /** v0.58 (Q4): codice materia di un quiz creato in app (sk «qc-…»), dal campo materia del record qcreato. */
     function materiaDiSk(sk) {
         if (/^[A-Z]+-\d/.test(sk || ''))
-            return sk.split('-')[0]; // v0.58.3: schede importate da Drive («B-3.3.1-5»)
+            return sk.split('-')[0];
         if (!/^qc-/.test(sk || ''))
             return undefined;
         const r = Stato.prendi(sk);
@@ -13085,9 +12038,7 @@ const PianiAI = (() => {
         const n = (x) => String(x || '').trim().toLowerCase();
         return codiciMaterie().find(c => n(c) === n(r.materia) || n(nomeMateria(c)) === n(r.materia)) || r.materia;
     }
-    /** I record statq con la materia dei quiz creati (materiaQ), per segnaliIper/monitoraAffaticamento. */
     const statqConMateria = () => Stato.tutti('statq').map(s => { const m = materiaDiSk(s.sk); return m ? { ...s, materiaQ: m } : s; });
-    /** Minuti già occupati quel giorno dagli altri piani attivi (non AI): v.min se c'è, altrimenti 45 per voce. */
     function minutiAltriPiani(data) {
         let tot = 0;
         for (const p of Studio.pianiAttivi()) {
@@ -13100,7 +12051,6 @@ const PianiAI = (() => {
         }
         return tot;
     }
-    /** Prime 15 pagine di un PDF su Drive (lotti da 4, page.cleanup()). */
     async function leggiFonte(id) {
         const blob = await Drive.scaricaBlob(id);
         const lib = await caricaPdfJs();
@@ -13117,7 +12067,7 @@ const PianiAI = (() => {
                     try {
                         pg.cleanup();
                     }
-                    catch (_) { /* niente */ }
+                    catch (_) { }
                 }
             }));
             pagine.push(...lotto);
@@ -13125,7 +12075,7 @@ const PianiAI = (() => {
         try {
             pdf.destroy();
         }
-        catch (_) { /* niente */ }
+        catch (_) { }
         return { fileId: id, nome: blob.name || id, pagine };
     }
     const idDaLink = (s) => { const m = /[-\w]{25,}/.exec(s); return m ? m[0] : ''; };
@@ -13136,11 +12086,10 @@ const PianiAI = (() => {
             minutiAltriPiani, statq: statqConMateria, leggiFonte,
             ia: o.usaAI && !Dominio.senzaAI() ? (m, x) => IA.testo(m, 'genera', { maxOut: x.maxOut, archetipo: x.archetipo }).then(r => r.testo) : undefined,
             testoIndice: o.testoIndice, unita: o.unita, pid: o.pid, titolo: o.titolo,
-            ritenzione: min => Ripassi.ritenzione(ymd(new Date()), min), intervallo: Ripassi.intervallo, // v0.57 (A16): unica fonte
+            ritenzione: min => Ripassi.ritenzione(ymd(new Date()), min), intervallo: Ripassi.intervallo,
         };
     }
     function salvaPiano(p) { p.aggiornato = new Date().toISOString(); return Studio.importa(p); }
-    // ---------- v0.56 (BP5): profilo biopsicologico (solo su questo dispositivo) ----------
     const CHIAVE_PROFILO = 'imc-profilo-bio';
     function profiloSalvato() {
         try {
@@ -13154,10 +12103,8 @@ const PianiAI = (() => {
     function salvaProfilo(p) { try {
         localStorage.setItem(CHIAVE_PROFILO, JSON.stringify(p));
     }
-    catch (_) { /* memoria piena o privata */ } }
-    /** Micro-call del Blocco B: catena «genera» di 07-ia (ordine e fornitori definiti in 07-ia.ts), max_tokens 450. */
+    catch (_) { } }
     const iaCalibrazione = () => Dominio.senzaAI() ? undefined : (m, x) => IA.testo(m, 'genera', { maxOut: x.maxOut }).then(r => r.testo);
-    // ---------- wizard «✨ Crea Piano Intelligente» ----------
     function apri() {
         const mats = codiciMaterie();
         const materia = selettore(mats.map(c => [c, nomeMateria(c)]), mats[0] || '');
@@ -13173,8 +12120,6 @@ const PianiAI = (() => {
         const senza = Dominio.senzaAI();
         const usaAI = h('input', { type: 'checkbox', checked: !senza, disabled: senza });
         const esito = h('div.tenue.piccolo');
-        // v0.56 (BP5): intensità 1–5 e questionario 6+3
-        // v0.57.1 (D5): il livello 5 «Sprint» contraddice il Burnout Breaker → il wizard offre 1–4 (il modulo puro lo conserva per i piani vecchi)
         const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.filter(c => c.livello <= 4).map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)']), '2', function () {
             oreMax.value = String(Pianificatore.configLivello(+this.value).oreRealiMax);
             avvisiBio();
@@ -13204,7 +12149,7 @@ const PianiAI = (() => {
                             if (f)
                                 testo = f.pagine.join('\n');
                         }
-                        catch (_) { /* fonte illeggibile */ }
+                        catch (_) { }
                     }
                     const seg = Pianificatore.segnaliIper(statqConMateria(), m);
                     const r = await Pianificatore.generaDomandeCalibrazione({ materia: nomeMateria(m), archetipo: Dominio.archetipoMateria(m), keyword: Pianificatore.paroleChiaveBM25(testo, 8), errori: seg.topErrori.slice(0, 3) }, usaAI.checked ? iaCalibrazione() : undefined);
@@ -13227,7 +12172,6 @@ const PianiAI = (() => {
                 maxOreGiorno: parseFloat(oreMax.value) || 3,
             };
         };
-        /** v0.56: vincoli + intensità dopo i guard-rail, profilo e pesi (Blocco A + B); ore/giorno mai oltre il livello. */
         const vincoliBP5 = () => {
             const v = vincoli(), p = profilo(), g = Pianificatore.applicaGuardRailBiologici(+intensita.value, p);
             salvaProfilo(p);
@@ -13266,8 +12210,6 @@ const PianiAI = (() => {
                     const i = imp(), attiva = primary.checked;
                     i.gcalLeggiPrimary = attiva || undefined;
                     Stato.salva(i);
-                    // v0.56.1: opt-in → consenso incrementale subito (prima del calcolo); se negato si torna indietro, così il rinnovo
-                    // silenzioso del token Drive non chiede mai uno scope non concesso.
                     if (attiva && Drive.collegato && !(await Drive.ampliaPermessi())) {
                         i.gcalLeggiPrimary = undefined;
                         Stato.salva(i);
@@ -13300,14 +12242,10 @@ const PianiAI = (() => {
         };
         const stima = h('div.tenue.piccolo', null, senza ? 'Modalità 100% senza AI: mappa dall\'indice locale, 0 token.' : 'Con l\'AI: ~3.200 tok · 1 chiamata (catena genera). Se fallisce: indice locale, 0 token.');
         const sh = foglio({ titolo: '✨ Crea Piano Intelligente', etichettaSalva: 'Crea',
-            corpo: h('div.modulo', null, 
-            // v0.58: 4 campi in vista; il resto (questionario incluso, facoltativo) in «Avanzate» chiuso
-            h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi), h('details.pai-avanzate', null, h('summary', null, 'Avanzate (facoltative)'), h('div.gruppo', null, riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), h('div.gruppo', null, h('div.tenue.piccolo', null, 'Questionario facoltativo: affina intensità e pesi.'), ...campiBio.map(x => riga(x.d.testo, x.s))), h('div.gruppo', null, calibra, boxB), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima), esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
+            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi), h('details.pai-avanzate', null, h('summary', null, 'Avanzate (facoltative)'), h('div.gruppo', null, riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), h('div.gruppo', null, h('div.tenue.piccolo', null, 'Questionario facoltativo: affina intensità e pesi.'), ...campiBio.map(x => riga(x.d.testo, x.s))), h('div.gruppo', null, calibra, boxB), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima), esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
             salva: () => { crea(sh); return false; } });
         avvisiBio();
     }
-    // ---------- hook post-quiz (Stadio 5, 0 token) ----------
-    /** v0.57.1 (Q3): restituisce una funzione che rimette i piani com'erano prima dell'anticipo («Annulla» del quiz). */
     function dopoQuiz(sk, caso) {
         const oggi = ymd(new Date()), prima = [];
         for (const p of pianiAI()) {
@@ -13324,8 +12262,6 @@ const PianiAI = (() => {
         return () => { for (const p of prima)
             salvaPiano(p); };
     }
-    // ---------- v0.56 (BP5 §4.2): Burnout Circuit Breaker, 0 token ----------
-    /** Dopo un errore nel quiz (e all'apertura dei piani): chiude i de-load scaduti e, se la fatica scatta, attiva il de-load 48 h. */
     function controllaFatica() {
         const oggi = ymd(new Date());
         let stats = null;
@@ -13351,10 +12287,9 @@ const PianiAI = (() => {
             avviso('🛌 Circuit breaker: ' + d.deload.motivo + '. Per 48 h livello ' + d.deload.livelloRidotto + ': solo ripasso FSRS leggero + Wakeful Rest.', 9000);
         }
     }
-    // ---------- azioni sul piano ----------
     function bottoni(p) {
         if (!eAI(p))
-            return null; // v0.57: si crea da «＋ Crea piano» (scegliPiano), qui solo le azioni del piano
+            return null;
         const nas = Studio.nascosto(p.id);
         const dl = p.deload && p.deload.attivo ? p.deload : null;
         return h('span', null, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
@@ -13381,31 +12316,17 @@ const PianiAI = (() => {
     return { apri, dopoQuiz, controllaFatica, bottoni, minutiAltriPiani, eAI };
 })();
 
-// ============================================================
-// 07-pianificatore.ts — v0.55 (BP4) Pianificatore Neuro-Algoritmico Ibrido + v0.56 (BP5) 5 livelli di intensità,
-// questionario biopsicologico 6+3 e Burnout Circuit Breaker (deload_48h).
-// Modulo PURO: niente DOM né rete al caricamento. Google Calendar, IA, Drive e IndexedDB arrivano come
-// dipendenze iniettate (così la suite 07-SUITE-… lo carica in una vm, come Neuro). Interfaccia: 07-pianiai.ts.
-// Invarianti:
-//  - opt-in puro: un piano nasce solo dal pulsante «✨ Crea Piano Intelligente»; è un PkPiano isolato
-//    (id 'ai-…', origine 'ai_neuro', proprio) e gli altri piani/pacchetti non vengono mai toccati;
-//  - al massimo UNA chiamata AI JSON (uscita ≤1800 token, struttura ≤8000 caratteri); se manca o fallisce
-//    si usa l'indice locale (TOC) a 0 token;
-//  - Google Calendar: si legge solo `primary`; gli eventi dello specchio non contano come occupato (anti-loop);
-//  - ipercorrezioni lette sia da statq.neuro (tag/ultimoCaso/daConsolidare + confidenceLog) sia dai campi legacy.
-// ============================================================
 const Pianificatore = (() => {
     const LIMITE_SERA = 21 * 60 + 30;
     const BUFFER_DISP = 0.85;
     const MAX_CHARS_STRUTTURA = 8000;
     const MAX_TOKEN_MAPPA = 1800;
     const MOLT = { da_zero: 1, ripasso: 0.55, raffinamento: 0.35 };
-    const QUOTE = [0.40, 0.25, 0.20, 0.15]; // L1 comprensione, L2 elaborazione, L3 applicazione, L4 transfer
-    const QUOTA_RIPASSO = 0.15; // ripassi FSRS: 15% del tempo di L1
+    const QUOTE = [0.40, 0.25, 0.20, 0.15];
+    const QUOTA_RIPASSO = 0.15;
     const INTERVALLI = [1, 3, 7, 15];
     const BASE_S0 = { stem_calcolo: 2.0, scienze_sperimentali: 2.5, umanistico_storico: 3.0, giuridico_economico: 2.8, lingue_letteratura: 2.2, informatica_coding: 2.4 };
     const NOMI_LIV = ['', 'Comprensione', 'Elaborazione', 'Applicazione', 'Transfer'];
-    // ---------- date e ore (UTC: niente sorprese con l'ora legale) ----------
     const d0 = (s) => { const [a, m, g] = s.slice(0, 10).split('-').map(Number); return new Date(Date.UTC(a, m - 1, g)); };
     const ymdU = (d) => d.toISOString().slice(0, 10);
     const piu = (s, n) => { const d = d0(s); d.setUTCDate(d.getUTCDate() + n); return ymdU(d); };
@@ -13414,11 +12335,6 @@ const Pianificatore = (() => {
     const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
     const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
     const arr1 = (x) => Math.round(x * 100) / 100;
-    // ---------- Stadio 1a: ipercorrezioni (neuro + legacy) ----------
-    /** Legge i segnali di ipercorrezione da record statq: tag/ultimoCaso/daConsolidare di `neuro` (BP3), confidenceLog
-     *  (certo+sbagliata, incerto+giusta) e i campi legacy (`iper`, `illusioni`, `ipercorrezioni`, `lucky`). */
-    /** v0.58 (Q4): materia di un record statq. I quiz creati in app (sk «qc-…») portano la materia in `materiaQ`
-     *  (la aggiunge PianiAI dal record qcreato); gli altri usano il prefisso della scheda `<materia>-<microstep>-<k>`. */
     const materiaSk = (s) => s && s.materiaQ ? String(s.materiaQ) : String((s && s.sk) || '').split('-')[0].split('~')[0];
     function segnaliIper(stats, materia) {
         let ill = 0, luck = 0, n = 0, ok = 0;
@@ -13453,9 +12369,6 @@ const Pianificatore = (() => {
                 top.push(e.sk);
         return { illusioni: ill, lucky: luck, tassoErrore: tasso, risposte: n, attiva: ill > 0 || tasso > 0.30, topErrori: top };
     }
-    // ---------- Stadio 1b: occupato da Google Calendar (anti-loop) ----------
-    /** Eventi di `primary` → intervalli occupati. Esclusi: annullati, «libero» (transparent), e tutto ciò che viene
-     *  dallo specchio dell'app (organizer = calendario specchio, proprietà privata imc, firma nella descrizione). */
     function occupatoDaEventi(eventi, mirrorId) {
         const out = [];
         for (const e of eventi || []) {
@@ -13478,7 +12391,6 @@ const Pianificatore = (() => {
         }
         return out;
     }
-    /** Finestre libere del giorno: finestre settimanali ∩ (non occupato), tetto 21:30. */
     function finestreLibere(v, data, occ) {
         const gs = d0(data).getUTCDay();
         let lib = (v.finestreSettimanali || []).filter(f => f && +f.giornoSettimana === gs)
@@ -13505,7 +12417,6 @@ const Pianificatore = (() => {
         }
         return lib;
     }
-    /** Capacità giorno per giorno da oggi a target−1 (target−1 = giorno leggero, massimo 60 minuti). */
     function capacita(v, oggi, occ, altri) {
         const out = [], fine = piu(v.dataTarget, -1), tetto = Math.max(0.5, +v.maxOreGiorno || 2) * 60;
         for (let d = oggi; d <= fine; d = piu(d, 1)) {
@@ -13520,12 +12431,10 @@ const Pianificatore = (() => {
         const base = (unita || []).reduce((s, u) => s + Math.max(0, +u.minutiBase || 0), 0) / 60;
         return arr1(base * (MOLT[v.livelloPartenza] || 1) * frazioneLivelli(obiettivo || v.livelloObiettivo) * (seg && seg.attiva ? 1.2 : 1));
     }
-    // ---------- Stadio 1: fattibilità (0 token) ----------
     function calcolaFattibilita(v, unita, ctx) {
         const giorni = capacita(v, ctx.oggi, ctx.occupato || [], ctx.minutiAltriPiani);
         const disp = arr1(giorni.reduce((s, g) => s + g.minuti, 0) / 60 * BUFFER_DISP), nec = oreNecessarie(unita, v, ctx.segnali);
         const rapporto = arr1(nec / Math.max(0.5, disp));
-        // v0.55.1: data obiettivo oggi, domani o già passata → non c'è nessun giorno di studio nuovo (target−1 è leggero)
         const vicina = v.dataTarget <= piu(ctx.oggi, 1);
         const stato = vicina ? 'critico' : rapporto <= 0.90 ? 'ottimale' : rapporto <= 1.15 ? 'serrato' : 'critico';
         const rimedi = [];
@@ -13536,13 +12445,11 @@ const Pianificatore = (() => {
             const extra = Math.ceil(mancano * 60 / BUFFER_DISP / lavoro / 5) * 5;
             rimedi.push({ tipo: 'piu_minuti', minutiExtra: extra, testo: 'Aggiungi circa ' + extra + ' minuti al giorno alle finestre di studio.' });
             const media = Math.max(0.25, disp / lavoro), giorniInPiu = Math.max(1, Math.ceil(mancano / media));
-            const nuova = piu(vicina ? piu(ctx.oggi, 1) : v.dataTarget, giorniInPiu); // mai una data nel passato
+            const nuova = piu(vicina ? piu(ctx.oggi, 1) : v.dataTarget, giorniInPiu);
             rimedi.push({ tipo: 'sposta_data', nuovaData: nuova, testo: 'Sposta la data obiettivo al ' + nuova + ' (+' + giorniInPiu + ' giorni).' });
         }
         return { stato, rapporto, oreNecessarie: nec, oreDisponibili: disp, bufferPct: stato === 'serrato' ? 0.08 : stato === 'ottimale' ? 0.10 : 0, extraIper: !!(ctx.segnali && ctx.segnali.attiva), giorni, rimedi };
     }
-    // ---------- Stadio 2: struttura delle fonti (indice locale, 0 token) ----------
-    /** Righe d'indice «1.2 Titolo ..... 34», «Capitolo 3 – Titolo 51», «Titolo 12». */
     function righeIndice(testo) {
         const out = [];
         for (const r0 of String(testo || '').split(/\r?\n/)) {
@@ -13558,10 +12465,9 @@ const Pianificatore = (() => {
             if (p)
                 out.push({ num: String(out.length + 1), titolo: p[1].replace(/[\s.·…_-]+$/, '').trim(), pagina: parseInt(p[2], 10) });
         }
-        return out.filter((c, i) => !(out[i + 1] && out[i + 1].num.startsWith(c.num + '.'))); // solo le foglie
+        return out.filter((c, i) => !(out[i + 1] && out[i + 1].num.startsWith(c.num + '.')));
     }
     const pulisci = (s) => String(s || '').replace(/[|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-    /** «FILE_ID | NOME | PAG_START-PAG_END | TITOLO», al massimo 8000 caratteri. */
     function strutturaDaFonti(fonti) {
         const righe = [];
         for (const f of fonti || []) {
@@ -13585,7 +12491,6 @@ const Pianificatore = (() => {
         }
         return out;
     }
-    /** Legge le prime pagine di ogni sorgente (la lettura PDF/Drive è iniettata) e restituisce la struttura. */
     async function estraiStrutturaFonti(fileIds, leggi, testoIndice) {
         const fonti = [];
         if (testoIndice && testoIndice.trim())
@@ -13596,11 +12501,10 @@ const Pianificatore = (() => {
                 if (f)
                     fonti.push(f);
             }
-            catch (_) { /* fonte illeggibile: si salta */ }
+            catch (_) { }
         }
         return strutturaDaFonti(fonti);
     }
-    /** Fallback offline: una unità per riga della struttura, catena lineare di prerequisiti. */
     function unitaDaStruttura(struttura) {
         const out = [];
         for (const r of String(struttura || '').split('\n')) {
@@ -13613,8 +12517,6 @@ const Pianificatore = (() => {
         }
         return out;
     }
-    // ---------- Stadio 3: mapping del curriculum (1 chiamata AI JSON, fallback TOC) ----------
-    /** v0.57 (A15): parsing delegato all'unico parser (01-json.ts). */
     const recuperaArrayParziale = (raw) => JsonAI.recuperaArrayParziale(raw, 'unita');
     function leggiRisposta(r) {
         const j = JsonAI.leggi(r);
@@ -13625,7 +12527,6 @@ const Pianificatore = (() => {
         }
         return typeof r === 'string' ? recuperaArrayParziale(r) : [];
     }
-    /** Validazione e grounding: fileId solo tra le sorgenti note, prerequisiti solo tra uid esistenti, valori nei limiti. */
     function normalizzaUnita(lista, struttura) {
         const noti = new Map();
         for (const r of String(struttura || '').split('\n')) {
@@ -13664,8 +12565,6 @@ const Pianificatore = (() => {
                     + 'STRUTTURA (FILE_ID | NOME | PAGINE | TITOLO):\n' + String(struttura || '').slice(0, MAX_CHARS_STRUTTURA) },
         ];
     }
-    /** Una sola chiamata JSON al router (≤1800 token di uscita). Qualsiasi errore (429 su tutta la catena, offline,
-     *  JSON vuoto) → unità dall'indice locale, 0 token. */
     async function mappaCurriculumAI(struttura, v, seg, ia) {
         const toc = unitaDaStruttura(struttura);
         if (!ia || !String(struttura || '').trim())
@@ -13681,17 +12580,14 @@ const Pianificatore = (() => {
             return { unita: toc, fonte: 'toc', chiamate: 1, tokenStimati: 0, errore: String(e && e.message || e).slice(0, 120) };
         }
     }
-    /** Stima mostrata nel wizard: ingresso (prompt + struttura) + uscita massima. */
     const stimaToken = (struttura) => Math.round((700 + Math.min(MAX_CHARS_STRUTTURA, String(struttura || '').length)) / 3.5) + MAX_TOKEN_MAPPA;
-    // ---------- Stadio 4: timeline (Kahn + livelli L1–L4 + FSRS) ----------
-    /** Ordine topologico: tra le unità pronte prima le prioritarie (errori), poi la densità più alta. */
     function ordineTopologico(unita) {
         const per = new Map(unita.map(u => [u.uid, u])), grado = new Map(unita.map(u => [u.uid, u.prereq.filter(p => per.has(p)).length]));
         const fatti = new Set(), out = [];
         const chiave = (u) => (u.priorita ? 0 : 1) * 10 - u.densita;
         while (out.length < unita.length) {
             const pronte = unita.filter(u => !fatti.has(u.uid) && (grado.get(u.uid) || 0) === 0).sort((a, b) => chiave(a) - chiave(b) || unita.indexOf(a) - unita.indexOf(b));
-            const u = pronte[0] || unita.find(x => !fatti.has(x.uid)); // ciclo: si spezza nell'ordine originale
+            const u = pronte[0] || unita.find(x => !fatti.has(x.uid));
             fatti.add(u.uid);
             out.push(u);
             for (const x of unita)
@@ -13700,15 +12596,11 @@ const Pianificatore = (() => {
         }
         return out;
     }
-    /** v0.55.1 — anti-ciclo: toglie i prerequisiti che puntano a unità successive nell'ordine di Kahn (archi all'indietro
-     *  di un ciclo U1↔U2) e quelli inesistenti. Senza, le unità in ciclo non avrebbero mai L1 «pronta». Copia, non muta. */
     function sanitizzaPrereq(unita) {
         const pos = new Map(ordineTopologico(unita).map((u, i) => [u.uid, i]));
         return unita.map(u => ({ ...u, prereq: (u.prereq || []).filter((p, i, a) => p !== u.uid && pos.has(p) && pos.get(p) < pos.get(u.uid) && a.indexOf(p) === i) }));
     }
     const s0 = (arch, densita, errori) => arr1((BASE_S0[arch] || 2.5) * (1.25 - 0.12 * densita) * (errori ? 0.65 : 1));
-    /** Ancoraggi di ripasso. Con «iv» (curva FSRS di Ripassi) gli intervalli si allungano/accorciano secondo la
-     *  ritenzione r rispetto al riferimento 0,90; senza, restano quelli di base (modulo puro nei test). */
     function intervalliFsrs(S0, r = 0.9, iv) {
         const k = iv && r !== 0.9 ? clamp(iv(100, r) / Math.max(1, iv(100, 0.9)), 0.4, 2) : 1;
         const f = clamp(S0 / 2.5, 0.6, 1.4) * k, out = [];
@@ -13722,12 +12614,10 @@ const Pianificatore = (() => {
         const ob = clamp(v.livelloObiettivo || 4, 1, 4), molt = (MOLT[v.livelloPartenza] || 1) * (seg && seg.attiva ? 1.2 : 1);
         const cod = String(v.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = o.pid.replace(/^ai-/, '');
         const ordine = ordineTopologico(unita), errori = !!(seg && seg.attiva);
-        // v0.56 (BP5): con un livello di intensità → hard cap analitico (L1+L3), pause Wakeful Rest BRAC, dip 13–15 senza teoria/calcolo
         const bio = v.livelloIntensita ? applicaGuardRailBiologici(v.livelloIntensita, v.profiloBio) : null;
         const capAnal = bio ? MATRICE_5_LIVELLI[bio.livello - 1].capSforzoAnaliticoMin : Infinity, pausaBio = bio ? bio.pausaMin : 0;
         const anal = new Map(), eAnal = (l) => l === 1 || l === 3;
         const ref = (u) => u.fileId ? { fileId: u.fileId, nomeFile: u.nomeFile || '', pagine: u.pagine ? [u.pagine[0], u.pagine[1]] : [] } : undefined;
-        // coda dei compiti: L1→L2 subito, L3 almeno 2 giorni dopo L1, L4 almeno 4 (interleaving con le unità successive)
         const coda = [];
         let ord = 0;
         for (const u of ordine)
@@ -13739,16 +12629,15 @@ const Pianificatore = (() => {
         const giorni = f.giorni.filter(g => g.minuti > 0 || g.leggero), lavoro = giorni.filter(g => !g.leggero);
         const voci = new Map(giorni.map(g => [g.data, []]));
         const usato = new Map(), cursore = new Map();
-        const dataL1 = new Map(), fattiLiv = new Map(); // uid → ultimo livello completato
+        const dataL1 = new Map(), fattiLiv = new Map();
         const ripassi = [];
         const ultimo = giorni.length ? giorni[giorni.length - 1].data : piu(v.dataTarget, -1);
-        /** Trova un orario libero di `min` minuti nelle finestre del giorno (in sequenza). */
         function posto(g, min, dip = false) {
             const c = cursore.get(g.data) || 0;
             for (const [a, b] of g.finestre) {
                 let ini = Math.max(a, c);
                 if (bio && !dip && ini < DIP[1] && ini + min > DIP[0])
-                    ini = Math.max(ini, DIP[1]); // BP5: niente studio vero nel dip
+                    ini = Math.max(ini, DIP[1]);
                 if (b - ini >= min && ini + min <= LIMITE_SERA)
                     return ini;
             }
@@ -13782,20 +12671,18 @@ const Pianificatore = (() => {
         };
         for (const g of lavoro) {
             const tetto = Math.floor(g.minuti * (1 - f.bufferPct));
-            // 1) ancoraggi FSRS del giorno (brevi, prima di tutto)
             for (const r of ripassi.filter(x => x.data === g.data)) {
                 if (metti(g, r.voce, r.voce.min))
                     r.data = '';
                 else
                     r.data = piu(g.data, 1);
             }
-            // 2) compiti: alterna «nuovo» (L1–L2) e «profondo» (L3–L4)
             let profondo = false, capRaggiunto = false, nDip = 0;
             for (let giri = 0; giri < 200; giri++) {
                 const resto = tetto - (usato.get(g.data) || 0);
                 if (resto < 30)
                     break;
-                if (bio) { // BP5 §1.3: se il cursore cade nel dip post-prandiale, solo flashcard a bassa frizione e cue Cornell
+                if (bio) {
                     const ini = posto(g, 15, true);
                     if (ini != null && ini >= DIP[0] && ini < DIP[1]) {
                         const m = Math.min(DIP[1] - ini, resto, bio.bloccoMin);
@@ -13834,16 +12721,13 @@ const Pianificatore = (() => {
                     });
                 }
             }
-            // 2b) BP5 §1.1: oltre l'hard cap analitico → Offloading Attivo Multi-Modale
             const restoOff = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
             if (bio && capRaggiunto && restoOff >= 30)
                 metti(g, { k: cod + '~' + pidC + '~OFF~' + g.data.replace(/-/g, ''), t: '🃏 Offloading attivo: ' + modalitaOffloading(MATRICE_5_LIVELLI[bio.livello - 1], v.profiloBio).join(' · '), speciale: true, isOffloading: true }, Math.min(restoOff, 90));
-            // 3) buffer per imprevisti (consumati da Ripianifica e dall'hook post-quiz)
             const buf = Math.min(Math.round(g.minuti * f.bufferPct / 5) * 5, g.minuti - (usato.get(g.data) || 0));
             if (f.bufferPct > 0 && buf >= 20)
                 metti(g, { k: cod + '~' + pidC + '~BUF~' + g.data.replace(/-/g, ''), t: '🧩 Buffer (recupero o anticipo)', isBuffer: true, speciale: true }, buf);
         }
-        // giorno leggero (target−1): solo ripassi e riposo attivo, massimo 60 minuti
         const leg = giorni.find(g => g.leggero);
         if (leg) {
             for (const r of ripassi.filter(x => x.data && x.data <= leg.data)) {
@@ -13862,10 +12746,9 @@ const Pianificatore = (() => {
             nota: avanzi ? avanzi + ' attività non sono entrate nel calendario: valuta i rimedi (più minuti o data più lontana).' : undefined,
         };
     }
-    // ================= v0.56 (BP5): 5 livelli, guard-rail biologici, allocazione BRAC/circadiana, questionario 6+3, breaker =================
-    const HARD_CAP_ANALITICO = 270; // Ericsson: mai più di 4,5 h al giorno di codifica/calcolo profondo
+    const HARD_CAP_ANALITICO = 270;
     const DIP = [13 * 60, 15 * 60];
-    const SERA = LIMITE_SERA - 60; // dalle 20:30 solo consolidamento leggero
+    const SERA = LIMITE_SERA - 60;
     const MAX_TOKEN_CALIBRAZIONE = 450, BUDGET_CALIBRAZIONE = 600;
     const L = (livello, nome, oreRealiMin, oreRealiMax, capSforzoAnaliticoMin, ritenzioneTargetFSRS, itemPerMicroQuiz, maxCardAutogenerateGiorno, abilitaCornellAuto, abilitaTrabocchetti, abilitaMiniCasiCatena, gradoInterleaving, pauseWakefulRestMin, moltiplicatoreResaEquivalente) => ({ livello, nome, oreRealiMin, oreRealiMax, capSforzoAnaliticoMin: Math.min(HARD_CAP_ANALITICO, capSforzoAnaliticoMin), ritenzioneTargetFSRS, itemPerMicroQuiz, maxCardAutogenerateGiorno,
         abilitaCornellAuto, abilitaTrabocchetti, abilitaMiniCasiCatena, gradoInterleaving, pauseWakefulRestMin, moltiplicatoreResaEquivalente });
@@ -13879,7 +12762,6 @@ const Pianificatore = (() => {
     const livelloValido = (x) => clamp(Math.round(+x) || 2, 1, 5);
     const configLivello = (l) => MATRICE_5_LIVELLI[livelloValido(l) - 1];
     const PROFILO_BASE = { fasciaEta: '20-26', cronotipo: 'intermedio', autonomiaBRACMin: 55, oreSonnoMedie: '7-8', reazioneErrore: 'sfida_attiva', canalePreferito: 'quiz_immediati' };
-    /** Blocco A del questionario: 6 domande universali, 0 token, linguaggio semplice. */
     const DOMANDE_UNIVERSALI = [
         { campo: 'fasciaEta', testo: 'Quanti anni hai?', opzioni: [['<16', 'Meno di 16'], ['16-19', '16–19'], ['20-26', '20–26'], ['27-40', '27–40'], ['40+', 'Più di 40']] },
         { campo: 'cronotipo', testo: 'Quando ti senti più lucido mentalmente?', opzioni: [['allodola_mattina', 'Presto la mattina'], ['intermedio', 'In tarda mattinata'], ['pomeridiano', 'Nel pomeriggio'], ['gufo_sera', 'La sera']] },
@@ -13888,7 +12770,6 @@ const Pianificatore = (() => {
         { campo: 'reazioneErrore', testo: 'Quando sbagli un quiz ti carichi per capire subito o ti innervosisci?', opzioni: [['sfida_attiva', 'Mi carico: voglio capire subito'], ['necessita_scaffolding', 'Mi innervosisco: preferisco una guida']] },
         { campo: 'canalePreferito', testo: 'Ricordi meglio scrivendo schemi brevi, facendo subito quiz o ripetendo a voce?', opzioni: [['scrittura_schemi', 'Schemi brevi'], ['quiz_immediati', 'Quiz subito'], ['esposizione_orale', 'Ripetere a voce']] },
     ];
-    /** Ripara un profilo parziale o vecchio (valori sconosciuti → base). */
     function normalizzaProfilo(p) {
         const out = { ...PROFILO_BASE };
         for (const d of DOMANDE_UNIVERSALI) {
@@ -13898,7 +12779,6 @@ const Pianificatore = (() => {
         }
         return out;
     }
-    /** §4.1 Cap biologici preventivi (0 token): età < 16 o sonno < 6 h → massimo L3; BRAC 35 → micro-blocchi 35 + 10. */
     function applicaGuardRailBiologici(richiesto, profilo) {
         const p = normalizzaProfilo(profilo || {}), req = livelloValido(richiesto), avvisi = [];
         let livello = req;
@@ -13915,7 +12795,6 @@ const Pianificatore = (() => {
             avvisi.push('Micro-blocchi da 35 minuti + 10 minuti di pausa (Wakeful Rest, zero schermi).');
         return { livello, richiesto: req, avvisi, bloccoMin, pausaMin };
     }
-    /** §1.3 Due picchi circadiani per cronotipo (minuti dalla mezzanotte) e inizio della giornata. */
     const PICCHI = {
         allodola_mattina: [[8 * 60, 11 * 60 + 30], [15 * 60 + 30, 18 * 60]],
         intermedio: [[9 * 60 + 30, 12 * 60 + 30], [16 * 60, 19 * 60]],
@@ -13924,7 +12803,6 @@ const Pianificatore = (() => {
     };
     const INIZIO_GIORNATA = { allodola_mattina: 8 * 60, intermedio: 8 * 60 + 30, pomeridiano: 9 * 60, gufo_sera: 9 * 60 + 30 };
     const picchiCircadiani = (c) => PICCHI[c] || PICCHI.intermedio;
-    /** Modalità di offloading attivo multi-modale, con il canale preferito in testa. */
     function modalitaOffloading(cfg, profilo) {
         const p = normalizzaProfilo(profilo || {});
         const m = ['flashcard visive', 'micro-quiz lampo (' + cfg.itemPerMicroQuiz + ' item, Lag-Buffered Loop)', 'richiamo orale'];
@@ -13936,8 +12814,6 @@ const Pianificatore = (() => {
             m.unshift(m.splice(i, 1)[0]);
         return m;
     }
-    /** §1.1–1.3 Allocazione di una giornata (0 token): blocchi BRAC + Wakeful Rest; L1/L3 solo nei picchi e fino all'hard cap
-     *  analitico; nel dip 13–15 solo flashcard/cue Cornell; dalle 20:30 solo consolidamento; mai oltre le 21:30. */
     function allocaGiornata(livello, profilo, o = {}) {
         const p = normalizzaProfilo(profilo || {}), g = applicaGuardRailBiologici(livello, p), cfg = configLivello(g.livello);
         const totale = Math.round(clamp(o.minuti != null ? +o.minuti : cfg.oreRealiMax * 60, 0, cfg.oreRealiMax * 60));
@@ -13989,7 +12865,6 @@ const Pianificatore = (() => {
         }
         return { slot, livello: g.livello, analiticoMin: anal, studioMin: studio, avvisi: g.avvisi };
     }
-    /** Pesi iniziali dal Blocco A (domande 5 e 6) + sonno/età per l'interleaving. */
     function pesiIniziali(profilo) {
         const p = normalizzaProfilo(profilo || {}), w = { w_faded: 1, w_cornell: 1, w_gemelle: 1, w_interleave: 1 };
         if (p.canalePreferito === 'scrittura_schemi') {
@@ -14019,7 +12894,6 @@ const Pianificatore = (() => {
     const CHIAVI_PESI = ['w_faded', 'w_cornell', 'w_gemelle', 'w_interleave'];
     const limitaPesi = (w) => { const o = {}; for (const k of CHIAVI_PESI)
         o[k] = arr1(clamp(+w[k] || 1, 0.5, 1.5)); return o; };
-    /** Applica le risposte del Blocco B (indice dell'opzione per domanda). Delta già limitati a −0,25..+0,35. */
     function applicaRisposte(base, domande, scelte) {
         const w = { ...base };
         (domande || []).forEach((d, i) => { const op = d && d.opzioni && scelte && scelte[i] != null ? d.opzioni[scelte[i]] : null; if (op)
@@ -14028,7 +12902,6 @@ const Pianificatore = (() => {
                     w[k] = (+w[k] || 1) + clamp(+op.delta[k], -0.25, 0.35); });
         return limitaPesi(w);
     }
-    /** Top parole chiave in stile BM25 (righe = documenti) dai titoli/indice delle fonti. */
     function paroleChiaveBM25(testo, n = 8) {
         const STOP = new Set('della delle degli dello nella nelle negli sulla sulle alla alle agli dalla dalle con per tra fra una uno del dei gli che non come capitolo parte indice esercizi introduzione and the of'.split(' '));
         const docs = String(testo || '').toLowerCase().split(/\r?\n/).map(r => (r.match(/[a-zà-ü]{4,}/g) || []).filter(x => !STOP.has(x))).filter(d => d.length);
@@ -14049,7 +12922,6 @@ const Pianificatore = (() => {
         }
         return Array.from(sc.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, n).map(x => x[0]);
     }
-    /** Fallback 0 token del Blocco B: set pre-calibrato per archetipo (6 archetipi di Dominio). */
     function domandeCalibrazioneDefault(archetipo) {
         const T = {
             stem_calcolo: ['Davanti a un esercizio di calcolo nuovo cosa ti aiuta di più?', 'Le formule le ricordi meglio…', 'Quando due formule si somigliano…'],
@@ -14066,7 +12938,6 @@ const Pianificatore = (() => {
             { testo: q[2], opzioni: [{ testo: 'Le confondo spesso: mettimele a confronto', delta: { w_gemelle: 0.35, w_interleave: 0.1 } }, { testo: 'Preferisco studiarle separate e ben distinte', delta: { w_interleave: -0.25 } }, { testo: 'Mi va bene alternarle durante lo studio', delta: { w_interleave: 0.3 } }] },
         ];
     }
-    /** Prompt del Blocco B: materia, archetipo, top 8 parole chiave, top 3 errori storici. Ingresso ≤ ~150 token. */
     function promptCalibrazione(c) {
         return [
             { role: 'system', content: 'Genera ESATTAMENTE 3 domande a scelta multipla (3 opzioni ciascuna) per capire come studia uno studente. Linguaggio semplice, in italiano. '
@@ -14075,14 +12946,13 @@ const Pianificatore = (() => {
             { role: 'user', content: 'Materia ' + String(c.materia).slice(0, 30) + ', archetipo ' + c.archetipo + '. Parole chiave: ' + (c.keyword || []).slice(0, 8).join(', ') + '. Errori ricorrenti: ' + ((c.errori || []).slice(0, 3).join(', ') || 'nessuno') + '.' },
         ];
     }
-    /** Parsing tollerante: esattamente 3 domande × 3 opzioni, delta limitati; altrimenti null (→ fallback). */
     function leggiDomandeCalibrazione(r) {
         let j = r;
         if (typeof r === 'string') {
             j = JsonAI.leggi(r);
             if (!j)
                 return null;
-        } // v0.57 (A15)
+        }
         const arr = Array.isArray(j) ? j : j && Array.isArray(j.domande) ? j.domande : null;
         if (!arr || arr.length < 3)
             return null;
@@ -14105,8 +12975,6 @@ const Pianificatore = (() => {
         return out;
     }
     const stimaTokenCalibrazione = (msgs) => Math.round(msgs.reduce((s, m) => s + m.content.length, 0) / 3.5) + MAX_TOKEN_CALIBRAZIONE;
-    /** Blocco B: 1 micro-call (max_tokens 450, totale ≤ 600) sulla catena iniettata; JSON rotto, 429 su tutta la catena,
-     *  offline o modalità senza AI → set pre-calibrato per archetipo a 0 token, all'istante. */
     async function generaDomandeCalibrazione(c, ia) {
         const def = () => domandeCalibrazioneDefault(c.archetipo);
         if (!ia)
@@ -14121,9 +12989,6 @@ const Pianificatore = (() => {
             return { domande: def(), fonte: 'default', chiamate: 1, tokenStimati: 0, errore: String(e && e.message || e).slice(0, 120) };
         }
     }
-    /** §4.2 Burnout Circuit Breaker (0 token). A: tasso d'errore degli ultimi 2 giorni ≥ media storica + 0,25.
-     *  B: ipercorrezioni (certo → sbagliata) delle ultime 48 h ≥ 2× le 48 h precedenti (minimo 2). Fonti: confidenceLog e
-     *  statq.neuro (illusione_competenza) di BP3, più i contatori storici n/ok. */
     function monitoraAffaticamento(stats, o) {
         const ieri = piu(o.oggi, -1), l2 = piu(o.oggi, -2), l3 = piu(o.oggi, -3);
         let r2 = 0, e2 = 0, rv = 0, ev = 0, n = 0, ok = 0, iper48 = 0, iperPrima = 0;
@@ -14159,7 +13024,6 @@ const Pianificatore = (() => {
                         iperPrima++;
                 }
             }
-            // statq.neuro: illusione registrata nelle ultime 48 h ma non ancora nel log (es. log troncato agli ultimi 10)
             const ne = s.neuro || {}, ult = String(s.ultima || '');
             if (!illLog48 && ult >= ieri && ult <= o.oggi && (ne.ultimoCaso === 'illusione_competenza' || (Array.isArray(ne.tag) && ne.tag.includes('illusione_competenza'))))
                 iper48++;
@@ -14176,8 +13040,6 @@ const Pianificatore = (() => {
         const condB = iper48 >= 2 && iper48 >= 2 * Math.max(1, iperPrima);
         return { trigger: condA || condB, condA, condB, tasso2g: arr1(tasso), mediaStorica: arr1(media), risposte2g: r2, iper48, iperPrima };
     }
-    /** Attiva il de-load di 48 h su un piano ai_neuro (copia): −2 livelli (min L1); i nuovi capitoli (L1–L4) delle 48 h slittano
-     *  di 2 giorni (chiavi invariate, mai oltre l'ultimo giorno di lavoro) e al loro posto restano ripasso FSRS leggero + Wakeful Rest. */
     function attivaDeload(piano, o) {
         if (!piano || piano.origine !== 'ai_neuro')
             return null;
@@ -14225,7 +13087,6 @@ const Pianificatore = (() => {
         p.livelloIntensita = ridotto;
         return p;
     }
-    /** Livello effettivo oggi: ridotto nelle 48 h, poi un giorno a metà strada (ripristino graduale), poi il target. */
     function livelloEffettivo(piano, oggi) {
         const d = piano && piano.deload;
         if (!d || !d.attivo)
@@ -14236,7 +13097,6 @@ const Pianificatore = (() => {
             return Math.min(d.livelloTarget, d.livelloRidotto + 1);
         return d.livelloTarget;
     }
-    /** Chiude il de-load scaduto (copia) e ripristina il livello target; null se non c'è nulla da cambiare. */
     function aggiornaDeload(piano, oggi) {
         if (!piano || piano.origine !== 'ai_neuro' || !piano.deload || !piano.deload.attivo)
             return null;
@@ -14249,11 +13109,8 @@ const Pianificatore = (() => {
             p.deload = { ...p.deload, attivo: false };
         return p;
     }
-    // ---------- Stadio 5: hook post-quiz e buffer ----------
     const vociDi = (p) => p.giorni.flatMap(g => g.voci.map(v => ({ v, g })));
     const clona = (x) => JSON.parse(JSON.stringify(x));
-    /** Dopo un'illusione di competenza (o una risposta fortunata) su una materia del piano ai_neuro: anticipa di 24–48 h
-     *  la prossima attività L3/L4 scambiandola con un buffer. Zero token; restituisce il piano nuovo (l'originale resta intatto). */
     function hookIpercorrezione(piano, ctx) {
         if (!piano || piano.origine !== 'ai_neuro' || piano.pausa)
             return null;
@@ -14268,7 +13125,6 @@ const Pianificatore = (() => {
             const buf = tutte.find(x => x.v.isBuffer && x.g.data >= ctx.oggi && x.g.data < c.g.data && diff(x.g.data, c.g.data) <= 2);
             if (!buf)
                 continue;
-            // scambio: l'attività va nel posto del buffer, il buffer prende il suo posto
             const iA = c.g.voci.indexOf(c.v), iB = buf.g.voci.indexOf(buf.v), oraA = c.v.ora, oraB = buf.v.ora;
             c.g.voci[iA] = buf.v;
             buf.g.voci[iB] = c.v;
@@ -14279,7 +13135,6 @@ const Pianificatore = (() => {
         }
         return null;
     }
-    /** Ripianifica: per le attività in ritardo propone prima i buffer futuri; i ripassi FSRS (ancoraggi) non si spostano. */
     function riassorbi(piano, ritardi, oggi) {
         if (!piano || piano.origine !== 'ai_neuro')
             return [];
@@ -14295,15 +13150,12 @@ const Pianificatore = (() => {
         }
         return out;
     }
-    /** Toglie dal piano i buffer consumati (nuovo oggetto). */
     function consumaBuffer(piano, chiavi) {
         const p = clona(piano);
         for (const g of p.giorni)
             g.voci = g.voci.filter(v => !(v.isBuffer && chiavi.includes(v.k)));
         return p;
     }
-    // ---------- orchestrazione ----------
-    /** Crea il piano: segnali → struttura → fattibilità (0 token) → [critico: stop, rimedi] → mapping (1 chiamata o TOC) → timeline. */
     async function creaPiano(v, dip) {
         const seg = segnaliIper(dip.statq ? dip.statq() : [], v.materiaCodice);
         let occ = [];
@@ -14333,17 +13185,11 @@ const Pianificatore = (() => {
     return { segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
         unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
         compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
-        // v0.56 (BP5)
         MATRICE_5_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
         picchiCircadiani, modalitaOffloading, allocaGiornata, pesiIniziali, applicaRisposte, paroleChiaveBM25, domandeCalibrazioneDefault, promptCalibrazione,
         leggiDomandeCalibrazione, generaDomandeCalibrazione, monitoraAffaticamento, attivaDeload, livelloEffettivo, aggiornaDeload };
 })();
 
-// 07-progressi.ts — Punti deboli (v0.12, F6 ridotta). In Studio → Statistiche.
-//
-// 1) Per tipo di domanda (Sbarramento, Applicativo, Trabocchetto, Problema, Completamento…), per materia,
-//    sommando i risultati letti in automatico dai quiz (Progresso.deboli) e dalle simulazioni.
-// 2) Sotto-step più deboli: media dei punteggi delle prioritarie e probabilità di ricordarli oggi.
 function puntiDeboli() {
     const acc = {};
     let quiz = 0;
@@ -14402,22 +13248,9 @@ function sezioneSottostepDeboli() {
         } } }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + x.titolo), h('span.voce-sotto', null, 'media ', h('b', { style: { color: coloreRicordo(x.media / 100) } }, x.media + '%'), ' su ' + x.n + (x.n === 1 ? ' scheda' : ' schede') + (x.r != null ? ' · 🧠 ' + Math.round(x.r * 100) + '%' : ''))), icona('dx', 18))));
 }
 
-// 07-quizapp.ts — Quiz Studio Q0+Q1 (v0.22): banca domande e quiz nativo.
-//
-// Banca (Q0): studio/banca/banca-step-N.json, generata dai sorgenti delle schede (quiz/build/banca.js):
-// { schede: {sk: info}, immagini: {id: svg}, domande: [DomB] }. Le schede che non sono nella banca
-// (Step 1, 2.1: solo HTML su Drive) si estraggono al volo: il quiz HTML gira in un iframe isolato e
-// nascosto con `var q=` reso visibile, e manda le domande al genitore. Il risultato resta in
-// localStorage ('imc-banca-<sk>') per non riscaricarlo.
-// Quiz nativo (Q1): disegnato dall'app, stesse funzioni delle schede (suggerimento, spiegazione dalle
-// fonti, correzione passo-passo, perché le altre sono sbagliate, ✨ AI, rifai gli errori) più le
-// statistiche per domanda: record 'statq' (id 'sq-<id domanda>') con tentativi, giuste e distrattori
-// scelti — è la base di Q4 (regole che imparano dall'esperienza).
-// Il risultato finale passa da Cattura.salva come per le schede HTML (progresso, ripassi, errori).
 const Banca = (() => {
     const file = new Map();
     const scarica = (nome) => fetch('studio/banca/' + nome + '.json').then(r => r.ok ? r.json() : null).catch(() => null);
-    /** v0.37: con la materia scarica solo la sua parte (banca-step-N-C.json, ~1/3), altrimenti il file intero. */
     function carica(step, mat) {
         const k = step + '-' + (mat || '');
         if (!file.has(k))
@@ -14427,7 +13260,6 @@ const Banca = (() => {
     const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++)
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
     const norm = (s) => String(s).replace(/\s+/g, ' ').trim().toLowerCase();
-    /** Estrae le domande da un quiz HTML (qualsiasi versione del motore) in un iframe isolato. */
     function estraiDaHtml(html, sk) {
         return new Promise((ok, ko) => {
             if (!/var q\s*=\s*\{\s*questions/.test(html)) {
@@ -14486,7 +13318,6 @@ const Banca = (() => {
             document.body.appendChild(fr);
         });
     }
-    /** Q2: applica le modifiche dell'utente (record 'modq'): campi cambiati, domande nascoste, domande nuove. */
     function applica(domande, sk) {
         const mod = new Map();
         for (const r of Stato.tutti('modq'))
@@ -14498,10 +13329,7 @@ const Banca = (() => {
                 out.push({ ...r.campi, id: r.qid, sk, mod: true, nuova: true });
         return out;
     }
-    /** Domande nascoste di una scheda (per poterle ripristinare). */
     function nascoste(sk) { return Stato.tutti('modq').filter(r => r.sk === sk && r.nascosta && !r.deleted); }
-    // v0.57 (BP6): tetto alle copie locali delle schede estratte (localStorage è piccolo e condiviso con tutta l'app).
-    // LRU: indice «imc-banca-uso» (chiave → ultimo uso); oltre MAX_COPIE o MAX_BYTE si tolgono le meno usate.
     const USO = 'imc-banca-uso', MAX_COPIE = 40, MAX_BYTE = 1.5 * 1024 * 1024;
     function indiceUso() {
         let u = {};
@@ -14525,7 +13353,6 @@ const Banca = (() => {
         console.warn('Banca: indice LRU non salvato', e);
     } }
     function usaCopia(k) { const u = indiceUso(); u[k] = Date.now(); scriviUso(u); }
-    /** Toglie le copie meno usate finché restano ≤ maxCopie e ≤ maxByte (escluso «tieni»). Ritorna quante ne ha tolte. */
     function potaCopie(tieni = '', maxCopie = MAX_COPIE, maxByte = MAX_BYTE) {
         const u = indiceUso(), ch = Object.keys(u).filter(k => localStorage.getItem(k) !== null).sort((a, b) => u[a] - u[b]);
         let byte = ch.reduce((t, k) => t + (localStorage.getItem(k) || '').length * 2, 0), n = 0;
@@ -14562,9 +13389,8 @@ const Banca = (() => {
             }
         }
     }
-    /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
     async function scheda(pk, m, micro, s) {
-        const imc = Dominio.domandeDi(s.id); // v0.52: domande importate da un pacchetto .imcpack (record 'bancaimc')
+        const imc = Dominio.domandeDi(s.id);
         if (imc)
             return { domande: applica(imc.map(d => ({ ...d })), s.id), immagini: {}, fonte: 'imcpack' };
         const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
@@ -14593,7 +13419,7 @@ const Banca = (() => {
 })();
 const QuizApp = (() => {
     const L = ['A', 'B', 'C', 'D', 'E'], LIVELLI = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
-    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); // v0.56.2: anche negli attributi
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const fmt = (s) => esc(s).replace(/_\{([^}]*)\}/g, '<sub>$1</sub>').replace(/\^\{([^}]*)\}/g, '<sup>$1</sup>');
     const fmtQ = (s) => fmt(s).replace(/(…+|\.\.\.\.+)/g, '<span class="qz-buco">________</span>');
     const normR = (s) => { let t = String(s).toLowerCase(); if (t.normalize)
@@ -14612,7 +13438,6 @@ const QuizApp = (() => {
         const j = Math.floor(Math.random() * (i + 1));
         [a[i], a[j]] = [a[j], a[i]];
     } return a; };
-    /** Registra la risposta (v0.48: nel contatore di questo dispositivo) e restituisce la funzione per annullarla. */
     function registraStat(v) {
         const id = 'sq-' + v.d.id, p = Stato.prendi(id), dev = Privacy.idDispositivo(), giusta = !!v.ok;
         const r = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false, c: {} };
@@ -14623,7 +13448,6 @@ const QuizApp = (() => {
         StatQC.ricalcola(r);
         r.ultima = ymd(new Date());
         r.esito = giusta;
-        // v0.54 (BP3 §1.2): calibrazione metacognitiva (solo se lo studente ha dichiarato la certezza)
         const neuroPrima = r.neuro ? { ...r.neuro } : undefined, logPrima = r.confidenceLog ? r.confidenceLog.slice() : undefined;
         if (v.cert) {
             const t = { ts: new Date().toISOString(), corretto: giusta, livelloCertezza: v.cert, tempoRispostaMs: Math.max(0, Math.round(v.ms || 0)) };
@@ -14645,7 +13469,6 @@ const QuizApp = (() => {
             r.scelte[o] = (r.scelte[o] || 0) + 1;
         }
         Stato.salva(r, true);
-        // v0.55 (BP4 Stadio 5): illusione di competenza / risposta fortunata → anticipo L3/L4 nei piani ai_neuro (0 token)
         let annullaPiani = null, carteNuove = [];
         if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess')
             try {
@@ -14654,12 +13477,11 @@ const QuizApp = (() => {
             catch (e) {
                 console.warn('dopoQuiz', e);
             }
-        // v0.56 (BP5 §4.2): dopo un errore, Burnout Circuit Breaker sui piani con intensità (0 token)
         if (!giusta)
             try {
                 PianiAI.controllaFatica();
             }
-            catch (_) { /* il quiz non si blocca */ }
+            catch (_) { }
         const annulla = () => {
             const q = Stato.prendi(id);
             if (!q)
@@ -14686,7 +13508,6 @@ const QuizApp = (() => {
                     delete q.scelte[scelta];
             }
             Stato.salva(q, true);
-            // v0.57.1 (Q3): annulla anche la carta «trappola» appena creata e l'anticipo nei piani ai_neuro
             for (const c of carteNuove)
                 Stato.elimina(c);
             if (annullaPiani)
@@ -14697,7 +13518,6 @@ const QuizApp = (() => {
                     console.warn('annulla piani', e);
                 }
         };
-        // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
         if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {
             const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o[oi];
             if (r.scelte && r.scelte[o] === 2) {
@@ -14712,26 +13532,24 @@ const QuizApp = (() => {
     }
     let toastAnnulla = null;
     const K_MODO = 'imc-quiz-modo';
-    /** Predefinita secondo il profilo cognitivo (hypercorrection attiva → neuro); la scelta dell'utente resta. */
     function modo() {
         try {
             const v = localStorage.getItem(K_MODO);
             if (v === 'neuro' || v === 'esame')
                 return v;
         }
-        catch (_) { /* niente */ }
+        catch (_) { }
         return Dominio.profilo().attivaHypercorrection === false ? 'esame' : 'neuro';
     }
     const impostaModo = (m) => { try {
         localStorage.setItem(K_MODO, m);
     }
-    catch (_) { /* niente */ } };
+    catch (_) { } };
     const NOMI_CERT = { 1: 'Tiro a indovinare', 2: 'Abbastanza sicuro', 3: 'Certo al 100%' };
     const statPer = (domande) => { const o = {}; for (const d of domande) {
         const s = Stato.prendi('sq-' + d.id);
         o[d.id] = s && !s.deleted ? s : undefined;
     } return o; };
-    /** Export 1 click (BP3 §3.1): testo compatto negli appunti + file .imcpack.json. */
     async function esporta(domande, f, titolo, archetipo) {
         const sel = Neuro.daEsportare(domande, statPer(domande), f);
         if (!sel.length) {
@@ -14741,7 +13559,7 @@ const QuizApp = (() => {
         try {
             await navigator.clipboard.writeText(Neuro.compatto(sel));
         }
-        catch (_) { /* appunti non disponibili: resta il file */ }
+        catch (_) { }
         const j = Neuro.pacchetto(sel, { titolo: titolo + ' · ' + { errori: 'errori', illusione: 'illusioni', bloom3: 'Bloom 3-4', tutti: 'tutte' }[f], archetipo, modalita: Dominio.profilo().modalita, oggi: ymd(new Date()) });
         const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(j, null, 1)], { type: 'application/json' })), download: (titolo || 'quiz').replace(/[\\/:*?"<>|]+/g, '_') + '-' + f + '.imcpack.json' });
         document.body.appendChild(a);
@@ -14750,7 +13568,6 @@ const QuizApp = (() => {
         avviso(sel.length + ' domande: testo compatto copiato e pacchetto .imcpack scaricato.', 5000);
         return sel.length;
     }
-    /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
     async function apri(pk, m, micro, s, gen, info) {
         const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
         v.corpo.classList.add('qz');
@@ -14777,10 +13594,8 @@ const QuizApp = (() => {
             v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
         v.corpo.appendChild(app);
         let P = [], cur = 0, ripasso = false, apertaX = false, finito = false;
-        // v0.54 (BP3): certezza prima della risposta (modo neuro), tempi per la fatica attentiva (zero token)
         let mq = modo(), storia = [], faticaOn = false, faticaZitta = 0;
         const archM = Dominio.archetipoMateria(m);
-        // v0.52 (BP2): sequenza (ordine da ricostruire), abbinamento (coppie) e risposta aperta valutata con una rubrica locale
         const NOMI_TIPO = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
         const nuovoTipo = (d) => d.t === 'sequenza' || d.t === 'abbinamento' || d.t === 'risposta_aperta_rubrica';
         function ordineIniziale(d) {
@@ -14789,7 +13604,7 @@ const QuizApp = (() => {
             const n = d.t === 'sequenza' ? (d.sequenzaOk || []).length : d.t === 'abbinamento' ? (d.coppieOk || []).length : 0;
             let o = mescola(Array.from({ length: n }, (_, k) => k));
             for (let t = 0; t < 5 && n > 1 && o.every((v, k) => v === k); t++)
-                o = mescola(o); // mai già in ordine
+                o = mescola(o);
             return o;
         }
         const leggiLista = (v) => { try {
@@ -14848,14 +13663,13 @@ const QuizApp = (() => {
                 s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o[x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
             if (x.voto)
                 s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
-            if (!x.ok && mc) { /* già sopra */ }
+            if (!x.ok && mc) { }
             else if (!x.ok && !mc && ew[0])
                 s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
             if (mc && ew.length && (x.ok || x.picked === null))
                 s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => '<p><b>«' + fmt(d.o[k + 1]) + '»</b> — ' + fmt(t) + '</p>').join('') + '</details>';
             return s2 + '</div>';
         }
-        /** v0.54 (BP3 §1.2): esito della matrice certezza × correttezza; per l'illusione il confronto è obbligatorio. */
         function bannerCaso(x) {
             if (!x.caso || x.caso === 'standard')
                 return '';
@@ -14877,7 +13691,7 @@ const QuizApp = (() => {
             return '<div class="qz-neuro">📌 <b>Lacuna nota</b> — sapevi di non saperlo: ripasso domani' + (dove ? '. Torna alla teoria: <b>' + esc(dove) + '</b>' : ' e rileggi la scheda di teoria') + '.</div>';
         }
         function riquadroAI(x) {
-            const nessunaAI = Dominio.senzaAI(); // v0.52: modalità «100% senza AI» → solo la spiegazione breve locale (se c'è)
+            const nessunaAI = Dominio.senzaAI();
             if (nessunaAI && !Locale.spiegazioneBreve(x.d.e))
                 return '';
             const a = x.ai, b = (l, n) => '<button type="button" class="chip' + (a && a.l === l ? ' on' : '') + '" data-ai="' + l + '">' + n + '</button>';
@@ -14992,7 +13806,6 @@ const QuizApp = (() => {
                     x.ok = giusta(val, d.a || []);
             }
             const annulla = registraStat(x);
-            // v0.54 (BP3 §1.3): fatica attentiva — banner non bloccante, al massimo una volta ogni 5 risposte
             storia.push({ ms: x.ms || 0, ok: !!x.ok });
             if (faticaZitta > 0)
                 faticaZitta--;
@@ -15000,7 +13813,6 @@ const QuizApp = (() => {
                 faticaOn = true;
                 faticaZitta = 5;
             }
-            // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
             if (toastAnnulla)
                 toastAnnulla.remove();
             avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
@@ -15008,7 +13820,6 @@ const QuizApp = (() => {
             if (!x.ok) {
                 const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null;
                 x.avv = Regole.avvisoRisposta(x.d, dk);
-                // v0.52 (BP2 §3): diagnostica locale secondo l'archetipo della materia (zero token)
                 if (x.d.t === 'mcq' || x.d.t === 'fill') {
                     const sc = typeof x.picked === 'number' ? x.d.o[x.ord[x.picked]] : String(x.picked || ''), gi = x.d.t === 'mcq' ? x.d.o[0] : (x.d.a || [x.d.show || ''])[0];
                     const dg = Locale.diagnosticaPerArchetipo(x.d.archetipo || Dominio.archetipoMateria(m), { scelta: sc, corretta: gi, domanda: x.d.q, opzioni: x.d.o });
@@ -15028,7 +13839,6 @@ const QuizApp = (() => {
                 cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo,
                 archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: MATERIE_BASE[m] ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
             const id = Spiega.idDi(dd, l), c = Stato.prendi(id);
-            // v0.54 (BP3 §2): imbuto AI — livello 0 locale → livello 1 spiegazione già pronta / salvata → livello 2 micro-chiamata (≤350 token)
             if (l === 'perche' || l === 'breve') {
                 const oi = mc && typeof x.picked === 'number' ? x.ord[x.picked] : null;
                 x.ai = { l, attesa: true };
@@ -15060,7 +13870,6 @@ const QuizApp = (() => {
                 disegnaQ();
                 return;
             }
-            // v0.43 memoria: se dopo una spiegazione più corta ne chiede una più lunga, la corta non bastava → lezione
             if (x.ai && x.ai.testo && (l === 'dettagliata' || (l === 'media' && x.ai.l === 'breve')) && x.ai.l !== l)
                 MemoriaIA.nota('spiegazioni', 'lezione', 'piu-passaggi-' + norm(mat0(pk, m).nome || m), 'In ' + (mat0(pk, m).nome || m) + ' lo studente chiede spesso più dettagli: anche nelle spiegazioni brevi non saltare i passaggi intermedi.');
             x.ai = { l, attesa: true };
@@ -15089,7 +13898,6 @@ const QuizApp = (() => {
             let s2 = '<section class="qz-carta"><div class="qz-punti">' + ok + '<small> / ' + tot + '</small></div><div class="tenue">' + pct + '% di risposte corrette</div>'
                 + '<div class="qz-livelli">' + liv.map(z => '<div class="qz-lvriga"><span>' + z[0] + '</span><span class="qz-barra"><span style="width:' + Math.round(z[1] * 100 / z[2]) + '%"></span></span><span>' + z[1] + '/' + z[2] + '</span></div>').join('') + '</div>'
                 + (deb ? '<p><b>Punto debole:</b> ' + deb[0] + '</p>' : '<p><b>Nessun punto debole.</b></p>');
-            // v0.54 (BP3 §1.2): illusioni di competenza della sessione, in testa
             const ill = P.filter(x => x.caso === 'illusione_competenza'), fort = P.filter(x => x.caso === 'lucky_guess').length;
             if (ill.length)
                 s2 += '<div class="qz-neuro ko"><b>⚠️ Illusioni di competenza: ' + ill.length + '</b> — eri certo ma era sbagliato. Tornano già oggi in cima al ripasso.<ul>' + ill.map(x => '<li>' + fmt(testoPiano(x.d.q).slice(0, 140)) + '</li>').join('') + '</ul></div>';
@@ -15121,7 +13929,7 @@ const QuizApp = (() => {
                 rispondi(parseInt(b.dataset.k, 10));
                 return;
             }
-            if (b.dataset.seq != null) { // v0.52: sequenza, un tocco per elemento; completata → si verifica
+            if (b.dataset.seq != null) {
                 const x = P[cur], seq = x.d.sequenzaOk || [];
                 x.sel = (x.sel || []).concat(parseInt(b.dataset.seq, 10));
                 if (x.sel.length >= seq.length)
@@ -15279,7 +14087,6 @@ const QuizApp = (() => {
             const x = P[cur];
             if (!x)
                 return;
-            // v0.54: in modo neuro 1–3 = certezza e a–e = risposta; in simulazione esame resta 1–5 / a–e
             if (mq === 'neuro' && !fatta(x) && /^[1-3]$/.test(e.key)) {
                 x.cert = +e.key;
                 disegnaQ();
@@ -15300,14 +14107,11 @@ const QuizApp = (() => {
                 app.querySelector('[data-az=prec]').click();
         };
         document.addEventListener('keydown', tasti);
-        // v0.54 (BP3 §1.3): interleaving — mai più di 2 di fila sullo stesso micro-argomento; Bloom alternato tranne alle medie/biennio
         nuovo(gen ? dati.domande.map((_, k) => k) : Neuro.interleave(dati.domande, Regole.ordina(dati.domande), { alterna: Dominio.profilo().modalita !== 'medie_biennio' }), false);
     }
-    /** Statistiche per domanda (per Q4 e per la vista Errori). */
     function stat(sk) { return Stato.tutti('statq').filter(r => !sk || r.sk === sk); }
     return { apri, stat, esporta, modo };
 })();
-/** Q2: editor di una domanda (modifica, nascondi, ripristina l'originale, nuova). */
 const Editor = (() => {
     const LIV = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
     const area = (v, righe = 2, ph = '') => h('textarea', { rows: righe, value: v, placeholder: ph });
@@ -15420,7 +14224,6 @@ const Editor = (() => {
             },
         });
     }
-    /** Rende di nuovo visibili le domande nascoste di una scheda. */
     function ripristina(sk, fatto) {
         for (const r of Banca.nascoste(sk)) {
             if (r.campi || r.nuova)
@@ -15433,28 +14236,17 @@ const Editor = (() => {
     return { apri, ripristina };
 })();
 
-// 07-quizrifare.ts — v0.58 (Q2): «🎯 Quiz da rifare».
-//
-// Lo SRS per domanda (statq.neuro.due, BP3) prima era letto solo dentro un quiz già aperto: la promessa
-// «tornano già oggi in cima al ripasso» non si avverava. Qui le domande scadute (illusioni di competenza in testa)
-// diventano un quiz unico, proposto in Studia ora e nella card «Adesso» di Oggi. ~1 minuto a domanda, massimo 10.
-// Sorgenti delle domande: quiz creati in app (qcreato), pacchetti .imcpack (Dominio.domandeDi), schede del proprietario (Banca).
-// In v0.59 diventa l'adapter di CodaRipasso per questa sorgente.
 const QuizRifare = (() => {
     const MAX = 10;
     const qcreato = (sk) => { const r = /^qc-/.test(sk) ? Stato.prendi(sk) : null; return r && !r.deleted ? r : null; };
-    /** La domanda si può ricostruire? (le serie generate 🎲 no: cambiano i numeri a ogni giro) */
     const risolvibile = (sk) => !!sk && (!!qcreato(sk) || !!Dominio.domandeDi(sk) || !!trovaScheda(sk));
     const urgenza = (s) => s.neuro && s.neuro.tag && s.neuro.tag.includes('illusione_competenza') ? 0 : 1;
-    /** Record statq con ripasso scaduto entro `giorno` (incluso), illusioni prima, poi i più vecchi. */
     function dovute(giorno = ymd(new Date())) {
         return Stato.tutti('statq').filter(s => !s.deleted && s.neuro && s.neuro.due && s.neuro.due <= giorno && risolvibile(s.sk))
             .sort((a, b) => urgenza(a) - urgenza(b) || (a.neuro.due < b.neuro.due ? -1 : a.neuro.due > b.neuro.due ? 1 : 0));
     }
     const conta = (giorno) => dovute(giorno).length;
-    /** Minuti stimati: ~1 a domanda, al massimo MAX domande. */
     const minuti = (n = conta()) => Math.min(MAX, n);
-    /** Ricostruisce le domande (al massimo MAX) con le immagini delle schede del proprietario. */
     async function domande(max = MAX) {
         const out = [], imm = {}, cache = new Map();
         let materia = '';
@@ -15508,19 +14300,11 @@ const QuizRifare = (() => {
     return { dovute, conta, minuti, domande, avvia, MAX };
 })();
 
-// ============================================================
-// 07-rapido.ts — Aggiunta rapida in linguaggio naturale (italiano).
-// Esempi: "domani 15-17 Chimica 3.1", "ogni lunedì 9 palestra",
-// "ven 18:30 cena da Marco", "12/11 tutto il giorno gita",
-// "ricorda lunedì alle 10 chiamare il medico" (→ promemoria),
-// "dalle 9 alle 10:30 ripasso fisica", "ogni giorno 7:30 corsa fino al 30/11".
-// ============================================================
 const GIORNI_IT = { lun: 0, lunedi: 0, mar: 1, martedi: 1, mer: 2, mercoledi: 2, gio: 3, giovedi: 3, ven: 4, venerdi: 4, sab: 5, sabato: 5, dom: 6, domenica: 6 };
 const MESI_IT = { gen: 0, gennaio: 0, feb: 1, febbraio: 1, mar: 2, marzo: 2, apr: 3, aprile: 3, mag: 4, maggio: 4, giu: 5, giugno: 5, lug: 6, luglio: 6, ago: 7, agosto: 7, set: 8, settembre: 8, ott: 9, ottobre: 9, nov: 10, novembre: 10, dic: 11, dicembre: 11 };
-/** Interpreta una frase. Restituisce null se non c'è un titolo. */
 function interpreta(frase, rif = new Date()) {
     let s = ' ' + frase.trim().replace(/\s+/g, ' ') + ' ';
-    const n = norm(s); // senza accenti, minuscolo, stesse posizioni
+    const n = norm(s);
     const togli = (re) => {
         let m;
         const out = [];
@@ -15539,10 +14323,9 @@ function interpreta(frase, rif = new Date()) {
     let giorno = base, dataEsplicita = false, tipo = 'evento', tutto = false;
     let rr;
     if (togli(/(^|\s)(ricorda(mi)?|promemoria|todo|da fare)(\s+(di|che|per))?(\s*:)?(?=\s)/).length)
-        tipo = 'task'; // v0.57: «ricordami di X» → «X», non «Di X»
+        tipo = 'task';
     if (togli(/\s(tutto il giorno|tutta la giornata)(?=\s)/).length)
         tutto = true;
-    // ricorrenze: "ogni giorno", "ogni settimana", "ogni mese", "ogni lunedì e giovedì", "ogni 2 settimane"
     const og = togli(/\sogni\s+(\d+\s+)?(giorno|giorni|settimana|settimane|mese|mesi|anno|anni|((lun|mar|mer|gio|ven|sab|dom)[a-z]*)((\s*,\s*|\s+e\s+)(lun|mar|mer|gio|ven|sab|dom)[a-z]*)*)(?=\s)/);
     if (og.length) {
         const m = og[0], interv = m[1] ? parseInt(m[1], 10) : 1, w = m[2];
@@ -15573,7 +14356,6 @@ function interpreta(frase, rif = new Date()) {
     const volte = togli(/\sper\s+(\d+)\s+volte(?=\s)/);
     if (rr && volte.length)
         rr.count = +volte[0][1];
-    // giorno
     if (togli(/\sdopodomani(?=\s)/).length) {
         giorno = piuGiorni(base, 2);
         dataEsplicita = true;
@@ -15586,7 +14368,7 @@ function interpreta(frase, rif = new Date()) {
         giorno = base;
         dataEsplicita = true;
     }
-    const dm = togli(/\s(\d{1,2})\/(\d{1,2})(\/(\d{2,4}))?(?=\s)/); // solo con '/': '3.1' resta nel titolo (es. Chimica 3.1)
+    const dm = togli(/\s(\d{1,2})\/(\d{1,2})(\/(\d{2,4}))?(?=\s)/);
     if (dm.length) {
         const m = dm[0];
         let y = m[4] ? +m[4] : base.getFullYear();
@@ -15622,7 +14404,6 @@ function interpreta(frase, rif = new Date()) {
     }
     if (rr && !rr.byday && rr.freq === 'W')
         rr.byday = [(giorno.getDay() + 6) % 7];
-    // ore: "15-17", "15:30-17", "dalle 9 alle 10:30", "alle 9", "ore 9", "9:30", "h 9"
     const hh = (x) => { const [a, b] = x.replace('.', ':').split(':'); return [Math.min(23, +a), Math.min(59, +(b || 0))]; };
     let ora, fineOra;
     const intv = togli(/\s(dalle\s+|ore\s+|h\s*)?(\d{1,2}([:.]\d{2})?)\s*(-|–|alle\s+|fino alle\s+)\s*(\d{1,2}([:.]\d{2})?)(?=\s)/);
@@ -15639,7 +14420,6 @@ function interpreta(frase, rif = new Date()) {
             if (nuda.length)
                 ora = hh(nuda[0][1]);
         }
-        // "ogni lunedì 9 palestra": un numero isolato subito dopo la data/ricorrenza vale come ora
         if (!ora && (og.length || dataEsplicita)) {
             const iso = togli(/^\s+(\d{1,2})(?=\s)/);
             if (iso.length && +iso[0][1] <= 23)
@@ -15657,7 +14437,6 @@ function interpreta(frase, rif = new Date()) {
         tutto = tutto || dataEsplicita;
     if (!ora && tipo === 'evento' && rr)
         tutto = true;
-    // categoria: materie di studio → Studio
     let categoriaId;
     const t = norm(titolo);
     for (const c of categorie())
@@ -15700,10 +14479,7 @@ function creaDaRapido(r) {
     Stato.salva(ev);
     return ev;
 }
-/** Campo di aggiunta rapida con anteprima di ciò che verrà creato. */
 function campoRapido() {
-    // v0.42: lo stesso campo è anche l'ASSISTENTE dell'app (✨): eventi/promemoria con data restano locali e immediati,
-    // tutto il resto (quiz, appunti, carte, ricerca, aprire viste, domande sull'app) passa all'assistente AI.
     const anteprima = h('div.rapido-anteprima');
     const invia = () => {
         const f = campo.value.trim();
@@ -15731,24 +14507,14 @@ function campoRapido() {
     return h('div.rapido-box', null, h('div.rapido-riga', null, campo, bottone), anteprima);
 }
 
-// 07-regole.ts — Quiz Studio Q4 (v0.25): regole che imparano dall'esperienza.
-//
-// Legge le statistiche per domanda (record 'statq') e:
-//  • raggruppa gli errori degli esercizi generati per TIPO (chiave dk del distrattore → categoria);
-//  • dopo N errori dello stesso tipo mostra un avviso con il consiglio, nel quiz;
-//  • per le domande della banca avvisa se la stessa domanda è già stata sbagliata;
-//  • negli esercizi generati sceglie più spesso i modelli in cui sbagli (quota «deboli»);
-//  • nel quiz nativo può mettere prima le domande già sbagliate (ordineQuiz = 'deboli-prima').
-// Le regole sono un oggetto JSON: predefinite qui, modificabili in Altro → Regole dei quiz (record
-// 'regole', id 'regole-quiz', sincronizzato su Drive). Claude può proporre una versione nuova da incollare.
 const Regole = (() => {
     const ID = 'regole-quiz';
     const PREDEFINITE = {
         versione: 1,
-        avvisoDopo: 2, // dalla 2ª volta dello stesso tipo di errore compare l'avviso
-        quotaDeboli: 0.5, // metà degli esercizi generati viene dai modelli in cui sbagli di più
-        minTentativi: 2, // un modello conta come «debole» solo dopo almeno 2 tentativi
-        ordineQuiz: 'scheda', // 'deboli-prima' = nel quiz nativo prima le domande già sbagliate
+        avvisoDopo: 2,
+        quotaDeboli: 0.5,
+        minTentativi: 2,
+        ordineQuiz: 'scheda',
         categorie: {
             unita: { etichetta: 'Unità di misura non convertite', consiglio: 'Prima di sostituire porta tutto nelle stesse unità (m, s, kg, L, m², m³, Pa) e scrivi l\'unità accanto a ogni numero.', dk: ['ml', 'kmh', 'noconv', 'min', 'cm', 'cm2', 'dm3', 'mm', 'pa', 'km', 'cento', 'mille', 'esp', 'milli', 'per36', 'cm3', 'r', 'ordine'] },
             kelvin: { etichetta: 'Temperatura in °C invece che in K', consiglio: 'Nelle formule di termodinamica, gas e soluzioni T va in kelvin: T = t + 273.', dk: ['celsius'] },
@@ -15772,7 +14538,7 @@ const Regole = (() => {
                 const j = JSON.parse(r.json);
                 x = { ...PREDEFINITE, ...j, categorie: { ...PREDEFINITE.categorie, ...(j.categorie || {}) } };
             }
-            catch (_) { /* JSON rotto: predefinite */ }
+            catch (_) { }
         cache = x;
         cacheTs = ts;
         return x;
@@ -15784,7 +14550,6 @@ const Regole = (() => {
                 return k;
         return 'altro';
     }
-    /** Errori per categoria negli esercizi generati (somma delle scelte sbagliate per dk). */
     function perTipo() {
         const out = {};
         for (const s of Stato.tutti('statq'))
@@ -15795,7 +14560,6 @@ const Regole = (() => {
                 }
         return out;
     }
-    /** Avviso da mostrare dopo una risposta sbagliata ('' se nessuno). */
     function avvisoRisposta(d, dk) {
         const R = get();
         if (d.gen && dk) {
@@ -15811,20 +14575,17 @@ const Regole = (() => {
         const sb = s && !s.deleted ? s.n - s.ok : 0;
         return sb >= R.avvisoDopo ? '⚠️ Hai sbagliato questa domanda ' + sb + ' volte: rileggi la spiegazione dalle fonti e poi chiedi la versione «Dettagliata» all\'AI.' : '';
     }
-    /** Tasso d'errore di un modello generato (0..1), null se pochi tentativi. */
     function errModello(id) {
         const s = Stato.prendi('sq-g-' + id);
         if (!s || s.deleted || s.n < get().minTentativi)
             return null;
         return (s.n - s.ok) / s.n;
     }
-    /** Sceglie l'ordine dei modelli per una serie: quota ai più sbagliati, il resto a rotazione. */
     function scegliModelli(ms, n) {
         const R = get(), out = [];
         const deboli = ms.map(m => ({ m, e: errModello(m.id) })).filter(x => x.e !== null && x.e > 0).sort((a, b) => b.e - a.e);
         const nd = deboli.length ? Math.round(n * R.quotaDeboli) : 0;
         for (let i = 0; i < nd; i++) {
-            // estrazione pesata sul tasso d'errore
             const tot = deboli.reduce((a, x) => a + x.e, 0);
             let r = Math.random() * tot;
             const x = deboli.find(y => (r -= y.e) <= 0) || deboli[0];
@@ -15834,10 +14595,8 @@ const Regole = (() => {
             out.push(ms[i % ms.length]);
         return out;
     }
-    /** Ordine delle domande del quiz nativo secondo la regola. */
     function ordina(domande) {
         const idx = domande.map((_, k) => k);
-        // v0.54 (BP3 §1.2): prima le domande con ripasso neuro scaduto (illusioni di competenza in testa); ordine stabile
         const oggi = ymd(new Date());
         const sq = (d) => { const s = Stato.prendi('sq-' + d.id); return s && !s.deleted ? s : null; };
         const urg = (d) => { const s = sq(d), n = s && s.neuro; if (!n || !n.due || n.due > oggi)
@@ -15846,7 +14605,6 @@ const Regole = (() => {
         const deboli = get().ordineQuiz === 'deboli-prima';
         return idx.sort((a, b) => (urg(domande[b]) - urg(domande[a])) || (deboli ? err(domande[b]) - err(domande[a]) : 0) || a - b);
     }
-    // ---- Studio → Errori: errori tipici ----
     function sezioneTipici() {
         const t = perTipo(), R = get();
         const voci = Object.entries(t).filter(([c]) => R.categorie[c]).sort((a, b) => b[1] - a[1]);
@@ -15855,7 +14613,6 @@ const Regole = (() => {
             return null;
         return h('section.card', null, h('h2.card-titolo', null, 'I tuoi errori tipici'), h('div.tenue.piccolo', null, 'Dagli esercizi generati (🎲): che tipo di errore fai più spesso e come evitarlo.'), voci.map(([c, n]) => h('div.dom-voce', null, h('div', null, h('b', null, R.categorie[c].etichetta), ' · ' + n + (n === 1 ? ' volta' : ' volte')), h('div.tenue.piccolo', null, R.categorie[c].consiglio))), modelli.length ? h('div', null, h('div.gruppo-titolo', null, 'Esercizi dove sbagli di più'), modelli.slice(0, 8).map(x => h('div.tenue.piccolo', null, nomeMateria(x.m.m) + ' · ' + x.m.titolo + ' — ' + Math.round(x.e * 100) + '% di errori su ' + x.s.n))) : null);
     }
-    // ---- Altro → Regole dei quiz ----
     function sezioneAltro() {
         const r = Stato.prendi(ID), propria = !!(r && !r.deleted);
         const ta = h('textarea.regole-json', { rows: 12, spellcheck: false, value: JSON.stringify(get(), null, 1) });
@@ -15896,18 +14653,9 @@ const Regole = (() => {
     return { get, PREDEFINITE, categoriaDi, perTipo, avvisoRisposta, errModello, scegliModelli, ordina, sezioneTipici, sezioneAltro };
 })();
 
-// 07-ripianifica.ts — Ripianifica gli step in ritardo del piano principale (F5 ridotta, v0.10).
-//
-// Gli step non completati con data passata vengono spostati in avanti con Studio.sposta(): i progressi
-// non cambiano mai, cambia solo il giorno (record 'spostamento'). Due modi, scelti nell'anteprima:
-//  - "prima possibile": il primo giorno utile con meno di 3 step;
-//  - "giorni leggeri": il giorno utile con meno step (a parità, il più vicino).
-// Giorni utili: da domani all'ultimo giorno prima della chiusura della teoria; esclusi simulazioni,
-// verifica, chiusura, sprint, riposo. Le "Riserva" accettano al massimo 2 step, gli altri 3.
 const Ripianifica = (() => {
-    const VIETATI = /^(SIM|VERIFICA|CHIUSURA|SPRINT|RIPOSO|FINALE)/; // v0.19: anche i giorni finali dei piani generati
+    const VIETATI = /^(SIM|VERIFICA|CHIUSURA|SPRINT|RIPOSO|FINALE)/;
     const piu = (k, n) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
-    /** Step in ritardo del piano principale, nell'ordine del piano. */
     function inRitardo(oggiK = ymd(new Date()), p = Studio.pkPiano()) {
         if (!p || (p.modo === 'raffinamento' && !/^gen-/.test(p.id)))
             return [];
@@ -15920,7 +14668,6 @@ const Ripianifica = (() => {
             }
         return out;
     }
-    /** Giorni utili con il loro carico attuale (step non speciali che cadono quel giorno). */
     function giorniUtili(oggiK, p = Studio.pkPiano()) {
         if (!p)
             return [];
@@ -15930,7 +14677,7 @@ const Ripianifica = (() => {
         for (const g of p.giorni)
             for (const v of g.voci) {
                 if (v.isBuffer)
-                    continue; // v0.55: i buffer dei piani ai_neuro non pesano e non bloccano il giorno
+                    continue;
                 const d = Studio.dataVoce(v, g, p.id);
                 if (v.speciale) {
                     if (g.data === d)
@@ -15947,10 +14694,8 @@ const Ripianifica = (() => {
         }
         return out;
     }
-    /** Proposta: per ogni step in ritardo, il nuovo giorno (null se non c'è posto prima della chiusura). */
     function proponi(modo, oggiK = ymd(new Date()), p = Studio.pkPiano()) {
         const giorni = giorniUtili(oggiK, p);
-        // v0.55 (BP4): nei piani ai_neuro prima si usano i buffer futuri; i ripassi FSRS (ancoraggi) non si spostano mai
         const ai = p && p.origine === 'ai_neuro';
         const rit = inRitardo(oggiK, p).filter(x => !ai || !p.giorni.some(g => g.voci.some(v => v.k === x.k && v.isRipassoFSRS)));
         const buf = ai ? Pianificatore.riassorbi(p, rit.map(x => x.k), oggiK) : [];
@@ -15972,7 +14717,6 @@ const Ripianifica = (() => {
         for (const x of prop)
             if (x.a)
                 Studio.sposta(x.k, x.a, p.id);
-        // v0.55: i buffer usati spariscono dal piano ai_neuro (annullabile: si rimette il piano di prima)
         const usati = prop.filter(x => x.a && x.buffer).map(x => x.buffer), pianoPrima = usati.length ? JSON.parse(JSON.stringify(p)) : null;
         if (pianoPrima) {
             const n = Pianificatore.consumaBuffer(p, usati);
@@ -15991,7 +14735,6 @@ const Ripianifica = (() => {
     return { inRitardo, giorniUtili, proponi, applica };
 })();
 const giornoBreve = (k) => { const d = daDt(k); return ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'][d.getDay()] + ' ' + k.slice(8, 10) + '/' + k.slice(5, 7); };
-/** Foglio con anteprima e conferma. */
 function apriRipianifica(piano) {
     const pp = piano && piano.giorni ? piano : Studio.pkPiano();
     let modo = 'leggeri';
@@ -16021,13 +14764,6 @@ function apriRipianifica(piano) {
         } });
 }
 
-// 07-simulazioni.ts — Modalità simulazione d'esame (v0.11, tattica T14).
-//
-// Le schede di consolidamento/simulazione (31 domande, 50 minuti) stanno su Drive in una cartella
-// trovata per nome ("consolidamento" o "simulazion", modificabile salvando imp().cartellaSimulazioni).
-// La simulazione si apre a schermo intero con il conto alla rovescia (predefinito 50 min), lo schermo
-// resta acceso (Wake Lock, dove supportato), avvisi a 10 minuti dalla fine e allo scadere; il risultato
-// si legge in automatico (07-cattura) e si salva in un record 'simulazione'. I file non vengono toccati.
 const Simulazioni = (() => {
     async function cartella() {
         const i = imp();
@@ -16053,7 +14789,6 @@ const Simulazioni = (() => {
     const minutiPredefiniti = () => imp().minutiSimulazione || 50;
     return { file, tutte, minutiPredefiniti };
 })();
-/** Elenco dei file di simulazione da scegliere. */
 async function apriSimulazioni() {
     if (serveGoogle())
         return;
@@ -16077,7 +14812,6 @@ async function apriSimulazioni() {
         corpo.appendChild(h('div.vuoto', null, String(e.message || e)));
     }
 }
-/** Esegue una simulazione a tempo. */
 async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefiniti()) {
     const inizio = Date.now(), fine = inizio + limite * 60000;
     let lock = null, tick = 0, salvata = false, avvisato10 = false, scaduto = false;
@@ -16086,7 +14820,7 @@ async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefi
     const v = visore('⏱ ' + nome, () => { clearInterval(tick); try {
         lock && lock.release();
     }
-    catch (_) { /* niente */ } });
+    catch (_) { } });
     v.barra.appendChild(orologio);
     v.corpo.appendChild(h('div.vuoto.centro', null, 'Scarico la simulazione da Drive…'));
     const aggiorna = () => {
@@ -16114,7 +14848,7 @@ async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefi
         try {
             lock = await navigator.wakeLock?.request('screen');
         }
-        catch (_) { /* non supportato */ }
+        catch (_) { }
         tick = window.setInterval(aggiorna, 1000);
         aggiorna();
         Cattura.osserva(fr, 'sim:' + fileId, nome, d => {
@@ -16128,7 +14862,7 @@ async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefi
                 pct: d.pct, giuste: d.giuste, totale: d.totale, deboli: d.livelli, debole: d.debole, minuti, limite };
             Stato.salva(rec);
             salvata = true;
-            Domande.registra('sim:' + fileId, '🧪 ' + nome, d); // v0.16: domande sbagliate della simulazione
+            Domande.registra('sim:' + fileId, '🧪 ' + nome, d);
             clearInterval(tick);
             avviso('✅ Simulazione salvata: ' + d.pct + '%' + (d.giuste != null ? ' (' + d.giuste + '/' + d.totale + ')' : '') + ' in ' + minuti + ' min' + (minuti > limite ? ' · fuori tempo di ' + (minuti - limite) + ' min' : '') + ' · tocca per annullare', 9000, () => { Stato.elimina(rec.id); avviso('Simulazione non salvata.'); });
         });
@@ -16138,24 +14872,13 @@ async function avviaSimulazione(fileId, nome, limite = Simulazioni.minutiPredefi
         v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e)));
     }
 }
-/** Riquadro in Studio → Esami: storico e pulsante. */
 function sezioneSimulazioni() {
     const s = Simulazioni.tutte();
     return h('section.card', null, h('h2.card-titolo', null, 'Simulazioni a tempo'), h('div.bottoni', null, h('button.btn', { onclick: apriSimulazioni }, '▶ Nuova simulazione (' + Simulazioni.minutiPredefiniti() + ' min)')), s.length ? s.slice(0, 12).map(x => h('div.widget-riga', null, h('span.nome', null, x.nome, h('div.tenue.piccolo', null, x.data.slice(8) + '/' + x.data.slice(5, 7) + ' · ' + x.minuti + '/' + x.limite + ' min' + (x.debole ? ' · debole: ' + x.debole : ''))), h('b', { style: { fontVariantNumeric: 'tabular-nums' } }, x.pct != null ? x.pct + '%' : '—'))) : h('div.tenue.piccolo', null, 'Nessuna simulazione ancora. La prossima del piano: Simulazione 3, domenica 22/11.'));
 }
 
-// 07-spiegazioni.ts — Spiegazioni AI dentro i quiz (v0.21).
-//
-// Nella copia del quiz aperta nell'app (il file su Drive non cambia) si aggiunge, sotto la correzione,
-// il riquadro «✨ Spiegazione AI» con tre livelli: breve, media, dettagliata. Il quiz manda al genitore
-// domanda, opzioni, risposta corretta, risposta data, citazioni e correzione; l'app chiama Groq
-// (gratuito, chiave solo su questo dispositivo, mai nei dati sincronizzati) e risponde.
-// Ogni spiegazione diventa un record 'spiegazione' (id 'sp-<hash domanda+corretta>-<livello>'):
-// si sincronizza su Drive con gli altri dati, così non si rigenera mai due volte e resta offline.
-// Modello principale openai/gpt-oss-120b; se finisce il limite si passa alla riserva.
 const Spiega = (() => {
-    // v0.46: chiavi e chiamate passano da IA (gateway unico); qui resta solo la logica delle spiegazioni.
-    const KM = 'imc-groq-modello'; // solo per compatibilità: i client 0.44 lo leggono da chiave-ai.json
+    const KM = 'imc-groq-modello';
     const LIV = {
         breve: 'in 2-3 frasi, andando dritto al punto',
         media: 'in un paragrafo di 5-7 frasi, con il ragionamento passo passo',
@@ -16173,10 +14896,8 @@ const Spiega = (() => {
         else
             localStorage.removeItem(k);
     }
-    catch (_) { /* niente */ } };
+    catch (_) { } };
     const chiave = () => IA.chiave('groq');
-    // v0.29: la chiave può viaggiare tra i TUOI dispositivi (iPhone dall'icona Home, Safari, iPad, PC hanno
-    // memorie separate) tramite un file privato sul tuo Drive, «dati/chiave-ai.json» — solo dopo conferma.
     const FILE_K = 'chiave-ai.json';
     async function recuperaDaDrive() {
         if (chiave() || !Drive.pronto)
@@ -16189,7 +14910,6 @@ const Spiega = (() => {
             const d = JSON.parse(await Drive.scaricaTesto(f.id));
             if (!d)
                 return false;
-            // v0.46: { groq, modello, v:2, chiavi:{groq, gemini} } — se c'è `chiavi` vale quello, altrimenti il vecchio { groq }
             const ch = d.v === 2 && d.chiavi ? d.chiavi : { groq: d.groq };
             if (!/^gsk_/.test(ch.groq || ''))
                 return false;
@@ -16198,7 +14918,7 @@ const Spiega = (() => {
                 IA.impostaChiave('gemini', ch.gemini);
             for (const p of IA.ALTRI)
                 if (ch[p] && !IA.chiave(p))
-                    IA.impostaChiave(p, ch[p]); // v0.47
+                    IA.impostaChiave(p, ch[p]);
             if (d.modello)
                 scrivi(KM, d.modello);
             avviso('✨ AI pronta: ' + (ch.gemini ? 'chiavi AI recuperate' : 'chiave Groq recuperata') + ' dal tuo Drive.');
@@ -16224,7 +14944,6 @@ const Spiega = (() => {
             avviso('Drive: ' + (e.message || e), 6000);
         }
     }
-    /** Garantisce la chiave: locale, oppure dal Drive. */
     async function pronta() { return !!chiave() || await recuperaDaDrive(); }
     function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++)
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
@@ -16240,7 +14959,6 @@ const Spiega = (() => {
         return 'Chimica, Biologia o Fisica';
     }
     async function chiama(d, l) {
-        // v0.52 (BP2): prompt per profilo/archetipo; per il proprietario (Medicina) il testo resta identico a prima
         const sys = Dominio.promptTutor(d.nomeMateria || materia(d.titolo), d.archetipo)
             + 'Basati sul testo di riferimento del corso e su conoscenze certe; non inventare dati, numeri o citazioni. Se il testo di riferimento non basta, dillo. '
             + 'Niente markdown: niente asterischi, cancelletti o tabelle. Puoi andare a capo tra un passaggio e l\'altro.' + MemoriaIA.linee('spiegazioni', 4);
@@ -16258,20 +14976,16 @@ const Spiega = (() => {
         await pronta();
         return chiama(d, l);
     }
-    /** Q5: chiamata generica (messaggi liberi, risposta JSON). v0.46: firma invariata, passa dal gateway IA. */
     async function chat(msgs, temperatura = 0.4) {
         return IA.json(msgs, 'genera', { temp: temperatura });
     }
-    /** v0.31: legge un'immagine (scrittura a mano) con un modello visivo; restituisce testo. */
     async function vede(istruzioni, immagine) {
         if (!await pronta() && !Object.keys(IA.tutteChiavi()).length)
             throw new Error('Manca la chiave AI: inseriscila in Altro → Spiegazioni AI.');
-        MediaStore.controllaVisione(immagine); // v0.50: oltre 20 MB nessun invio
-        // v0.46: modello visivo scelto dal gateway (Gemini Flash, poi Qwen visivo di Groq)
+        MediaStore.controllaVisione(immagine);
         const r = await IA.testo([{ role: 'user', content: [{ type: 'text', text: istruzioni }, { type: 'image_url', image_url: { url: immagine } }] }], 'visione', { temp: 0.1, maxOut: 4096 });
         return r.testo;
     }
-    // ---- Lato genitore: risponde alle richieste dei quiz aperti nell'app ----
     async function ricevi(e) {
         const m = e.data;
         if (!m || m.imc !== 'spiega-chiedi' || !e.source)
@@ -16304,7 +15018,6 @@ const Spiega = (() => {
         }
     }
     window.addEventListener('message', e => { ricevi(e); });
-    // ---- Lato quiz: script aggiunto alla copia del quiz (autonomo, niente riferimenti all'app) ----
     function spiaAI() {
         const D = document, stato = {};
         const tx = (el) => el ? (el.textContent || '').replace(/\s+/g, ' ').trim() : '';
@@ -16361,7 +15074,6 @@ const Spiega = (() => {
                     return;
                 ev.stopPropagation();
                 const l = t.dataset.l, forza = !!t.dataset.f;
-                // Le citazioni sono nel riquadro «📖 Spiegazione»: se è chiuso lo apro un istante per leggerle.
                 const btn = D.getElementById('explbtn'), apri = !D.getElementById('expl') && !!btn;
                 if (apri)
                     btn.click();
@@ -16394,9 +15106,7 @@ const Spiega = (() => {
         aggiungi();
     }
     const SCRIPT = '<script>(' + spiaAI.toString() + ')();<\/script>';
-    /** Aggiunge il riquadro AI alla copia del quiz (in fondo al body). */
     function inietta(html) { return /<\/body>/i.test(html) ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, SCRIPT + '</body>') : html + SCRIPT; }
-    // ---- Altro → Spiegazioni AI ----
     function sezione() {
         const inp = h('input', { type: 'text', placeholder: 'gsk_…', value: chiave(), autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: false, style: { fontFamily: 'monospace' } });
         const salvaChiave = () => { const v = inp.value.replace(/\s+/g, ''); inp.value = v; IA.impostaChiave('groq', v); if (/^gsk_/.test(v))
@@ -16436,16 +15146,6 @@ const Spiega = (() => {
     return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
 
-// 07-studiaora.ts — "Studia ora" (v0.15, F4 ridotta, tattiche T15–T19).
-//
-// Un tasto in cima a Oggi: scegli quanto tempo hai (25/50/90 min) e l'app compone la sessione,
-// una cosa alla volta, in quest'ordine:
-//  1. ripassi di oggi più a rischio (al massimo ~40% del tempo, richiamo con memoria "tiepida");
-//  2. step del giorno: prova a freddo se lo step non è iniziato, poi le prioritarie da fare in ordine;
-//  3. schede da rifare (errori), se avanza tempo;
-//  4. 5 minuti finali di richiamo a memoria (cosa ho imparato? scrivo una domanda).
-// Le pause sono inserite ogni ~25 minuti. Il timer della sessione parte con la durata scelta.
-// La sessione in corso si salva sul dispositivo (localStorage) per riprenderla.
 const StudiaOra = (() => {
     const CH = 'imc-studia-ora', MIN = 10;
     const leggi = () => { try {
@@ -16457,16 +15157,15 @@ const StudiaOra = (() => {
     const scrivi = (s) => { try {
         s ? localStorage.setItem(CH, JSON.stringify(s)) : localStorage.removeItem(CH);
     }
-    catch (_) { /* niente */ } };
+    catch (_) { } };
     function componi(minuti, giorno = oggi()) {
         const out = [];
-        let resto = minuti - 5; // 5 min finali di richiamo
+        let resto = minuti - 5;
         const metti = (v) => { if (resto >= v.min) {
             out.push(v);
             resto -= v.min;
             return true;
         } return false; };
-        // 1) ripassi più a rischio, max ~40% del tempo
         let tettoRip = Math.max(MIN, Math.round(minuti * 0.4));
         for (const x of Ripassi.delGiorno(ymd(giorno)).oggi) {
             if (tettoRip < MIN)
@@ -16477,19 +15176,15 @@ const StudiaOra = (() => {
             if (metti({ tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ricordo ' + Math.round(x.r * 100) + '%', min: MIN, k: x.k, id: sc.id }))
                 tettoRip -= MIN;
         }
-        // 1b) flashcard di oggi (v0.18): circa 12 secondi a carta, massimo 15 minuti
         const nc = Carte.conta();
         const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
         if (nc.ripasso + nc.nuove && Carte.mazzi().length)
             metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
-        // 1b') v0.58 (Q2): domande dei quiz con ripasso scaduto (illusioni di oggi comprese), ~1 min a domanda, max 10
         const nq = QuizRifare.conta(ymd(giorno));
         if (nq)
             metti({ tipo: 'quiz', titolo: '🎯 Quiz da rifare (' + nq + ')', sotto: (nq > QuizRifare.MAX ? 'Le ' + QuizRifare.MAX + ' più urgenti' : 'Le domande scadute') + ', prima le illusioni di competenza', min: Math.max(3, QuizRifare.minuti(nq)) });
-        // 1c) appunti da ripassare (copri e ricorda): ~4 min ciascuno, al massimo 3
         for (const a of Appunti.appuntiDaRipassare().slice(0, 3))
             metti({ tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto: 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni', min: 4, id: a.id });
-        // 2) step del giorno
         for (const vg of Studio.vociDelGiorno(giorno)) {
             if (vg.v.speciale || vg.p.modo === 'raffinamento')
                 continue;
@@ -16502,11 +15197,9 @@ const StudiaOra = (() => {
                 if (!metti({ tipo: 'scheda', titolo: '📖 ' + Studio.etichetta(vg.v.k) + ' · scheda ' + s.k + '/' + s.n, sotto: s.titolo + ' · pp. ' + Studio.intervalli(Studio.pagineSet(s.pagine)), min: MIN, k: vg.v.k, id: s.id }))
                     break;
         }
-        // 3) errori
         for (const x of tutteLeSchede().filter(x => daRifare(x.s.id)))
             if (!metti({ tipo: 'errore', titolo: '✏️ Da rifare · ' + Studio.etichetta(x.sub.k), sotto: x.s.titolo, min: MIN, k: x.sub.k, id: x.s.id }))
                 break;
-        // pause ogni ~25 minuti di lavoro
         const conPause = [];
         let acc = 0;
         out.forEach((v, i) => { conPause.push(v); acc += v.min; if (acc >= 25 && i < out.length - 1 && minuti >= 50) {
@@ -16528,7 +15221,6 @@ const StudiaOra = (() => {
     function chiudi() { scrivi(null); }
     return { componi, avvia, leggi, segnaFatto, chiudi };
 })();
-/** Esegue una voce: apre il quiz giusto (ripasso, scheda, errore) o la prova a freddo. */
 function eseguiVoce(v) {
     if (v.tipo === 'freddo' && v.k) {
         avviaProvaAFreddo(v.k);
@@ -16598,15 +15290,12 @@ function apriSessione() {
     disegnaS();
     foglio({ titolo: 'Sessione in corso', corpo, etichettaSalva: 'Termina', salva: () => { StudiaOra.chiudi(); avviso('Sessione chiusa.'); } });
 }
-/** Riquadro in cima a Oggi. */
 function widgetStudiaOra() {
     const s = StudiaOra.leggi();
     if (s) {
         const prossima = s.voci.find(v => !v.fatto), fatte = s.voci.filter(v => v.fatto).length;
         return h('section.card', null, h('button.btn.studia-ora', { onclick: apriSessione }, '▶ Sessione in corso · ' + fatte + '/' + s.voci.length), prossima ? h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Prossima: ' + prossima.titolo) : null);
     }
-    // v0.58: card «Adesso» — cosa fare ora in una riga, durata stimata e [Inizia] che avvia subito la sessione (2 tocchi da app chiusa)
-    // Il riassunto (2 composizioni della sessione) si calcola dopo il disegno: Oggi resta nel budget dei tempi (prestazioni.py).
     const e = prossimoEsame(), durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
     const inizia = () => { const a = adesso(); if (!a.minuti) {
         Timer.avvia({ titolo: 'Studio libero' });
@@ -16630,7 +15319,6 @@ function widgetStudiaOra() {
         { t: 'Simulazione d\'esame', ic: 'quiz', f: () => apriSimulazioni() }
     ], 'Studia ora'), h('button.btn-testo', { onclick: apriStudiaOra }, 'Altra durata')));
 }
-/** v0.58: la sessione consigliata adesso — la durata più corta (25/50/90) che contiene tutto il dovuto, e una riga di riassunto. */
 function adesso(giorno = oggi()) {
     const lavoro = (vv) => vv.filter(v => v.tipo !== 'pausa' && v.tipo !== 'richiamo');
     const tutto = lavoro(StudiaOra.componi(90, giorno)), serve = tutto.reduce((s, v) => s + v.min, 0);
@@ -16654,7 +15342,6 @@ function adesso(giorno = oggi()) {
         pezzi.push(n('errore') + ' errori');
     return { minuti, riassunto: pezzi.join(' + ') || voci[0].titolo };
 }
-/** v0.58: esame più vicino (oggi compreso) e stato rispetto al piano. */
 function prossimoEsame() {
     const e = Stato.tutti('esame').filter(x => !x.deleted && giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
     if (!e)
@@ -16663,20 +15350,6 @@ function prossimoEsame() {
     return { nome: e.nome.replace(/ semestre filtro$/i, ''), giorni: giorniA(e.data), stato: r < 0 ? '' : r ? 'indietro di ' + r + ' step' : 'in pari ✓' };
 }
 
-// ============================================================
-// 07-studio.ts — Modulo STUDIO.
-// - Pacchetti studio (formato v1, docs/formato-studio.md): arrivano dal sito
-//   (studio/*.json, generati da studio/genera.mjs) e dalla cartella Drive
-//   "Calendario personale/studio". Salvati come record type 'pacchetto'.
-// - I PROGRESSI sono record separati (type 'progresso', id 'prog-<idScheda>'):
-//   aggiornare un pacchetto non li tocca mai.
-// - Piano → calendario: i giorni del piano compaiono come blocchi "Studio".
-//   Uno step spostato è un record type 'spostamento' (id 'sp-<chiave>').
-// ============================================================
-// ---------- Materie (generiche) ----------
-// Una materia ha un CODICE di lettere maiuscole (C, B, F, ANA, STAT…). Le chiavi dei sotto-step sono
-// codice + numero ("C2.3", "ANA1.2"). Nome, sigla e colore vengono, in ordine: dal record 'materia'
-// (modificabile dall'utente), dal pacchetto che la contiene, dai valori di base sotto.
 const MATERIE_BASE = {
     C: { nome: 'Chimica', breve: 'Chi', colore: '#e9a23b' }, B: { nome: 'Biologia', breve: 'Bio', colore: '#2fbf8f' }, F: { nome: 'Fisica', breve: 'Fis', colore: '#6c8cff' },
 };
@@ -16706,9 +15379,7 @@ function infoMateria(code) {
 }
 const nomeMateria = (c) => infoMateria(c).nome;
 const coloreMateria = (c) => infoMateria(c).colore;
-/** Colore di una chiave di step ("C2.3") o grigio per le voci speciali. */
 const coloreChiave = (k) => materiaDi(k) ? coloreMateria(materiaDi(k)) : '#7c8597';
-/** v0.20: ogni materia ha anche una FORMA (non solo un colore): si riconosce anche senza distinguere i colori. */
 const FORME_BASE = { C: '◆', B: '●', F: '▲' };
 const FORME = ['■', '★', '⬟', '⬢', '✚', '◗'];
 function formaMateria(code) { if (FORME_BASE[code])
@@ -16717,10 +15388,6 @@ function formaMateria(code) { if (FORME_BASE[code])
 const formaChiave = (k) => materiaDi(k) ? formaMateria(materiaDi(k)) : '';
 function segnoMateria(k) { const f = formaChiave(k); return f ? h('span.forma-mat', { style: { color: coloreChiave(k) }, 'aria-hidden': 'true' }, f) : null; }
 const Studio = (() => {
-    /**
-     * "Piani" ricavati da altri dati: i corsi creati dall'utente (sotto-step con data) e gli esami.
-     * Così compaiono nel calendario, in Oggi e nel ritardo come gli step del piano principale.
-     */
     function pianiVirtuali() {
         const out = [];
         for (const pk of pkStep().filter(p => p.proprio)) {
@@ -16738,43 +15405,36 @@ const Studio = (() => {
                 giorni: esami.map(e => ({ data: e.data, voci: [{ k: 'ESAME-' + e.id, t: '🎓 ' + e.nome + (e.ora ? ' · ' + e.ora : ''), d: e.nota || 'Esame', speciale: true }] })) });
         return out;
     }
-    // v0.17: risultati memorizzati finché i dati non cambiano (Stato.ver)
     const memo = (f) => { let v = -1, x; return () => { if (v !== Stato.ver) {
         x = f();
         v = Stato.ver;
     } return x; }; };
-    const pkStepM = memo(() => ImportaDrive.applicaCorsi(Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step))); // v0.58.2: + innesti Drive
+    const pkStepM = memo(() => ImportaDrive.applicaCorsi(Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'step').sort((a, b) => a.step - b.step)));
     function pkStep() { return pkStepM().slice(); }
-    const pkPianiM = memo(() => ImportaDrive.applicaPiani(Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1))); // v0.58.2: + innesti Drive
+    const pkPianiM = memo(() => ImportaDrive.applicaPiani(Stato.tutti('pacchetto').map(r => r.contenuto).filter(c => c && c.tipo === 'piano').sort((a, b) => (a.giorni[0] || { data: '' }).data < (b.giorni[0] || { data: '' }).data ? -1 : 1)));
     function pkPiani() { return pkPianiM().slice(); }
-    /** v0.20.1: piani visibili in Oggi, calendario, ritardi e ripassi (quelli nascosti restano solo nella vista Piano). */
     const nascosto = (id) => (imp().pianiNascosti || []).includes(id);
     function pianiAttivi() { return pkPianiM().filter(p => !nascosto(p.id)); }
     function nascondiPiano(id, si) { const i = imp(), l = (i.pianiNascosti || []).filter((x) => x !== id); if (si)
         l.push(id); i.pianiNascosti = l; Stato.salva(i, true); }
-    /** Il piano principale (teoria). */
     function pkPiano() { return pkPiani().find(p => p.id === 'piano') || pkPiani()[0] || null; }
-    /** Inserisce/aggiorna un pacchetto. I progressi stanno altrove: non si perdono. */
     function importa(c, daSito = false) {
         if (!c || c.formato !== 'pacchetto-studio' || !c.id || !c.tipo)
             return false;
         const id = 'pk-' + c.id, mio = Stato.rec.get(id);
         if (mio && !mio.deleted && JSON.stringify(mio.contenuto) === JSON.stringify(c))
             return false;
-        // mai sostituire un pacchetto con una versione più vecchia (es. sito vs Drive)
         if (mio && !mio.deleted && mio.contenuto && String(mio.contenuto.aggiornato || '') > String(c.aggiornato || ''))
             return false;
         Stato.salva({ id, type: 'pacchetto', updatedAt: 0, contenuto: c, daSito: daSito || undefined });
-        // esami indicati dal pacchetto: creati una volta sola (poi li gestisce l'utente)
         for (const e of c.esami || [])
             if (e && e.id && !Stato.rec.has(e.id))
                 Stato.salva({ id: e.id, type: 'esame', updatedAt: 0, nome: e.nome, data: e.data, ora: e.ora, daSito: daSito || undefined });
         return true;
     }
-    /** Pacchetti distribuiti col sito (base di partenza). */
     async function caricaDalSito() {
         if (!Drive.eProprietario())
-            return; // v0.26: il programma del sito è solo del proprietario
+            return;
         try {
             const r = await fetch('studio/indice.json', { cache: 'no-cache' });
             if (!r.ok)
@@ -16785,9 +15445,8 @@ const Studio = (() => {
                     importa(await p.json(), true);
             }
         }
-        catch (_) { /* offline o anteprima */ }
+        catch (_) { }
     }
-    /** v0.26: il secondo account non deve ereditare il programma del sito caricato prima dell'accesso. */
     function togliSito() {
         let n = 0;
         for (const r of Stato.rec.values())
@@ -16797,9 +15456,6 @@ const Studio = (() => {
             }
         return n;
     }
-    /** Pacchetti nella cartella Drive dell'app (quelli creati da Claude in futuro). */
-    /** v0.42: cerca i pacchetti in TUTTO il Drive (Trova.pacchetti), non solo nella cartella dell'app.
-     *  Legge prima i candidati migliori; accetta file singoli, elenchi o raccolte {pacchetti:[…]}. */
     let ultimiTrovati = [];
     async function caricaDaDrive(avanzamento) {
         await Drive.preparaCartelle();
@@ -16814,7 +15470,7 @@ const Studio = (() => {
             if (noto && mod && noto.v.modifiedTime === mod && noto.v.importato) {
                 ultimiTrovati.push(...(noto.v.titoli || []).map((t) => ({ nome, cartella, tipo: t.tipo, titolo: t.titolo })));
                 return true;
-            } // invariato: non lo riscarico
+            }
             let j;
             try {
                 j = JsonAI.leggiFile(await Drive.scaricaTesto(id));
@@ -16839,14 +15495,12 @@ const Studio = (() => {
                 MemoriaIA.nota('ricerca', 'pacchetto', id, { id, name: nome, mimeType: 'application/json', modifiedTime: mod || '', parents: par ? [par] : [], importato: true, titoli: lista.filter((c) => c && c.formato === 'pacchetto-studio').map((c) => ({ tipo: c.tipo, titolo: c.titolo || c.id })) });
             }
             else if (!noto)
-                MemoriaIA.nota('ricerca', 'nonpacchetto', id, null); // JSON che non è un pacchetto: la prossima volta lo salto
+                MemoriaIA.nota('ricerca', 'nonpacchetto', id, null);
             return buoni > 0;
         };
-        // 1) la cartella dell'app (veloce)
         for (const f of await Drive.elencaTutti(Drive.idCartella('studio')))
             if (/\.json$/i.test(f.name))
                 await prova(f.id, f.name, 'Calendario personale/studio');
-        // 2) tutto il Drive, in ordine di probabilità
         avanzamento && avanzamento('Cerco i pacchetti in tutto il Drive…');
         const scarti = new Set(MemoriaIA.migliori('ricerca', 'nonpacchetto', 300).map(x => x.k));
         const cand = (await Trova.pacchetti()).filter(c => c.punti > 5 && !scarti.has(c.id)).slice(0, 60);
@@ -16868,10 +15522,9 @@ const Studio = (() => {
             p.data = ymd(new Date());
         Stato.salva(p);
         if (!id.startsWith('step-') && typeof Ripassi !== 'undefined')
-            Ripassi.registra(id, p); // v0.7: ripasso FSRS
+            Ripassi.registra(id, p);
     }
-    /** Pagine del libro: '141-144,146' o appendice 'A1-A4'. Restituisce stringhe ('141', 'A2'). */
-    const cachePagine = new Map(); // v0.17: stessa stringa → stesso risultato
+    const cachePagine = new Map();
     function pagineSet(s) {
         const c = cachePagine.get(s || '');
         if (c)
@@ -16900,7 +15553,6 @@ const Studio = (() => {
         return out.join(', ');
     }
     function unione(l) { const o = new Set(); l.forEach(s => pagineSet(s.pagine).forEach(p => o.add(p))); return o; }
-    /** Numeri di un insieme di schede (come nella tabella riepilogo della scheda PDF). */
     function numeri(l) {
         const P = l.filter(s => s.tipo === 'P'), R = l.filter(s => s.tipo === 'R');
         return { P: P.length, R: R.length, Pf: P.filter(s => fatta(s.id)).length, Rf: R.filter(s => fatta(s.id)).length,
@@ -16921,18 +15573,12 @@ const Studio = (() => {
     function etichetta(k) {
         const a = /^([A-Z]+)~[^~]+~([^~]+)~([^~]+)$/.exec(k);
         if (a)
-            return infoMateria(a[1]).breve + ' ' + (a[2] === 'BUF' ? 'buffer' : a[2] + ' ' + a[3].replace(/-\d+$/, '')); // v0.55: chiavi dei piani ai_neuro
+            return infoMateria(a[1]).breve + ' ' + (a[2] === 'BUF' ? 'buffer' : a[2] + ' ' + a[3].replace(/-\d+$/, ''));
         const m = /^([A-Z]+)(\d.*)$/.exec(k);
         return m ? infoMateria(m[1]).breve + ' ' + m[2] : k;
     }
-    // ---------- Piano ----------
-    // Chiavi degli spostamenti: 'sp-<k>' per il piano principale, 'sp-<idPiano>-<k>' per gli altri.
     const idSp = (k, pid = 'piano') => pid === 'piano' ? 'sp-' + k : 'sp-' + pid + '-' + k;
     function dataVoce(v, g, pid = 'piano') { const sp = Stato.prendi(idSp(v.k, pid)); return sp ? sp.data : g.data; }
-    /**
-     * Uno step è completato quando tutte le sue prioritarie sono fatte; nel piano di raffinamento
-     * quando sono fatte anche tutte le schede di raffinamento. Senza pacchetto si spunta a mano.
-     */
     function stepFatto(k, p) {
         const t = trovaSotto(k), raff = !!(p && p.modo === 'raffinamento');
         if (t) {
@@ -16951,7 +15597,6 @@ const Studio = (() => {
                         out.push({ v, g: gg, spostata: gg.data !== k, p });
         return out;
     }
-    /** Step (non speciali) con data già passata e non completati, in tutti i piani. */
     function inRitardo() {
         const oggiK = ymd(oggi()), out = [];
         for (const p of [...pianiAttivi(), ...pianiVirtuali()])
@@ -16968,14 +15613,12 @@ const Studio = (() => {
         else if (Stato.rec.get(id))
             Stato.elimina(id);
     }
-    // ---------- Risorse su Drive ----------
     const cacheElenchi = {};
     async function elenco(cartella) {
         if (!cacheElenchi[cartella])
             cacheElenchi[cartella] = await Drive.elencaTutti(cartella);
         return cacheElenchi[cartella];
     }
-    /** Trova il file quiz di una scheda nella cartella "<materia> quiz" (per microstep + "scheda k di n"). */
     async function idQuiz(pk, m, micro, s) {
         if (s.quizFileId)
             return s.quizFileId;
@@ -16984,18 +15627,16 @@ const Studio = (() => {
         try {
             f = (await elenco(pk.risorse.quiz[m])).filter(x => x.name.startsWith(micro + ' ') && x.name.endsWith(coda));
         }
-        catch (_) { /* cartella di un altro Drive: cerco ovunque */ }
+        catch (_) { }
         const esatto = f.find(x => x.name === s.quizFile);
         if (esatto || f.length)
             return (esatto || f[0]).id;
-        // v0.42: la cartella del pacchetto non c'è (es. un altro account): cerco la scheda in tutto il Drive
         const t = await Trova.perNome([micro + ' ', '(scheda ' + s.k + ' di ' + s.n + ')'], 'text/html') || await Trova.perNome([s.titolo.slice(0, 40)]);
         if (!t)
             throw new Error('Quiz non trovato su Drive: ' + s.quizFile + '. Caricalo in qualsiasi cartella del tuo Drive.');
         s.quizFileId = t.id;
         return t.id;
     }
-    /** Pagina del libro → file PDF diviso + pagina dentro al file. */
     async function pdfPagina(pk, m, pagLibro) {
         const L = pk.risorse.libri[m], ass = pagLibro + L.offset, primo = Math.floor((ass - 1) / L.blocco) * L.blocco + 1;
         let id = L.file[String(primo)];
@@ -17005,7 +15646,7 @@ const Studio = (() => {
             try {
                 f = (await elenco(L.cartella)).find(x => x.name.startsWith(pref) && /\.pdf$/i.test(x.name));
             }
-            catch (_) { /* altro Drive */ }
+            catch (_) { }
             if (!f) {
                 const t = await Trova.perNome([pref], 'application/pdf');
                 if (t)
@@ -17020,9 +15661,7 @@ const Studio = (() => {
     return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, trovati, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
         dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
-// ---------- Visore a tutto schermo (quiz e PDF) ----------
 function visore(titolo, alChiudi) {
-    // v0.57.1 (Q6): doppio tocco → un solo visore. Lo stesso titolo aperto da < 1 s sostituisce il precedente (senza alChiudi).
     for (const vecchio of Array.from(document.querySelectorAll('.visore')))
         if (vecchio.dataset.titolo === titolo && Date.now() - Number(vecchio.dataset.aperto || 0) < 1000)
             vecchio.remove();
@@ -17042,9 +15681,7 @@ function serveGoogle() {
     avviso('Accedi a Google, poi tocca di nuovo.');
     return true;
 }
-/** Apre una mini-app quiz HTML dentro l'app, in un iframe isolato (sandbox). Il file su Drive non viene modificato. */
 async function apriQuiz(pk, m, micro, s, cb) {
-    // Schede dei corsi propri: file qualsiasi (PDF → visore, HTML → iframe, altro → link)
     if (s.file && !(s.file.mime || '').includes('html') && !/\.html?$/i.test(s.file.nome)) {
         if (s.file.id && /pdf/i.test(s.file.mime || s.file.nome)) {
             if (serveGoogle())
@@ -17072,11 +15709,10 @@ async function apriQuiz(pk, m, micro, s, cb) {
     v.corpo.appendChild(h('div.vuoto.centro', null, 'Scarico il quiz da Drive…'));
     try {
         let html = await Drive.scaricaTesto(await Studio.idQuiz(pk, m, micro, s));
-        // Nell'iframe isolato localStorage non esiste: ne fornisco uno in memoria, solo a schermo.
         const toppa = '<script>try{window.localStorage.getItem("x")}catch(e){(function(){var m={};var s={getItem:function(k){return k in m?m[k]:null},setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}}};try{Object.defineProperty(window,"localStorage",{value:s});Object.defineProperty(window,"sessionStorage",{value:s})}catch(_){}})()}<\/script>';
         html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, x => x + toppa) : html.replace(/<html[^>]*>/i, x => x + toppa);
-        html = Cattura.inietta(html); // v0.9: legge il risultato finale (il file su Drive non cambia)
-        html = Spiega.inietta(html); // v0.21: riquadro «✨ Spiegazione AI» sotto la correzione
+        html = Cattura.inietta(html);
+        html = Spiega.inietta(html);
         svuota(v.corpo);
         const fr = h('iframe.visore-frame', { sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals', srcdoc: html, title: s.titolo });
         v.corpo.appendChild(fr);
@@ -17088,11 +15724,6 @@ async function apriQuiz(pk, m, micro, s, cb) {
     }
 }
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
-/**
- * Cache dei PDF dei libri sul dispositivo (Cache Storage): il primo apertura scarica il file intero
- * mostrando l'avanzamento, le successive sono istantanee e funzionano anche offline.
- * Tiene al massimo MAX file (i meno usati escono per primi).
- */
 const PdfCache = (() => {
     const NOME = 'imc-pdf', MAX = 10, CH = 'imc-pdf-uso';
     const url = (id) => location.origin + '/__pdf/' + id;
@@ -17105,7 +15736,7 @@ const PdfCache = (() => {
     const segna = (u) => { try {
         localStorage.setItem(CH, JSON.stringify(u));
     }
-    catch (_) { /* niente */ } };
+    catch (_) { } };
     async function cache() { try {
         return await caches.open(NOME);
     }
@@ -17154,13 +15785,12 @@ const PdfCache = (() => {
                 }
                 segna(u);
             }
-            catch (_) { /* spazio esaurito: lo uso senza salvarlo */ }
+            catch (_) { }
         }
         return tutto;
     }
     return { prendi, presente };
 })();
-/** Visualizzatore PDF integrato (pdf.js), alla pagina indicata. */
 async function apriPdf(fileId, pagina, titolo) {
     if (serveGoogle())
         return;
@@ -17173,7 +15803,7 @@ async function apriPdf(fileId, pagina, titolo) {
         pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
         const dati = await PdfCache.prendi(fileId, (f, t) => { stato.textContent = 'Scarico il PDF… ' + (t ? Math.round(f / t * 100) + '%' : Math.round(f / 1048576) + ' MB') + ' (solo la prima volta)'; });
         stato.textContent = 'Apro il PDF…';
-        const doc = await pdfjsLib.getDocument({ data: dati, isEvalSupported: false }).promise; // v0.56.2: CVE-2024-4367 (pdf.js 3.11)
+        const doc = await pdfjsLib.getDocument({ data: dati, isEvalSupported: false }).promise;
         let p = Math.min(Math.max(1, pagina), doc.numPages), zoom = 1, giro = 0;
         const tela = h('canvas.pdf-tela'), num = h('span.pdf-num');
         async function mostra() {
@@ -17216,10 +15846,8 @@ async function apriPdf(fileId, pagina, titolo) {
         }
     }
 }
-/** Foglio di una scheda: fatta, data, punteggio, nota errori, quiz, pagine del libro. */
 function apriScheda(pk, m, micro, s, ripasso = false) {
     const p = Studio.prog(s.id);
-    // Ripasso (v0.7): data di oggi e punteggio vuoto; si salva solo se scrivi il nuovo punteggio.
     const fatta = h('input', { type: 'checkbox', checked: !!(p && p.fatta) });
     const data = h('input', { type: 'date', value: ripasso ? ymd(new Date()) : p && p.data || '' });
     const punti = h('input', { type: 'number', min: '0', max: '100', inputMode: 'numeric', placeholder: ripasso && p && p.punteggio != null ? 'prima ' + p.punteggio + '%' : '%', value: !ripasso && p && p.punteggio != null ? String(p.punteggio) : '' });
@@ -17232,9 +15860,7 @@ function apriScheda(pk, m, micro, s, ripasso = false) {
     const apribili = pk.risorse.libri[m] ? blocchi.filter(b => /^\d/.test(b)) : [];
     const f = foglio({
         titolo: (ripasso ? '🧠 Ripasso · ' : '') + micro + ' · scheda ' + s.k + '/' + s.n,
-        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), pk.proprio && !Dominio.haDomande(s.id) ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s); } }, '🧩 Quiz nell\'app'), // v0.52: anche corsi propri con domande .imcpack
-        Generatori.per(m, micro).length ? h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s, () => Generatori.serie(m, micro)); } }, '🎲 Esercizi nuovi') : null, pk.proprio || Dominio.senzaAI() ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); AIGen.avvia(pk, m, micro, s); } }, '🤖 Domande AI'), // v0.52: nascosto senza chiavi AI
-        h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
+        corpo: h('div.modulo', null, h('div.gruppo', { style: { padding: '12px 14px' } }, h('div.voce-titolo', { style: { whiteSpace: 'normal' } }, s.titolo), h('div.chips', { style: { marginTop: '8px' } }, h('span.etichetta.' + (s.tipo === 'P' ? 'prior' : 'raff'), null, s.tipo === 'P' ? 'PRIORITARIA' : 'RAFFINAMENTO'), s.problemi ? h('span.etichetta', null, 'Problemi da risolvere') : null)), h('div.bottoni', null, h('button.btn', { onclick: () => { salva(); f.chiudi(); apriQuiz(pk, m, micro, s); } }, pk.proprio ? (s.file ? 'Apri il file' : 'Nessun file') : 'Apri il quiz'), pk.proprio && !Dominio.haDomande(s.id) ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s); } }, '🧩 Quiz nell\'app'), Generatori.per(m, micro).length ? h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); QuizApp.apri(pk, m, micro, s, () => Generatori.serie(m, micro)); } }, '🎲 Esercizi nuovi') : null, pk.proprio || Dominio.senzaAI() ? null : h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); AIGen.avvia(pk, m, micro, s); } }, '🤖 Domande AI'), h('button.btn.neutro', { onclick: () => { salva(); f.chiudi(); Timer.avvia({ m, k: m + micro.split('.').slice(0, 2).join('.'), schedaId: s.id, titolo: s.titolo }); } }, '▶ Timer')), pk.proprio ? h('button.btn-testo', { onclick: () => { f.chiudi(); editorSchedaPropria(pk, mat0(pk, m), mat0(pk, m).sottostep.find(ss => ss.microstep.some(mm => mm.schede.some(x => x.id === s.id))), s); } }, 'Modifica scheda') : null, h('div.gruppo', null, riga('Fatta', fatta), riga('Data', data), riga('Punteggio %', punti), riga('Da rifare', rifare)), ripasso ? h('div.tenue.piccolo', null, 'Rifai il quiz senza guardare gli appunti, poi scrivi il nuovo punteggio: l\'app calcola il prossimo ripasso.') : h('div.tenue.piccolo', null, 'Con un punteggio sotto il ' + sogliaErrori() + '% la scheda va da sola in Studio → Errori.'), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Nota errori'), nota), h('div.gruppo', null, h('div.gruppo-titolo', null, blocchi.length ? 'Libro (' + L.nome + ') — pp. ' + blocchi.join(', ') : 'Nessuna pagina del libro'), h('div.chips', { style: { margin: '4px 0 10px' } }, apribili.map(b => {
             const pag = parseInt(b, 10);
             return h('button.chip', { onclick: async () => {
                     if (serveGoogle())
@@ -17252,7 +15878,7 @@ function apriScheda(pk, m, micro, s, ripasso = false) {
     });
     function salva() {
         if (ripasso && punti.value === '')
-            return; // aprire un ripasso senza punteggio non conta
+            return;
         const v = punti.value === '' ? undefined : Math.max(0, Math.min(100, parseInt(punti.value, 10) || 0));
         const prima = JSON.stringify([!!(p && p.fatta), p && p.data || '', p && p.punteggio, p && p.nota || '', !!(p && p.daRifare)]);
         if (prima === JSON.stringify([fatta.checked, data.value, v, nota.value, rifare.checked]))
@@ -17260,7 +15886,6 @@ function apriScheda(pk, m, micro, s, ripasso = false) {
         Studio.segna(s.id, { fatta: fatta.checked, data: data.value || undefined, punteggio: v, nota: nota.value || undefined, daRifare: rifare.checked });
     }
 }
-/** Foglio per spostare uno step del piano su un altro giorno (i progressi restano). */
 function apriSposta(v, g, p) {
     const attuale = Studio.dataVoce(v, g, p.id);
     const data = h('input', { type: 'date', value: attuale });
@@ -17275,10 +15900,9 @@ function apriSposta(v, g, p) {
 function barra(fatte, tot, colore) {
     return h('div.barra-av', { role: 'progressbar', 'aria-valuenow': String(fatte), 'aria-valuemax': String(tot) }, h('div', { style: { width: (tot ? (fatte / tot) * 100 : 0) + '%', background: colore || 'var(--accento)' } }));
 }
-/** Riga "blocco studio" per Oggi / calendario. */
 function rigaStudio(x) {
     const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k.replace(/^G2-/, ''));
-    const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k); // v0.11: apre la modalità simulazione
+    const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k);
     return lungo(h('button.voce-lista', { onclick: () => { if (sim) {
             apriSimulazioni();
             return;
@@ -17294,8 +15918,6 @@ function rigaStudio(x) {
             vai('studio');
         } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : ''))), () => sim ? MenuLungo.esame() : MenuLungo.step(x.v.k), x.v.speciale ? x.v.t : Studio.etichetta(x.v.k));
 }
-/** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
-/** v0.20.2: flashcard collegate al sotto-step, da aggiungere al sottotitolo delle voci del piano. */
 function testoCarte(k) {
     const mz = Carte.mazzi().filter(m => m.sub === k);
     if (!mz.length)
@@ -17306,7 +15928,7 @@ function testoCarte(k) {
 function hm2(ora, min) { const [a, b] = ora.split(':').map(Number), t = a * 60 + b + min; return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); }
 function testoAvanzamento(k, p) { return testoAvanzamento0(k, p) + testoCarte(k); }
 function testoAvanzamento0(k, p) {
-    if (p.origine === 'ai_neuro') { // v0.55 (BP4): ora, durata, fonte
+    if (p.origine === 'ai_neuro') {
         const v = p.giorni.reduce((r, g) => r || g.voci.find(x => x.k === k), undefined);
         if (v)
             return [v.ora ? v.ora + (v.min ? '–' + hm2(v.ora, v.min) : '') : '', v.min ? v.min + ' min' : '', v.sorgenteRef && v.sorgenteRef.pagine.length ? (v.sorgenteRef.nomeFile || 'fonte') + ' pp. ' + v.sorgenteRef.pagine.join('–') : '', v.isRipassoFSRS ? 'ancoraggio FSRS' : ''].filter(Boolean).join(' · ');
@@ -17326,10 +15948,8 @@ function indicatoreStudio() {
         return null;
     const r = Studio.inRitardo();
     const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, h('span.pallino-stato'), r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
-    // v0.10: ripianificazione in un tocco (solo piano principale) — v0.34: compatta, sulla stessa riga
     return Ripianifica.inRitardo().length ? h('div.indicatore-riga', null, ind, h('button.btn-testo.ripianifica', { onclick: () => apriRipianifica() }, icona('ripeti', 16), 'Ripianifica')) : ind;
 }
-// ---------- Vista STUDIO ----------
 function vistaStudio() {
     const pks = Studio.pkStep(), piano = Studio.pkPiano();
     if (UI.studioSub) {
@@ -17340,12 +15960,9 @@ function vistaStudio() {
     }
     const pk = pks.find(p => p.id === UI.studioStep) || pks[pks.length - 1];
     const voci = [['schede', 'Schede'], ['carte', 'Carte'], ['piano', 'Piano'], ['errori', 'Errori'], ['statistiche', 'Statistiche'], ['esami', 'Esami'], ['syllabus', 'Syllabus'], ['tabelle', 'Tabelle']];
-    // v0.41 standard a tendina: 4 viste frequenti in vista, le altre nel menu «Altro ▾» (quella aperta resta visibile)
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
-    const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), // v0.58 (Q5): visibile, non più solo in «Altro ▾»
-    h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), // v0.58.1
-    tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
+    const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
         { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
@@ -17363,12 +15980,11 @@ function vistaStudio() {
         const piani = Studio.pkPiani(), scelto = piani.find(p => p.id === UI.studioPiano) || piani.find(p => { const g = p.giorni; return g.length && ymd(oggi()) <= g[g.length - 1].data; }) || piano;
         return h('div.pagina', null, seg, indicatoreStudio(), piani.length > 1 ? h('div.chips', null, piani.map(p => h('button.chip' + (p.id === scelto.id ? '.attivo' : ''), { onclick: () => { UI.studioPiano = p.id; UI.pianoScorso = false; disegna(); } }, p.titolo))) : null, scelto.nota ? h('div.tenue.piccolo', null, scelto.nota) : null, bottoniGeneratore(scelto), Ripianifica.inRitardo(ymd(new Date()), scelto).length && scelto.id !== (Studio.pkPiano() || { id: '' }).id ? h('button.btn.neutro', { onclick: () => apriRipianifica(scelto) }, '↻ Ripianifica i ritardi di questo piano') : null, vistaPiano(scelto));
     }
-    // v0.56.2 (U8): senza pacchetto-piano la vista Piano resta raggiungibile, con i due pulsanti del generatore
     if (UI.studioVista === 'piano')
         return h('div.pagina.piano-vuoto', null, seg, vuoto('Nessun piano di studio ancora. Generane uno dalle tue schede o crea un piano intelligente su misura.'), bottoniGeneratore());
     if (UI.studioVista !== 'schede')
         UI.studioVista = 'schede';
-    if (!pk && Drive.collegato && !window._pkAuto) { // v0.42: primo avvio di un nuovo account: cerca da solo i pacchetti nel Drive
+    if (!pk && Drive.collegato && !window._pkAuto) {
         window._pkAuto = true;
         Studio.caricaDaDrive().then(n => { if (n) {
             avviso('☁︎ Trovati nel tuo Drive ' + n + ' pacchetti di studio.');
@@ -17387,7 +16003,6 @@ function vistaStudio() {
     }), h('div.tenue.piccolo', null, 'pag. = prioritarie / raffinamento / totali (unione, non somma). Aggiornato: ' + pk.aggiornato + '.'), bottoneDrive());
 }
 function numero(v, eti) { return h('div.numero', null, h('strong', null, v), h('span', null, eti)); }
-/** v0.57 (BP6 · T7-1): onboarding minimo senza corsi (anche senza login / ospite): Corso → Piano → Quiz/Schede. */
 function primiPassi() {
     const passo = (n, titolo, testo, azione) => h('li.primo-passo', null, h('strong', null, n + ' ' + titolo), h('div.tenue.piccolo', null, testo), azione);
     return h('section.scheda.primi-passi', { 'aria-label': 'Primi passi nello Studio' }, h('h2', null, '👋 Primi passi'), h('ol', null, passo('1.', 'Crea un corso', 'Qualsiasi materia o esame: capitoli, schede e domande stanno nel corso.', h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio')), passo('2.', 'Crea un piano', 'Dall’indice del libro, dalle tue schede o su misura con i ripassi FSRS.', h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')), passo('3.', 'Studia con quiz e schede', 'Ogni giorno Oggi ti propone le schede del piano e i ripassi in scadenza.', null)), Drive.collegato ? bottoneDrive()
@@ -17447,7 +16062,6 @@ function vistaSottostep(pk, mat, sub) {
 }
 function vistaPiano(piano) {
     const oggiK = ymd(oggi()), lista = h('div.agenda');
-    // raggruppo per data effettiva (tenendo conto degli spostamenti)
     const perData = new Map();
     for (const g of piano.giorni) {
         if (!perData.has(g.data))
@@ -17481,7 +16095,6 @@ function vistaPiano(piano) {
     } }, 30);
     return lista;
 }
-// ---------- Copertura del syllabus ----------
 function vistaCopertura(piano) {
     const cop = piano.copertura || [];
     if (!cop.length)
@@ -17499,16 +16112,8 @@ function vistaCopertura(piano) {
 }
 function mat0(pk, m) { return pk.materie.find(x => x.m === m) || { m, nome: nomeMateria(m), libro: '', sottostep: [] }; }
 
-// ============================================================
-// 07-tabelle.ts — Tabelle personalizzate (dentro Studio → Tabelle).
-// Una tabella = un record type 'tabella' con colonne e righe.
-// Tipi di colonna: testo, numero, data, spunta, selezione, link (Drive o web).
-// Le righe con una colonna "data" compaiono nel giorno corrispondente (Oggi e calendario).
-// CSV: importa/esporta. Google Sheet: collega (apri) e importa come righe.
-// ============================================================
 const TIPI_COL = [['testo', 'Testo'], ['numero', 'Numero'], ['data', 'Data'], ['spunta', 'Spunta'], ['selezione', 'Selezione'], ['link', 'Link / file Drive']];
 function tabelle() { return Stato.tutti('tabella').sort((a, b) => a.nome.localeCompare(b.nome)); }
-/** Righe di tutte le tabelle che hanno una colonna data uguale al giorno. */
 function righeDelGiorno(g) {
     const k = ymd(g), out = [];
     for (const t of tabelle())
@@ -17522,7 +16127,6 @@ function rigaTabellaGiorno(x) {
     const prima = x.t.colonne.find(c => c.tipo === 'testo');
     return h('button.voce-lista', { onclick: () => { UI.studioVista = 'tabelle'; UI.tabella = x.t.id; vai('studio'); } }, h('span.barra', { style: { background: 'var(--tenue)' } }), h('span.voce-corpo', null, h('span.voce-titolo', null, prima ? String(x.r.c[prima.id] || '(riga)') : '(riga)'), h('span.voce-sotto', null, x.t.nome + ' · ' + x.col.nome)));
 }
-// ---------- CSV ----------
 function csvRighe(testo) {
     const sep = (testo.split('\n')[0].match(/;/g) || []).length > (testo.split('\n')[0].match(/,/g) || []).length ? ';' : ',';
     const out = [];
@@ -17569,7 +16173,6 @@ function csvDa(t) {
     const q = (v) => { const s = v == null ? '' : typeof v === 'boolean' ? (v ? 'sì' : 'no') : String(v); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     return [t.colonne.map(c => q(c.nome)).join(','), ...t.righe.map(r => t.colonne.map(c => q(r.c[c.id])).join(','))].join('\n');
 }
-/** Aggiunge righe da una tabella di testo (CSV o Google Sheet). Prima riga = intestazioni: crea le colonne mancanti. */
 function importaRighe(t, dati) {
     if (!dati.length)
         return 0;
@@ -17604,7 +16207,6 @@ function importaRighe(t, dati) {
     }
     return corpo.length;
 }
-// ---------- Viste ----------
 function vistaTabelle() {
     if (UI.tabella) {
         const t = Stato.prendi(UI.tabella);
@@ -17798,13 +16400,7 @@ function vistaTabella(t) {
         } }, 300); } }), h('div.tab-scroll', null, h('table.tab', null, h('thead', null, h('tr', null, t.colonne.map(c => h('th', null, h('button', { onclick: () => ordina(c), title: 'Ordina' }, c.nome + freccia(c)), h('button.th-mod', { 'aria-label': 'Modifica colonna ' + c.nome, onclick: () => editorColonna(t, c) }, '⚙'))), h('th.th-piu', null, h('button', { onclick: () => editorColonna(t), 'aria-label': 'Aggiungi colonna' }, '+')))), h('tbody', null, righe.map(r => h('tr', null, t.colonne.map(c => h('td.td-' + c.tipo, null, cella(t, r, c))), h('td', null, h('button.btn-ico', { 'aria-label': 'Elimina riga', onclick: () => { t.righe = t.righe.filter(x => x.id !== r.id); Stato.salva(t); } }, icona('x', 16)))))))), h('div.tenue.piccolo', null, righe.length + ' di ' + t.righe.length + ' righe' + (UI.tabOrd ? ' · ordinate' : '') + '. Le righe con una data compaiono anche nel calendario.'), h('button.btn.neutro', { onclick: () => { t.righe.push({ id: uid(), c: {} }); Stato.salva(t); } }, '+ Aggiungi riga'));
 }
 
-// ============================================================
-// 08-lungo.ts — v0.35: "tieni premuto" (come il tocco prolungato di iOS).
-// Un pulsante tenuto premuto ~0,45 s si "solleva" e apre un menu di
-// scorciatoie collegate a quello che rappresenta. Il tocco normale resta
-// invariato. Le voci sono costruite al momento, così sono sempre attuali.
-// ============================================================
-let lungoAppena = -1e9; // per ignorare il "click" che segue un tocco prolungato
+let lungoAppena = -1e9;
 document.addEventListener('click', e => { if (performance.now() - lungoAppena < 500) {
     e.preventDefault();
     e.stopPropagation();
@@ -17848,7 +16444,6 @@ function apriMenuLungo(da, voci, titolo) {
     const sfondo = h('div.lungo-sfondo', { onclick: (e) => { if (e.target === sfondo)
             chiudi(); } }, menu);
     document.body.appendChild(sfondo);
-    // posizione: vicino al pulsante, dentro lo schermo
     const mw = Math.min(280, innerWidth - 24), mh = menu.offsetHeight;
     const sotto = r.bottom + 8 + mh < innerHeight - 12;
     menu.style.width = mw + 'px';
@@ -17862,7 +16457,6 @@ function apriMenuLungo(da, voci, titolo) {
     document.addEventListener('keydown', esc);
     menu.querySelector('button')?.focus({ preventScroll: true });
 }
-// ---------- I menu collegati ----------
 const MenuLungo = {
     sezione(s) {
         const vaiStudio = (v) => () => { UI.studioVista = v; UI.studioSub = null; vai('studio'); };
@@ -17893,7 +16487,6 @@ const MenuLungo = {
         }
         return [];
     },
-    /** una voce del piano (es. Chi 2.2): tutto ciò che è collegato a quello step */
     step(k) {
         const t = Studio.trovaSotto(k.replace(/^G2-/, ''));
         if (!t)
@@ -17920,23 +16513,17 @@ const MenuLungo = {
     },
 };
 
-// ============================================================
-// 06-viste.ts — Le schermate: Oggi, Calendario (giorno/settimana/mese/
-// agenda), Promemoria, Note, Altro (impostazioni), Cerca.
-// Ogni vista è una funzione che restituisce un elemento; `disegna()`
-// (in 07-main.ts) ricostruisce la schermata a ogni cambio di dati.
-// ============================================================
 const UI = {
     scheda: 'oggi',
     vista: 'mese',
-    data: oggi(), // giorno selezionato nel calendario
+    data: oggi(),
     filtroTask: 'dafare',
     qNote: '',
     tagNote: '',
     q: '',
     studioVista: 'schede',
     studioPiano: '',
-    domTutte: false, // v0.57: «Mostra altre» nell'elenco Errori
+    domTutte: false,
     copMateria: '',
     copStato: '',
     tabella: null,
@@ -17946,9 +16533,9 @@ const UI = {
     studioSub: null,
     soloPrior: false,
     pianoScorso: false,
-    altroSez: null, // v0.34: sotto-pagina di Altro
+    altroSez: null,
 };
-const ORA_PX = 52; // altezza di un'ora nella griglia oraria
+const ORA_PX = 52;
 function vai(scheda, vista, data) {
     UI.scheda = scheda;
     if (vista)
@@ -17957,7 +16544,6 @@ function vai(scheda, vista, data) {
         UI.data = inizioGiorno(data);
     disegna();
 }
-// ---------- Righe riusabili ----------
 function orarioOcc(o, giorno) {
     if (o.ev.tuttoIlGiorno)
         return 'Tutto il giorno';
@@ -17995,14 +16581,12 @@ function taskDelGiorno(g) {
     const k = ymd(g);
     return Stato.tutti('task').filter(t => !t.fatto && t.scadenza && t.scadenza.slice(0, 10) === k && categoriaVisibile(t.categoriaId)).sort(ordinaTask);
 }
-// ---------- OGGI (Home/Dashboard) ----------
 const WIDGET = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
-/** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget() {
     const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
     for (const [w] of WIDGET)
         if (!ord.includes(w))
-            (w === 'ripassi' || w === 'chiusura' || w === 'studiaora') ? ord.unshift(w) : ord.push(w); // v0.7: i ripassi in cima
+            (w === 'ripassi' || w === 'chiusura' || w === 'studiaora') ? ord.unshift(w) : ord.push(w);
     return ord.filter(w => !(i.widgetNascosti || []).includes(w));
 }
 let timerNotaGiorno = 0;
@@ -18010,7 +16594,6 @@ function vistaOggi() {
     const g = oggi();
     const occ = occorrenzeDelGiorno(g);
     const tasks = Stato.tutti('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(g))).sort(ordinaTask);
-    // Nota del giorno: id fisso per data, così non si duplica tra dispositivi.
     const idNota = 'giorno-' + ymd(g);
     const nota = Stato.prendi(idNota);
     const area = h('textarea.nota-giorno', {
@@ -18045,8 +16628,7 @@ function vistaOggi() {
             }
             case 'nota': return scheda('Nota del giorno', area);
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
-            // v0.57.1 (D3) → v0.58: anche con corsi propri, carte, appunti o quiz da rifare (sempre)
-            case 'studiaora': return widgetStudiaOra(); // v0.58: card «Adesso» sempre in cima, anche senza pacchetti-step
+            case 'studiaora': return widgetStudiaOra();
             case 'carte': return widgetCarte();
             case 'appunti': return widgetAppunti();
             case 'ripassi': return widgetRipassi();
@@ -18058,7 +16640,6 @@ function vistaOggi() {
         return null;
     }));
 }
-// ---------- CALENDARIO ----------
 function titoloCal() {
     const d = UI.data;
     if (UI.vista === 'mese')
@@ -18088,7 +16669,6 @@ function vistaCalendario() {
     const barra = h('div.cal-barra', null, h('div.cal-nav', null, h('button.btn-ico', { 'aria-label': 'Precedente', onclick: () => spostaCal(-1) }, icona('sx')), h('button.cal-titolo', { onclick: () => { UI.data = oggi(); disegna(); }, title: 'Torna a oggi' }, titoloCal()), h('button.btn-ico', { 'aria-label': 'Successivo', onclick: () => spostaCal(1) }, icona('dx')), stessoGiorno(UI.data, oggi()) ? null : h('button.btn-testo', { onclick: () => { UI.data = oggi(); disegna(); } }, 'Oggi')), h('div.segmenti', { role: 'tablist' }, viste.map(([v, t]) => h('button' + (UI.vista === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.vista = v; disegna(); } }, t))));
     const corpo = UI.vista === 'mese' ? vistaMese() : UI.vista === 'agenda' ? vistaAgenda() : vistaGriglia(UI.vista === 'giorno' ? 1 : 7);
     const el = h('div.pagina.cal', null, barra, UI.vista === 'agenda' || UI.vista === 'mese' ? campoRapido() : null, corpo);
-    // Scorrimento orizzontale col dito per cambiare periodo.
     let x0 = 0, y0 = 0;
     el.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
     el.addEventListener('touchend', e => {
@@ -18098,7 +16678,6 @@ function vistaCalendario() {
     }, { passive: true });
     return el;
 }
-/** Raggruppa le occorrenze per giorno ('YYYY-MM-DD'), contando anche gli eventi su più giorni. */
 function perGiorno(da, a) {
     const m = new Map();
     for (const o of occorrenzeTra(da, a)) {
@@ -18114,8 +16693,6 @@ function perGiorno(da, a) {
     }
     return m;
 }
-/** v0.57 (BP6 · INP): la cella del mese mostra ~12 caratteri; tagliare prima evita di impaginare testo invisibile
- *  (al primo disegno la sagomatura del testo delle chip costava ~80 ms con CPU 4×). Il titolo intero resta nel dettaglio del giorno. */
 const chipMese = (t) => t.length > 18 ? t.slice(0, 18) : t;
 function vistaMese() {
     const primo = new Date(UI.data.getFullYear(), UI.data.getMonth(), 1);
@@ -18141,11 +16718,9 @@ function vistaMese() {
             } },
         }, h('span.mese-num', null, String(g.getDate())), Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : coloreChiave(x.v.k) } }, chipMese(x.v.speciale ? x.v.t : Studio.etichetta(x.v.k)))), occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, chipMese(o.ev.titolo))), occ.length > 2 ? h('span.mese-altro', null, '+' + (occ.length - 2)) : null, nTask ? h('span.mese-task', { title: nTask + ' promemoria' }) : null));
     }
-    // Sotto la griglia: dettaglio del giorno selezionato.
     const occSel = occorrenzeDelGiorno(UI.data), taskSel = taskDelGiorno(UI.data);
     return h('div', null, griglia, h('div.card.giorno-sel', null, h('div.card-titolo.riga-tra', null, h('span', null, dataLunga(UI.data)), h('button.btn-testo', { onclick: () => vai('cal', 'giorno', UI.data) }, 'Apri giorno')), Studio.vociDelGiorno(UI.data).map(rigaStudio), righeDelGiorno(UI.data).map(rigaTabellaGiorno), occSel.map(o => rigaOcc(o, UI.data)), taskSel.map(rigaTask), !occSel.length && !taskSel.length && !Studio.vociDelGiorno(UI.data).length ? vuoto('Niente in programma.') : null));
 }
-/** Dispone gli eventi sovrapposti in colonne affiancate. */
 function impagina(occ, giorno) {
     const g0 = inizioGiorno(giorno).getTime();
     const voci = occ.map(o => {
@@ -18191,7 +16766,6 @@ function vistaGriglia(nGiorni) {
             onclick: (e) => {
                 if (e.target !== colonna)
                     return;
-                // tocco su uno spazio vuoto: nuovo evento a quell'ora (arrotondata alla mezz'ora)
                 const min = Math.floor((e.offsetY / ORA_PX) * 2) * 30;
                 const d = new Date(g);
                 d.setHours(0, min, 0, 0);
@@ -18228,7 +16802,6 @@ function vistaAgenda() {
         lista.appendChild(vuoto('Niente in programma nei prossimi 60 giorni.'));
     return lista;
 }
-// ---------- PROMEMORIA ----------
 function vistaTask() {
     const tutti = Stato.tutti('task');
     const rapido = h('input.rapido', { type: 'text', placeholder: '+ Nuovo promemoria (Invio per salvare in Inbox)', enterKeyHint: 'done', onkeydown: (e) => {
@@ -18264,7 +16837,6 @@ function vistaTask() {
     }
     return h('div.pagina', null, h('div.segmenti', { role: 'tablist' }, filtri.map(([v, t]) => h('button' + (UI.filtroTask === v ? '.attivo' : ''), { role: 'tab', onclick: () => { UI.filtroTask = v; disegna(); } }, t))), rapido, corpo);
 }
-// ---------- NOTE ----------
 function vistaNote() {
     const lista = h('div');
     const zonaTag = h('div.chips');
@@ -18283,7 +16855,6 @@ function vistaNote() {
     aggiorna();
     return h('div.pagina', null, h('input.rapido', { type: 'search', placeholder: 'Cerca nelle note…', value: UI.qNote, oninput: (e) => { UI.qNote = e.target.value; aggiorna(); } }), zonaTag, lista);
 }
-// ---------- CERCA (globale) ----------
 function vistaCerca() {
     const ris = h('div');
     function aggiorna() {
@@ -18314,7 +16885,6 @@ function vistaCerca() {
         campo.focus(); }, 50);
     return h('div.pagina', null, campo, ris);
 }
-// ---------- ALTRO (impostazioni base; l'editor completo arriva in Fase 4) ----------
 function vistaAltro() {
     const i = imp();
     const salvaImp = (mod) => { Object.assign(i, mod); Stato.salva(i); applicaTema(); };
@@ -18345,7 +16915,7 @@ function vistaAltro() {
                 }
             });
         } });
-    const anteprima = !document.querySelector('link[rel="manifest"]'); // versione di prova a file unico
+    const anteprima = !document.querySelector('link[rel="manifest"]');
     const esporta = () => {
         if (anteprima) {
             avviso("Nell'anteprima l'esportazione non è disponibile: funziona nell'app installata.");
@@ -18368,10 +16938,9 @@ function vistaAltro() {
             h('div.bottoni', null, h('button.btn', { onclick: () => Drive.login() }, 'Accedi con Google'))]);
     const sezDati = scheda('I miei dati', h('div.tenue.piccolo', null, 'Salvataggio: ' + memoria + '.'), anteprima ? h('div.tenue.piccolo', null, 'Questa è l\'anteprima di prova: i dati restano solo in questo browser e possono andare persi.') : null, h('div.bottoni', null, h('button.btn', { onclick: esporta }, 'Esporta backup'), h('button.btn.neutro', { onclick: () => fileImport.click() }, 'Importa backup'), fileImport));
     const versione = h('div.tenue.piccolo.centro', null, 'Il mio calendario · v' + VERSIONE);
-    // v0.34: Altro = scorciatoie in vista + 4 gruppi di impostazioni (sotto-pagine)
     switch (UI.altroSez) {
         case 'aspetto': return h('div.pagina.sotto', null, sezioneAspetto(salvaImp), sezioneSuoni(salvaImp), sezioneLayout(salvaImp), sezionePreset(salvaImp));
-        case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro()); // v0.52: profilo e materie
+        case 'studio': return h('div.pagina.sotto', null, Dominio.sezione(), sezioneStudio(salvaImp), Spiega.sezione(), Regole.sezioneAltro());
         case 'calendario': return h('div.pagina.sotto', null, scheda('Categorie', cats, nuovaCat), sezioneNotifiche(salvaImp), sezioneCalendari(salvaImp));
         case 'dati': return h('div.pagina.sotto', null, sezDrive, sezDati, versione);
     }
@@ -18380,14 +16949,12 @@ function vistaAltro() {
     const tessera = (sch, ic, tit, sotto, cls) => h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
     return h('div.pagina', null, h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')), h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } }, h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')), icona('dx', 18)), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)), icona('dx', 18)))), versione);
 }
-/** v0.34: i gruppi di Altro: [chiave, titolo, sottotitolo, icona, colore]. Anche la ricerca li usa. */
 const GRUPPI_ALTRO = [
     ['aspetto', 'Aspetto', 'Tema, colori, carattere, suoni e animazioni, layout', 'ingranaggio', '#0B5FD9'],
     ['studio', 'Studio e AI', 'Piano, ripassi, chiave AI, regole', 'studio', '#0E9F6E'],
     ['calendario', 'Calendario e notifiche', 'Categorie, avvisi, Google Calendar e .ics', 'cal', '#D97706'],
     ['dati', 'Dati e backup', 'Google Drive, esporta, importa', 'nuvola', '#64748B'],
 ];
-/** Parole che portano a ciascun gruppo dalla ricerca. */
 const PAROLE_ALTRO = {
     aspetto: 'tema scuro chiaro colore accento sfondo vetro carattere font testo dimensione densità angoli layout riquadri widget barra sezioni preset suono suoni tap clic animazioni movimento',
     studio: 'studio piano ripassi ripasso fsrs ai intelligenza artificiale groq chiave regole quiz',
@@ -18421,7 +16988,7 @@ const PRESET_BASE = [
 ];
 function sezionePreset(salva) {
     const i = imp(), miei = Stato.tutti('preset').sort((a, b) => a.nome.localeCompare(b.nome));
-    const applica = (nome, v) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); }; // v0.56.1: avviso solo a scrittura confermata
+    const applica = (nome, v) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); };
     return scheda('Preset', h('div.chips', null, PRESET_BASE.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: () => applica(p.nome, p.valori) }, p.nome)), miei.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: async () => {
             const s = await chiedi(p.nome, [{ testo: 'Applica', valore: 'a' }, { testo: 'Sovrascrivi con l\'aspetto attuale', valore: 's' }, { testo: 'Elimina preset', valore: 'd', pericolo: true }]);
             if (s === 'a')
@@ -18485,7 +17052,6 @@ function sezioneCalendari(salva) {
             else
                 avviso(String(err.message || err), 8000); }) }, 'Ricopia tutto ora')] : null, h('div.gruppo-titolo', null, 'File .ics'), h('div.bottoni', null, h('button.btn.neutro', { onclick: () => fileIcs.click() }, 'Importa .ics'), h('button.btn.neutro', { onclick: esporta }, 'Esporta .ics'), fileIcs));
 }
-// ---------- v0.7: Notifiche sul telefono (ntfy) ----------
 function sezioneNotifiche(salva) {
     const i = imp(), T = Object.assign({ promemoria: true, studio: true, sera: true, esami: true }, i.ntfyTipi || {});
     const priv = new Set(i.ntfyPrivate || []);
@@ -18534,9 +17100,6 @@ function sezioneStudio(salva) {
     const num = (k, def, min, max) => h('input', { type: 'number', min: String(min), max: String(max), inputMode: 'numeric', value: String(i[k] || def), onchange: (e) => salva({ [k]: Math.max(min, Math.min(max, parseInt(e.target.value, 10) || def)) }) });
     return scheda('Studio', riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')), riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')), riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')), riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')), h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassi di oggi) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
 }
-// ---------- Trascinamento degli eventi (vista Giorno/Settimana) ----------
-// Tieni premuto (circa 0,3 s) e trascina per spostare; trascina la lineetta in basso per cambiare la durata.
-// Passi di 15 minuti; nella settimana si può spostare anche di giorno. Le serie chiedono "solo questo / tutta la serie".
 const PASSO = 15;
 function trascinabile(el, o, nGiorni) {
     let x0 = 0, y0 = 0, attivo = false, ridim = false, dMin = 0, dGiorni = 0, timer = 0, larg = 0, mosso = false, pid = -1;
@@ -18556,10 +17119,10 @@ function trascinabile(el, o, nGiorni) {
         const parti = () => { attivo = true; el.classList.add('trascino'); try {
             el.setPointerCapture(pid);
         }
-        catch (_) { /* niente */ } try {
+        catch (_) { } try {
             navigator.vibrate && navigator.vibrate(15);
         }
-        catch (_) { /* niente */ } };
+        catch (_) { } };
         if (e.pointerType === 'mouse' || ridim)
             parti();
         else
@@ -18601,14 +17164,12 @@ function trascinabile(el, o, nGiorni) {
     el.addEventListener('pointerup', fine);
     el.addEventListener('pointercancel', (e) => { if (e.pointerId === pid)
         reset(); });
-    // dopo un trascinamento non deve aprirsi l'editor
     el.addEventListener('click', (e) => { if (el.dataset.trascinato) {
         e.stopImmediatePropagation();
         e.preventDefault();
     } }, true);
     return el;
 }
-/** Sposta un'occorrenza: deltaInizio (min) sposta tutto, deltaFine (min) allunga/accorcia solo la fine (ridimensionamento). */
 async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     const ridim = deltaInizio === 0;
     const nuovoI = piuMinuti(o.inizio, deltaInizio), nuovaF = piuMinuti(o.fine, ridim ? deltaFine : deltaInizio);
@@ -18638,13 +17199,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-// ============================================================
-// 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
-// ============================================================
-const VERSIONE = '0.58.3';
-// ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
-/** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
- *  con la superficie più critica del tema (--sup2) è ≥ 4,5:1. Un colore non esadecimale resta com'è. */
+const VERSIONE = '0.58.4';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
@@ -18658,16 +17213,14 @@ function accentoTesto(hex, scuro) {
         c = rgb.map(x => Math.round(x + (verso - x) * p));
     return '#' + c.map(x => x.toString(16).padStart(2, '0')).join('');
 }
-// ACCENTO-TESTO-FINE
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
     const r = document.documentElement, st = r.style;
-    // v0.34: il vecchio blu predefinito passa al nuovo blu del rebranding
     const accento = !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento;
     st.setProperty('--accento', accento);
-    st.setProperty('--accento-testo', accentoTesto(accento, scuro)); // v0.56.2: testo accento ≥ 4,5:1 (WCAG AA) nei due temi
+    st.setProperty('--accento-testo', accentoTesto(accento, scuro));
     r.dataset.animazioni = i.animazioni === 'no' ? 'no' : 'si';
     if (i.sfondo)
         st.setProperty('--bg', i.sfondo);
@@ -18682,15 +17235,13 @@ function applicaTema() {
     st.setProperty('--raggio', (i.raggio != null ? i.raggio : 14) + 'px');
     r.dataset.densita = i.densita || 'comoda';
     r.dataset.nav = i.nav || 'auto';
-    r.dataset.vetro = i.vetro === false || i.vetro === 'no' ? 'no' : 'si'; // v0.20: vetro leggero (disattivabile)
+    r.dataset.vetro = i.vetro === false || i.vetro === 'no' ? 'no' : 'si';
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta)
         meta.setAttribute('content', i.sfondo || (scuro ? '#0b0d12' : '#f5f7fa'));
 }
-/** Ricostruisce l'intera schermata (le viste sono leggere: va benissimo così). */
 function disegna() {
     const app = document.getElementById('app');
-    // ricordo lo scorrimento della griglia oraria per non "saltare" a ogni salvataggio
     const vecchiaGriglia = app.querySelector('.gr-scroll');
     const scrollGriglia = vecchiaGriglia ? vecchiaGriglia.scrollTop : -1;
     const vecchioMain = app.querySelector('main');
@@ -18700,7 +17251,6 @@ function disegna() {
     const vista = UI.scheda === 'oggi' ? vistaOggi() : UI.scheda === 'cal' ? vistaCalendario() : UI.scheda === 'studio' ? vistaStudio() : UI.scheda === 'task' ? vistaTask()
         : UI.scheda === 'note' ? vistaNote() : UI.scheda === 'appunti' ? vistaAppunti() : UI.scheda === 'cerca' ? vistaCerca() : vistaAltro();
     const daFare = Stato.tutti('task').filter(t => !t.fatto && t.scadenza && (taskScaduto(t) || t.scadenza.slice(0, 10) === ymd(oggi()))).length;
-    // v0.34: 5 sezioni in barra; Promemoria e Note vivono in Altro (con scorciatoie in Oggi)
     const schede = [['oggi', 'Oggi', 'oggi'], ['cal', 'Calendario', 'cal'], ['studio', 'Studio', 'studio'], ['appunti', 'Appunti', 'appunti'], ['altro', 'Altro', 'altro']];
     const nascoste = imp().tabNascoste || [];
     const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
@@ -18710,7 +17260,6 @@ function disegna() {
                 UI.studioSub = null; if (s === 'altro')
                 UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
     }));
-    // direzione dell'animazione: verso destra o sinistra secondo la posizione in barra
     const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro', 'task', 'note', 'cerca'];
     const prima = vecchioMain ? ordine.indexOf((vecchioMain.dataset.scheda || '').replace(/(giorno|settimana|mese|agenda)$/, '')) : -1;
     const dir = prima < 0 ? '' : ordine.indexOf(UI.scheda) >= prima ? '.da-dx' : '.da-sx';
@@ -18734,7 +17283,7 @@ function disegna() {
         if (scrollGriglia >= 0 && stessaScheda)
             griglia.scrollTop = scrollGriglia;
         else
-            griglia.scrollTop = Math.max(0, (Math.min(new Date().getHours(), 20) - 1.5) * ORA_PX); // parte vicino all'ora attuale
+            griglia.scrollTop = Math.max(0, (Math.min(new Date().getHours(), 20) - 1.5) * ORA_PX);
     }
     if (stessaScheda)
         main.scrollTop = scrollMain;
@@ -18745,12 +17294,11 @@ function disegna() {
     else
         attivaScorriSezioni(main, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(x => x[0]));
 }
-/** v0.35: scorrendo col dito a destra/sinistra si passa alla sezione accanto (la pagina segue il dito). */
 const ZONE_SENZA_SCORRI = 'input, textarea, select, canvas, [contenteditable], .mano-foglio, .mano-barra, .segmenti, .chips, .gr-scroll, .mese, .cal, .tabella, .scorre, .tessere, .carta, .foglio, input[type=range]';
 function attivaScorriSezioni(main, ordine) {
     const i = ordine.indexOf(UI.scheda);
     if (i < 0 || UI.scheda === 'cal')
-        return; // il calendario usa lo scorrimento per cambiare periodo
+        return;
     let x0 = 0, y0 = 0, dx = 0, attivo = false, deciso = false, scartato = false, t0 = 0;
     const pag = () => main.firstElementChild;
     const scorribile = (el) => {
@@ -18815,7 +17363,6 @@ function attivaScorriSezioni(main, ordine) {
         }
     }, { passive: true });
 }
-/** v0.34: nelle sotto-pagine si torna indietro scorrendo dal bordo sinistro (come su iPhone). */
 function attivaIndietroSwipe(el) {
     let x0 = -1, y0 = 0;
     el.addEventListener('touchstart', e => { const t = e.touches[0]; x0 = t.clientX < 28 ? t.clientX : -1; y0 = t.clientY; }, { passive: true });
@@ -18830,10 +17377,9 @@ function attivaIndietroSwipe(el) {
         }
     }, { passive: true });
 }
-/** v0.34: una volta sola, dico dove sono finiti Promemoria e Note. */
 function avvisoNovita() {
     if (navigator.webdriver)
-        return; // nei test automatici niente finestre
+        return;
     try {
         if (localStorage.getItem('imc-novita-035'))
             return;
@@ -18849,11 +17395,8 @@ function avvisoNovita() {
         .then(() => { try {
         localStorage.setItem('imc-novita-035', '1');
     }
-    catch (_) { /* niente */ } });
+    catch (_) { } });
 }
-// ---------- Avvisi in-app (Livello 1 dei promemoria) ----------
-// Controlla ogni 30 s cosa è "scattato" dall'ultimo controllo; all'apertura
-// mostra anche ciò che è scattato mentre l'app era chiusa (ultime 12 ore).
 function controllaAvvisi() {
     const CHIAVE = 'imc-ultimo-controllo';
     const adesso = Date.now();
@@ -18863,14 +17406,14 @@ function controllaAvvisi() {
         if (v)
             ultimo = Math.max(v, adesso - 12 * 3600000);
     }
-    catch (_) { /* niente */ }
+    catch (_) { }
     try {
         localStorage.setItem(CHIAVE, String(adesso));
     }
-    catch (_) { /* niente */ }
+    catch (_) { }
     for (const o of occorrenzeTra(new Date(ultimo - 86400000), new Date(adesso + 3 * 86400000))) {
         if (o.fine.getTime() < adesso)
-            continue; // già finito: inutile avvisare
+            continue;
         for (const min of o.ev.promemoria || []) {
             const scatto = o.inizio.getTime() - min * 60000;
             if (scatto > ultimo && scatto <= adesso) {
@@ -18887,7 +17430,6 @@ function controllaAvvisi() {
             avviso('☑️ ' + t.titolo + ' — scade adesso', 15000, () => apriTask(t));
     }
 }
-/** v0.58: scorciatoie del manifest (`?az=studia|aggiungi|ripassa`): un tocco dall'icona → azione. Poi pulisce l'indirizzo. */
 function scorciatoiaAvvio() {
     let az = '';
     try {
@@ -18932,18 +17474,18 @@ async function avvia() {
     }
     Stato.ascolta(disegna);
     Ripassi.inizializza();
-    Stato.pulisci(); // v0.17: lapidi vecchie del registro notifiche
-    Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
-    Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
+    Stato.pulisci();
+    Stato.ascolta(() => { Ripassi.inizializza(); });
+    Stato.ascolta(Notifiche.programma);
     Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
         disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva)
         Spiega.recuperaDaDrive(); if (Drive.stato.sync === 'ok' && Dominio.serveBenvenuto())
-        Dominio.benvenuto(); }); // v0.52: wizard di benvenuto per gli ospiti
+        Dominio.benvenuto(); });
     attivaSimboli();
     Tocco.attiva();
     disegna();
-    scorciatoiaAvvio(); // v0.58: scorciatoie PWA (tocco lungo sull'icona)
-    setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500); // v0.57 (A14)
+    scorciatoiaAvvio();
+    setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500);
     avvisoNovita();
     Drive.precarica();
     Timer.parti();
@@ -18954,7 +17496,6 @@ async function avvia() {
     controllaAvvisi();
     setInterval(controllaAvvisi, 30000);
     Notifiche.programma();
-    // Al ritorno sull'app (es. dalla Home dell'iPhone) aggiorno giorno e avvisi.
     let giornoMostrato = ymd(new Date());
     document.addEventListener('visibilitychange', () => {
         if (document.hidden)
@@ -18971,22 +17512,15 @@ async function avvia() {
         if (!document.querySelector('.foglio-sfondo'))
             disegna();
     });
-    // Service worker: cache dell'app per l'uso offline (solo sul sito vero, non nell'anteprima).
     if ('serviceWorker' in navigator && location.protocol === 'https:' && document.querySelector('link[rel="manifest"]')) {
         navigator.serviceWorker.register('sw.js').then(reg => Aggiornamento.collega(reg, navigator.serviceWorker)).catch(() => { });
     }
-    // Chiedo al browser di non cancellare i dati locali quando lo spazio scarseggia.
     try {
         if (navigator.storage && navigator.storage.persist)
             navigator.storage.persist();
     }
-    catch (_) { /* niente */ }
+    catch (_) { }
 }
-/**
- * v0.50: nuova versione del service worker pronta → banner «Nuova versione pronta · Aggiorna».
- * Il tocco manda 'salta' al worker in attesa; al cambio di controller si ricarica (una volta sola).
- * Prima installazione (nessun controller): nessun banner.
- */
 const Aggiornamento = (() => {
     let mostrato = false, ricaricato = false;
     function banner(reg) {
