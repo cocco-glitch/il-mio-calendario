@@ -139,7 +139,8 @@ function vistaOggi(): HTMLElement {
         case 'tabelle': { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; }
         case 'nota': return scheda('Nota del giorno', area);
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
-        case 'studiaora': return Studio.pkStep().length ? widgetStudiaOra() : null;
+        // v0.57.1 (D3): anche con corsi propri, carte o appunti da ripassare, non solo con i pacchetti-step
+        case 'studiaora': return Studio.pkStep().length || Stato.tutti('materia').length || Stato.tutti('carta').length || Appunti.appuntiDaRipassare().length || StudiaOra.leggi() ? widgetStudiaOra() : null;
         case 'carte': return widgetCarte();
         case 'appunti': return widgetAppunti();
         case 'ripassi': return widgetRipassi();

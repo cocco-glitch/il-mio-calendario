@@ -13,7 +13,8 @@ const PianiAI = (() => {
   const pianiAI = (): PkPianoAI[] => Studio.pkPiani().filter(eAI) as PkPianoAI[];
 
   function codiciMaterie(): string[] {
-    const s = new Set<string>([...Object.keys(MATERIE_BASE), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
+    // v0.57.1 (D1): le materie del proprietario solo al proprietario, come 07-dominio.ts
+    const s = new Set<string>([...Object.keys(MATERIE_BASE).filter(() => Drive.eProprietario()), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
     return Array.from(s).filter(Boolean);
   }
   /** Minuti già occupati quel giorno dagli altri piani attivi (non AI): v.min se c'è, altrimenti 45 per voce. */
@@ -82,7 +83,8 @@ const PianiAI = (() => {
     const usaAI = h('input', { type: 'checkbox', checked: !senza, disabled: senza }) as HTMLInputElement;
     const esito = h('div.tenue.piccolo');
     // v0.56 (BP5): intensità 1–5 e questionario 6+3
-    const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)'] as [string, string]), '2', function () {
+    // v0.57.1 (D5): il livello 5 «Sprint» contraddice il Burnout Breaker → il wizard offre 1–4 (il modulo puro lo conserva per i piani vecchi)
+    const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.filter(c => c.livello <= 4).map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)'] as [string, string]), '2', function () {
       oreMax.value = String(Pianificatore.configLivello(+this.value).oreRealiMax); avvisiBio();
     });
     const prof0 = profiloSalvato() || Pianificatore.normalizzaProfilo({});
@@ -124,9 +126,9 @@ const PianiAI = (() => {
     const vincoliBP5 = (): VincoliPianoAI => {
       const v = vincoli(), p = profilo(), g = Pianificatore.applicaGuardRailBiologici(+intensita.value, p);
       salvaProfilo(p);
-      v.livelloIntensita = g.livello; v.profiloBio = p;
+      v.livelloIntensita = Math.min(4, g.livello) as IntensitaPiano; v.profiloBio = p;
       v.pesi = Pianificatore.applicaRisposte(Pianificatore.pesiIniziali(p), domandeB, scelteB.map(s => s.value === '' ? null : +s.value));
-      v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(g.livello).oreRealiMax);
+      v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(v.livelloIntensita).oreRealiMax);
       return v;
     };
     const mostraRimedi = (f: FattibilitaAI) => {
@@ -181,15 +183,18 @@ const PianiAI = (() => {
   }
 
   // ---------- hook post-quiz (Stadio 5, 0 token) ----------
-  function dopoQuiz(sk: string, caso: string): void {
-    const oggi = ymd(new Date());
+  /** v0.57.1 (Q3): restituisce una funzione che rimette i piani com'erano prima dell'anticipo («Annulla» del quiz). */
+  function dopoQuiz(sk: string, caso: string): () => void {
+    const oggi = ymd(new Date()), prima: PkPianoAI[] = [];
     for (const p of pianiAI()) {
       if (Studio.nascosto(p.id)) continue;
+      const copia = JSON.parse(JSON.stringify(p)) as PkPianoAI;
       const r = Pianificatore.hookIpercorrezione(p, { oggi, sk, caso });
       if (!r) continue;
-      salvaPiano(r.piano);
+      salvaPiano(r.piano); prima.push(copia);
       avviso('🧠 ' + (caso === 'illusione_competenza' ? 'Illusione di competenza' : 'Risposta fortunata') + ': anticipo l\'applicazione dal ' + r.da.slice(8, 10) + '/' + r.da.slice(5, 7) + ' al ' + r.a.slice(8, 10) + '/' + r.a.slice(5, 7) + '.', 6000);
     }
+    return () => { for (const p of prima) salvaPiano(p); };
   }
 
   // ---------- v0.56 (BP5 §4.2): Burnout Circuit Breaker, 0 token ----------
@@ -220,7 +225,7 @@ const PianiAI = (() => {
       p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null,
       h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'),
       h('button.btn.neutro', { onclick: async () => {
-        const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
+        const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Math.min(4, Pianificatore.livelloEffettivo(p, ymd(new Date()))) as IntensitaPiano } : p.vincoliAI;
         const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
         if (r.piano && p.deload) { r.piano.deload = p.deload; r.piano.vincoliAI = p.vincoliAI; }
         if (!r.piano) { avviso('⛔ Da oggi il piano è critico: ' + r.fatt.rimedi.map(x => x.testo).join(' · '), 9000); return; }

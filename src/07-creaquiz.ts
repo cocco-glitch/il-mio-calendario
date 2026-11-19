@@ -239,7 +239,9 @@ const CreaQuiz = (() => {
   }
   async function nuovo(pre: Partial<{ argomento: string; materia: string; cosa: string; extra: string }> = {}): Promise<void> {
     if (!Spiega.attiva && !IA.gemini) { avviso('Serve una chiave AI gratuita: Altro → Spiegazioni AI.', 6000); return; }
-    const materie = Array.from(new Set(['Chimica', 'Biologia', 'Fisica'].concat(Stato.tutti<Rec>('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m: any) => m.nome)).filter(Boolean))));
+    // v0.57.1 (D2): materie fisse solo per il proprietario; per gli altri solo dai propri dati (corsi + pacchetti)
+    const materie = Array.from(new Set((Drive.eProprietario() ? ['Chimica', 'Biologia', 'Fisica'] : Stato.tutti<MateriaRec>('materia').map(m => m.nome)).concat(Stato.tutti<Rec>('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m: any) => m.nome))).filter(Boolean)));
+    if (!materie.length) materie.push('Studio');
     const arg = h('input.campo', { type: 'text', value: pre.argomento || '', placeholder: 'Argomento preciso (es. «leve del corpo umano e guadagno meccanico»)' }) as HTMLInputElement;
     const mat = h('select.campo', null, ...materie.map(m => h('option', { value: m, selected: pre.materia ? n2(pre.materia) === n2(m) : false }, m))) as HTMLSelectElement;
     let cosa = pre.cosa || 'misto';

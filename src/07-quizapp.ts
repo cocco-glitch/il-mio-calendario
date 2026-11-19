@@ -164,7 +164,8 @@ const QuizApp = (() => {
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; scelta = o; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
     Stato.salva(r, true);
     // v0.55 (BP4 Stadio 5): illusione di competenza / risposta fortunata → anticipo L3/L4 nei piani ai_neuro (0 token)
-    if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess') try { PianiAI.dopoQuiz(v.d.sk, v.caso); } catch (_) { /* il quiz non si blocca */ }
+    let annullaPiani: (() => void) | null = null, carteNuove: string[] = [];
+    if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess') try { annullaPiani = PianiAI.dopoQuiz(v.d.sk, v.caso); } catch (e) { console.warn('dopoQuiz', e); }
     // v0.56 (BP5 §4.2): dopo un errore, Burnout Circuit Breaker sui piani con intensità (0 token)
     if (!giusta) try { PianiAI.controllaFatica(); } catch (_) { /* il quiz non si blocca */ }
     const annulla = () => {
@@ -173,6 +174,9 @@ const QuizApp = (() => {
       if (v.cert) { if (neuroPrima) q.neuro = neuroPrima; else delete q.neuro; if (logPrima) q.confidenceLog = logPrima; else delete q.confidenceLog; }
       if (scelta && q.scelte && q.scelte[scelta]) { q.scelte = Object.assign({}, q.scelte); q.scelte[scelta]--; if (!q.scelte[scelta]) delete q.scelte[scelta]; }
       Stato.salva(q, true);
+      // v0.57.1 (Q3): annulla anche la carta «trappola» appena creata e l'anticipo nei piani ai_neuro
+      for (const c of carteNuove) Stato.elimina(c);
+      if (annullaPiani) try { annullaPiani(); } catch (e) { console.warn('annulla piani', e); }
     };
     // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {
@@ -180,6 +184,7 @@ const QuizApp = (() => {
       if (r.scelte && r.scelte[o] === 2) {
         const perche = v.d.ew && v.d.ew[oi - 1] ? v.d.ew[oi - 1] : '';
         const n = Carte.daErrori([{ schedaId: v.d.sk, q: testoPiano(v.d.q) + '\n\nTrappola in cui sei caduto 2 volte: «' + testoPiano(v.d.o![oi]) + '»', giusta: testoPiano(v.d.o![0]), spieg: perche ? 'Perché «' + testoPiano(v.d.o![oi]) + '» è sbagliata: ' + perche : '' }]);
+        carteNuove = n;
         if (n.length) avviso('🪤 Stessa trappola per la seconda volta: aggiunta alle flashcard degli errori.', 5000);
       }
     }

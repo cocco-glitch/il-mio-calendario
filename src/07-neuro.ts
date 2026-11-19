@@ -245,22 +245,43 @@ const Neuro = (() => {
   const STOP = new Set('della delle degli dello dalla dalle dagli nella nelle negli sulla sulle questo questa quello quella perché quando mentre anche ancora sempre molto essere hanno viene sono stato stata tutti tutte altri altre loro come dove però quindi infatti'.split(' '));
   /** Cloze dalle frasi chiave: **termine** se c'è, altrimenti la parola lunga più rara della frase. */
   function cloze(testo: string, o: { sk?: string; stepId?: string; max?: number } = {}): any[] {
-    const frasi = String(testo || '').replace(/\r/g, '').split(/(?<=[.!?])\s+|\n+/).map(x => x.trim().replace(/^[-*•]\s*/, '')).filter(x => x.length >= 30 && x.length <= 260);
-    const freq = new Map<string, number>(); for (const w of String(testo).toLowerCase().match(/[a-zà-ù]{7,}/g) || []) freq.set(w, (freq.get(w) || 0) + 1);
-    const out: any[] = [], visti = new Set<string>();
+    const out: any[] = [], visti = new Set<string>(), max = o.max || 8, resto: string[] = [];
+    const aggiungi = (q: string, r: string, lv: string, e: string) => {
+      if (out.length >= max || !q || !r || visti.has(n2Cz(q))) return; visti.add(n2Cz(q));
+      const d: any = { id: 'q-cz-' + hashTesto(q), sk: o.sk || '', t: 'fill', lv, q, a: [r], show: r, e: [e], bloomLevel: 1, gen: true };
+      if (o.stepId) d.stepId = o.stepId;
+      out.push(d);
+    };
+    // v0.57.1 (Q1): sintassi degli appunti prima dell'euristica. «domanda :: risposta» → domanda con la sua risposta;
+    // {{parola}} → completamento con risposta «parola» (le graffe non restano mai visibili). I template {{x:1:9}} / {{=…}} non sono toccati.
+    const GRAFFA = /\{\{(?!\s*=)(?![^}]*:)\s*([^}]+?)\s*\}\}/g;
+    for (const riga of String(testo || '').replace(/\r/g, '').split('\n')) {
+      const x = riga.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '');
+      const qr = /^(.+?)\s::\s(.+)$/.exec(x);
+      if (qr) { aggiungi(qr[1].trim(), qr[2].trim(), 'Domanda', 'Risposta: ' + qr[2].trim()); continue; }
+      const g = Array.from(x.matchAll(GRAFFA));
+      if (g.length) {
+        const pulita = x.replace(GRAFFA, '$1');
+        g.forEach((m, i) => { let k = 0; aggiungi(x.replace(GRAFFA, (_m, p) => k++ === i ? '……' : p), m[1], 'Completamento', 'In sintesi: ' + pulita); });
+        continue;
+      }
+      resto.push(riga);
+    }
+    const testoResto = resto.join('\n');
+    const frasi = testoResto.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim().replace(/^[-*•]\s*/, '')).filter(x => x.length >= 30 && x.length <= 260 && !x.includes('{{'));
+    const freq = new Map<string, number>(); for (const w of testoResto.toLowerCase().match(/[a-zà-ù]{7,}/g) || []) freq.set(w, (freq.get(w) || 0) + 1);
     for (const f of frasi) {
-      if (out.length >= (o.max || 8)) break;
+      if (out.length >= max) break;
       let term = (/\*\*([^*]{2,40})\*\*/.exec(f) || [])[1] || '';
       if (!term) { const cand = (f.match(/[A-Za-zÀ-ù]{7,}/g) || []).filter(w => !STOP.has(w.toLowerCase())); cand.sort((a, b) => (freq.get(a.toLowerCase()) || 0) - (freq.get(b.toLowerCase()) || 0) || b.length - a.length); term = cand[0] || ''; }
       if (!term || visti.has(term.toLowerCase())) continue; visti.add(term.toLowerCase());
       const pulita = f.replace(/\*\*/g, ''), q = pulita.replace(term, '……');
       if (q === pulita) continue;
-      const d: any = { id: 'q-cz-' + hashTesto(q), sk: o.sk || '', t: 'fill', lv: 'Completamento', q, a: [term], show: term, e: ['In sintesi: ' + pulita], bloomLevel: 1, gen: true };
-      if (o.stepId) d.stepId = o.stepId;
-      out.push(d);
+      aggiungi(q, term, 'Completamento', 'In sintesi: ' + pulita);
     }
     return out;
   }
+  const n2Cz = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
 
   // ---------- 6b. parser JSON tollerante + alias ----------
   // v0.57 (A15): un solo parser, in 01-json.ts (qui restano i nomi storici).

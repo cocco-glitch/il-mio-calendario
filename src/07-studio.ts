@@ -263,9 +263,13 @@ const Studio = (() => {
 
 // ---------- Visore a tutto schermo (quiz e PDF) ----------
 function visore(titolo: string, alChiudi?: () => void): { corpo: HTMLElement; barra: HTMLElement; chiudi: () => void } {
+  // v0.57.1 (Q6): doppio tocco → un solo visore. Lo stesso titolo aperto da < 1 s sostituisce il precedente (senza alChiudi).
+  for (const vecchio of Array.from(document.querySelectorAll<HTMLElement>('.visore')))
+    if (vecchio.dataset.titolo === titolo && Date.now() - Number(vecchio.dataset.aperto || 0) < 1000) vecchio.remove();
   const corpo = h('div.visore-corpo'), barra = h('div.visore-strumenti');
   const chiudi = () => { el.remove(); if (alChiudi) alChiudi(); };
   const el = h('div.visore', null, h('div.visore-testa', null, h('button.btn-testo', { onclick: chiudi }, 'Chiudi'), h('div.foglio-titolo.visore-titolo', null, titolo), barra), corpo);
+  el.dataset.titolo = titolo; el.dataset.aperto = String(Date.now());
   document.body.appendChild(el);
   return { corpo, barra, chiudi };
 }

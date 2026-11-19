@@ -142,6 +142,21 @@ t('deduplica con badge «Nuove: X | Già presenti saltate: Y»', () => {
   eq(d.nuove.length, 1); eq(d.saltate, 2); eq(d.badge, 'Nuove: 1 | Già presenti saltate: 2');
 });
 t('cloze dalle frasi chiave (termine in grassetto)', () => { const c = N.cloze('Il **mitocondrio** è la centrale energetica della cellula eucariotica. Corto.', { sk: 's', stepId: 'B-1' }); eq(c.length, 1); eq(c[0].a, ['mitocondrio']); vero(c[0].q.includes('……')); eq(c[0].stepId, 'B-1'); });
+t('v0.57.1 Q1: cloze da appunto — {{x}} = risposta x, «q :: r» = domanda/risposta, niente graffe visibili', () => {
+  const c = N.cloze('# Rivoluzione\n- La presa della {{Bastiglia}} avviene nel 1789.\n- Quando inizia la Rivoluzione francese? :: 1789\nIl {{=2+3}} resta un template.', { sk: 's' });
+  const g = c.find(x => x.a[0] === 'Bastiglia'), q = c.find(x => x.a[0] === '1789');
+  vero(g && g.q === 'La presa della …… avviene nel 1789.', 'completamento dalle graffe');
+  vero(q && q.q === 'Quando inizia la Rivoluzione francese?' && q.lv === 'Domanda', 'domanda :: risposta');
+  vero(c.every(x => !/\{\{|\}\}|::/.test(x.q)), 'nessuna graffa o :: nel testo');
+});
+t('v0.57.1 D1/D2/D3/D5/Q3/Q6: guardie statiche', () => {
+  vero(/MATERIE_BASE\)\.filter\(\(\) => Drive\.eProprietario\(\)\)/.test(leggi('07-pianiai.ts')), 'D1 pianiai');
+  vero(/Drive\.eProprietario\(\) \? \['Chimica'/.test(leggi('07-creaquiz.ts')), 'D2 creaquiz');
+  vero(/case 'studiaora': return Studio\.pkStep\(\)\.length \|\| [^\n]*'carta'/.test(leggi('08-viste.ts')), 'D3 Studia ora');
+  vero(/MATRICE_5_LIVELLI\.filter\(c => c\.livello <= 4\)/.test(leggi('07-pianiai.ts')), 'D5 wizard 1–4');
+  vero(/for \(const c of carteNuove\) Stato\.elimina\(c\)/.test(leggi('07-quizapp.ts')) && /annullaPiani\(\)/.test(leggi('07-quizapp.ts')), 'Q3 annulla completo');
+  vero(/dataset\.titolo === titolo/.test(leggi('07-studio.ts')), 'Q6 un solo visore');
+});
 t('template parametrici {{var:min:max:step}} e {{=espr}}', () => {
   const v = N.varianti({ id: 't', q: 'Quanto fa {{a:2:9}} × {{b:2:9}}?', o: ['{{=a*b}}', '{{=a*b+1}}', '{{=a*b-1}}'] }, 5, (() => { let s = 1; return () => (s = (s * 16807) % 2147483647) / 2147483647; })());
   vero(v.length >= 3); for (const x of v) { const [a, b] = x.q.match(/\d+/g).map(Number); eq(x.o[0], String(a * b)); }
@@ -188,7 +203,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.57.0', () => vero(/const VERSIONE = '0\.57\.0'/.test(leggi('09-main.ts'))));
+t('versione app 0.57.1', () => vero(/const VERSIONE = '0\.57\.1'/.test(leggi('09-main.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
