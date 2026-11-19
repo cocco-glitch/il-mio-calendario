@@ -819,7 +819,12 @@ function avviso(testo, durataMs = 4000, alTocco) {
         zona = h('div', { id: 'avvisi', 'aria-live': 'polite' });
         document.body.appendChild(zona);
     }
-    const el = h('div.avviso', { onclick: () => { el.remove(); if (alTocco)
+    for (const vecchio of Array.from(zona.children))
+        if (vecchio.textContent === testo)
+            vecchio.remove();
+    while (zona.children.length >= 2)
+        (zona.querySelector('.avviso:not(.fisso)') || zona.firstElementChild).remove();
+    const el = h('div.avviso' + (durataMs > 0 ? '' : '.fisso'), { onclick: () => { el.remove(); if (alTocco)
             alTocco(); } }, testo);
     zona.appendChild(el);
     if (durataMs > 0)
@@ -16947,7 +16952,7 @@ function vistaAltro() {
     const nTask = Stato.tutti('task').filter(t => !t.fatto).length;
     const nNote = Stato.tutti('nota').length;
     const tessera = (sch, ic, tit, sotto, cls) => h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
-    return h('div.pagina', null, h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')), h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } }, h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')), icona('dx', 18)), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)), icona('dx', 18)))), versione);
+    return h('div.pagina', null, Aggiornamento.riga(), h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')), h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } }, h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')), icona('dx', 18)), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)), icona('dx', 18)))), versione);
 }
 const GRUPPI_ALTRO = [
     ['aspetto', 'Aspetto', 'Tema, colori, carattere, suoni e animazioni, layout', 'ingranaggio', '#0B5FD9'],
@@ -17199,7 +17204,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.58.4';
+const VERSIONE = '0.58.5';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
@@ -17258,7 +17263,7 @@ function disegna() {
         const att = UI.scheda === s || (s === 'altro' && inAltro);
         return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio')
                 UI.studioSub = null; if (s === 'altro')
-                UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null), h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
+                UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null, 'aria-label': s === 'altro' && Aggiornamento.pronto() ? 'Altro · aggiornamento pronto' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : s === 'altro' && Aggiornamento.pronto() ? h('span.punto-agg', { title: 'Aggiornamento pronto' }) : null), h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
     }));
     const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro', 'task', 'note', 'cerca'];
     const prima = vecchioMain ? ordine.indexOf((vecchioMain.dataset.scheda || '').replace(/(giorno|settimana|mese|agenda)$/, '')) : -1;
@@ -17522,13 +17527,51 @@ async function avvia() {
     catch (_) { }
 }
 const Aggiornamento = (() => {
-    let mostrato = false, ricaricato = false;
-    function banner(reg) {
-        if (mostrato || !reg.waiting)
+    let inAttesa = null, chiesto = null, nuova = '', ricaricato = false, controllo = 0;
+    function versioneDi(w) {
+        return new Promise(ok => {
+            const t = setTimeout(() => ok(''), 1500);
+            try {
+                const c = new MessageChannel();
+                c.port1.onmessage = e => { clearTimeout(t); ok(String(e.data || '')); };
+                w.postMessage('versione?', [c.port2]);
+            }
+            catch (e) {
+                console.warn('Aggiornamento: versione non leggibile', e);
+                clearTimeout(t);
+                ok('');
+            }
+        });
+    }
+    function libero() { return !Timer.attivo() && !document.querySelector('.foglio-sfondo, .visore, dialog[open]') && !document.activeElement?.matches('input, textarea, [contenteditable]'); }
+    function puntino() {
+        const tab = Array.from(document.querySelectorAll('.tabbar button')).find(b => b.querySelector('.tab-eti')?.textContent === 'Altro');
+        const ico = tab && tab.querySelector('.tab-ico');
+        if (ico && !ico.querySelector('.punto-agg, .badge'))
+            ico.appendChild(h('span.punto-agg', { title: 'Aggiornamento pronto' }));
+        if (tab)
+            tab.setAttribute('aria-label', 'Altro · aggiornamento pronto');
+    }
+    async function segnala(reg, freddo) {
+        const w = reg.waiting;
+        if (!w || w === inAttesa || w === chiesto)
             return;
-        mostrato = true;
-        avviso('Nuova versione pronta · tocca per aggiornare', 0, () => { if (reg.waiting)
-            reg.waiting.postMessage('salta'); });
+        chiesto = w;
+        const n = ++controllo;
+        const v = await versioneDi(w);
+        if (n !== controllo || reg.waiting !== w)
+            return;
+        if (v && v === VERSIONE)
+            return;
+        if (freddo && libero()) {
+            w.postMessage('salta');
+            return;
+        }
+        inAttesa = w;
+        nuova = v;
+        puntino();
+        if (UI.scheda === 'altro' && !UI.altroSez && !document.querySelector('.agg-pronto') && !document.querySelector('.foglio-sfondo, .visore'))
+            disegna();
     }
     function collega(reg, sw, ricarica = () => location.reload()) {
         if (!sw.controller)
@@ -17536,15 +17579,21 @@ const Aggiornamento = (() => {
         sw.addEventListener('controllerchange', () => { if (ricaricato)
             return; ricaricato = true; ricarica(); });
         if (reg.waiting)
-            banner(reg);
+            segnala(reg, true);
         reg.addEventListener('updatefound', () => {
-            const nuovo = reg.installing;
-            if (nuovo)
-                nuovo.addEventListener('statechange', () => { if (nuovo.state === 'installed')
-                    banner(reg); });
+            const nw = reg.installing;
+            if (nw)
+                nw.addEventListener('statechange', () => { if (nw.state === 'installed')
+                    segnala(reg, false); });
         });
     }
-    return { collega };
+    function riga() {
+        if (!inAttesa)
+            return null;
+        const w = inAttesa;
+        return h('div.card.agg-pronto', null, h('div.voce-titolo', null, 'Aggiornamento pronto' + (nuova ? ' (v' + VERSIONE + ' → v' + nuova + ')' : '')), h('div.tenue.piccolo', null, "L'app si riapre in un attimo; i dati restano dove sono."), h('div.bottoni', null, h('button.btn', { onclick: () => w.postMessage('salta') }, 'Aggiorna')));
+    }
+    return { collega, riga, pronto: () => !!inAttesa };
 })();
 avvia().catch(err => {
     document.getElementById('app').textContent = 'Errore di avvio: ' + (err && err.message || err);

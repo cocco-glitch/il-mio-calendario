@@ -1,6 +1,6 @@
 // Service worker: tiene in cache i file dell'app per aprirla offline.
-// mwnv6j31 viene sostituita da build.mjs: a ogni build la cache si rinnova.
-const CACHE = 'imc-mwnv6j31';
+// mwnwndjh viene sostituita da build.mjs: a ogni build la cache si rinnova.
+const CACHE = 'imc-mwnwndjh';
 const FILE = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icone/icona-180.png', 'icone/icona-192.png', 'icone/icona-512.png'];
 
 const PDFJS = ['pdf.min.js', 'pdf.worker.min.js'].map(f => 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/' + f);
@@ -11,7 +11,11 @@ self.addEventListener('install', e => {
   // pdf.js è facoltativo: se la CDN non risponde l'install non deve fallire.
   caches.open('imc-lib').then(c => Promise.all(PDFJS.map(u => c.match(u).then(r => r || c.add(u)).catch(() => {})))).catch(() => {});
 });
-self.addEventListener('message', e => { if (e.data === 'salta') self.skipWaiting(); });
+self.addEventListener('message', e => {
+  if (e.data === 'salta') self.skipWaiting();
+  // v0.58.5 (B1): l'app chiede la versione del worker in attesa per non proporre un aggiornamento identico
+  if (e.data === 'versione?' && e.ports && e.ports[0]) e.ports[0].postMessage(CACHE.slice(4));
+});
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(nomi => Promise.all(nomi.filter(n => n !== CACHE && n !== 'imc-pdf' && n !== 'imc-lib').map(n => caches.delete(n)))).then(() => self.clients.claim()));
 });
