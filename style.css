@@ -880,3 +880,10 @@ button, a, .chip, [role=tab], .nota-tessera { touch-action: manipulation; }   /*
 /* v0.57 (BP6 · INP): Registro errori — le card sotto la piega si impaginano solo quando entrano nello schermo */
 .vista-errori { display: flex; flex-direction: column; gap: 10px; }
 .vista-errori > section.card ~ section.card { content-visibility: auto; contain-intrinsic-size: auto 480px; }
+.campo-materia { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.campo-materia-nuova { width: 100%; }
+
+/* v0.58.6 (U7): pulsanti nel toast */
+.avviso-azioni { display: inline-flex; gap: 6px; margin-left: 10px; vertical-align: middle; }
+.avviso-azione { background: transparent; color: inherit; border: 1.5px solid currentColor; border-radius: 10px; padding: 6px 12px; min-height: 36px; font: inherit; font-size: 14px; cursor: pointer; }
+.primi-passi .primo-passo.fatto strong { color: var(--tenue); }

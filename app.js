@@ -813,19 +813,21 @@ function chiedi(titolo, scelte, testo) {
             primo.focus();
     });
 }
-function avviso(testo, durataMs = 4000, alTocco) {
+function avviso(testo, durataMs = 4000, alTocco, azioni) {
     let zona = document.getElementById('avvisi');
     if (!zona) {
         zona = h('div', { id: 'avvisi', 'aria-live': 'polite' });
         document.body.appendChild(zona);
     }
     for (const vecchio of Array.from(zona.children))
-        if (vecchio.textContent === testo)
+        if (vecchio.dataset.testo === testo)
             vecchio.remove();
     while (zona.children.length >= 2)
         (zona.querySelector('.avviso:not(.fisso)') || zona.firstElementChild).remove();
-    const el = h('div.avviso' + (durataMs > 0 ? '' : '.fisso'), { onclick: () => { el.remove(); if (alTocco)
+    const el = h('div.avviso' + (durataMs > 0 ? '' : '.fisso'), { 'data-testo': testo, onclick: () => { el.remove(); if (alTocco)
             alTocco(); } }, testo);
+    if (azioni && azioni.length)
+        el.appendChild(h('span.avviso-azioni', null, azioni.map(a => h('button.avviso-azione', { type: 'button', onclick: (e) => { e.stopPropagation(); el.remove(); a.fn(); } }, a.testo))));
     zona.appendChild(el);
     if (durataMs > 0)
         setTimeout(() => el.remove(), durataMs);
@@ -5843,10 +5845,8 @@ const CreaQuiz = (() => {
             return;
         }
         const materie = Array.from(new Set((Drive.eProprietario() ? ['Chimica', 'Biologia', 'Fisica'] : Stato.tutti('materia').map(m => m.nome)).concat(Stato.tutti('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m) => m.nome))).filter(Boolean)));
-        if (!materie.length)
-            materie.push('Studio');
         const arg = h('input.campo', { type: 'text', value: pre.argomento || '', placeholder: 'Argomento preciso (es. «leve del corpo umano e guadagno meccanico»)' });
-        const mat = h('select.campo', null, ...materie.map(m => h('option', { value: m, selected: pre.materia ? n2(pre.materia) === n2(m) : false }, m)));
+        const mat = campoMateria(materie.map(m => [m, m]), materie.find(m => pre.materia && n2(pre.materia) === n2(m)) || '', nome => { materiaPerNome(nome); return nome.trim(); });
         let cosa = pre.cosa || 'misto';
         const cose = [['misto', 'Misto (come le schede)'], ['teoria', 'Teoria e definizioni'], ['problemi', 'Problemi con calcoli'], ['trabocchetti', 'Trabocchetti']];
         const chips = h('div.chips', null, ...cose.map(([k, t]) => h('button.chip' + (k === cosa ? '.attivo' : ''), { type: 'button', onclick: (e) => { cosa = k; chips.querySelectorAll('.chip').forEach(c => c.classList.remove('attivo')); e.target.classList.add('attivo'); } }, t)));
@@ -5870,7 +5870,7 @@ const CreaQuiz = (() => {
             stato.textContent = fonti.length ? 'Fonti trovate (le prime 3 sono già scelte; tocca per cambiare):' : 'Nessuna fonte trovata: prova con altre parole chiave (sinonimi, nome del capitolo o del libro).';
             box.append(...fonti.map(f => h('label.cq-fonte', null, h('input', { type: 'checkbox', checked: f.usa, onchange: (e) => f.usa = e.target.checked }), h('span', null, h('b', null, f.name), h('span.tenue.piccolo', null, ' · ' + (f.cartella ? '«' + f.cartella + '» · ' : '') + f.perche.slice(0, 3).join(', '))))));
         };
-        const fs = foglio({ titolo: '✨ Crea un quiz', etichettaSalva: 'Crea', corpo: h('div.modulo', null, h('label', null, 'Argomento', arg), h('label', null, 'Materia', mat), h('div', null, h('div.piccolo', null, 'Cosa vuoi'), chips), h('label', null, 'Aiuta la ricerca (facoltativo)', extra), h('div.tenue.piccolo', null, '💡 Più l\'argomento è preciso, migliori sono le fonti e le domande: nomina il capitolo o la lezione, aggiungi sinonimi e il nome del libro o del docente.'), h('button.btn.neutro', { type: 'button', onclick: cercaFonti }, '🔎 Cerca le fonti nel Drive'), stato, box),
+        const fs = foglio({ titolo: '✨ Crea un quiz', etichettaSalva: 'Crea', corpo: h('div.modulo', null, h('label', null, 'Argomento', arg), h('label', null, 'Materia', mat.el), h('div', null, h('div.piccolo', null, 'Cosa vuoi'), chips), h('label', null, 'Aiuta la ricerca (facoltativo)', extra), h('div.tenue.piccolo', null, '💡 Più l\'argomento è preciso, migliori sono le fonti e le domande: nomina il capitolo o la lezione, aggiungi sinonimi e il nome del libro o del docente.'), h('button.btn.neutro', { type: 'button', onclick: cercaFonti }, '🔎 Cerca le fonti nel Drive'), stato, box),
             salva: () => {
                 const scelte = fonti.filter(f => f.usa);
                 if (!scelte.length) {
@@ -5878,7 +5878,7 @@ const CreaQuiz = (() => {
                     return false;
                 }
                 const nM = cosa === 'problemi' ? 12 : 12, nF = 6;
-                avvia({ argomento: arg.value.trim(), materia: mat.value, cosa: { misto: 'mix di teoria, applicazioni, trabocchetti e problemi come nelle schede', teoria: 'soprattutto teoria e definizioni (Sbarramento), qualche applicativa', problemi: 'soprattutto problemi con calcoli (Problema), con passaggi numerici completi', trabocchetti: 'soprattutto trabocchetti sugli errori tipici' }[cosa], extra: extra.value.trim(), fonti: scelte, nMcq: nM, nFill: nF });
+                avvia({ argomento: arg.value.trim(), materia: mat.value || 'Studio', cosa: { misto: 'mix di teoria, applicazioni, trabocchetti e problemi come nelle schede', teoria: 'soprattutto teoria e definizioni (Sbarramento), qualche applicativa', problemi: 'soprattutto problemi con calcoli (Problema), con passaggi numerici completi', trabocchetti: 'soprattutto trabocchetti sugli errori tipici' }[cosa], extra: extra.value.trim(), fonti: scelte, nMcq: nM, nFill: nF });
             } });
         void fs;
         if (pre.argomento)
@@ -6850,6 +6850,34 @@ function nuovoCodice(nome) {
         i++;
     return base.slice(0, 3) + 'X'.repeat(i - 1);
 }
+function materiaPerNome(nome) {
+    const n = norm(nome.trim());
+    if (!n)
+        return '';
+    const r = Stato.tutti('materia').find(m => !m.deleted && norm(m.nome) === n);
+    if (r)
+        return r.codice;
+    const codice = nuovoCodice(nome);
+    Stato.salva({ id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome: nome.trim(), colore: coloreMateria(codice) });
+    return codice;
+}
+function campoMateria(opzioni, valore, perNome) {
+    const testo = h('input.campo-materia-nuova', { type: 'text', placeholder: "Nome della materia o dell'esame", 'aria-label': 'Nuova materia', autocomplete: 'off' });
+    const daTesto = () => {
+        const t = testo.value.trim();
+        if (!t)
+            return '';
+        const gia = opzioni.find(o => norm(o[1]) === norm(t) || norm(o[0]) === norm(t));
+        return gia ? gia[0] : perNome(t);
+    };
+    if (!opzioni.length)
+        return { el: testo, get value() { return daTesto(); } };
+    const NUOVA = '__nuova__';
+    const sel = selettore([...opzioni, [NUOVA, '＋ Nuova materia…']], opzioni.some(o => o[0] === valore) ? valore : opzioni[0][0], () => { testo.hidden = sel.value !== NUOVA; if (!testo.hidden)
+        testo.focus(); });
+    testo.hidden = true;
+    return { el: h('span.campo-materia', null, sel, testo), get value() { return sel.value === NUOVA ? daTesto() : sel.value; } };
+}
 function editorCorso(pk0) {
     const pk = pk0 ? JSON.parse(JSON.stringify(pk0)) : { tipo: 'step', id: 'corso-' + uid().slice(0, 8), step: 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo: '', aggiornato: ymd(new Date()), proprio: true, risorse: { libri: {}, quiz: {} }, materie: [] };
     const titolo = h('input.titolo-grande', { type: 'text', placeholder: 'Es. Anatomia I, Inglese B2, Patente…', value: pk.titolo });
@@ -7278,11 +7306,14 @@ function apriGeneratore(base, sostituisci) {
     disegnaPasso();
 }
 async function scegliPiano() {
+    const schede = tutteLeSchede().length > 0;
     const m = await chiedi('＋ Crea piano', [
-        { testo: '✨ Genera un piano dalle tue schede', valore: 'gen' },
-        { testo: '✨ Crea Piano Intelligente (FSRS, livelli L1–L5)', valore: 'ai' },
-        { testo: '🗓 Crea piano dal libro (indice + data esame)', valore: 'libro' }
-    ], 'Scegli da dove partire: dalle schede già nei tuoi corsi, da vincoli e ritenzione su misura, oppure dall’indice di un libro.');
+        { testo: '📅 Ho una data d’esame', valore: 'ai' },
+        { testo: '📖 Parto dall’indice del libro', valore: 'libro' },
+        ...(schede ? [{ testo: '🗂 Uso le schede dei miei corsi', valore: 'gen' }] : [])
+    ], ['📅 Ti chiedo materia, data e quando puoi studiare: l’app distribuisce studio e ripassi.',
+        '📖 Incolli l’indice: un capitolo per riga, con le date fino all’esame.',
+        ...(schede ? ['🗂 Mette in fila le schede che hai già nei corsi.'] : [])].join('\n'));
     if (m === 'gen')
         apriGeneratore();
     else if (m === 'ai')
@@ -12112,7 +12143,7 @@ const PianiAI = (() => {
     const iaCalibrazione = () => Dominio.senzaAI() ? undefined : (m, x) => IA.testo(m, 'genera', { maxOut: x.maxOut }).then(r => r.testo);
     function apri() {
         const mats = codiciMaterie();
-        const materia = selettore(mats.map(c => [c, nomeMateria(c)]), mats[0] || '');
+        const materia = campoMateria(mats.map(c => [c, nomeMateria(c)]), mats[0] || '', materiaPerNome);
         const data = h('input', { type: 'date', value: ymd(piuGiorni(new Date(), 21)), min: ymd(piuGiorni(new Date(), 2)) });
         const partenza = selettore([['da_zero', 'Da zero'], ['ripasso', 'Ripasso'], ['raffinamento', 'Raffinamento']], 'da_zero');
         const obiettivo = selettore([['1', '1 · Comprensione'], ['2', '2 · Elaborazione'], ['3', '3 · Applicazione'], ['4', '4 · Transfer']], '4');
@@ -12141,8 +12172,10 @@ const PianiAI = (() => {
         const boxB = h('div');
         const calibra = h('button.btn.neutro', { onclick: async () => {
                 const m = materia.value;
-                if (!m)
+                if (!m) {
+                    avviso('Scrivi il nome della materia.');
                     return;
+                }
                 calibra.disabled = true;
                 boxB.textContent = 'Preparo 3 domande sulla materia…';
                 try {
@@ -12208,7 +12241,7 @@ const PianiAI = (() => {
             try {
                 const v = vincoliBP5();
                 if (!v.materiaCodice || !v.dataTarget || !v.finestreSettimanali.length) {
-                    avviso('Scegli materia, data e almeno un giorno.');
+                    avviso(!v.materiaCodice ? 'Scrivi il nome della materia.' : 'Scegli la data e almeno un giorno.');
                     return;
                 }
                 if (!!imp().gcalLeggiPrimary !== primary.checked) {
@@ -12227,8 +12260,14 @@ const PianiAI = (() => {
                 if (!r.piano) {
                     if (r.fatt.stato === 'critico')
                         mostraRimedi(r.fatt);
-                    else
-                        esito.textContent = 'Nessun argomento trovato: incolla l\'indice o indica un PDF.';
+                    else {
+                        esito.textContent = 'Per questa materia mi serve l’indice: incollalo qui sotto, un capitolo per riga, e tocca di nuovo Crea.';
+                        const av = indice.closest('details');
+                        if (av)
+                            av.open = true;
+                        indice.focus();
+                        indice.scrollIntoView({ block: 'center' });
+                    }
                     return;
                 }
                 salvaPiano(r.piano);
@@ -12247,7 +12286,7 @@ const PianiAI = (() => {
         };
         const stima = h('div.tenue.piccolo', null, senza ? 'Modalità 100% senza AI: mappa dall\'indice locale, 0 token.' : 'Con l\'AI: ~3.200 tok · 1 chiamata (catena genera). Se fallisce: indice locale, 0 token.');
         const sh = foglio({ titolo: '✨ Crea Piano Intelligente', etichettaSalva: 'Crea',
-            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi), h('details.pai-avanzate', null, h('summary', null, 'Avanzate (facoltative)'), h('div.gruppo', null, riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), h('div.gruppo', null, h('div.tenue.piccolo', null, 'Questionario facoltativo: affina intensità e pesi.'), ...campiBio.map(x => riga(x.d.testo, x.s))), h('div.gruppo', null, calibra, boxB), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima), esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
+            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Materia', materia.el), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi), h('details.pai-avanzate', null, h('summary', null, 'Avanzate (facoltative)'), h('div.gruppo', null, riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), h('div.gruppo', null, h('div.tenue.piccolo', null, 'Questionario facoltativo: affina intensità e pesi.'), ...campiBio.map(x => riga(x.d.testo, x.s))), h('div.gruppo', null, calibra, boxB), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima), esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
             salva: () => { crea(sh); return false; } });
         avvisiBio();
     }
@@ -14495,7 +14534,13 @@ function campoRapido() {
             const rec = creaDaRapido(r);
             campo.value = '';
             anteprima.textContent = '';
-            avviso('Creato: ' + descriviRapido(r), 5000, () => rec.type === 'task' ? apriTask(rec) : apriEvento(rec));
+            const apri = () => { const att = Stato.prendi(rec.id); if (att && !att.deleted) {
+                if (att.type === 'task')
+                    apriTask(att);
+                else
+                    apriEvento(att);
+            } };
+            avviso('Creato: ' + descriviRapido(r), 7000, apri, [{ testo: 'Annulla', fn: () => { Stato.elimina(rec.id); avviso('Annullato.'); } }, { testo: 'Modifica', fn: apri }]);
             return;
         }
         campo.value = '';
@@ -16010,8 +16055,8 @@ function vistaStudio() {
 function numero(v, eti) { return h('div.numero', null, h('strong', null, v), h('span', null, eti)); }
 function primiPassi() {
     const passo = (n, titolo, testo, azione) => h('li.primo-passo', null, h('strong', null, n + ' ' + titolo), h('div.tenue.piccolo', null, testo), azione);
-    return h('section.scheda.primi-passi', { 'aria-label': 'Primi passi nello Studio' }, h('h2', null, '👋 Primi passi'), h('ol', null, passo('1.', 'Crea un corso', 'Qualsiasi materia o esame: capitoli, schede e domande stanno nel corso.', h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio')), passo('2.', 'Crea un piano', 'Dall’indice del libro, dalle tue schede o su misura con i ripassi FSRS.', h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')), passo('3.', 'Studia con quiz e schede', 'Ogni giorno Oggi ti propone le schede del piano e i ripassi in scadenza.', null)), Drive.collegato ? bottoneDrive()
-        : h('div.tenue.piccolo', null, '🔒 Senza accesso i dati restano solo su questo dispositivo. Collega Google Drive (in alto) per il backup e gli altri dispositivi.'));
+    return h('section.scheda.primi-passi', { 'aria-label': 'Primi passi nello Studio' }, h('h2', null, '👋 Primi passi'), h('ol', null, passo('1.', 'Crea un corso', 'Qualsiasi materia o esame: capitoli, schede e domande stanno nel corso.', h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio')), passo('2.', 'Crea un piano', 'Dalla data d’esame, dall’indice del libro o dalle tue schede: la materia si crea anche lì.', h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')), passo('3.', 'Studia con quiz e schede', 'Ogni giorno Oggi ti propone le schede del piano e i ripassi in scadenza.', null)), Drive.collegato ? bottoneDrive()
+        : h('div', null, h('div.tenue.piccolo', null, '🔒 Senza accesso i dati restano solo su questo dispositivo. Collega Google Drive per il backup e gli altri dispositivi (anche da Altro → Google Drive).'), h('div.bottoni', null, h('button.btn.neutro', { onclick: () => Drive.login() }, 'Collega Google Drive'))));
 }
 function bottoneDrive() {
     return h('button.btn.neutro', { onclick: async () => {
@@ -16619,7 +16664,11 @@ function vistaOggi() {
         } });
     const domani = piuGiorni(g, 1);
     const occDomani = occorrenzeDelGiorno(domani);
-    return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), ordineWidget().map(w => {
+    const senzaCorsi = !Studio.pkStep().length;
+    const vuotoTotale = senzaCorsi && !Stato.tutti('evento').some(r => !r.deleted) && !Stato.tutti('task').some(r => !r.deleted) && !Stato.tutti('nota').some(r => !r.deleted);
+    if (vuotoTotale)
+        return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), iniziaIn3Passi(), occ.length ? scheda('Impegni di oggi', occ.map(o => rigaOcc(o, g))) : null, tasks.length ? scheda('Promemoria', tasks.map(rigaTask)) : null, occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null);
+    return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null, ordineWidget().map(w => {
         switch (w) {
             case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
             case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
@@ -16644,6 +16693,23 @@ function vistaOggi() {
         }
         return null;
     }));
+}
+function guidaNascosta() { try {
+    return localStorage.getItem('imc-guida-3passi') === 'no';
+}
+catch (_) {
+    return false;
+} }
+function iniziaIn3Passi(nascondibile = false) {
+    const conPiano = Studio.pkPiani().length > 0;
+    const passo = (n, titolo, testo, fatto, azione) => h('li.primo-passo' + (fatto ? '.fatto' : ''), null, h('strong', null, (fatto ? '✓ ' : n + ' ') + titolo), h('div.tenue.piccolo', null, testo), fatto ? null : azione);
+    return h('section.scheda.primi-passi.inizia-3', { 'aria-label': 'Inizia in 3 passi' }, h('h2', null, '👋 Inizia in 3 passi'), h('ol', null, passo('1.', 'Crea un corso', 'Una materia o un esame: lì metti capitoli, schede e domande.', false, h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso')), passo('2.', 'Crea un piano', 'Dalla data d’esame o dall’indice del libro: la materia si crea anche lì.', conPiano, h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')), passo('3.', 'Fai la prima sessione', 'Da domani qui trovi «Studia ora» con le schede del giorno e i ripassi.', false, null)), nascondibile ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => {
+            try {
+                localStorage.setItem('imc-guida-3passi', 'no');
+            }
+            catch (_) { }
+            disegna();
+        } }, 'Nascondi')) : null);
 }
 function titoloCal() {
     const d = UI.data;
@@ -17204,7 +17270,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.58.5';
+const VERSIONE = '0.58.6';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
@@ -17396,7 +17462,7 @@ function avvisoNovita() {
     catch (_) {
         return;
     }
-    chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], '• Scorri col dito a destra o sinistra per passare da una sezione all\'altra.\n• Tieni premuto un pulsante della barra, un esame o una voce del piano: compaiono le scorciatoie collegate.\n• Promemoria e Note ora sono in Altro (in alto) e restano nei riquadri di Oggi.\n• Nelle pagine a mano: due dita per ingrandire.')
+    chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], '• Scorri col dito a destra o sinistra per passare da una sezione all\'altra.\n• Tieni premuto un pulsante della barra, un esame o una voce del piano: compaiono le scorciatoie collegate.\n• Promemoria e Note ora sono nella sezione Altro della barra e restano nei riquadri di Oggi.\n• Nelle pagine a mano: due dita per ingrandire.')
         .then(() => { try {
         localStorage.setItem('imc-novita-035', '1');
     }
