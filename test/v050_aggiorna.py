@@ -1,4 +1,4 @@
-# Test v0.50: service worker con banner «Aggiorna» (niente skipWaiting all'install) + comprimiImmagine (BP1 §6, §7).
+# Test v0.50 → v0.58.5: service worker, aggiornamento senza banner (puntino su Altro, automatico a freddo) + comprimiImmagine (BP1 §6, §7).
 import os, sys, re, http.server, threading, functools
 from playwright.sync_api import sync_playwright
 QUI = os.path.dirname(os.path.abspath(__file__))
@@ -18,47 +18,74 @@ sw = open(os.path.join(QUI, '..', 'public', 'sw.js'), encoding='utf-8').read()
 install = re.search(r"addEventListener\('install'.*?\n\}\);", sw, re.S).group(0)
 ok('skipWaiting' not in re.sub(r'//.*', '', install), 'install senza skipWaiting')
 ok("e.data === 'salta'" in sw and 'self.skipWaiting()' in sw, "skipWaiting solo sul messaggio 'salta'")
+ok("e.data === 'versione?'" in sw and 'e.ports[0].postMessage(CACHE.slice(4))' in sw, 'il worker risponde con la sua versione (B1)')
 ok('imc-lib' in install and "waitUntil(caches.open(CACHE).then(c => c.addAll(FILE.map(f => new Request(f, { cache: 'reload' })))))" in install
    and 'imc-lib' not in install.split('waitUntil(')[1].split(chr(10))[0], 'pdf.js fuori dal waitUntil critico; precache con cache reload (v0.57)')
 
 FINTI = """(opz) => {
   const ev = (o) => { o.ascolta = {}; o.addEventListener = (t, f) => { (o.ascolta[t] = o.ascolta[t] || []).push(f); }; o.lancia = (t) => (o.ascolta[t] || []).forEach(f => f()); return o; };
-  const posta = []; const waiting = { postMessage: (m) => posta.push(m) };
+  const posta = []; const waiting = { postMessage: (m, porte) => { posta.push(m); if (m === 'versione?' && opz.ver != null && porte) porte[0].postMessage(opz.ver); } };
   const reg = ev({ waiting: opz.waiting ? waiting : null, installing: null });
   const sw = ev({ controller: opz.controller ? {} : null });
   let ricariche = 0;
   window.__f = { reg, sw, posta, waiting, get ricariche() { return ricariche; } };
   Aggiornamento.collega(reg, sw, () => { ricariche++; });
 }"""
-conta = lambda pg: pg.locator('#avvisi .avviso', has_text='Nuova versione pronta').count()
+# v0.58.5: niente banner fisso (U2), mai per la stessa versione (B1), aggiornamento automatico a freddo
+banner = lambda pg: pg.locator('#avvisi .avviso', has_text='Nuova versione').count()
+puntino = lambda pg: pg.locator('.tabbar .punto-agg').count()
+TIMER = "() => localStorage.setItem('imc-timer', JSON.stringify({ inizio: Date.now(), durata: 25, fase: 'studio' }))"
+def nuova(pg):
+    pg.evaluate("() => localStorage.removeItem('imc-timer')"); pg.reload(); pg.wait_for_selector('.tabbar')
 with sync_playwright() as p:
     b = p.chromium.launch()
     ctx = b.new_context(bypass_csp=True, viewport={'width': 390, 'height': 844})
     ctx.route('**/cdnjs.cloudflare.com/**', lambda r: r.abort())
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.goto(URL); pg.wait_for_selector('.tabbar')
+    VER = pg.evaluate('VERSIONE')
 
-    # --- prima installazione: nessun controller → nessun banner, nessuna ricarica ---
-    pg.evaluate(FINTI, {'controller': False, 'waiting': True})
-    pg.evaluate("() => { __f.sw.lancia('controllerchange'); }")
-    ok(conta(pg) == 0 and pg.evaluate("__f.ricariche") == 0, 'prima installazione: niente banner né ricarica')
+    # --- prima installazione: nessun controller → niente, nessuna ricarica ---
+    pg.evaluate(FINTI, {'controller': False, 'waiting': True, 'ver': '9.9.9'})
+    pg.evaluate("() => { __f.sw.lancia('controllerchange'); }"); pg.wait_for_timeout(300)
+    ok(pg.evaluate("__f.posta") == [] and pg.evaluate("__f.ricariche") == 0, 'prima installazione: niente aggiornamento né ricarica')
 
-    # --- worker già in attesa all'apertura → banner; tocco → 'salta'; controllerchange → una sola ricarica ---
-    pg.reload(); pg.wait_for_selector('.tabbar')
-    pg.evaluate(FINTI, {'controller': True, 'waiting': True})
-    ok(conta(pg) == 1, 'banner «Nuova versione pronta» con un worker in attesa')
-    pg.locator('#avvisi .avviso', has_text='Nuova versione pronta').click()
-    ok(pg.evaluate("__f.posta") == ['salta'], "tocco → postMessage('salta')")
+    # --- avvio a freddo, app libera: si aggiorna da sola, senza banner ---
+    nuova(pg)
+    pg.evaluate(FINTI, {'controller': True, 'waiting': True, 'ver': '9.9.9'}); pg.wait_for_timeout(300)
+    ok(pg.evaluate("__f.posta") == ['versione?', 'salta'] and banner(pg) == 0, 'freddo + app libera: salta automatico, nessun banner (%s)' % pg.evaluate("__f.posta"))
     pg.evaluate("() => { __f.sw.lancia('controllerchange'); __f.sw.lancia('controllerchange'); }")
     ok(pg.evaluate("__f.ricariche") == 1, 'controllerchange → una sola ricarica')
 
-    # --- aggiornamento trovato mentre l'app è aperta (updatefound → installed) ---
-    pg.reload(); pg.wait_for_selector('.tabbar')
-    pg.evaluate(FINTI, {'controller': True, 'waiting': False})
-    ok(conta(pg) == 0, 'nessun banner senza aggiornamenti')
+    # --- avvio a freddo con il timer attivo: niente ricarica, puntino su Altro + riga in Altro ---
+    nuova(pg); pg.evaluate(TIMER)
+    pg.evaluate(FINTI, {'controller': True, 'waiting': True, 'ver': '9.9.9'}); pg.wait_for_timeout(300)
+    ok(pg.evaluate("__f.posta") == ['versione?'] and puntino(pg) == 1 and banner(pg) == 0, 'timer attivo: nessun salta, puntino su Altro, nessun banner')
+    ok(pg.locator('.tabbar button[aria-label="Altro · aggiornamento pronto"]').count() == 1, 'nome accessibile del tab Altro con aggiornamento')
+    pg.locator('.tabbar button[aria-label="Altro · aggiornamento pronto"]').click(); pg.wait_for_selector('.agg-pronto')
+    ok(('v%s → v9.9.9' % VER) in pg.inner_text('.agg-pronto'), 'riga in Altro con le due versioni: ' + pg.inner_text('.agg-pronto')[:60])
+    pg.locator('.agg-pronto button', has_text='Aggiorna').click()
+    ok(pg.evaluate("__f.posta") == ['versione?', 'salta'], "Aggiorna → postMessage('salta')")
+
+    # --- stessa versione già in esecuzione: nulla da proporre (B1) ---
+    nuova(pg); pg.evaluate(TIMER)
+    pg.evaluate(FINTI, {'controller': True, 'waiting': True, 'ver': VER}); pg.wait_for_timeout(300)
+    ok(pg.evaluate("__f.posta") == ['versione?'] and puntino(pg) == 0, 'stessa versione: nessun puntino, nessun salta')
+
+    # --- worker vecchio che non risponde alla domanda: si propone comunque (dopo l'attesa) ---
+    nuova(pg); pg.evaluate(TIMER)
+    pg.evaluate(FINTI, {'controller': True, 'waiting': True, 'ver': None}); pg.wait_for_timeout(1800)
+    ok(puntino(pg) == 1, 'worker senza risposta: puntino dopo il timeout')
+
+    # --- aggiornamento trovato mentre l'app è aperta (updatefound → installed): puntino, mai ricarica da sola ---
+    nuova(pg)
+    pg.evaluate(FINTI, {'controller': True, 'waiting': False, 'ver': '9.9.9'}); pg.wait_for_timeout(200)
+    ok(puntino(pg) == 0, 'nessun puntino senza aggiornamenti')
     pg.evaluate("""() => { const n = { state: 'installing', ascolta: [], addEventListener(t, f) { this.ascolta.push(f); } };
       __f.reg.installing = n; __f.reg.lancia('updatefound'); n.state = 'installed'; __f.reg.waiting = __f.waiting; n.ascolta.forEach(f => f()); n.ascolta.forEach(f => f()); }""")
-    ok(conta(pg) == 1, 'updatefound → installed: banner, una volta sola')
+    pg.wait_for_timeout(300)
+    ok(puntino(pg) == 1 and pg.evaluate("__f.posta") == ['versione?'] and banner(pg) == 0, 'updatefound → installed: un puntino, una sola domanda, nessun salta (%s)' % pg.evaluate("__f.posta"))
+    pg.evaluate("() => localStorage.removeItem('imc-timer')")
 
     # --- service worker vero su 127.0.0.1: installa e prende il controllo anche con la CDN di pdf.js irraggiungibile ---
     r = pg.evaluate("""async () => { const reg = await navigator.serviceWorker.register('sw.js'); await navigator.serviceWorker.ready;

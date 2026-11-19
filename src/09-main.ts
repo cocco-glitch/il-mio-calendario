@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.58.4';
+const VERSIONE = '0.58.5';
 
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
@@ -63,8 +63,8 @@ function disegna(): void {
   const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
   const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => {
     const att = UI.scheda === s || (s === 'altro' && inAltro);
-    return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; if (s === 'altro') UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null },
-      h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : null),
+    return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; if (s === 'altro') UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null, 'aria-label': s === 'altro' && Aggiornamento.pronto() ? 'Altro · aggiornamento pronto' : null },
+      h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : s === 'altro' && Aggiornamento.pronto() ? h('span.punto-agg', { title: 'Aggiornamento pronto' }) : null),
       h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
   }));
   // direzione dell'animazione: verso destra o sinistra secondo la posizione in barra
@@ -243,27 +243,62 @@ async function avvia(): Promise<void> {
 }
 
 /**
- * v0.50: nuova versione del service worker pronta → banner «Nuova versione pronta · Aggiorna».
+ * v0.50 → v0.58.5: nuova versione del service worker pronta.
+ * - All'avvio a freddo (worker già in attesa, nessun timer, nessun foglio/visore aperto) si aggiorna da sola.
+ * - Altrimenti: puntino sull'icona Altro + riga «Aggiornamento pronto · Aggiorna» in Altro. Mai un banner fisso (U2).
+ * - Se il worker in attesa ha la stessa VERSIONE già in esecuzione non si propone nulla (B1).
  * Il tocco manda 'salta' al worker in attesa; al cambio di controller si ricarica (una volta sola).
- * Prima installazione (nessun controller): nessun banner.
+ * Prima installazione (nessun controller): niente.
  */
 const Aggiornamento = (() => {
-  let mostrato = false, ricaricato = false;
-  function banner(reg: ServiceWorkerRegistration): void {
-    if (mostrato || !reg.waiting) return;
-    mostrato = true;
-    avviso('Nuova versione pronta · tocca per aggiornare', 0, () => { if (reg.waiting) reg.waiting.postMessage('salta'); });
+  let inAttesa: ServiceWorker | null = null, chiesto: ServiceWorker | null = null, nuova = '', ricaricato = false, controllo = 0;
+  /** Versione del worker in attesa ('' se non risponde: worker vecchio → si tratta come diversa). */
+  function versioneDi(w: ServiceWorker): Promise<string> {
+    return new Promise(ok => {
+      const t = setTimeout(() => ok(''), 1500);
+      try {
+        const c = new MessageChannel();
+        c.port1.onmessage = e => { clearTimeout(t); ok(String(e.data || '')); };
+        w.postMessage('versione?', [c.port2]);
+      } catch (e) { console.warn('Aggiornamento: versione non leggibile', e); clearTimeout(t); ok(''); }
+    });
+  }
+  function libero(): boolean { return !Timer.attivo() && !document.querySelector('.foglio-sfondo, .visore, dialog[open]') && !document.activeElement?.matches('input, textarea, [contenteditable]'); }
+  function puntino(): void {
+    const tab = Array.from(document.querySelectorAll<HTMLElement>('.tabbar button')).find(b => b.querySelector('.tab-eti')?.textContent === 'Altro');
+    const ico = tab && tab.querySelector('.tab-ico');
+    if (ico && !ico.querySelector('.punto-agg, .badge')) ico.appendChild(h('span.punto-agg', { title: 'Aggiornamento pronto' }));
+    if (tab) tab.setAttribute('aria-label', 'Altro · aggiornamento pronto');
+  }
+  async function segnala(reg: ServiceWorkerRegistration, freddo: boolean): Promise<void> {
+    const w = reg.waiting; if (!w || w === inAttesa || w === chiesto) return;
+    chiesto = w; const n = ++controllo;
+    const v = await versioneDi(w);
+    if (n !== controllo || reg.waiting !== w) return;
+    if (v && v === VERSIONE) return;
+    if (freddo && libero()) { w.postMessage('salta'); return; }
+    inAttesa = w; nuova = v; puntino();
+    if (UI.scheda === 'altro' && !UI.altroSez && !document.querySelector('.agg-pronto') && !document.querySelector('.foglio-sfondo, .visore')) disegna();
   }
   function collega(reg: ServiceWorkerRegistration, sw: { controller: ServiceWorker | null; addEventListener(t: string, f: () => void): void }, ricarica: () => void = () => location.reload()): void {
     if (!sw.controller) return;
     sw.addEventListener('controllerchange', () => { if (ricaricato) return; ricaricato = true; ricarica(); });
-    if (reg.waiting) banner(reg);
+    if (reg.waiting) segnala(reg, true);
     reg.addEventListener('updatefound', () => {
-      const nuovo = reg.installing;
-      if (nuovo) nuovo.addEventListener('statechange', () => { if (nuovo.state === 'installed') banner(reg); });
+      const nw = reg.installing;
+      if (nw) nw.addEventListener('statechange', () => { if (nw.state === 'installed') segnala(reg, false); });
     });
   }
-  return { collega };
+  /** Riga per la pagina Altro (null se non c'è nulla da aggiornare). */
+  function riga(): HTMLElement | null {
+    if (!inAttesa) return null;
+    const w = inAttesa;
+    return h('div.card.agg-pronto', null,
+      h('div.voce-titolo', null, 'Aggiornamento pronto' + (nuova ? ' (v' + VERSIONE + ' → v' + nuova + ')' : '')),
+      h('div.tenue.piccolo', null, "L'app si riapre in un attimo; i dati restano dove sono."),
+      h('div.bottoni', null, h('button.btn', { onclick: () => w.postMessage('salta') }, 'Aggiorna')));
+  }
+  return { collega, riga, pronto: () => !!inAttesa };
 })();
 
 avvia().catch(err => {

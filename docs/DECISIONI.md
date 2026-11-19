@@ -197,3 +197,8 @@ Chiavi Gemini nuove «AQ.» accettate (Bearer → x-goog-api-key → ?key=). I m
 
 ## v0.58.4 — Peso (19/11)
 - 2026-11-19 · `removeComments: true` in `tsconfig.json`: `app.js` 338 → 283 KB gzip senza cambiare codice · i commenti restano nel sorgente `src/`, nessun test leggeva commenti dalla build, nessun `/*!` di licenza in `src/` (pdf.js è caricato a parte). Soglia peso stretta a 306 KB (+8 %) e test Node che blocca il ritorno a `false`.
+
+## v0.58.5 — HUD che non copre (19/11)
+- 2026-11-19 · Avvisi spostati in basso, sopra barra, timer e «+» (a destra lasciano 84 px al pulsante flottante); con foglio o visore aperto vanno in fondo allo schermo · in alto coprivano Cerca/+ e Annulla/Salva dei fogli (U1). Al massimo 2 visibili, lo stesso testo sostituisce il precedente; quelli senza scadenza si tolgono per ultimi (B2).
+- 2026-11-19 · Niente più banner fisso «Nuova versione pronta» (U2): all'avvio a freddo, se non c'è timer né foglio né campo di testo attivo, l'app si aggiorna da sola; altrimenti puntino sul tab Altro (con nome accessibile) e riga «Aggiornamento pronto (vX → vY) · Aggiorna» in Altro. L'app chiede al worker in attesa la sua versione (`'versione?'` su MessageChannel, 1,5 s): se è uguale a quella in uso non propone nulla (B1); se non risponde (worker vecchio) la tratta come diversa.
+- 2026-11-19 · Con il timer attivo le pagine (non il calendario) hanno 160 px di spazio in fondo, 88 su PC: l'ultima tessera resta sopra la pillola (U9). Test `test/v0585_hud.py` con `elementFromPoint` a 390 px e 1280 px.

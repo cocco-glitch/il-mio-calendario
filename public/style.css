@@ -218,9 +218,15 @@ dialog.dialogo-sfondo::backdrop { background: transparent; }
 .dialogo-titolo { font-size: 18px; font-weight: 750; text-align: center; }
 .dialogo-testo { color: var(--tenue); text-align: center; margin-bottom: 6px; }
 
-#avvisi { position: fixed; top: calc(env(safe-area-inset-top) + 8px); left: 10px; right: 10px; z-index: 40; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
-/* v0.57: con un visore aperto (quiz, appunto…) gli avvisi vanno in basso: in alto coprirebbero «Chiudi» */
-body:has(.visore) #avvisi { top: auto; bottom: calc(env(safe-area-inset-bottom) + 12px); flex-direction: column-reverse; }
+/* v0.58.5: avvisi SEMPRE in basso, sopra la barra (a sinistra del + flottante) e sopra il timer: mai sopra Cerca, + o Annulla/Salva */
+#avvisi { position: fixed; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 14px); left: 10px; right: 84px; z-index: 40; display: flex; flex-direction: column-reverse; gap: 6px; align-items: center; pointer-events: none; }
+body:has(#timer-barra) #avvisi { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 74px); }
+/* con un visore (quiz, appunto…) o un foglio aperto la barra è coperta: avvisi in fondo allo schermo */
+body:has(.visore) #avvisi, body:has(.foglio-sfondo) #avvisi { bottom: calc(env(safe-area-inset-bottom) + 12px); right: 10px; }
+@media (min-width: 900px) {
+  :root:not([data-nav="basso"]) body:not(:has(.visore)):not(:has(.foglio-sfondo)) #avvisi { bottom: 16px; left: 226px; right: 16px; }
+  :root:not([data-nav="basso"]) body:has(#timer-barra):not(:has(.visore)):not(:has(.foglio-sfondo)) #avvisi { bottom: 80px; }
+}
 .avviso { pointer-events: auto; background: var(--testo); color: var(--bg); padding: 11px 16px; border-radius: 14px; font-weight: 600; font-size: 15px; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); max-width: 480px; animation: su .2s ease-out; }
 
 /* ---------- PC / tablet largo: barra laterale al posto della tab bar ---------- */
@@ -314,6 +320,11 @@ body { font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", R
 .timer-btn { width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 18%, transparent); color: var(--bg); font-weight: 800; text-align: center; }
 body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 76px); }
 @media (min-width: 900px) { #timer-barra { bottom: 16px; left: 226px; } }
+/* v0.58.5 (U9): con il timer attivo l'ultima riga/tessera non finisce sotto la pillola */
+body:has(#timer-barra) .pagina:not(.cal) { padding-bottom: 160px; }
+@media (min-width: 900px) { body:has(#timer-barra) .pagina:not(.cal) { padding-bottom: 88px; } }
+/* v0.58.5 (U2): aggiornamento pronto = puntino sull'icona Altro, mai un banner fisso */
+.punto-agg { position: absolute; top: -2px; right: -4px; width: 9px; height: 9px; border-radius: 50%; background: var(--accento); box-shadow: 0 0 0 2px var(--sup); }
 .grafico { display: flex; align-items: flex-end; gap: 4px; height: 120px; margin: 10px 0 4px; }
 .grafico .colonna { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; gap: 2px; }
 .grafico .pila { flex: 1; width: 100%; display: flex; flex-direction: column-reverse; background: var(--sup2); border-radius: 4px; overflow: hidden; }

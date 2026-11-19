@@ -491,6 +491,7 @@ function vistaAltro(): HTMLElement {
   const tessera = (sch: Scheda, ic: string, tit: string, sotto: string, cls: string) =>
     h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
   return h('div.pagina', null,
+    Aggiornamento.riga(),
     h('div.tessere-altro', null,
       tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'),
       tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nota del giorno', 'viola')),

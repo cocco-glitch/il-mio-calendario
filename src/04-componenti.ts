@@ -91,11 +91,14 @@ function chiedi(titolo: string, scelte: { testo: string; valore: string; pericol
   });
 }
 
-/** Avviso temporaneo in alto. */
+/** Avviso temporaneo in basso, sopra barra e timer (v0.58.5: in alto copriva Cerca/+ e Annulla/Salva dei fogli).
+ *  Al massimo 2 visibili; lo stesso testo non si ripete (sostituisce il precedente). */
 function avviso(testo: string, durataMs = 4000, alTocco?: () => void): void {
   let zona = document.getElementById('avvisi');
   if (!zona) { zona = h('div', { id: 'avvisi', 'aria-live': 'polite' }); document.body.appendChild(zona); }
-  const el = h('div.avviso', { onclick: () => { el.remove(); if (alTocco) alTocco(); } }, testo);
+  for (const vecchio of Array.from(zona.children)) if (vecchio.textContent === testo) vecchio.remove();
+  while (zona.children.length >= 2) (zona.querySelector('.avviso:not(.fisso)') || zona.firstElementChild!).remove();   // gli avvisi senza scadenza restano per ultimi
+  const el = h('div.avviso' + (durataMs > 0 ? '' : '.fisso'), { onclick: () => { el.remove(); if (alTocco) alTocco(); } }, testo);
   zona.appendChild(el);
   if (durataMs > 0) setTimeout(() => el.remove(), durataMs);
 }

@@ -11,7 +11,11 @@ self.addEventListener('install', e => {
   // pdf.js è facoltativo: se la CDN non risponde l'install non deve fallire.
   caches.open('imc-lib').then(c => Promise.all(PDFJS.map(u => c.match(u).then(r => r || c.add(u)).catch(() => {})))).catch(() => {});
 });
-self.addEventListener('message', e => { if (e.data === 'salta') self.skipWaiting(); });
+self.addEventListener('message', e => {
+  if (e.data === 'salta') self.skipWaiting();
+  // v0.58.5 (B1): l'app chiede la versione del worker in attesa per non proporre un aggiornamento identico
+  if (e.data === 'versione?' && e.ports && e.ports[0]) e.ports[0].postMessage(CACHE.slice(4));
+});
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(nomi => Promise.all(nomi.filter(n => n !== CACHE && n !== 'imc-pdf' && n !== 'imc-lib').map(n => caches.delete(n)))).then(() => self.clients.claim()));
 });
