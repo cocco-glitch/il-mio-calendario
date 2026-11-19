@@ -9,6 +9,11 @@
   "orientation": "any",
   "background_color": "#0e1014",
   "theme_color": "#0e1014",
+  "shortcuts": [
+    { "name": "Studia ora", "short_name": "Studia", "description": "Avvia subito la sessione consigliata", "url": "./?az=studia", "icons": [{ "src": "icone/icona-192.png", "sizes": "192x192" }] },
+    { "name": "Aggiungi", "short_name": "Aggiungi", "description": "Nuovo impegno", "url": "./?az=aggiungi", "icons": [{ "src": "icone/icona-192.png", "sizes": "192x192" }] },
+    { "name": "Ripassa le flashcard", "short_name": "Ripassa", "description": "Le carte di oggi", "url": "./?az=ripassa", "icons": [{ "src": "icone/icona-192.png", "sizes": "192x192" }] }
+  ],
   "icons": [
     { "src": "icone/icona-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icone/icona-512.png", "sizes": "512x512", "type": "image/png" },

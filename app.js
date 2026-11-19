@@ -4064,6 +4064,19 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
             if (x)
                 aiRiassunto(x);
         }
+        if (s === 'quiz') {
+            salvaOra();
+            const x = Stato.prendi(ap.id);
+            if (x) {
+                if (!x.testo.trim()) {
+                    avviso('Scrivi prima qualcosa.');
+                    return;
+                }
+                cambiato = false;
+                v.chiudi();
+                CreaQuiz.leggero({ titolo: x.titolo, appunto: x.id });
+            }
+        } // v0.58 (Q5)
         if (s === 'carte') {
             salvaOra();
             avviaCarte(['mz-ap-' + ap.id.replace(/^ap-/, '')], ap.titolo);
@@ -4077,7 +4090,7 @@ function apriAppunto(a, extra = {}, alRiassunto = false) {
             avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).');
         }
     };
-    v.barra.append(tendina('⋯', () => [['🗣 Spiegamelo (Feynman)', 'feyn'], ['📑 Vista Cornell', 'cornell'], ['🧠 Copri e ricorda', 'copri'], ['✨ Riscontro AI sul riassunto', 'airiass'], ['🎙 Lezione audio', 'audio'], ['☁︎ Salva su Drive', 'drive'], ['🃏 Ripassa le sue carte', 'carte']].map(([t, k]) => ({ testo: t, azione: () => k === 'audio' ? audioOra() : azioneTesta(k) }))
+    v.barra.append(tendina('⋯', () => [['🗣 Spiegamelo (Feynman)', 'feyn'], ['📑 Vista Cornell', 'cornell'], ['🧠 Copri e ricorda', 'copri'], ['✨ Riscontro AI sul riassunto', 'airiass'], ['🎙 Lezione audio', 'audio'], ['☁︎ Salva su Drive', 'drive'], ['🃏 Ripassa le sue carte', 'carte'], ['🎯 Quiz da questo appunto', 'quiz']].map(([t, k]) => ({ testo: t, azione: () => k === 'audio' ? audioOra() : azioneTesta(k) }))
         .concat([{ testo: '🗑 Elimina appunto', azione: () => azioneTesta('del'), pericolo: true }]), 'Azioni dell\'appunto'));
     const scambio = h('div.segmenti.appunto-modo');
     const leggiOra = () => {
@@ -6547,6 +6560,19 @@ const CreaQuiz = (() => {
                 aggiornaPipe();
             } daCloze(a.testo); } }, '✂️ Dai punti chiave')), badge, anteprima, h('div.chips', null, h('span.piccolo', null, 'Oppure con l\'AI:'), nAI, h('button.chip', { type: 'button', onclick: generaAI }, '✨ Genera domande')), breaker, h('div.bottoni', null, h('button.btn', { type: 'button', onclick: salva }, '💾 Salva e apri il quiz'), h('button.btn.neutro', { type: 'button', onclick: () => { pronte = []; badge.textContent = ''; anteprima.textContent = 'Svuotato.'; } }, 'Svuota')), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Esporta dall\'archivio (appunti + .imcpack)'), h('div.chips', null, ...[['errori', 'Solo errori'], ['illusione', 'Illusioni di competenza'], ['bloom3', 'Bloom ≥ 3']].map(([f, n]) => h('button.chip', { type: 'button', onclick: () => QuizApp.esporta(archivio(), f, 'Quiz creati in app', Dominio.archetipoMateria(materia.value.trim())) }, n)))), pipe));
         aggiornaPipe();
+        // v0.58 (Q5): «🎯 Quiz da questo appunto» dal menu ⋯ dell'appunto → completamenti già pronti dai suoi punti chiave
+        if (pre.appunto) {
+            const a = app.find(x => x.id === pre.appunto) || Stato.prendi(pre.appunto);
+            if (a && !a.deleted) {
+                if (app.includes(a))
+                    selApp.value = a.id;
+                if (!step.value.trim() && (a.micro || a.sub)) {
+                    step.value = String(a.micro || a.sub);
+                    aggiornaPipe();
+                }
+                daCloze(a.testo);
+            }
+        }
     }
     return { nuovo, elenco, apri, tutti, controlla, crea, leggero };
 })();
@@ -12019,6 +12045,18 @@ const PianiAI = (() => {
         const s = new Set([...Object.keys(MATERIE_BASE).filter(() => Drive.eProprietario()), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
         return Array.from(s).filter(Boolean);
     }
+    /** v0.58 (Q4): codice materia di un quiz creato in app (sk «qc-…»), dal campo materia del record qcreato. */
+    function materiaDiSk(sk) {
+        if (!/^qc-/.test(sk || ''))
+            return undefined;
+        const r = Stato.prendi(sk);
+        if (!r || r.deleted || !r.materia)
+            return undefined;
+        const n = (x) => String(x || '').trim().toLowerCase();
+        return codiciMaterie().find(c => n(c) === n(r.materia) || n(nomeMateria(c)) === n(r.materia)) || r.materia;
+    }
+    /** I record statq con la materia dei quiz creati (materiaQ), per segnaliIper/monitoraAffaticamento. */
+    const statqConMateria = () => Stato.tutti('statq').map(s => { const m = materiaDiSk(s.sk); return m ? { ...s, materiaQ: m } : s; });
     /** Minuti già occupati quel giorno dagli altri piani attivi (non AI): v.min se c'è, altrimenti 45 per voce. */
     function minutiAltriPiani(data) {
         let tot = 0;
@@ -12065,7 +12103,7 @@ const PianiAI = (() => {
         return {
             oggi: ymd(new Date()),
             occupato: (da, a) => GCal.occupatoPrimary(da, a),
-            minutiAltriPiani, statq: () => Stato.tutti('statq'), leggiFonte,
+            minutiAltriPiani, statq: statqConMateria, leggiFonte,
             ia: o.usaAI && !Dominio.senzaAI() ? (m, x) => IA.testo(m, 'genera', { maxOut: x.maxOut, archetipo: x.archetipo }).then(r => r.testo) : undefined,
             testoIndice: o.testoIndice, unita: o.unita, pid: o.pid, titolo: o.titolo,
             ritenzione: min => Ripassi.ritenzione(ymd(new Date()), min), intervallo: Ripassi.intervallo, // v0.57 (A16): unica fonte
@@ -12138,7 +12176,7 @@ const PianiAI = (() => {
                         }
                         catch (_) { /* fonte illeggibile */ }
                     }
-                    const seg = Pianificatore.segnaliIper(Stato.tutti('statq'), m);
+                    const seg = Pianificatore.segnaliIper(statqConMateria(), m);
                     const r = await Pianificatore.generaDomandeCalibrazione({ materia: nomeMateria(m), archetipo: Dominio.archetipoMateria(m), keyword: Pianificatore.paroleChiaveBM25(testo, 8), errori: seg.topErrori.slice(0, 3) }, usaAI.checked ? iaCalibrazione() : undefined);
                     domandeB = r.domande;
                     svuota(boxB);
@@ -12232,7 +12270,9 @@ const PianiAI = (() => {
         };
         const stima = h('div.tenue.piccolo', null, senza ? 'Modalità 100% senza AI: mappa dall\'indice locale, 0 token.' : 'Con l\'AI: ~3.200 tok · 1 chiamata (catena genera). Se fallisce: indice locale, 0 token.');
         const sh = foglio({ titolo: '✨ Crea Piano Intelligente', etichettaSalva: 'Crea',
-            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Ore max/giorno', oreMax), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), h('div.gruppo', null, riga('Intensità', intensita), ...campiBio.map(x => riga(x.d.testo, x.s)), boxAvvisi), h('div.gruppo', null, calibra, boxB), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima, esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
+            corpo: h('div.modulo', null, 
+            // v0.58: 4 campi in vista; il resto (questionario incluso, facoltativo) in «Avanzate» chiuso
+            h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi), h('details.pai-avanzate', null, h('summary', null, 'Avanzate (facoltative)'), h('div.gruppo', null, riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), h('div.gruppo', null, h('div.tenue.piccolo', null, 'Questionario facoltativo: affina intensità e pesi.'), ...campiBio.map(x => riga(x.d.testo, x.s))), h('div.gruppo', null, calibra, boxB), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima), esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
             salva: () => { crea(sh); return false; } });
         avvisiBio();
     }
@@ -12244,7 +12284,7 @@ const PianiAI = (() => {
             if (Studio.nascosto(p.id))
                 continue;
             const copia = JSON.parse(JSON.stringify(p));
-            const r = Pianificatore.hookIpercorrezione(p, { oggi, sk, caso });
+            const r = Pianificatore.hookIpercorrezione(p, { oggi, sk, caso, materia: materiaDiSk(sk) });
             if (!r)
                 continue;
             salvaPiano(r.piano);
@@ -12270,7 +12310,7 @@ const PianiAI = (() => {
             }
             if (!p.livelloIntensita || Studio.nascosto(p.id) || (p.deload && p.deload.attivo))
                 continue;
-            stats = stats || Stato.tutti('statq');
+            stats = stats || statqConMateria();
             const f = Pianificatore.monitoraAffaticamento(stats, { oggi, materia: p.vincoliAI.materiaCodice });
             if (!f.trigger)
                 continue;
@@ -12347,6 +12387,9 @@ const Pianificatore = (() => {
     // ---------- Stadio 1a: ipercorrezioni (neuro + legacy) ----------
     /** Legge i segnali di ipercorrezione da record statq: tag/ultimoCaso/daConsolidare di `neuro` (BP3), confidenceLog
      *  (certo+sbagliata, incerto+giusta) e i campi legacy (`iper`, `illusioni`, `ipercorrezioni`, `lucky`). */
+    /** v0.58 (Q4): materia di un record statq. I quiz creati in app (sk «qc-…») portano la materia in `materiaQ`
+     *  (la aggiunge PianiAI dal record qcreato); gli altri usano il prefisso della scheda `<materia>-<microstep>-<k>`. */
+    const materiaSk = (s) => s && s.materiaQ ? String(s.materiaQ) : String((s && s.sk) || '').split('-')[0].split('~')[0];
     function segnaliIper(stats, materia) {
         let ill = 0, luck = 0, n = 0, ok = 0;
         const errori = [];
@@ -12354,7 +12397,7 @@ const Pianificatore = (() => {
             if (!s || s.deleted || typeof s !== 'object')
                 continue;
             const sk = String(s.sk || '');
-            if (materia && sk && sk.split('-')[0] !== materia)
+            if (materia && sk && materiaSk(s) !== materia)
                 continue;
             const nn = Math.max(0, +s.n || 0), oo = clamp(+s.ok || 0, 0, nn);
             n += nn;
@@ -13058,7 +13101,7 @@ const Pianificatore = (() => {
             if (!s || s.deleted || typeof s !== 'object')
                 continue;
             const sk = String(s.sk || '');
-            if (o.materia && sk && sk.split('-')[0] !== o.materia)
+            if (o.materia && sk && materiaSk(s) !== o.materia)
                 continue;
             const nn = Math.max(0, +s.n || 0);
             n += nn;
@@ -13186,7 +13229,7 @@ const Pianificatore = (() => {
             return null;
         if (ctx.caso !== 'illusione_competenza' && ctx.caso !== 'lucky_guess')
             return null;
-        if (ctx.sk && piano.vincoliAI && String(ctx.sk).split('-')[0].split('~')[0] !== piano.vincoliAI.materiaCodice)
+        if ((ctx.materia || ctx.sk) && piano.vincoliAI && (ctx.materia || materiaSk({ sk: ctx.sk })) !== piano.vincoliAI.materiaCodice)
             return null;
         const p = clona(piano), tutte = vociDi(p);
         const cand = tutte.filter(x => (x.v.livelloCognitivo === 3 || x.v.livelloCognitivo === 4) && !x.v.isRipassoFSRS && !x.v.isBuffer && x.g.data > ctx.oggi && (!ctx.uid || x.v.uid === ctx.uid))
@@ -13257,7 +13300,7 @@ const Pianificatore = (() => {
         piano.fonteMappa = m.fonte;
         return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: m.errore };
     }
-    return { segnaliIper, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
+    return { segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
         unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
         compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
         // v0.56 (BP5)
@@ -13684,7 +13727,7 @@ const QuizApp = (() => {
         v.corpo.appendChild(h('div.vuoto.centro', null, 'Preparo le domande…'));
         let dati;
         try {
-            dati = gen ? { domande: gen(), immagini: {}, fonte: 'gen' } : await Banca.scheda(pk, m, micro, s);
+            dati = gen ? { domande: gen(), immagini: (info && info.immagini) || {}, fonte: 'gen' } : await Banca.scheda(pk, m, micro, s);
         }
         catch (e) {
             svuota(v.corpo);
@@ -14358,6 +14401,81 @@ const Editor = (() => {
         fatto();
     }
     return { apri, ripristina };
+})();
+
+// 07-quizrifare.ts — v0.58 (Q2): «🎯 Quiz da rifare».
+//
+// Lo SRS per domanda (statq.neuro.due, BP3) prima era letto solo dentro un quiz già aperto: la promessa
+// «tornano già oggi in cima al ripasso» non si avverava. Qui le domande scadute (illusioni di competenza in testa)
+// diventano un quiz unico, proposto in Studia ora e nella card «Adesso» di Oggi. ~1 minuto a domanda, massimo 10.
+// Sorgenti delle domande: quiz creati in app (qcreato), pacchetti .imcpack (Dominio.domandeDi), schede del proprietario (Banca).
+// In v0.59 diventa l'adapter di CodaRipasso per questa sorgente.
+const QuizRifare = (() => {
+    const MAX = 10;
+    const qcreato = (sk) => { const r = /^qc-/.test(sk) ? Stato.prendi(sk) : null; return r && !r.deleted ? r : null; };
+    /** La domanda si può ricostruire? (le serie generate 🎲 no: cambiano i numeri a ogni giro) */
+    const risolvibile = (sk) => !!sk && (!!qcreato(sk) || !!Dominio.domandeDi(sk) || !!trovaScheda(sk));
+    const urgenza = (s) => s.neuro && s.neuro.tag && s.neuro.tag.includes('illusione_competenza') ? 0 : 1;
+    /** Record statq con ripasso scaduto entro `giorno` (incluso), illusioni prima, poi i più vecchi. */
+    function dovute(giorno = ymd(new Date())) {
+        return Stato.tutti('statq').filter(s => !s.deleted && s.neuro && s.neuro.due && s.neuro.due <= giorno && risolvibile(s.sk))
+            .sort((a, b) => urgenza(a) - urgenza(b) || (a.neuro.due < b.neuro.due ? -1 : a.neuro.due > b.neuro.due ? 1 : 0));
+    }
+    const conta = (giorno) => dovute(giorno).length;
+    /** Minuti stimati: ~1 a domanda, al massimo MAX domande. */
+    const minuti = (n = conta()) => Math.min(MAX, n);
+    /** Ricostruisce le domande (al massimo MAX) con le immagini delle schede del proprietario. */
+    async function domande(max = MAX) {
+        const out = [], imm = {}, cache = new Map();
+        let materia = '';
+        for (const s of dovute()) {
+            if (out.length >= max)
+                break;
+            let lista = cache.get(s.sk);
+            if (!lista) {
+                const qc = qcreato(s.sk), imc = Dominio.domandeDi(s.sk), t = !qc && !imc ? trovaScheda(s.sk) : null;
+                if (qc)
+                    lista = qc.domande;
+                else if (imc)
+                    lista = Banca.applica(imc.map(d => ({ ...d })), s.sk);
+                else if (t) {
+                    try {
+                        const b = await Banca.scheda(t.pk, t.m, t.micro, t.s);
+                        lista = b.domande;
+                        Object.assign(imm, b.immagini);
+                    }
+                    catch (e) {
+                        console.warn('QuizRifare: scheda non caricata', s.sk, e);
+                        lista = [];
+                    }
+                }
+                else
+                    lista = [];
+                cache.set(s.sk, lista);
+            }
+            const d = lista.find(x => 'sq-' + x.id === s.id);
+            if (d) {
+                out.push(d);
+                if (!materia) {
+                    const qc = qcreato(s.sk), t = trovaScheda(s.sk);
+                    materia = qc ? qc.materia : t ? t.m : s.sk.split('-')[0];
+                }
+            }
+        }
+        return { domande: out, immagini: imm, materia };
+    }
+    async function avvia(chiudi) {
+        const r = await domande();
+        if (!r.domande.length) {
+            avviso('Nessun quiz da rifare oggi. 🎉');
+            return;
+        }
+        const pk = { tipo: 'step', id: 'qr', step: 0, titolo: '', aggiornato: '', risorse: { libri: {}, quiz: {} }, materie: [] };
+        const s = { id: 'qr-' + ymd(new Date()), k: 1, n: 1, titolo: 'Quiz da rifare', tipo: 'P', problemi: false, pagine: '', quizFile: '' };
+        const lista = r.domande;
+        QuizApp.apri(pk, r.materia, 'Quiz da rifare', s, () => lista, { occh: '🎯 Ripasso delle domande scadute · ' + lista.length + (lista.length === 1 ? ' domanda' : ' domande'), titolo: 'Quiz da rifare', chiudi, immagini: r.immagini });
+    }
+    return { dovute, conta, minuti, domande, avvia, MAX };
 })();
 
 // ============================================================
@@ -15334,6 +15452,10 @@ const StudiaOra = (() => {
         const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
         if (nc.ripasso + nc.nuove && Carte.mazzi().length)
             metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
+        // 1b') v0.58 (Q2): domande dei quiz con ripasso scaduto (illusioni di oggi comprese), ~1 min a domanda, max 10
+        const nq = QuizRifare.conta(ymd(giorno));
+        if (nq)
+            metti({ tipo: 'quiz', titolo: '🎯 Quiz da rifare (' + nq + ')', sotto: (nq > QuizRifare.MAX ? 'Le ' + QuizRifare.MAX + ' più urgenti' : 'Le domande scadute') + ', prima le illusioni di competenza', min: Math.max(3, QuizRifare.minuti(nq)) });
         // 1c) appunti da ripassare (copri e ricorda): ~4 min ciascuno, al massimo 3
         for (const a of Appunti.appuntiDaRipassare().slice(0, 3))
             metti({ tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto: 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni', min: 4, id: a.id });
@@ -15384,6 +15506,10 @@ function eseguiVoce(v) {
     }
     if (v.tipo === 'carte') {
         avviaCarte(undefined, 'Flashcard');
+        return;
+    }
+    if (v.tipo === 'quiz') {
+        QuizRifare.avvia();
         return;
     }
     if (v.tipo === 'appunto' && v.id) {
@@ -15449,12 +15575,62 @@ function widgetStudiaOra() {
         const prossima = s.voci.find(v => !v.fatto), fatte = s.voci.filter(v => v.fatto).length;
         return h('section.card', null, h('button.btn.studia-ora', { onclick: apriSessione }, '▶ Sessione in corso · ' + fatte + '/' + s.voci.length), prossima ? h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Prossima: ' + prossima.titolo) : null);
     }
-    return h('section.card', null, lungo(h('button.btn.studia-ora', { onclick: apriStudiaOra }, '▶ Studia ora'), () => [
+    // v0.58: card «Adesso» — cosa fare ora in una riga, durata stimata e [Inizia] che avvia subito la sessione (2 tocchi da app chiusa)
+    // Il riassunto (2 composizioni della sessione) si calcola dopo il disegno: Oggi resta nel budget dei tempi (prestazioni.py).
+    const e = prossimoEsame(), durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
+    const inizia = () => { const a = adesso(); if (!a.minuti) {
+        Timer.avvia({ titolo: 'Studio libero' });
+        return;
+    } StudiaOra.avvia(a.minuti); setTimeout(apriSessione, 50); };
+    const btn = h('button.btn.studia-ora', { onclick: inizia }, '▶ Inizia');
+    setTimeout(() => {
+        if (!riassunto.isConnected)
+            return;
+        const a = adesso();
+        riassunto.textContent = a.riassunto;
+        durata.textContent = a.minuti ? ' · ' + a.minuti + ' min' : '';
+        if (!a.minuti)
+            btn.textContent = '▶ Studio libero con timer';
+    }, 0);
+    return h('section.card.adesso', null, h('div.adesso-testa', null, h('b', null, 'Adesso'), durata, e ? h('span.tenue.piccolo', null, ' · ' + (e.giorni === 0 ? 'esame oggi' : '−' + e.giorni + (e.giorni === 1 ? ' giorno' : ' giorni')) + ' a ' + e.nome + (e.stato ? ' · ' + e.stato : '')) : null), riassunto, h('div.bottoni', null, lungo(btn, () => [
+        { t: 'Scegli quanto tempo hai', ic: 'cronometro', f: () => apriStudiaOra() },
         { t: 'Ripassa le flashcard', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } },
         { t: 'Rivedi gli errori', ic: 'avvertenza', f: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
         { t: 'Studio libero con timer', ic: 'cronometro', f: () => Timer.avvia({ titolo: 'Studio libero' }) },
         { t: 'Simulazione d\'esame', ic: 'quiz', f: () => apriSimulazioni() }
-    ], 'Studia ora'), h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Scegli quanto tempo hai: l\'app compone la sessione migliore.'));
+    ], 'Studia ora'), h('button.btn-testo', { onclick: apriStudiaOra }, 'Altra durata')));
+}
+/** v0.58: la sessione consigliata adesso — la durata più corta (25/50/90) che contiene tutto il dovuto, e una riga di riassunto. */
+function adesso(giorno = oggi()) {
+    const lavoro = (vv) => vv.filter(v => v.tipo !== 'pausa' && v.tipo !== 'richiamo');
+    const tutto = lavoro(StudiaOra.componi(90, giorno)), serve = tutto.reduce((s, v) => s + v.min, 0);
+    if (!tutto.length)
+        return { minuti: 0, riassunto: 'Niente in scadenza: buon momento per avanzare o per una pausa vera.' };
+    const minuti = [25, 50, 90].find(m => serve + 5 <= m) || 90, voci = lavoro(StudiaOra.componi(minuti, giorno));
+    const n = (tipo) => voci.filter(v => v.tipo === tipo).length, pezzi = [];
+    const nc = Carte.conta(), nq = QuizRifare.conta(ymd(giorno));
+    if (n('ripasso'))
+        pezzi.push(n('ripasso') + (n('ripasso') === 1 ? ' ripasso' : ' ripassi'));
+    if (n('carte'))
+        pezzi.push((nc.ripasso + nc.nuove) + ' carte');
+    if (n('quiz'))
+        pezzi.push(Math.min(nq, QuizRifare.MAX) + ' quiz da rifare');
+    if (n('appunto'))
+        pezzi.push(n('appunto') + (n('appunto') === 1 ? ' appunto' : ' appunti'));
+    const st = voci.find(v => (v.tipo === 'scheda' || v.tipo === 'freddo') && v.k);
+    if (st && st.k)
+        pezzi.push(Studio.etichetta(st.k));
+    if (n('errore'))
+        pezzi.push(n('errore') + ' errori');
+    return { minuti, riassunto: pezzi.join(' + ') || voci[0].titolo };
+}
+/** v0.58: esame più vicino (oggi compreso) e stato rispetto al piano. */
+function prossimoEsame() {
+    const e = Stato.tutti('esame').filter(x => !x.deleted && giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
+    if (!e)
+        return null;
+    const r = Studio.pkPiani().length ? Studio.inRitardo().length : -1;
+    return { nome: e.nome.replace(/ semestre filtro$/i, ''), giorni: giorniA(e.data), stato: r < 0 ? '' : r ? 'indietro di ' + r + ' step' : 'in pari ✓' };
 }
 
 // ============================================================
@@ -16137,7 +16313,8 @@ function vistaStudio() {
     // v0.41 standard a tendina: 4 viste frequenti in vista, le altre nel menu «Altro ▾» (quella aperta resta visibile)
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
-    const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+    const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), // v0.58 (Q5): visibile, non più solo in «Altro ▾»
+    tendina('Altro ▾', () => voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
     if (UI.studioVista === 'tabelle')
@@ -16787,7 +16964,7 @@ function taskDelGiorno(g) {
     return Stato.tutti('task').filter(t => !t.fatto && t.scadenza && t.scadenza.slice(0, 10) === k && categoriaVisibile(t.categoriaId)).sort(ordinaTask);
 }
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Studia ora'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget() {
     const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
@@ -16836,8 +17013,8 @@ function vistaOggi() {
             }
             case 'nota': return scheda('Nota del giorno', area);
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
-            // v0.57.1 (D3): anche con corsi propri, carte o appunti da ripassare, non solo con i pacchetti-step
-            case 'studiaora': return Studio.pkStep().length || Stato.tutti('materia').length || Stato.tutti('carta').length || Appunti.appuntiDaRipassare().length || StudiaOra.leggi() ? widgetStudiaOra() : null;
+            // v0.57.1 (D3) → v0.58: anche con corsi propri, carte, appunti o quiz da rifare (sempre)
+            case 'studiaora': return widgetStudiaOra(); // v0.58: card «Adesso» sempre in cima, anche senza pacchetti-step
             case 'carte': return widgetCarte();
             case 'appunti': return widgetAppunti();
             case 'ripassi': return widgetRipassi();
@@ -17432,7 +17609,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.57.1';
+const VERSIONE = '0.58.0';
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
  *  con la superficie più critica del tema (--sup2) è ≥ 4,5:1. Un colore non esadecimale resta com'è. */
@@ -17678,6 +17855,41 @@ function controllaAvvisi() {
             avviso('☑️ ' + t.titolo + ' — scade adesso', 15000, () => apriTask(t));
     }
 }
+/** v0.58: scorciatoie del manifest (`?az=studia|aggiungi|ripassa`): un tocco dall'icona → azione. Poi pulisce l'indirizzo. */
+function scorciatoiaAvvio() {
+    let az = '';
+    try {
+        az = new URLSearchParams(location.search).get('az') || '';
+    }
+    catch (e) {
+        console.warn('scorciatoia: indirizzo illeggibile', e);
+    }
+    if (!az)
+        return;
+    try {
+        history.replaceState(null, '', location.pathname);
+    }
+    catch (e) {
+        console.warn('scorciatoia: replaceState', e);
+    }
+    if (az === 'studia') {
+        if (StudiaOra.leggi()) {
+            apriSessione();
+            return;
+        }
+        const a = adesso();
+        if (a.minuti) {
+            StudiaOra.avvia(a.minuti);
+            setTimeout(apriSessione, 50);
+        }
+        else
+            apriStudiaOra();
+    }
+    else if (az === 'aggiungi')
+        apriNuovo();
+    else if (az === 'ripassa')
+        avviaCarte(undefined, 'Flashcard');
+}
 async function avvia() {
     await Stato.carica();
     applicaTema();
@@ -17698,6 +17910,7 @@ async function avvia() {
     attivaSimboli();
     Tocco.attiva();
     disegna();
+    scorciatoiaAvvio(); // v0.58: scorciatoie PWA (tocco lungo sull'icona)
     setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500); // v0.57 (A14)
     avvisoNovita();
     Drive.precarica();
