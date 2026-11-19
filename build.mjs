@@ -19,10 +19,15 @@ execSync(tsc + ' -p tsconfig.json', { stdio: 'inherit' });
 const js = readdirSync('build-tmp').filter(f => f.endsWith('.js')).sort()
   .map(f => readFileSync('build-tmp/' + f, 'utf8')).join('\n');
 const app = '"use strict";\n' + js.replace(/^"use strict";\n/gm, '');
+// v0.59.2: src/su-richiesta/*.ts → strumenti-quiz.js, caricato solo al primo uso (conStrumentiQuiz); stessi controlli di tipo
+const jsExtra = readdirSync('build-tmp/su-richiesta').filter(f => f.endsWith('.js')).sort()
+  .map(f => readFileSync('build-tmp/su-richiesta/' + f, 'utf8')).join('\n');
+const extra = '"use strict";\n' + jsExtra.replace(/^"use strict";\n/gm, '');
 
 mkdirSync('dist');
 cpSync('public', 'dist', { recursive: true });
 writeFileSync('dist/app.js', app);
+writeFileSync('dist/strumenti-quiz.js', extra);
 const versione = Date.now().toString(36);
 writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replaceAll('__VERSIONE__', versione));   // v0.56.2: tutte le occorrenze (prima restava il segnaposto)
 writeFileSync('dist/.nojekyll', '');
@@ -46,7 +51,7 @@ for (const f of readdirSync('studio/banca').filter(f => /^banca-step-\d+\.json$/
 const html = readFileSync('public/index.html', 'utf8')
   .replace(/<!--PWA-->[\s\S]*?<!--\/PWA-->\n/, '')
   .replace('<link rel="stylesheet" href="style.css">', () => '<style>\n' + readFileSync('public/style.css', 'utf8') + '</style>')
-  .replace('<script src="app.js"></script>', () => '<script>\n' + app.replace(/<\/script/g, '<\\/script') + '</script>');
+  .replace('<script src="app.js"></script>', () => '<script>\n' + (app + '\n' + extra).replace(/<\/script/g, '<\\/script') + '</script>');
 writeFileSync('dist/anteprima.html', html);
 rmSync('build-tmp', { recursive: true, force: true });
 console.log('OK: dist/ pronta (cache ' + versione + ', app.js ' + Math.round(app.length / 1024) + ' kB)');

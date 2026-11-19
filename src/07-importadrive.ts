@@ -103,6 +103,7 @@ const ImportaDrive = (() => {
     const sr = rifFonte(x.sourceRef, k) || (s(x.fonte) ? rifFonte(x.fonte, k) : undefined);
     if (sr) d.sourceRef = sr;
     if (s(x.sottoStep)) d.subtopic = s(x.sottoStep);
+    if (s(x.erroreTipico)) d.erroreTipico = s(x.erroreTipico);   // v0.59.2: mostrato nella correzione quando sbagli
     return d;
   }
   function falla(msg: string): never { throw new Error(msg); }

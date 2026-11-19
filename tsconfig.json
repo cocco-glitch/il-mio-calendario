@@ -9,5 +9,5 @@
     "moduleDetection": "legacy",
     "removeComments": true
   },
-  "include": ["src/*.ts"]
+  "include": ["src/*.ts", "src/su-richiesta/*.ts"]
 }

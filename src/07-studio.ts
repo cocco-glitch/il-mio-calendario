@@ -496,7 +496,8 @@ function vistaStudio(): HTMLElement {
     h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'),   // v0.58 (Q5): visibile, non più solo in «Altro ▾»
     h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'),   // v0.58.1
     tendina('Altro ▾', () => (voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })) as VoceTendina[]).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
-      { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
+      { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
+      { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));   // v0.59.2
   if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());
   if (UI.studioVista === 'errori') return h('div.pagina', null, seg, vistaErrori());

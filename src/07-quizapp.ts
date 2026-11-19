@@ -17,7 +17,8 @@ interface DomB { id: string; sk: string; t: 'mcq' | 'fill' | 'sequenza' | 'abbin
   archetipo?: string; sequenzaOk?: string[]; coppieOk?: Array<[string, string]>; rubricaPunti?: string[]; linguaCodice?: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[];
   // v0.54 (BP3 §1.1): metadati neuro-cognitivi, tutti facoltativi (i quiz v0.51–v0.53 restano validi così come sono)
   bloomLevel?: BloomN; distractorTypes?: Record<number, TipoDistr>; confidenceLog?: TentativoN[]; sourceRef?: SourceRefN; subtopic?: string; stepId?: string;
-  spiegazione?: string; spiegazioneDistrattori?: Record<number, string> | string[]; }
+  spiegazione?: string; spiegazioneDistrattori?: Record<number, string> | string[];
+  erroreTipico?: string; }   // v0.59.2: l'errore di ragionamento dietro il distrattore principale (quiz da Gemini)
 interface BancaFile { step: number; schede: Record<string, { titolo: string; materia: string; microstep: string; k: number; n: number; fonti?: string; focus?: string }>; immagini: Record<string, string>; domande: DomB[]; }
 interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Partial<DomB>; nascosta?: boolean; nuova?: boolean; originale?: Partial<DomB>; }
 interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; c?: Record<string, ContoQ>;
@@ -272,17 +273,35 @@ const QuizApp = (() => {
     const punti = () => P.filter(x => x.ok).length;
     const corretta = (x: Voce) => x.ord.indexOf(0);
     const passi = (e: string | string[]) => '<ol class="qz-passi">' + (Array.isArray(e) ? e : [e]).map(t => { const m2 = String(t).match(/^([^:]{2,80}):\s([\s\S]*)$/); return '<li>' + (m2 ? '<b>' + fmt(m2[1]) + ':</b> ' + fmt(m2[2]) : fmt(t)) + '</li>'; }).join('') + '</ol>';
+    /** v0.59.2: confutazioni per opzione nell'ordine di o[1..3]; i quiz da Drive/Gemini le hanno in spiegazioneDistrattori, non in ew. */
+    const ewDi = (d: DomB): string[] => {
+      if (d.ew && d.ew.length) return d.ew;
+      const sd = d.spiegazioneDistrattori;
+      if (!sd || d.t !== 'mcq') return [];
+      return Array.isArray(sd) ? sd.slice(0, 3).map(String) : [1, 2, 3].map(k => sd[k] || '');
+    };
+    /** v0.59.2: spiegazione lunga a sezioni (COSA CHIEDE / CONCETTO… / IN SINTESI) → un passo per sezione. Le opzioni sono
+     *  mescolate, quindi con le confutazioni per opzione le sezioni con le lettere A–D originali vengono omesse (le lettere a video sono altre). */
+    const passiDi = (d: DomB, conConfutazioni: boolean): string => {
+      const sez = typeof d.e === 'string' ? sezioniSpiegazione(d.e) : [];
+      if (sez.length < 2) return passi(d.e);
+      const tieni = sez.filter(x => !(conConfutazioni && /^(RISPOSTA ESATTA|PERCH)/.test(x.etichetta)));
+      return passi(tieni.map(x => x.etichetta ? x.etichetta.charAt(0) + x.etichetta.slice(1).toLowerCase() + ': ' + x.testo : x.testo));
+    };
     const spiegFonti = (d: DomB) => '<div class="qz-box"><span class="qz-etich">Spiegazione dalle fonti</span>'
       + (d.cit || []).map(c => '<blockquote>«' + esc(c.t) + '»<span class="qz-chi">' + esc(c.f) + (c.l ? ' · <a href="' + esc(c.l) + '" target="_blank" rel="noopener">apri la pagina</a>' : '') + '</span></blockquote>').join('')
       + (d.cl ? '<div class="qz-mia"><b>Spiegazione di Claude</b> ' + esc(d.cl) + '</div>' : '') + (!d.cit && !d.cl ? '<p>' + fmt(Array.isArray(d.e) ? d.e.join(' ') : d.e) + '</p>' : '') + '</div>';
     function correzione(x: Voce): string {
-      const d = x.d, ew = d.ew || [], mc = d.t === 'mcq';
+      const d = x.d, ew = ewDi(d), mc = d.t === 'mcq';
       let s2 = bannerCaso(x) + (x.avv ? '<div class="qz-avviso">' + fmt(x.avv) + '</div>' : '') + '<div class="qz-box" id="qz-why"><span class="qz-etich">Correzione passo-passo</span><p class="qz-verdetto ' + (x.ok ? 'ok' : 'ko') + '">'
-        + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passi(d.e);
+        + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passiDi(d, mc && ew.some(Boolean));
       if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o![x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
+      if (!x.ok && d.erroreTipico) s2 += '<div class="qz-perche"><b>Errore tipico</b><p>' + fmt(d.erroreTipico) + '</p></div>';
       if (x.voto) s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
       if (!x.ok && mc) { /* già sopra */ } else if (!x.ok && !mc && ew[0]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
-      if (mc && ew.length && (x.ok || x.picked === null)) s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => '<p><b>«' + fmt(d.o![k + 1]) + '»</b> — ' + fmt(t) + '</p>').join('') + '</details>';
+      const tua = !x.ok && typeof x.picked === 'number' ? x.ord[x.picked] : -1;   // v0.59.2: anche dopo un errore, le confutazioni delle ALTRE opzioni
+      if (mc && ew.some(Boolean)) s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => ({ t, k, pos: x.ord.indexOf(k + 1) })).filter(z => z.t && z.k + 1 !== tua).sort((a, b) => a.pos - b.pos)
+        .map(z => '<p><b>' + L[z.pos] + ') «' + fmt(d.o![z.k + 1]) + '»</b> — ' + fmt(z.t) + '</p>').join('') + '</details>';
       return s2 + '</div>';
     }
     /** v0.54 (BP3 §1.2): esito della matrice certezza × correttezza; per l'illusione il confronto è obbligatorio. */

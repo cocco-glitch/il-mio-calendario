@@ -184,9 +184,11 @@ t('catena «micro» (livello 2): gemini → groq → xkiro, uscita 350 token', (
   const m = /micro:\s*\[([^\]]+)\]\s*\}/.exec(ia.slice(ia.indexOf('const CATENA'))); eq(m[1].replace(/['\s]/g, '').split(','), ['gemini', 'groq', 'xkiro']);
   vero(/micro:\s*350/.test(ia), 'USCITA.micro'); vero(/gemini:\s*\{\s*micro:\s*\['gemini-3\.5-flash-lite'/.test(ia), 'flash-lite per primo');
 });
+// v0.59.2: anche src/su-richiesta/ (strumenti-quiz.js, caricato al primo uso)
+function SRC_TUTTI() { return [...fs.readdirSync(SRC).filter(x => x.endsWith('.ts')), ...fs.readdirSync(path.join(SRC, 'su-richiesta')).filter(x => x.endsWith('.ts')).map(x => 'su-richiesta/' + x)]; }
 t('nessun riferimento attivo a Mistral/OpenRouter in src/', () => {
   const sporchi = [];
-  for (const f of fs.readdirSync(SRC).filter(x => x.endsWith('.ts'))) leggi(f).split('\n').forEach((r, i) => {
+  for (const f of SRC_TUTTI()) leggi(f).split('\n').forEach((r, i) => {
     const codice = r.replace(/\/\/.*$/, '').replace(/\/\*\*.*\*\//, '');
     if (/mistral|openrouter/i.test(codice) && !/const RITIRATI = \['mistral', 'openrouter'\]/.test(codice)) sporchi.push(f + ':' + (i + 1));
   });
@@ -203,7 +205,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.59.1', () => vero(/const VERSIONE = '0\.59\.1'/.test(leggi('09-main.ts'))));
+t('versione app 0.59.2', () => vero(/const VERSIONE = '0\.59\.2'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
@@ -466,7 +468,7 @@ await t('testQuestionario6Piu3Fallback: 3 domande AI (≤600 token, max 450) e f
   vero(/MAX_TOKEN_CALIBRAZIONE = 450/.test(leggi('07-pianificatore.ts')) && /BUDGET_CALIBRAZIONE = 600/.test(leggi('07-pianificatore.ts')), 'costanti budget');
 });
 // ---------- v0.56.2: urgenze pre-BP6 (audit A1–A4, A7, A9, U8) ----------
-const tuttiSrc = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).map(f => [f, leggi(f)]);
+const tuttiSrc = SRC_TUTTI().map(f => [f, leggi(f)]);
 t('U5 pdf.js: ogni getDocument con isEvalSupported:false (CVE-2024-4367)', () => {
   const chiamate = tuttiSrc.flatMap(([f, s]) => s.split('\n').filter(r => /\.getDocument\(/.test(r)).map(c => [f, c.trim()]));
   vero(chiamate.length >= 5, 'trovate ' + chiamate.length + ' chiamate');
@@ -727,6 +729,108 @@ await t('v0.58.3: quiz a PARTI — classifica, raggruppa, unisci (ordine qualsia
     vero(tr2.domande > 0 && /^B\d/.test(tr2.k), 'reale ' + f + ': ' + tr2.k + ' · ' + tr2.domande + ' domande, ' + tr2.scartate + ' scartate');
   }
   if (!reali.length) console.log('    (nessun file reale in test/fixtures: saltati)');
+});
+
+await t('v0.59.2: DiagnosiQuiz — lettura chat, controlli, auto-fix, patch, prompt di correzione, piano', async () => {
+  const { createRequire } = await import('node:module');
+  const ts = createRequire(import.meta.url)('typescript');
+  const js = ['07-sezionispiegazione.ts', 'su-richiesta/07-diagnosiquiz.ts','su-richiesta/07-masterprompt.ts'].map(f => ts.transpileModule(leggi(f), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText).join('\n');
+  const sb = { console }; vm.createContext(sb);
+  vm.runInContext(js + '\n;this.DiagnosiQuiz = DiagnosiQuiz; this.MasterPrompt = MasterPrompt;', sb);
+  const DQ = sb.DiagnosiQuiz; globalThis.__DQ_SANDBOX = sb;
+  const SP = (l) => 'COSA CHIEDE: il meccanismo della pompa. CONCETTO E MECCANISMO: ' + 'la pompa sodio-potassio scambia 3 Na+ contro 2 K+ consumando ATP. '.repeat(8) + 'RISPOSTA ESATTA: ' + l + ') «x». PERCHÉ GLI ALTRI NO: A) no B) no. IN SINTESI: gradiente. [[Manuale, p. 120]]';
+  const q = (n, es, lv) => ({ id: 'biologia-3.3-' + String(n).padStart(3, '0'), stepId: 'biologia-3.3', sottoStep: '3.3.1', scheda: 'biologia-3.3-S01', categoria: 'prioritaria',
+    livelloCognitivo: lv, livello: 'L' + lv, tipoItem: 'richiamo', coppiaGemellaId: null, erroreTipico: 'confondere', domanda: 'Domanda numero ' + n + ' sulla pompa?',
+    opzioni: [0, 1, 2, 3].map(i => i === es ? 'corta ' + n : 'distrattore molto più lungo e plausibile numero ' + i + ' / ' + n), esatta: es, spiegazione: SP('ABCD'[es]),
+    spiegazioneDistrattori: [1, 2, 3].map(k => 'Confutazione ' + k + ' della domanda ' + n + ': il distrattore confonde i due ioni.'), distractorTypes: ['a', 'b', 'c'], fonte: '[[Manuale, p. 120]]', sourceRef: '[[Manuale, p. 120]]' });
+  const LV = [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4], ES = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1];
+  const buone = LV.map((lv, i) => q(i + 1, ES[i], lv));
+  // lettura: chat con testo + due blocchi ```json, virgola finale riparata
+  const chat = 'STEP biologia 3.3\n```json\n{ "parte": "biologia-3.3-s1", "quiz": ' + JSON.stringify(buone.slice(0, 9)) + ', }\n```\nSTATO: 1/2\n```json\n' + JSON.stringify(buone.slice(9)) + '\n```';
+  const L = DQ.leggi(chat);
+  eq([L.quiz.length, L.blocchi, L.riparato, L.parti[0]], [18, 2, true, 'biologia-3.3-s1'], 'chat intera: 2 blocchi, virgola riparata');
+  vero(DQ.riparaVirgole('{"a":"x,}",}') === '{"a":"x,}"}', 'virgole: dentro le stringhe intatte');
+  eq(DQ.sezioni(SP('B')).map(x => x.etichetta), ['COSA CHIEDE', 'CONCETTO E MECCANISMO', 'RISPOSTA ESATTA', 'PERCHÉ GLI ALTRI NO', 'IN SINTESI'], 'sezioni della spiegazione');
+  eq(DQ.letteraDichiarata(SP('C')), 2, 'lettera dichiarata');
+  const A = DQ.analizza(buone);
+  eq([A.n, A.pronte, A.problemi.filter(p => p.sev === 'err').length], [18, 18, 0], 'scheda corretta: 18 pronte, 0 errori: ' + JSON.stringify(A.problemi.filter(p => p.sev === 'err')));
+  eq(A.schede[0].lv, [5, 6, 4, 3], 'livelli per scheda');
+  // difetti mirati
+  const rotte = buone.map(x => ({ ...x }));
+  rotte[0] = { ...rotte[0], spiegazione: SP('D') };                       // lettera ≠ esatta
+  rotte[1] = { ...rotte[1], livelloCognitivo: '2' };                     // stringa
+  rotte[2] = { ...rotte[2], opzioni: ['a', 'b', 'c'] };                  // 3 opzioni
+  rotte[3] = { ...rotte[3], fonte: '[[Manuale, p. 999]]' };              // citazione ≠ fonte
+  const B = DQ.analizza(rotte), msg = (id) => B.problemi.filter(p => p.id === id).map(p => p.sev + ':' + p.msg).join(' | ');
+  vero(/err:.*RISPOSTA ESATTA/i.test(msg('biologia-3.3-001')), 'lettera RISPOSTA ESATTA ≠ esatta → errore: ' + msg('biologia-3.3-001'));
+  vero(/livelloCognitivo/.test(msg('biologia-3.3-002')), 'livelloCognitivo stringa segnalato');
+  vero(/err:.*opzioni/.test(msg('biologia-3.3-003')), '3 opzioni → errore');
+  vero(/citazione/.test(msg('biologia-3.3-004')), 'citazione ≠ fonte → avviso');
+  vero(B.pronte < 18, 'le domande con errori non sono pronte');
+  // auto-fix immutabile
+  const F = DQ.autoFix(rotte);
+  vero(F.log.length > 0 && rotte[1].livelloCognitivo === '2' && F.qs[1].livelloCognitivo === 2, 'autoFix converte il livello senza toccare l\'originale');
+  // patch
+  const P = DQ.leggiPatch('```json\n[{"id":"biologia-3.3-003","opzioni":["a","b","c","d"]},{"id":"nessuno","domanda":"x"}]\n```');
+  vero(P.patch && P.patch.length === 2, 'leggiPatch dal blocco di codice');
+  const AP = DQ.applicaPatch(F.qs, P.patch);
+  eq([AP.n, AP.mancanti, AP.qs[2].opzioni.length, F.qs[2].opzioni.length], [1, ['nessuno'], 4, 3], 'applicaPatch immutabile, ID mancanti');
+  vero('errore' in DQ.leggiPatch('non json'), 'patch non valida → errore');
+  // prompt di correzione
+  const C = DQ.promptCorrezione(rotte, B.problemi, { gem: false });
+  vero(C.nDomande >= 2 && /biologia-3\.3-001/.test(C.testo) && /RESTITUISCI/.test(C.testo), 'prompt di correzione con ID e campi da restituire');
+  vero(!/scheda intera/i.test(C.testo) || /mai la scheda intera|non.*scheda intera/i.test(C.testo), 'chiede solo patch');
+  // JSON finale
+  const jf = JSON.parse(DQ.jsonFinale(buone, 'biologia-3.3-s1'));
+  eq([jf.parte, jf.quiz.length], ['biologia-3.3-s1', 18], 'jsonFinale');
+  // piano: quote 25/35/25/15 e mai 3 uguali di fila
+  eq(DQ.pianoConteggi(18), [5, 6, 4, 3], 'quote per 18');
+  eq(DQ.pianoConteggi(36).reduce((a, b) => a + b, 0), 36, 'somma quote');
+  let seme = 7; const rnd = () => (seme = (seme * 16807) % 2147483647) / 2147483647;
+  const pi = DQ.piano(36, rnd);
+  vero(pi.length === 36 && pi.every((p, i) => i < 2 || !(p.es === pi[i - 1].es && p.es === pi[i - 2].es)), 'piano: mai 3 posizioni uguali di fila');
+  vero(/biologia-3\.3-019 \| L\d \| esatta=\d \([A-D]\)/.test(DQ.tabella('biologia-3.3', 19, pi.slice(0, 18))), 'tabella di assegnazione');
+});
+
+await t('v0.59.2: MasterPrompt — indice di lettura, scostamento pagine, ID liberi, prompt universale', async () => {
+  const MP = globalThis.__DQ_SANDBOX.MasterPrompt;
+  const testo = 'La membrana plasmatica è formata da un doppio strato fosfolipidico con proteine integrali e periferiche. '.repeat(4);
+  eq(MP.indiceLettura([testo, testo, testo, '']).giudizio, 'parziale', '3/4 → parziale');
+  eq(MP.indiceLettura(Array(10).fill(testo)).giudizio, 'testo pieno', 'tutte leggibili');
+  eq(MP.indiceLettura(['', '12', '§§§ ### ' + '@@@ '.repeat(80)]).giudizio, 'scansione', 'scansione/OCR sporco');
+  eq(MP.pagineCampione(5), [1, 2, 3, 4, 5], 'pochi fogli: tutti');
+  const pc = MP.pagineCampione(600); vero(pc.length === 24 && pc[0] === 1 && pc[23] === 600, 'campione distribuito');
+  eq([MP.segmentoDa('Fasano 301-350.pdf'), MP.segmentoDa('Biologia.pdf'), MP.segmentoDa('Cap 50-10.pdf')], [301, null, null], 'segmento dal nome');
+  eq(MP.nomeLibro('Fasano 301-350.pdf'), MP.nomeLibro('Fasano 351-400.pdf'), 'segmenti dello stesso libro raggruppati');
+  const camp = [20, 40, 60, 80, 100].map(n => ({ pdf: n + 14, testo: 'Capitolo 3\n' + testo + '\n' + n }));
+  eq(MP.stimaOffset(camp), 14, 'scostamento costante dalle pagine stampate');
+  eq(MP.stimaOffset([{ pdf: 5, testo }]), null, 'senza numeri → null');
+  eq(MP.prossimo(['q-drv-biologia-3.3-018', 'biologia-3.3-036', 'chimica-3.3-099'], 'biologia-3.3'), { primo: 37, scheda: 3 }, 'primo ID libero e prima scheda');
+  eq(MP.slug('Fisica e Chimica'), 'fisicaechimica', 'slug');
+  const p = MP.costruisci({ materia: 'Chimica', codice: 'C', step: '2.1', archetipo: 'scienze_sperimentali', intensita: 'leggera', perMessaggio: 1, tono: 'semplice_esempi',
+    libri: [{ nome: 'Chimica generale', pdf: ['Chimica generale.pdf'], lettura: { campione: 24, leggibili: 6, pct: 25, media: 300, giudizio: 'scansione' }, offset: null }],
+    vietati: ['Chimica TB.pdf'], idEsistenti: ['chimica-2.1-018'], puntiDeboli: ['C-2.1.1-1 (40%)'] });
+  vero(/10–14 schede/.test(p) && /chimica-2\.1-019/.test(p) && /chimica-2\.1-S02/.test(p), 'intensità leggera, primo ID e scheda liberi');
+  vero(/SCANSIONE/.test(p) && /NON misurato/.test(p) && /Chimica TB\.pdf/.test(p), 'leggibilità, offset mancante, fonti vietate nel prompt');
+  vero(/Problemi su/.test(p) && /CHIMICA/.test(p), 'regola Q-E e schede di calcolo per la chimica');
+  vero(/1 scheda \(18 domande\)/.test(p) && /punti deboli/i.test(p) && /semplice/.test(p), '1 scheda per messaggio, punti deboli, registro');
+  vero(/"parte": "chimica-2\.1-s<n>"/.test(p) && /erroreTipico/.test(p), 'formato consegna');
+  vero(!/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(p), 'nessun indirizzo email nel prompt universale');
+  const s = MP.costruisci({ materia: 'Storia', codice: 'S', step: '1.1', archetipo: 'umanistico_storico' });
+  vero(/cause → eventi/.test(s) && !/Problemi su/.test(s) && /18–25 schede/.test(s), 'archetipo umanistico, niente calcoli, standard');
+  vero(DQ_CHIAVI_OK(s, globalThis.__DQ_SANDBOX.DiagnosiQuiz.CHIAVI), 'il prompt elenca le 18 chiavi che la diagnostica controlla');
+});
+function DQ_CHIAVI_OK(p, ch) { return ch.length === 18 && ch.every(k => p.includes(k)); }
+
+await t('v0.59.2: quiz in app — confutazioni da spiegazioneDistrattori, sezioni, errore tipico, strumenti in Studio', () => {
+  const qa = leggi('07-quizapp.ts'), id = leggi('07-importadrive.ts'), st = leggi('07-studio.ts'), sq = leggi('su-richiesta/07-strumentiquiz.ts'), sp = leggi('07-sezionispiegazione.ts'), bm = fs.readFileSync(path.join(SRC, '..', 'build.mjs'), 'utf8'), sw = fs.readFileSync(path.join(SRC, '..', 'public', 'sw.js'), 'utf8');
+  vero(/ew = ewDi\(d\)/.test(qa) && /spiegazioneDistrattori/.test(qa), 'correzione usa le confutazioni dei quiz da Drive');
+  vero(/sezioniSpiegazione\(d\.e\)/.test(qa) && /function sezioniSpiegazione/.test(sp) && /RISPOSTA ESATTA\|PERCH/.test(qa), 'spiegazione a sezioni, lettere originali omesse');
+  vero(/d\.erroreTipico/.test(qa) && /d\.erroreTipico = s\(x\.erroreTipico\)/.test(id), 'erroreTipico importato e mostrato');
+  vero(/conStrumentiQuiz\(\(\) => StrumentiQuiz\.prompt\(\)\)/.test(st) && /conStrumentiQuiz\(\(\) => StrumentiQuiz\.diagnostica\(\)\)/.test(st), 'voci in Studio «Altro ▾», caricate su richiesta');
+  vero(/dist\/strumenti-quiz\.js/.test(bm) && /app \+ '\\n' \+ extra/.test(bm) && /'strumenti-quiz\.js'/.test(sw), 'strumenti-quiz.js costruito, nell\'anteprima e in cache offline');
+  vero(!fs.readdirSync(SRC).some(f => /diagnosiquiz|masterprompt|strumentiquiz/.test(f)), 'strumenti quiz fuori dal pacchetto principale');
+  vero(/isEvalSupported: false/.test(sq) && !/innerHTML/.test(sq), 'pdf.js senza eval, niente innerHTML');
 });
 
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();
