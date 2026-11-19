@@ -11483,6 +11483,8 @@ const Neuro = (() => {
 // Collega il modulo puro Pianificatore (07-pianificatore.ts) a: Google Calendar `primary` (sola lettura, opt-in),
 // Drive (PDF delle fonti), IA (catena «genera», 1 chiamata JSON ≤1800 token), statq (ipercorrezioni), IndexedDB.
 // Opt-in puro: un piano 'ai_neuro' nasce solo da «✨ Crea Piano Intelligente»; gli altri piani non vengono toccati.
+// v0.56 (BP5): intensità 1–5 + questionario 6+3 (6 domande locali, 3 dall'AI con 1 micro-call ≤600 token sulla catena
+// «genera», fallback per archetipo a 0 token), avvisi dei guard-rail biologici, Burnout Circuit Breaker post-quiz (0 token).
 // ============================================================
 const PianiAI = (() => {
     const GIORNI = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
@@ -11544,6 +11546,23 @@ const PianiAI = (() => {
         };
     }
     function salvaPiano(p) { p.aggiornato = new Date().toISOString(); return Studio.importa(p); }
+    // ---------- v0.56 (BP5): profilo biopsicologico (solo su questo dispositivo) ----------
+    const CHIAVE_PROFILO = 'imc-profilo-bio';
+    function profiloSalvato() {
+        try {
+            const x = localStorage.getItem(CHIAVE_PROFILO);
+            return x ? Pianificatore.normalizzaProfilo(JSON.parse(x)) : null;
+        }
+        catch (_) {
+            return null;
+        }
+    }
+    function salvaProfilo(p) { try {
+        localStorage.setItem(CHIAVE_PROFILO, JSON.stringify(p));
+    }
+    catch (_) { /* memoria piena o privata */ } }
+    /** Micro-call del Blocco B: catena «genera» di 07-ia (ordine e fornitori definiti in 07-ia.ts), max_tokens 450. */
+    const iaCalibrazione = () => Dominio.senzaAI() ? undefined : (m, x) => IA.testo(m, 'genera', { maxOut: x.maxOut }).then(r => r.testo);
     // ---------- wizard «✨ Crea Piano Intelligente» ----------
     function apri() {
         const mats = codiciMaterie();
@@ -11560,6 +11579,50 @@ const PianiAI = (() => {
         const senza = Dominio.senzaAI();
         const usaAI = h('input', { type: 'checkbox', checked: !senza, disabled: senza });
         const esito = h('div.tenue.piccolo');
+        // v0.56 (BP5): intensità 1–5 e questionario 6+3
+        const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)']), '2', function () {
+            oreMax.value = String(Pianificatore.configLivello(+this.value).oreRealiMax);
+            avvisiBio();
+        });
+        const prof0 = profiloSalvato() || Pianificatore.normalizzaProfilo({});
+        const campiBio = Pianificatore.DOMANDE_UNIVERSALI.map(d => ({ d, s: selettore(d.opzioni, String(prof0[d.campo]), () => avvisiBio()) }));
+        const profilo = () => Pianificatore.normalizzaProfilo(Object.fromEntries(campiBio.map(x => [x.d.campo, x.s.value])));
+        const boxAvvisi = h('div.tenue.piccolo');
+        function avvisiBio() {
+            const g = Pianificatore.applicaGuardRailBiologici(+intensita.value, profilo());
+            boxAvvisi.textContent = (g.livello !== g.richiesto ? '🛡 Livello ' + g.richiesto + ' → ' + g.livello + '. ' : '') + g.avvisi.join(' ');
+        }
+        let domandeB = [], scelteB = [];
+        const boxB = h('div');
+        const calibra = h('button.btn.neutro', { onclick: async () => {
+                const m = materia.value;
+                if (!m)
+                    return;
+                calibra.disabled = true;
+                boxB.textContent = 'Preparo 3 domande sulla materia…';
+                try {
+                    let testo = indice.value;
+                    const ids = fonti.value.split(/[,\s]+/).map(idDaLink).filter(Boolean);
+                    if (!testo.trim() && ids.length) {
+                        try {
+                            const f = await leggiFonte(ids[0]);
+                            if (f)
+                                testo = f.pagine.join('\n');
+                        }
+                        catch (_) { /* fonte illeggibile */ }
+                    }
+                    const seg = Pianificatore.segnaliIper(Stato.tutti('statq'), m);
+                    const r = await Pianificatore.generaDomandeCalibrazione({ materia: nomeMateria(m), archetipo: Dominio.archetipoMateria(m), keyword: Pianificatore.paroleChiaveBM25(testo, 8), errori: seg.topErrori.slice(0, 3) }, usaAI.checked ? iaCalibrazione() : undefined);
+                    domandeB = r.domande;
+                    svuota(boxB);
+                    scelteB = r.domande.map(d => selettore([['', '—']].concat(d.opzioni.map((o, i) => [String(i), o.testo])), ''));
+                    r.domande.forEach((d, i) => boxB.append(riga(d.testo, scelteB[i])));
+                    boxB.append(h('div.tenue.piccolo', null, r.fonte === 'ai' ? '~' + r.tokenStimati + ' tok · 1 chiamata (≤600).' : 'Domande pronte per l\'archetipo · 0 token' + (r.errore ? ' (AI non disponibile: ' + r.errore + ')' : '') + '.'));
+                }
+                finally {
+                    calibra.disabled = false;
+                }
+            } }, '🎯 3 domande sulla materia');
         const vincoli = () => {
             const m = materia.value;
             return {
@@ -11568,6 +11631,16 @@ const PianiAI = (() => {
                 finestreSettimanali: giorni.filter(c => c.checked).map(c => ({ giornoSettimana: c._g, oraInizio: oraDa.value || '15:00', oraFine: oraA.value || '19:00' })),
                 maxOreGiorno: parseFloat(oreMax.value) || 3,
             };
+        };
+        /** v0.56: vincoli + intensità dopo i guard-rail, profilo e pesi (Blocco A + B); ore/giorno mai oltre il livello. */
+        const vincoliBP5 = () => {
+            const v = vincoli(), p = profilo(), g = Pianificatore.applicaGuardRailBiologici(+intensita.value, p);
+            salvaProfilo(p);
+            v.livelloIntensita = g.livello;
+            v.profiloBio = p;
+            v.pesi = Pianificatore.applicaRisposte(Pianificatore.pesiIniziali(p), domandeB, scelteB.map(s => s.value === '' ? null : +s.value));
+            v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(g.livello).oreRealiMax);
+            return v;
         };
         const mostraRimedi = (f) => {
             svuota(esito);
@@ -11589,7 +11662,7 @@ const PianiAI = (() => {
                 return;
             inCorso = true;
             try {
-                const v = vincoli();
+                const v = vincoliBP5();
                 if (!v.materiaCodice || !v.dataTarget || !v.finestreSettimanali.length) {
                     avviso('Scegli materia, data e almeno un giorno.');
                     return;
@@ -11609,7 +11682,8 @@ const PianiAI = (() => {
                     return;
                 }
                 salvaPiano(r.piano);
-                avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : ''), 8000);
+                avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : '')
+                    + ' · L' + (r.piano.livelloIntensita || '?') + (r.piano.avvisiBio ? ' · 🛡 ' + r.piano.avvisiBio.join(' ') : ''), 8000);
                 sh.chiudi();
                 if (typeof disegna === 'function')
                     disegna();
@@ -11623,8 +11697,9 @@ const PianiAI = (() => {
         };
         const stima = h('div.tenue.piccolo', null, senza ? 'Modalità 100% senza AI: mappa dall\'indice locale, 0 token.' : 'Con l\'AI: ~3.200 tok · 1 chiamata (catena genera). Se fallisce: indice locale, 0 token.');
         const sh = foglio({ titolo: '✨ Crea Piano Intelligente', etichettaSalva: 'Crea',
-            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Ore max/giorno', oreMax), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima, esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
+            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Partenza', partenza), riga('Obiettivo', obiettivo)), h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[c._g])))), riga('Dalle', oraDa), riga('Alle', oraA), riga('Ore max/giorno', oreMax), riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))), h('div.gruppo', null, riga('Intensità', intensita), ...campiBio.map(x => riga(x.d.testo, x.s)), boxAvvisi), h('div.gruppo', null, calibra, boxB), indice, fonti, h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima, esito, h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
             salva: () => { crea(sh); return false; } });
+        avvisiBio();
     }
     // ---------- hook post-quiz (Stadio 5, 0 token) ----------
     function dopoQuiz(sk, caso) {
@@ -11639,14 +11714,47 @@ const PianiAI = (() => {
             avviso('🧠 ' + (caso === 'illusione_competenza' ? 'Illusione di competenza' : 'Risposta fortunata') + ': anticipo l\'applicazione dal ' + r.da.slice(8, 10) + '/' + r.da.slice(5, 7) + ' al ' + r.a.slice(8, 10) + '/' + r.a.slice(5, 7) + '.', 6000);
         }
     }
+    // ---------- v0.56 (BP5 §4.2): Burnout Circuit Breaker, 0 token ----------
+    /** Dopo un errore nel quiz (e all'apertura dei piani): chiude i de-load scaduti e, se la fatica scatta, attiva il de-load 48 h. */
+    function controllaFatica() {
+        const oggi = ymd(new Date());
+        let stats = null;
+        for (const p0 of pianiAI()) {
+            let p = p0;
+            const agg = Pianificatore.aggiornaDeload(p, oggi);
+            if (agg) {
+                salvaPiano(agg);
+                p = agg;
+                if (!agg.deload.attivo)
+                    avviso('🌱 De-load finito: torno al livello ' + agg.livelloIntensita + '.', 5000);
+            }
+            if (!p.livelloIntensita || Studio.nascosto(p.id) || (p.deload && p.deload.attivo))
+                continue;
+            stats = stats || Stato.tutti('statq');
+            const f = Pianificatore.monitoraAffaticamento(stats, { oggi, materia: p.vincoliAI.materiaCodice });
+            if (!f.trigger)
+                continue;
+            const d = Pianificatore.attivaDeload(p, { oggi, motivo: f.condA ? 'errori +' + Math.round((f.tasso2g - f.mediaStorica) * 100) + '% in 2 giorni' : 'ipercorrezioni ×2 in 48 h' });
+            if (!d)
+                continue;
+            salvaPiano(d);
+            avviso('🛌 Circuit breaker: ' + d.deload.motivo + '. Per 48 h livello ' + d.deload.livelloRidotto + ': solo ripasso FSRS leggero + Wakeful Rest.', 9000);
+        }
+    }
     // ---------- azioni sul piano ----------
     function bottoni(p) {
         const crea = h('button.btn.neutro', { onclick: () => apri() }, '✨ Crea Piano Intelligente');
         if (!eAI(p))
             return crea;
         const nas = Studio.nascosto(p.id);
-        return h('span', null, crea, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
-                const r = await Pianificatore.creaPiano(p.vincoliAI, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
+        const dl = p.deload && p.deload.attivo ? p.deload : null;
+        return h('span', null, crea, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
+                const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
+                const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
+                if (r.piano && p.deload) {
+                    r.piano.deload = p.deload;
+                    r.piano.vincoliAI = p.vincoliAI;
+                }
                 if (!r.piano) {
                     avviso('⛔ Da oggi il piano è critico: ' + r.fatt.rimedi.map(x => x.testo).join(' · '), 9000);
                     return;
@@ -11661,11 +11769,12 @@ const PianiAI = (() => {
                 }
             } }, '🗑 Elimina'));
     }
-    return { apri, dopoQuiz, bottoni, minutiAltriPiani, eAI };
+    return { apri, dopoQuiz, controllaFatica, bottoni, minutiAltriPiani, eAI };
 })();
 
 // ============================================================
-// 07-pianificatore.ts — v0.55 (BP4) Pianificatore Neuro-Algoritmico Ibrido.
+// 07-pianificatore.ts — v0.55 (BP4) Pianificatore Neuro-Algoritmico Ibrido + v0.56 (BP5) 5 livelli di intensità,
+// questionario biopsicologico 6+3 e Burnout Circuit Breaker (deload_48h).
 // Modulo PURO: niente DOM né rete al caricamento. Google Calendar, IA, Drive e IndexedDB arrivano come
 // dipendenze iniettate (così la suite 07-SUITE-… lo carica in una vm, come Neuro). Interfaccia: 07-pianiai.ts.
 // Invarianti:
@@ -12041,6 +12150,10 @@ const Pianificatore = (() => {
         const ob = clamp(v.livelloObiettivo || 4, 1, 4), molt = (MOLT[v.livelloPartenza] || 1) * (seg && seg.attiva ? 1.2 : 1);
         const cod = String(v.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = o.pid.replace(/^ai-/, '');
         const ordine = ordineTopologico(unita), errori = !!(seg && seg.attiva);
+        // v0.56 (BP5): con un livello di intensità → hard cap analitico (L1+L3), pause Wakeful Rest BRAC, dip 13–15 senza teoria/calcolo
+        const bio = v.livelloIntensita ? applicaGuardRailBiologici(v.livelloIntensita, v.profiloBio) : null;
+        const capAnal = bio ? MATRICE_5_LIVELLI[bio.livello - 1].capSforzoAnaliticoMin : Infinity, pausaBio = bio ? bio.pausaMin : 0;
+        const anal = new Map(), eAnal = (l) => l === 1 || l === 3;
         const ref = (u) => u.fileId ? { fileId: u.fileId, nomeFile: u.nomeFile || '', pagine: u.pagine ? [u.pagine[0], u.pagine[1]] : [] } : undefined;
         // coda dei compiti: L1→L2 subito, L3 almeno 2 giorni dopo L1, L4 almeno 4 (interleaving con le unità successive)
         const coda = [];
@@ -12058,24 +12171,28 @@ const Pianificatore = (() => {
         const ripassi = [];
         const ultimo = giorni.length ? giorni[giorni.length - 1].data : piu(v.dataTarget, -1);
         /** Trova un orario libero di `min` minuti nelle finestre del giorno (in sequenza). */
-        function posto(g, min) {
+        function posto(g, min, dip = false) {
             const c = cursore.get(g.data) || 0;
             for (const [a, b] of g.finestre) {
-                const ini = Math.max(a, c);
+                let ini = Math.max(a, c);
+                if (bio && !dip && ini < DIP[1] && ini + min > DIP[0])
+                    ini = Math.max(ini, DIP[1]); // BP5: niente studio vero nel dip
                 if (b - ini >= min && ini + min <= LIMITE_SERA)
                     return ini;
             }
             return null;
         }
-        function metti(g, vo, min) {
-            const ini = posto(g, min);
+        function metti(g, vo, min, dip = false) {
+            const ini = posto(g, min, dip);
             if (ini == null)
                 return false;
             vo.ora = hhmm(ini);
             vo.min = min;
-            cursore.set(g.data, ini + min);
+            cursore.set(g.data, ini + min + pausaBio);
             usato.set(g.data, (usato.get(g.data) || 0) + min);
             voci.get(g.data).push(vo);
+            if (vo.livelloCognitivo && !vo.isRipassoFSRS && eAnal(vo.livelloCognitivo))
+                anal.set(g.data, (anal.get(g.data) || 0) + min);
             return true;
         }
         const pronto = (c, d) => {
@@ -12101,12 +12218,24 @@ const Pianificatore = (() => {
                     r.data = piu(g.data, 1);
             }
             // 2) compiti: alterna «nuovo» (L1–L2) e «profondo» (L3–L4)
-            let profondo = false;
+            let profondo = false, capRaggiunto = false, nDip = 0;
             for (let giri = 0; giri < 200; giri++) {
                 const resto = tetto - (usato.get(g.data) || 0);
                 if (resto < 30)
                     break;
-                const pronti = coda.filter(c => c.min <= resto && pronto(c, g.data));
+                if (bio) { // BP5 §1.3: se il cursore cade nel dip post-prandiale, solo flashcard a bassa frizione e cue Cornell
+                    const ini = posto(g, 15, true);
+                    if (ini != null && ini >= DIP[0] && ini < DIP[1]) {
+                        const m = Math.min(DIP[1] - ini, resto, bio.bloccoMin);
+                        if (m >= 15 && metti(g, { k: cod + '~' + pidC + '~DIP~' + g.data.replace(/-/g, '') + (nDip ? '-' + nDip : ''), t: '🃏 Dip post-prandiale: flashcard a bassa frizione + cue Cornell', speciale: true, isOffloading: true }, m, true)) {
+                            nDip++;
+                            continue;
+                        }
+                    }
+                }
+                const pronti = coda.filter(c => c.min <= resto && pronto(c, g.data) && (!bio || !eAnal(c.liv) || (anal.get(g.data) || 0) + c.min <= capAnal));
+                if (bio && coda.some(c => eAnal(c.liv) && pronto(c, g.data) && (anal.get(g.data) || 0) + c.min > capAnal))
+                    capRaggiunto = true;
                 if (!pronti.length)
                     break;
                 const pref = pronti.find(c => (c.liv >= 3) === profondo) || pronti[0];
@@ -12133,6 +12262,10 @@ const Pianificatore = (() => {
                     });
                 }
             }
+            // 2b) BP5 §1.1: oltre l'hard cap analitico → Offloading Attivo Multi-Modale
+            const restoOff = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
+            if (bio && capRaggiunto && restoOff >= 30)
+                metti(g, { k: cod + '~' + pidC + '~OFF~' + g.data.replace(/-/g, ''), t: '🃏 Offloading attivo: ' + modalitaOffloading(MATRICE_5_LIVELLI[bio.livello - 1], v.profiloBio).join(' · '), speciale: true, isOffloading: true }, Math.min(restoOff, 90));
             // 3) buffer per imprevisti (consumati da Ripianifica e dall'hook post-quiz)
             const buf = Math.min(Math.round(g.minuti * f.bufferPct / 5) * 5, g.minuti - (usato.get(g.data) || 0));
             if (f.bufferPct > 0 && buf >= 20)
@@ -12153,8 +12286,400 @@ const Pianificatore = (() => {
             formato: 'pacchetto-studio', tipo: 'piano', id: o.pid, titolo: o.titolo || '✨ Piano intelligente ' + v.materiaCodice, aggiornato: new Date().toISOString(),
             giorniTeoria: gg.length, giorni: gg, origine: 'ai_neuro', proprio: true, vincoliAI: v, statoFattibilita: f.stato,
             capienza: Math.max(3, ...gg.map(x => x.voci.length)) + 1, unita, fonteMappa: 'toc', iper: errori || undefined,
+            livelloIntensita: bio ? bio.livello : undefined, avvisiBio: bio && bio.avvisi.length ? bio.avvisi : undefined,
             nota: avanzi ? avanzi + ' attività non sono entrate nel calendario: valuta i rimedi (più minuti o data più lontana).' : undefined,
         };
+    }
+    // ================= v0.56 (BP5): 5 livelli, guard-rail biologici, allocazione BRAC/circadiana, questionario 6+3, breaker =================
+    const HARD_CAP_ANALITICO = 270; // Ericsson: mai più di 4,5 h al giorno di codifica/calcolo profondo
+    const DIP = [13 * 60, 15 * 60];
+    const SERA = LIMITE_SERA - 60; // dalle 20:30 solo consolidamento leggero
+    const MAX_TOKEN_CALIBRAZIONE = 450, BUDGET_CALIBRAZIONE = 600;
+    const L = (livello, nome, oreRealiMin, oreRealiMax, capSforzoAnaliticoMin, ritenzioneTargetFSRS, itemPerMicroQuiz, maxCardAutogenerateGiorno, abilitaCornellAuto, abilitaTrabocchetti, abilitaMiniCasiCatena, gradoInterleaving, pauseWakefulRestMin, moltiplicatoreResaEquivalente) => ({ livello, nome, oreRealiMin, oreRealiMax, capSforzoAnaliticoMin: Math.min(HARD_CAP_ANALITICO, capSforzoAnaliticoMin), ritenzioneTargetFSRS, itemPerMicroQuiz, maxCardAutogenerateGiorno,
+        abilitaCornellAuto, abilitaTrabocchetti, abilitaMiniCasiCatena, gradoInterleaving, pauseWakefulRestMin, moltiplicatoreResaEquivalente });
+    const MATRICE_5_LIVELLI = [
+        L(1, 'Mantenimento Leggero', 1.5, 2.5, 90, 0.85, 5, 0, false, false, false, 'nessuno', 1, 1.05),
+        L(2, 'Standard Strutturato', 3.0, 4.5, 150, 0.88, 6, 8, true, false, false, 'nessuno', 2, 1.25),
+        L(3, 'Intensivo Universitario', 5.0, 6.5, 210, 0.90, 8, 14, true, true, false, 'intra_materia', 3, 1.48),
+        L(4, 'Pre-Esame / Concorso Avanzato', 7.0, 8.0, 250, 0.92, 8, 20, true, true, true, 'multi_materia', 4, 1.72),
+        L(5, 'Sprint Olimpico Multi-Modale', 8.5, 10.0, 270, 0.94, 8, 25, true, true, true, 'multi_materia', 5, 1.95),
+    ];
+    const livelloValido = (x) => clamp(Math.round(+x) || 2, 1, 5);
+    const configLivello = (l) => MATRICE_5_LIVELLI[livelloValido(l) - 1];
+    const PROFILO_BASE = { fasciaEta: '20-26', cronotipo: 'intermedio', autonomiaBRACMin: 55, oreSonnoMedie: '7-8', reazioneErrore: 'sfida_attiva', canalePreferito: 'quiz_immediati' };
+    /** Blocco A del questionario: 6 domande universali, 0 token, linguaggio semplice. */
+    const DOMANDE_UNIVERSALI = [
+        { campo: 'fasciaEta', testo: 'Quanti anni hai?', opzioni: [['<16', 'Meno di 16'], ['16-19', '16–19'], ['20-26', '20–26'], ['27-40', '27–40'], ['40+', 'Più di 40']] },
+        { campo: 'cronotipo', testo: 'Quando ti senti più lucido mentalmente?', opzioni: [['allodola_mattina', 'Presto la mattina'], ['intermedio', 'In tarda mattinata'], ['pomeridiano', 'Nel pomeriggio'], ['gufo_sera', 'La sera']] },
+        { campo: 'autonomiaBRACMin', testo: 'Dopo quanti minuti continui senti bisogno di staccare?', opzioni: [['35', 'Circa 35'], ['55', 'Circa 55'], ['80', 'Circa 80'], ['100', 'Oltre 90']] },
+        { campo: 'oreSonnoMedie', testo: 'Quante ore dormi in media a notte?', opzioni: [['<6', 'Meno di 6'], ['6-7', '6–7'], ['7-8', '7–8'], ['>8', 'Più di 8']] },
+        { campo: 'reazioneErrore', testo: 'Quando sbagli un quiz ti carichi per capire subito o ti innervosisci?', opzioni: [['sfida_attiva', 'Mi carico: voglio capire subito'], ['necessita_scaffolding', 'Mi innervosisco: preferisco una guida']] },
+        { campo: 'canalePreferito', testo: 'Ricordi meglio scrivendo schemi brevi, facendo subito quiz o ripetendo a voce?', opzioni: [['scrittura_schemi', 'Schemi brevi'], ['quiz_immediati', 'Quiz subito'], ['esposizione_orale', 'Ripetere a voce']] },
+    ];
+    /** Ripara un profilo parziale o vecchio (valori sconosciuti → base). */
+    function normalizzaProfilo(p) {
+        const out = { ...PROFILO_BASE };
+        for (const d of DOMANDE_UNIVERSALI) {
+            const x = p && p[d.campo] != null ? String(p[d.campo]) : '';
+            if (d.opzioni.some(o => o[0] === x))
+                out[d.campo] = d.campo === 'autonomiaBRACMin' ? +x : x;
+        }
+        return out;
+    }
+    /** §4.1 Cap biologici preventivi (0 token): età < 16 o sonno < 6 h → massimo L3; BRAC 35 → micro-blocchi 35 + 10. */
+    function applicaGuardRailBiologici(richiesto, profilo) {
+        const p = normalizzaProfilo(profilo || {}), req = livelloValido(richiesto), avvisi = [];
+        let livello = req;
+        if (p.fasciaEta === '<16' && req > 3) {
+            livello = 3;
+            avvisi.push('Protezione neurosviluppo: massimo 6.5h multi-modali (livello 3).');
+        }
+        if (p.oreSonnoMedie === '<6' && req > 3) {
+            livello = 3;
+            avvisi.push('Con meno di 6h di sonno il consolidamento ippocampale cala: intensità calibrata (livello 3) per evitare perdita di ritenzione.');
+        }
+        const bloccoMin = p.autonomiaBRACMin, pausaMin = bloccoMin === 35 ? 10 : bloccoMin === 100 ? 15 : 12;
+        if (bloccoMin === 35)
+            avvisi.push('Micro-blocchi da 35 minuti + 10 minuti di pausa (Wakeful Rest, zero schermi).');
+        return { livello, richiesto: req, avvisi, bloccoMin, pausaMin };
+    }
+    /** §1.3 Due picchi circadiani per cronotipo (minuti dalla mezzanotte) e inizio della giornata. */
+    const PICCHI = {
+        allodola_mattina: [[8 * 60, 11 * 60 + 30], [15 * 60 + 30, 18 * 60]],
+        intermedio: [[9 * 60 + 30, 12 * 60 + 30], [16 * 60, 19 * 60]],
+        pomeridiano: [[10 * 60 + 30, 12 * 60 + 45], [15 * 60 + 30, 19 * 60 + 30]],
+        gufo_sera: [[11 * 60, 12 * 60 + 45], [17 * 60, SERA]],
+    };
+    const INIZIO_GIORNATA = { allodola_mattina: 8 * 60, intermedio: 8 * 60 + 30, pomeridiano: 9 * 60, gufo_sera: 9 * 60 + 30 };
+    const picchiCircadiani = (c) => PICCHI[c] || PICCHI.intermedio;
+    /** Modalità di offloading attivo multi-modale, con il canale preferito in testa. */
+    function modalitaOffloading(cfg, profilo) {
+        const p = normalizzaProfilo(profilo || {});
+        const m = ['flashcard visive', 'micro-quiz lampo (' + cfg.itemPerMicroQuiz + ' item, Lag-Buffered Loop)', 'richiamo orale'];
+        if (cfg.abilitaCornellAuto)
+            m.splice(1, 0, 'card da note Cornell (max ' + cfg.maxCardAutogenerateGiorno + '/giorno)');
+        const pref = p.canalePreferito === 'scrittura_schemi' ? /Cornell|flashcard/ : p.canalePreferito === 'quiz_immediati' ? /micro-quiz/ : /orale/;
+        const i = m.findIndex(x => pref.test(x));
+        if (i > 0)
+            m.unshift(m.splice(i, 1)[0]);
+        return m;
+    }
+    /** §1.1–1.3 Allocazione di una giornata (0 token): blocchi BRAC + Wakeful Rest; L1/L3 solo nei picchi e fino all'hard cap
+     *  analitico; nel dip 13–15 solo flashcard/cue Cornell; dalle 20:30 solo consolidamento; mai oltre le 21:30. */
+    function allocaGiornata(livello, profilo, o = {}) {
+        const p = normalizzaProfilo(profilo || {}), g = applicaGuardRailBiologici(livello, p), cfg = configLivello(g.livello);
+        const totale = Math.round(clamp(o.minuti != null ? +o.minuti : cfg.oreRealiMax * 60, 0, cfg.oreRealiMax * 60));
+        const cap = Math.min(HARD_CAP_ANALITICO, cfg.capSforzoAnaliticoMin), pic = picchiCircadiani(p.cronotipo), offl = modalitaOffloading(cfg, p);
+        const faded = p.reazioneErrore === 'necessita_scaffolding' && (o.giorno || 0) < 2;
+        const slot = [];
+        let t = o.inizio ? minDi(o.inizio) : INIZIO_GIORNATA[p.cronotipo], studio = 0, anal = 0, nA = 0, nO = 0, nD = 0;
+        for (let giri = 0; giri < 100 && studio < totale && t + 15 <= LIMITE_SERA; giri++) {
+            let len = Math.min(g.bloccoMin, totale - studio, LIMITE_SERA - t), tipo, modalita, analitico = false;
+            if (t >= DIP[0] && t < DIP[1]) {
+                len = Math.min(len, DIP[1] - t);
+                tipo = 'flashcard_dip';
+                modalita = nD++ % 2 ? 'cue Cornell' : 'flashcard a bassa frizione';
+            }
+            else if (t >= SERA) {
+                tipo = 'consolidamento';
+                modalita = 'consolidamento leggero e chiusura errori del giorno';
+            }
+            else {
+                if (t < DIP[0])
+                    len = Math.min(len, DIP[0] - t);
+                else
+                    len = Math.min(len, SERA - t);
+                const pk = pic.find(([a, b]) => t >= a && t < b);
+                if (pk && cap - anal >= 20) {
+                    len = Math.min(len, pk[1] - t, cap - anal);
+                    analitico = true;
+                    tipo = nA++ % 2 === 0 ? 'L1_codifica' : faded ? 'L3_faded' : 'L3_problemi';
+                    modalita = tipo === 'L1_codifica' ? 'codifica di teoria nuova' : tipo === 'L3_faded' ? 'Faded Worked Examples guidati' : 'problemi' + (cfg.abilitaTrabocchetti ? ' + trabocchetti' : '') + (cfg.abilitaMiniCasiCatena ? ' + mini-casi a catena' : '');
+                }
+                else {
+                    tipo = 'offloading';
+                    modalita = offl[nO++ % offl.length];
+                }
+            }
+            if (len < 15) {
+                t = t < DIP[0] && t + len >= DIP[0] ? DIP[0] : t + Math.max(len, 5);
+                continue;
+            }
+            slot.push({ ora: hhmm(t), min: len, tipo, analitico, modalita });
+            studio += len;
+            if (analitico)
+                anal += len;
+            t += len;
+            if (studio < totale && t + g.pausaMin + 15 <= LIMITE_SERA) {
+                slot.push({ ora: hhmm(t), min: g.pausaMin, tipo: 'wakeful_rest', analitico: false, modalita: 'Wakeful Rest: zero schermi' });
+                t += g.pausaMin;
+            }
+        }
+        return { slot, livello: g.livello, analiticoMin: anal, studioMin: studio, avvisi: g.avvisi };
+    }
+    /** Pesi iniziali dal Blocco A (domande 5 e 6) + sonno/età per l'interleaving. */
+    function pesiIniziali(profilo) {
+        const p = normalizzaProfilo(profilo || {}), w = { w_faded: 1, w_cornell: 1, w_gemelle: 1, w_interleave: 1 };
+        if (p.canalePreferito === 'scrittura_schemi') {
+            w.w_cornell = 1.3;
+            w.w_gemelle = 0.9;
+        }
+        else if (p.canalePreferito === 'quiz_immediati') {
+            w.w_gemelle = 1.3;
+            w.w_cornell = 0.9;
+        }
+        else {
+            w.w_cornell = 1.1;
+            w.w_faded = 1.1;
+        }
+        if (p.reazioneErrore === 'necessita_scaffolding') {
+            w.w_faded += 0.2;
+            w.w_gemelle -= 0.1;
+        }
+        else
+            w.w_gemelle += 0.1;
+        if (p.oreSonnoMedie === '<6')
+            w.w_interleave -= 0.2;
+        if (p.fasciaEta === '<16')
+            w.w_interleave -= 0.1;
+        return limitaPesi(w);
+    }
+    const CHIAVI_PESI = ['w_faded', 'w_cornell', 'w_gemelle', 'w_interleave'];
+    const limitaPesi = (w) => { const o = {}; for (const k of CHIAVI_PESI)
+        o[k] = arr1(clamp(+w[k] || 1, 0.5, 1.5)); return o; };
+    /** Applica le risposte del Blocco B (indice dell'opzione per domanda). Delta già limitati a −0,25..+0,35. */
+    function applicaRisposte(base, domande, scelte) {
+        const w = { ...base };
+        (domande || []).forEach((d, i) => { const op = d && d.opzioni && scelte && scelte[i] != null ? d.opzioni[scelte[i]] : null; if (op)
+            for (const k of CHIAVI_PESI)
+                if (op.delta[k] != null)
+                    w[k] = (+w[k] || 1) + clamp(+op.delta[k], -0.25, 0.35); });
+        return limitaPesi(w);
+    }
+    /** Top parole chiave in stile BM25 (righe = documenti) dai titoli/indice delle fonti. */
+    function paroleChiaveBM25(testo, n = 8) {
+        const STOP = new Set('della delle degli dello nella nelle negli sulla sulle alla alle agli dalla dalle con per tra fra una uno del dei gli che non come capitolo parte indice esercizi introduzione and the of'.split(' '));
+        const docs = String(testo || '').toLowerCase().split(/\r?\n/).map(r => (r.match(/[a-zà-ü]{4,}/g) || []).filter(x => !STOP.has(x))).filter(d => d.length);
+        if (!docs.length)
+            return [];
+        const N = docs.length, avg = docs.reduce((s, d) => s + d.length, 0) / N, df = new Map(), sc = new Map();
+        for (const d of docs)
+            for (const w of new Set(d))
+                df.set(w, (df.get(w) || 0) + 1);
+        for (const d of docs) {
+            const tf = new Map();
+            for (const w of d)
+                tf.set(w, (tf.get(w) || 0) + 1);
+            for (const [w, f] of tf) {
+                const idf = Math.log(1 + (N - df.get(w) + 0.5) / (df.get(w) + 0.5));
+                sc.set(w, (sc.get(w) || 0) + idf * f * 2.2 / (f + 1.2 * (0.25 + 0.75 * d.length / avg)));
+            }
+        }
+        return Array.from(sc.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, n).map(x => x[0]);
+    }
+    /** Fallback 0 token del Blocco B: set pre-calibrato per archetipo (6 archetipi di Dominio). */
+    function domandeCalibrazioneDefault(archetipo) {
+        const T = {
+            stem_calcolo: ['Davanti a un esercizio di calcolo nuovo cosa ti aiuta di più?', 'Le formule le ricordi meglio…', 'Quando due formule si somigliano…'],
+            scienze_sperimentali: ['Davanti a un problema di chimica/fisica/biologia nuovo cosa ti aiuta di più?', 'I processi (cicli, reazioni) li ricordi meglio…', 'Quando due concetti si somigliano (es. mitosi/meiosi)…'],
+            umanistico_storico: ['Davanti a un argomento storico o filosofico nuovo cosa ti aiuta di più?', 'Date ed eventi li ricordi meglio…', 'Quando due autori o periodi si somigliano…'],
+            giuridico_economico: ['Davanti a un caso pratico nuovo cosa ti aiuta di più?', 'Norme e definizioni le ricordi meglio…', 'Quando due istituti si somigliano…'],
+            lingue_letteratura: ['Davanti a una regola grammaticale nuova cosa ti aiuta di più?', 'Il lessico lo ricordi meglio…', 'Quando due costruzioni si somigliano…'],
+            informatica_coding: ['Davanti a un algoritmo o a un pezzo di codice nuovo cosa ti aiuta di più?', 'Sintassi e API le ricordi meglio…', 'Quando due strutture dati si somigliano…'],
+        };
+        const q = T[String(archetipo)] || T.scienze_sperimentali;
+        return [
+            { testo: q[0], opzioni: [{ testo: 'Vedere prima un esempio svolto passo passo', delta: { w_faded: 0.35 } }, { testo: 'Provare subito da solo e poi correggermi', delta: { w_faded: -0.25, w_gemelle: 0.15 } }, { testo: 'Un mix: esempio breve e poi prova', delta: { w_faded: 0.1 } }] },
+            { testo: q[1], opzioni: [{ testo: 'Scrivendo uno schema con le domande a margine', delta: { w_cornell: 0.35 } }, { testo: 'Rispondendo a domande lampo', delta: { w_cornell: -0.15, w_gemelle: 0.1 } }, { testo: 'Ripetendole a voce', delta: { w_cornell: 0.1, w_faded: 0.05 } }] },
+            { testo: q[2], opzioni: [{ testo: 'Le confondo spesso: mettimele a confronto', delta: { w_gemelle: 0.35, w_interleave: 0.1 } }, { testo: 'Preferisco studiarle separate e ben distinte', delta: { w_interleave: -0.25 } }, { testo: 'Mi va bene alternarle durante lo studio', delta: { w_interleave: 0.3 } }] },
+        ];
+    }
+    /** Prompt del Blocco B: materia, archetipo, top 8 parole chiave, top 3 errori storici. Ingresso ≤ ~150 token. */
+    function promptCalibrazione(c) {
+        return [
+            { role: 'system', content: 'Genera ESATTAMENTE 3 domande a scelta multipla (3 opzioni ciascuna) per capire come studia uno studente. Linguaggio semplice, in italiano. '
+                    + 'Ogni opzione modifica i pesi w_faded, w_cornell, w_gemelle, w_interleave con delta tra -0.25 e 0.35. Solo JSON: '
+                    + '{"domande":[{"testo":"...","opzioni":[{"testo":"...","delta":{"w_faded":0.2}}]}]}' },
+            { role: 'user', content: 'Materia ' + String(c.materia).slice(0, 30) + ', archetipo ' + c.archetipo + '. Parole chiave: ' + (c.keyword || []).slice(0, 8).join(', ') + '. Errori ricorrenti: ' + ((c.errori || []).slice(0, 3).join(', ') || 'nessuno') + '.' },
+        ];
+    }
+    /** Parsing tollerante: esattamente 3 domande × 3 opzioni, delta limitati; altrimenti null (→ fallback). */
+    function leggiDomandeCalibrazione(r) {
+        let j = r;
+        if (typeof r === 'string') {
+            const s = r.replace(/```(?:json)?/g, '');
+            try {
+                j = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
+            }
+            catch (_) {
+                return null;
+            }
+        }
+        const arr = Array.isArray(j) ? j : j && Array.isArray(j.domande) ? j.domande : null;
+        if (!arr || arr.length < 3)
+            return null;
+        const out = [];
+        for (const d of arr.slice(0, 3)) {
+            if (!d || !String(d.testo || '').trim() || !Array.isArray(d.opzioni) || d.opzioni.length < 3)
+                return null;
+            const opz = [];
+            for (const o of d.opzioni.slice(0, 3)) {
+                if (!o || !String(o.testo || '').trim())
+                    return null;
+                const delta = {};
+                for (const k of CHIAVI_PESI)
+                    if (o.delta && isFinite(+o.delta[k]) && o.delta[k] !== null && o.delta[k] !== '')
+                        delta[k] = arr1(clamp(+o.delta[k], -0.25, 0.35));
+                opz.push({ testo: pulisci(o.testo).slice(0, 120), delta });
+            }
+            out.push({ testo: pulisci(d.testo).slice(0, 160), opzioni: opz });
+        }
+        return out;
+    }
+    const stimaTokenCalibrazione = (msgs) => Math.round(msgs.reduce((s, m) => s + m.content.length, 0) / 3.5) + MAX_TOKEN_CALIBRAZIONE;
+    /** Blocco B: 1 micro-call (max_tokens 450, totale ≤ 600) sulla catena iniettata; JSON rotto, 429 su tutta la catena,
+     *  offline o modalità senza AI → set pre-calibrato per archetipo a 0 token, all'istante. */
+    async function generaDomandeCalibrazione(c, ia) {
+        const def = () => domandeCalibrazioneDefault(c.archetipo);
+        if (!ia)
+            return { domande: def(), fonte: 'default', chiamate: 0, tokenStimati: 0 };
+        const msgs = promptCalibrazione({ materia: c.materia, archetipo: c.archetipo, keyword: c.keyword || [], errori: c.errori || [] });
+        const tok = Math.min(BUDGET_CALIBRAZIONE, stimaTokenCalibrazione(msgs));
+        try {
+            const d = leggiDomandeCalibrazione(await ia(msgs, { maxOut: MAX_TOKEN_CALIBRAZIONE }));
+            return d ? { domande: d, fonte: 'ai', chiamate: 1, tokenStimati: tok } : { domande: def(), fonte: 'default', chiamate: 1, tokenStimati: 0, errore: 'JSON non valido' };
+        }
+        catch (e) {
+            return { domande: def(), fonte: 'default', chiamate: 1, tokenStimati: 0, errore: String(e && e.message || e).slice(0, 120) };
+        }
+    }
+    /** §4.2 Burnout Circuit Breaker (0 token). A: tasso d'errore degli ultimi 2 giorni ≥ media storica + 0,25.
+     *  B: ipercorrezioni (certo → sbagliata) delle ultime 48 h ≥ 2× le 48 h precedenti (minimo 2). Fonti: confidenceLog e
+     *  statq.neuro (illusione_competenza) di BP3, più i contatori storici n/ok. */
+    function monitoraAffaticamento(stats, o) {
+        const ieri = piu(o.oggi, -1), l2 = piu(o.oggi, -2), l3 = piu(o.oggi, -3);
+        let r2 = 0, e2 = 0, rv = 0, ev = 0, n = 0, ok = 0, iper48 = 0, iperPrima = 0;
+        for (const s of stats || []) {
+            if (!s || s.deleted || typeof s !== 'object')
+                continue;
+            const sk = String(s.sk || '');
+            if (o.materia && sk && sk.split('-')[0] !== o.materia)
+                continue;
+            const nn = Math.max(0, +s.n || 0);
+            n += nn;
+            ok += clamp(+s.ok || 0, 0, nn);
+            const log = Array.isArray(s.confidenceLog) ? s.confidenceLog : [];
+            let illLog48 = 0;
+            for (const x of log) {
+                if (!x || !x.ts)
+                    continue;
+                const d = String(x.ts).slice(0, 10), sbagliata = x.corretto === false, iper = sbagliata && x.livelloCertezza === 3;
+                if (d >= ieri && d <= o.oggi) {
+                    r2++;
+                    if (sbagliata)
+                        e2++;
+                    if (iper) {
+                        iper48++;
+                        illLog48++;
+                    }
+                }
+                else if (d < ieri) {
+                    rv++;
+                    if (sbagliata)
+                        ev++;
+                    if (iper && d >= l3 && d <= l2)
+                        iperPrima++;
+                }
+            }
+            // statq.neuro: illusione registrata nelle ultime 48 h ma non ancora nel log (es. log troncato agli ultimi 10)
+            const ne = s.neuro || {}, ult = String(s.ultima || '');
+            if (!illLog48 && ult >= ieri && ult <= o.oggi && (ne.ultimoCaso === 'illusione_competenza' || (Array.isArray(ne.tag) && ne.tag.includes('illusione_competenza'))))
+                iper48++;
+            if (!log.length && ult >= ieri && ult <= o.oggi) {
+                r2++;
+                if (s.esito === false)
+                    e2++;
+            }
+        }
+        const nVecchi = n - r2, okVecchi = ok - (r2 - e2);
+        const media = o.mediaStorica != null ? +o.mediaStorica : rv >= 5 ? ev / rv : nVecchi >= 5 ? clamp(1 - okVecchi / nVecchi, 0, 1) : n ? 1 - ok / n : 0;
+        const tasso = r2 ? e2 / r2 : 0;
+        const condA = r2 >= 4 && tasso >= media + 0.25 - 1e-9;
+        const condB = iper48 >= 2 && iper48 >= 2 * Math.max(1, iperPrima);
+        return { trigger: condA || condB, condA, condB, tasso2g: arr1(tasso), mediaStorica: arr1(media), risposte2g: r2, iper48, iperPrima };
+    }
+    /** Attiva il de-load di 48 h su un piano ai_neuro (copia): −2 livelli (min L1); i nuovi capitoli (L1–L4) delle 48 h slittano
+     *  di 2 giorni (chiavi invariate, mai oltre l'ultimo giorno di lavoro) e al loro posto restano ripasso FSRS leggero + Wakeful Rest. */
+    function attivaDeload(piano, o) {
+        if (!piano || piano.origine !== 'ai_neuro')
+            return null;
+        if (piano.deload && piano.deload.attivo && piano.deload.fino > o.oggi)
+            return null;
+        const p = clona(piano), target = livelloValido(p.livelloIntensita || (p.vincoliAI && p.vincoliAI.livelloIntensita) || 2), fino = piu(o.oggi, 2);
+        const ridotto = Math.max(1, target - 2);
+        const cod = String(p.vincoliAI && p.vincoliAI.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = String(p.id).replace(/^ai-/, '');
+        const lavoro = p.giorni.filter(g => g.voci.some(v => v.livelloCognitivo && !v.isRipassoFSRS)).map(g => g.data).sort();
+        const ultimo = lavoro.length ? lavoro[lavoro.length - 1] : fino;
+        const sposta = [];
+        for (const g of p.giorni) {
+            if (g.data < o.oggi || g.data >= fino)
+                continue;
+            const tenere = [];
+            for (const v of g.voci) {
+                if (v.livelloCognitivo && !v.isRipassoFSRS && !v.isBuffer) {
+                    const a = piu(g.data, 2);
+                    sposta.push({ v, a: a > ultimo ? ultimo : a });
+                }
+                else
+                    tenere.push(v);
+            }
+            if (tenere.length !== g.voci.length)
+                tenere.push({ k: cod + '~' + pidC + '~DELOAD~' + g.data.replace(/-/g, ''), t: '🛌 De-load: ripasso FSRS leggero + Wakeful Rest (niente capitoli nuovi)', speciale: true, isDeload: true, d: 'Circuit breaker anti-burnout: intensità ridotta a L' + ridotto + ' fino al ' + fino + '.' });
+            g.voci = tenere;
+        }
+        for (const s of sposta) {
+            let g = p.giorni.find(x => x.data === s.a);
+            if (!g) {
+                g = { data: s.a, voci: [] };
+                p.giorni.push(g);
+                p.giorni.sort((a, b) => a.data < b.data ? -1 : 1);
+            }
+            const iBuf = g.voci.findIndex(v => v.isBuffer);
+            if (iBuf >= 0)
+                g.voci.splice(iBuf, 0, s.v);
+            else
+                g.voci.push(s.v);
+        }
+        p.giorni.forEach((g, i) => { g.n = i + 1; });
+        p.giorniTeoria = p.giorni.length;
+        p.capienza = Math.max(p.capienza || 0, ...p.giorni.map(g => g.voci.length + 1));
+        p.deload = { attivo: true, da: o.oggi, fino, livelloTarget: target, livelloRidotto: ridotto, motivo: o.motivo || 'affaticamento' };
+        p.livelloIntensita = ridotto;
+        return p;
+    }
+    /** Livello effettivo oggi: ridotto nelle 48 h, poi un giorno a metà strada (ripristino graduale), poi il target. */
+    function livelloEffettivo(piano, oggi) {
+        const d = piano && piano.deload;
+        if (!d || !d.attivo)
+            return livelloValido(piano && piano.livelloIntensita || 2);
+        if (oggi < d.fino)
+            return d.livelloRidotto;
+        if (oggi < piu(d.fino, 1))
+            return Math.min(d.livelloTarget, d.livelloRidotto + 1);
+        return d.livelloTarget;
+    }
+    /** Chiude il de-load scaduto (copia) e ripristina il livello target; null se non c'è nulla da cambiare. */
+    function aggiornaDeload(piano, oggi) {
+        if (!piano || piano.origine !== 'ai_neuro' || !piano.deload || !piano.deload.attivo)
+            return null;
+        const liv = livelloEffettivo(piano, oggi);
+        if (liv === piano.livelloIntensita && oggi < piu(piano.deload.fino, 1))
+            return null;
+        const p = clona(piano);
+        p.livelloIntensita = liv;
+        if (oggi >= piu(p.deload.fino, 1))
+            p.deload = { ...p.deload, attivo: false };
+        return p;
     }
     // ---------- Stadio 5: hook post-quiz e buffer ----------
     const vociDi = (p) => p.giorni.flatMap(g => g.voci.map(v => ({ v, g })));
@@ -12238,7 +12763,11 @@ const Pianificatore = (() => {
     }
     return { segnaliIper, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
         unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
-        compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA };
+        compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
+        // v0.56 (BP5)
+        MATRICE_5_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
+        picchiCircadiani, modalitaOffloading, allocaGiornata, pesiIniziali, applicaRisposte, paroleChiaveBM25, domandeCalibrazioneDefault, promptCalibrazione,
+        leggiDomandeCalibrazione, generaDomandeCalibrazione, monitoraAffaticamento, attivaDeload, livelloEffettivo, aggiornaDeload };
 })();
 
 // 07-progressi.ts — Punti deboli (v0.12, F6 ridotta). In Studio → Statistiche.
@@ -12489,6 +13018,12 @@ const QuizApp = (() => {
         if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess')
             try {
                 PianiAI.dopoQuiz(v.d.sk, v.caso);
+            }
+            catch (_) { /* il quiz non si blocca */ }
+        // v0.56 (BP5 §4.2): dopo un errore, Burnout Circuit Breaker sui piani con intensità (0 token)
+        if (!giusta)
+            try {
+                PianiAI.controllaFatica();
             }
             catch (_) { /* il quiz non si blocca */ }
         const annulla = () => {
@@ -16302,7 +16837,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.55';
+const VERSIONE = '0.56';
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
