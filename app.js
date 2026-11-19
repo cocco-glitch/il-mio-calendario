@@ -302,6 +302,8 @@ const Stato = (() => {
     const rec = new Map();
     const TIPI_SERVIZIO = new Set(['notifica']); // v0.17: lapidi ripulibili dopo 7 giorni
     const lapideScaduta = (r) => TIPI_SERVIZIO.has(r.type) && (r.updatedAt || 0) < Date.now() - 7 * 86400000;
+    const inCorso = new Set(); // v0.56.1: scritture IndexedDB non ancora confermate
+    const traccia = (p) => { const q = p.catch(e => { console.warn('DB.salva', e); }); inCorso.add(q); q.then(() => inCorso.delete(q)); return q; };
     let ver = 0, cacheVer = -1; // v0.17: versione dei dati e cache per tipo
     const perTipo = new Map();
     const ascoltatori = [];
@@ -383,14 +385,17 @@ const Stato = (() => {
             catch (_) { /* */ }
             rec.set(r.id, r);
             ver++;
-            DB.salva([r]);
+            const p = traccia(DB.salva([r])); // v0.56.1: promise risolta solo a transazione IndexedDB completata (oncomplete)
             if (!silenzioso)
                 notifica(); // silenzioso: non ridisegna (es. mentre scrivi la nota del giorno)
             if (typeof Drive !== 'undefined')
                 Drive.programma();
             if (typeof GCal !== 'undefined' && (r.type === 'evento' || r.type === 'task'))
                 GCal.programma();
+            return p;
         },
+        /** v0.56.1: si risolve quando tutte le scritture IndexedDB avviate finora sono confermate (oncomplete). */
+        scritto() { return Promise.all(Array.from(inCorso)).then(() => undefined); },
         /** Eliminazione "morbida": il record resta come lapide per la sync. */
         elimina(id) {
             const r = rec.get(id);
@@ -425,7 +430,7 @@ const Stato = (() => {
                 }
             }
             if (cambiati.length) {
-                DB.salva(cambiati);
+                traccia(DB.salva(cambiati));
                 notifica();
             }
             return cambiati.length;
@@ -1500,6 +1505,9 @@ const Drive = (() => {
             }
         });
     }
+    /** v0.56.1: consenso incrementale (es. calendar.events.readonly per il wizard BP4). Chiede a Google lo scope attuale
+     *  con popup; se l'utente rifiuta, il token Drive già valido resta quello di prima (accedi lo sostituisce solo in caso di successo). */
+    function ampliaPermessi() { return accedi(true); }
     async function tokenValido(interattivo = false) {
         if (token && Date.now() < scadenzaToken)
             return token;
@@ -1898,7 +1906,7 @@ const Drive = (() => {
         sincronizza(false); });
     return {
         stato, ascolta(f) { ascoltatori.push(f); },
-        sincronizza, programma, login, logout, precarica,
+        sincronizza, programma, login, logout, precarica, ampliaPermessi,
         caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
         elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle, api,
         get collegato() { return !!stato.email; },
@@ -11668,9 +11676,17 @@ const PianiAI = (() => {
                     return;
                 }
                 if (!!imp().gcalLeggiPrimary !== primary.checked) {
-                    const i = imp();
-                    i.gcalLeggiPrimary = primary.checked || undefined;
+                    const i = imp(), attiva = primary.checked;
+                    i.gcalLeggiPrimary = attiva || undefined;
                     Stato.salva(i);
+                    // v0.56.1: opt-in → consenso incrementale subito (prima del calcolo); se negato si torna indietro, così il rinnovo
+                    // silenzioso del token Drive non chiede mai uno scope non concesso.
+                    if (attiva && Drive.collegato && !(await Drive.ampliaPermessi())) {
+                        i.gcalLeggiPrimary = undefined;
+                        Stato.salva(i);
+                        primary.checked = false;
+                        avviso('Accesso in lettura a Google Calendar non concesso: il piano non terrà conto di «primary».', 6000);
+                    }
                 }
                 esito.textContent = 'Calcolo la fattibilità (0 token)…';
                 const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: usaAI.checked, testoIndice: indice.value, titolo: '🧠 ' + nomeMateria(v.materiaCodice) + ' entro ' + v.dataTarget }));
@@ -16617,7 +16633,7 @@ const PRESET_BASE = [
 ];
 function sezionePreset(salva) {
     const i = imp(), miei = Stato.tutti('preset').sort((a, b) => a.nome.localeCompare(b.nome));
-    const applica = (nome, v) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); avviso('Preset «' + nome + '» applicato'); };
+    const applica = (nome, v) => { salva({ ...JSON.parse(JSON.stringify(v)), preset: nome }); Stato.scritto().then(() => avviso('Preset «' + nome + '» applicato')); }; // v0.56.1: avviso solo a scrittura confermata
     return scheda('Preset', h('div.chips', null, PRESET_BASE.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: () => applica(p.nome, p.valori) }, p.nome)), miei.map(p => h('button.chip' + (i.preset === p.nome ? '.attivo' : ''), { onclick: async () => {
             const s = await chiedi(p.nome, [{ testo: 'Applica', valore: 'a' }, { testo: 'Sovrascrivi con l\'aspetto attuale', valore: 's' }, { testo: 'Elimina preset', valore: 'd', pericolo: true }]);
             if (s === 'a')
