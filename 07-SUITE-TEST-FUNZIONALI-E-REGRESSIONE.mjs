@@ -1,4 +1,4 @@
-// 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs — v0.55 (BP3 + BP4)
+// 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs — v0.56 (BP3 + BP4 + BP5)
 // Test funzionali e di regressione SENZA browser e SENZA toccare dist/:
 //  - compila src/07-neuro.ts (modulo puro) in una cartella temporanea del sistema e lo carica in una sandbox vm;
 //  - fetch è sostituita da un contatore: i livelli 0 e 1 dell'imbuto AI devono fare ZERO chiamate di rete;
@@ -185,7 +185,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.55', () => vero(/const VERSIONE = '0\.55'/.test(leggi('09-main.ts'))));
+t('versione app 0.56', () => vero(/const VERSIONE = '0\.56'/.test(leggi('09-main.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
@@ -321,6 +321,126 @@ await t('testGuardRailBP4: prereq in ciclo sanificati prima di Kahn, data obiett
     eq(x.fatt.stato, 'critico', 'target ' + target); vero(x.piano === null && ia === 0, 'nessun piano, 0 AI');
     const nd = x.fatt.rimedi.find(m => m.tipo === 'sposta_data').nuovaData; vero(nd >= '2026-11-21', 'nuova data futura: ' + nd);
   }
+});
+// ---------- BP5: 5 livelli, questionario 6+3, guard-rail biologici, Burnout Circuit Breaker ----------
+const minDi = (o) => +o.slice(0, 2) * 60 + +o.slice(3, 5);
+t('testHardCapEricssonL5: L5 con 9,5 h → analitico ≤ 270 min, il resto offloading attivo', () => {
+  const rete0 = chiamateRete;
+  eq(P.MATRICE_5_LIVELLI.length, 5); vero(P.MATRICE_5_LIVELLI.every(c => c.capSforzoAnaliticoMin <= 270), 'cap ≤ 270 in matrice');
+  eq(P.configLivello(5).capSforzoAnaliticoMin, 270); eq(P.configLivello(5).moltiplicatoreResaEquivalente, 1.95); eq(P.configLivello(1).ritenzioneTargetFSRS, 0.85);
+  for (const cronotipo of ['allodola_mattina', 'intermedio', 'pomeridiano', 'gufo_sera']) for (const autonomiaBRACMin of [35, 55, 80, 100]) {
+    const g = P.allocaGiornata(5, { fasciaEta: '20-26', oreSonnoMedie: '7-8', cronotipo, autonomiaBRACMin }, { minuti: 570 });
+    const an = g.slot.filter(x => x.analitico).reduce((a, x) => a + x.min, 0);
+    vero(an <= 270 && an === g.analiticoMin, cronotipo + '/' + autonomiaBRACMin + ': analitico ' + an);
+    vero(g.slot.filter(x => x.analitico).every(x => x.tipo === 'L1_codifica' || x.tipo === 'L3_problemi' || x.tipo === 'L3_faded'), 'solo L1/L3 analitici');
+    vero(g.slot.some(x => x.tipo === 'offloading') && g.studioMin - an > 0, 'eccedenza → offloading');
+    vero(g.slot.every(x => minDi(x.ora) + x.min <= 21 * 60 + 30), 'mai oltre le 21:30');
+    const blocchi = g.slot.filter(x => x.tipo !== 'wakeful_rest');
+    vero(blocchi.every(x => x.min <= autonomiaBRACMin), 'blocchi ≤ autonomia BRAC');
+    vero(g.slot.some(x => x.tipo === 'wakeful_rest'), 'Wakeful Rest presente');
+  }
+  eq(chiamateRete - rete0, 0, 'rete');
+});
+await t('testHardCapEricssonL5 (timeline): piano con livelloIntensita → analitico/giorno ≤ cap, piano BP4 senza livello invariato', async () => {
+  const a = await P.creaPiano(V(), { oggi: OGGI, unita: UNITA, pid: 'ai-bp4' });
+  vero(a.piano && a.piano.livelloIntensita === undefined && !tutteVoci(a.piano).some(v => v.isOffloading), 'BP4 retrocompatibile');
+  const r = await P.creaPiano(V({ livelloIntensita: 1, maxOreGiorno: 2.5 }), { oggi: OGGI, unita: UNITA, pid: 'ai-l1' });
+  vero(r.piano, 'piano L1'); eq(r.piano.livelloIntensita, 1);
+  for (const g of r.piano.giorni) {
+    const an = g.voci.filter(v => (v.livelloCognitivo === 1 || v.livelloCognitivo === 3) && !v.isRipassoFSRS).reduce((s, v) => s + (v.min || 0), 0);
+    vero(an <= 90, g.data + ': analitico ' + an + ' > 90');
+    for (const v of g.voci) if (v.ora && (v.livelloCognitivo === 1 || v.livelloCognitivo === 3) && !v.isRipassoFSRS) { const m = minDi(v.ora); vero(m + (v.min || 0) <= 780 || m >= 900, g.data + ' ' + v.ora + ' L' + v.livelloCognitivo + ' nel dip'); }
+  }
+});
+t('testAllocazioneCircadianaDip: 13:00–15:00 solo flashcard/cue, mai L1/L3', () => {
+  for (const liv of [1, 2, 3, 4, 5]) for (const cronotipo of ['allodola_mattina', 'intermedio', 'pomeridiano', 'gufo_sera']) for (const autonomiaBRACMin of [35, 55, 80, 100]) {
+    const g = P.allocaGiornata(liv, { cronotipo, autonomiaBRACMin, oreSonnoMedie: '7-8' }, { inizio: '08:00' });
+    for (const x of g.slot) {
+      const a = minDi(x.ora), b = a + x.min, nelDip = a < 900 && b > 780;
+      if (nelDip && x.tipo !== 'wakeful_rest') vero(x.tipo === 'flashcard_dip' && !x.analitico && /flashcard|Cornell/.test(x.modalita), 'L' + liv + ' ' + cronotipo + ' ' + x.ora + ' ' + x.tipo);
+      if (x.analitico) vero(b <= 780 || a >= 900, 'analitico fuori dal dip');
+      if (a >= 20 * 60 + 30 && x.tipo !== 'wakeful_rest') eq(x.tipo, 'consolidamento', 'sera solo consolidamento');
+    }
+    if (liv >= 3) vero(g.slot.some(x => x.tipo === 'flashcard_dip'), 'dip usato con flashcard a L' + liv);
+  }
+  const sc = P.allocaGiornata(3, { reazioneErrore: 'necessita_scaffolding' }, { giorno: 0 });
+  vero(sc.slot.some(x => x.tipo === 'L3_faded') && !sc.slot.some(x => x.tipo === 'L3_problemi'), 'scaffolding: faded nei primi 2 giorni');
+  vero(P.allocaGiornata(3, { reazioneErrore: 'necessita_scaffolding' }, { giorno: 2 }).slot.some(x => x.tipo === 'L3_problemi'), 'dal giorno 3 problemi');
+});
+t('testCapBiologiciEtaESonno: <16 o sonno <6 che chiedono L5 → L3 con avviso; BRAC 35 → 35 + 10', () => {
+  const a = P.applicaGuardRailBiologici(5, { fasciaEta: '<16' });
+  eq(a.livello, 3); eq(a.richiesto, 5); vero(a.avvisi.some(x => /neurosviluppo/.test(x) && /6\.5h/.test(x)), 'avviso età');
+  const b = P.applicaGuardRailBiologici(5, { oreSonnoMedie: '<6' });
+  eq(b.livello, 3); vero(b.avvisi.some(x => /6h di sonno/.test(x) && /ippocampale/.test(x)), 'avviso sonno');
+  const c = P.applicaGuardRailBiologici(4, { fasciaEta: '<16', oreSonnoMedie: '<6' }); eq(c.livello, 3); eq(c.avvisi.length, 2);
+  eq(P.applicaGuardRailBiologici(3, { fasciaEta: '<16', oreSonnoMedie: '<6' }).livello, 3, 'L3 resta L3');
+  eq(P.applicaGuardRailBiologici(5, { fasciaEta: '20-26', oreSonnoMedie: '7-8' }).livello, 5, 'adulto riposato: L5');
+  const d = P.applicaGuardRailBiologici(2, { autonomiaBRACMin: 35 }); eq(d.bloccoMin, 35); eq(d.pausaMin, 10);
+  const g = P.allocaGiornata(5, { fasciaEta: '<16', autonomiaBRACMin: 35 });
+  eq(g.livello, 3); vero(g.studioMin <= 6.5 * 60, 'ore L3'); vero(g.slot.filter(x => x.tipo === 'wakeful_rest').every(x => x.min === 10), 'pause 10');
+  vero(g.slot.filter(x => x.tipo !== 'wakeful_rest').every(x => x.min <= 35), 'micro-blocchi 35');
+  eq(P.DOMANDE_UNIVERSALI.length, 6, 'Blocco A: 6 domande');
+});
+await t('testBurnoutCircuitBreaker48h: errori +30% in 2 giorni → de-load 48 h a 0 token, poi ripristino graduale', async () => {
+  const rete0 = chiamateRete; let ia = 0;
+  const log = (d, corretto, c = 2) => ({ ts: d + 'T10:00:00.000Z', corretto, livelloCertezza: c, tempoRispostaMs: 4000 });
+  const vecchi = [], nuovi = [];
+  for (let i = 0; i < 10; i++) vecchi.push(log('2026-11-1' + (i % 5), i >= 2)); // storico 20% errori
+  for (let i = 0; i < 10; i++) nuovi.push(log(i < 5 ? '2026-11-17' : OGGI, i >= 5 && i < 10 && i % 2 === 0 ? true : i < 5 ? i >= 3 : false)); // ~50%+ errori
+  const stats = [{ sk: 'C-1.1.1-1', n: 20, ok: 12, confidenceLog: vecchi.slice(0, 5).concat(nuovi.slice(0, 5)) }, { sk: 'C-1.1.1-2', n: 10, ok: 6, confidenceLog: vecchi.slice(5).concat(nuovi.slice(5)) }];
+  const f = P.monitoraAffaticamento(stats, { oggi: OGGI, materia: 'C' });
+  vero(f.condA && f.trigger, 'cond A: ' + JSON.stringify(f)); vero(f.tasso2g >= f.mediaStorica + 0.25, 'tasso +25%');
+  vero(!P.monitoraAffaticamento(stats, { oggi: OGGI, materia: 'ZZ' }).trigger, 'altra materia: niente');
+  const calmo = [{ sk: 'C-1-1', n: 10, ok: 8, confidenceLog: vecchi.slice(0, 5).concat([log(OGGI, true), log(OGGI, true), log(OGGI, false), log(OGGI, true)]) }];
+  vero(!P.monitoraAffaticamento(calmo, { oggi: OGGI }).trigger, 'oscillazione normale: niente de-load');
+  const iper = [{ sk: 'C-2-1', n: 6, ok: 3, confidenceLog: [log('2026-11-14', false, 3), log('2026-11-17', false, 3), log(OGGI, false, 3), log(OGGI, true, 3)] }];
+  const fb = P.monitoraAffaticamento(iper, { oggi: OGGI }); vero(fb.condB && fb.iper48 === 2 && fb.iperPrima === 0, 'cond B ipercorrezioni ×2: ' + JSON.stringify(fb));
+  const neuro = [{ sk: 'C-3-1', n: 4, ok: 2, ultima: OGGI, neuro: { ultimoCaso: 'illusione_competenza' } }, { sk: 'C-3-2', n: 4, ok: 2, ultima: '2026-11-17', neuro: { tag: ['illusione_competenza'] } }];
+  vero(P.monitoraAffaticamento(neuro, { oggi: OGGI }).condB, 'cond B da statq.neuro');
+  const r = await P.creaPiano(V({ livelloIntensita: 4, maxOreGiorno: 7 }), { oggi: OGGI, unita: UNITA, pid: 'ai-dl', ia: async () => { ia++; return '[]'; } });
+  vero(r.piano, 'piano'); const p0 = JSON.stringify(r.piano), chiavi = tutteVoci(r.piano).filter(v => !v.speciale).map(v => v.k).sort();
+  const d = P.attivaDeload(r.piano, { oggi: OGGI, motivo: 'test' });
+  eq(JSON.stringify(r.piano), p0, 'originale intatto'); vero(d && d.deload.attivo, 'de-load attivo');
+  eq(d.deload.fino, '2026-11-20'); eq(d.deload.livelloTarget, 4); eq(d.deload.livelloRidotto, 2); eq(d.livelloIntensita, 2);
+  for (const g of d.giorni) if (g.data >= OGGI && g.data < '2026-11-20') {
+    vero(!g.voci.some(v => v.livelloCognitivo && !v.isRipassoFSRS && !v.isBuffer), g.data + ': niente capitoli nuovi');
+  }
+  vero(tutteVoci(d).some(v => v.isDeload), 'voce de-load (FSRS leggero + Wakeful Rest)');
+  eq(tutteVoci(d).filter(v => !v.speciale).map(v => v.k).sort().join(), chiavi.join(), 'chiavi invariate, niente perso');
+  eq(P.attivaDeload(d, { oggi: OGGI }), null, 'niente doppio de-load');
+  eq(P.livelloEffettivo(d, '2026-11-19'), 2); eq(P.livelloEffettivo(d, '2026-11-20'), 3); eq(P.livelloEffettivo(d, '2026-11-21'), 4);
+  eq(P.aggiornaDeload(d, '2026-11-19'), null);
+  const x = P.aggiornaDeload(d, '2026-11-20'); eq(x.livelloIntensita, 3); vero(x.deload.attivo);
+  const y = P.aggiornaDeload(x, '2026-11-21'); eq(y.livelloIntensita, 4); vero(!y.deload.attivo, 'de-load chiuso');
+  eq(P.attivaDeload({ ...r.piano, origine: 'manuale' }, { oggi: OGGI }), null, 'solo ai_neuro');
+  eq(ia, 0, 'AI'); eq(chiamateRete - rete0, 0, 'rete');
+  const ui = leggi('07-pianiai.ts'), qz = leggi('07-quizapp.ts');
+  vero(ui.includes('Pianificatore.monitoraAffaticamento') && ui.includes('Pianificatore.attivaDeload') && qz.includes('PianiAI.controllaFatica()'), 'breaker collegato al quiz');
+});
+await t('testQuestionario6Piu3Fallback: 3 domande AI (≤600 token, max 450) e fallback per archetipo a 0 token', async () => {
+  const rete0 = chiamateRete;
+  const buono = { domande: [0, 1, 2].map(i => ({ testo: 'Domanda ' + i, opzioni: [{ testo: 'a', delta: { w_faded: 0.9 } }, { testo: 'b', delta: { w_cornell: -0.9 } }, { testo: 'c', delta: { w_gemelle: 0.2, w_x: 3 } }] })) };
+  let viste = 0, maxOut = 0, prompt = '';
+  const r = await P.generaDomandeCalibrazione({ materia: 'Chimica', archetipo: 'scienze_sperimentali', keyword: P.paroleChiaveBM25('Stechiometria e moli\nEquilibrio chimico acido base\nCinetica chimica velocità\nEquilibrio di solubilità'), errori: ['C-1-1'] },
+    async (m, o) => { viste++; maxOut = o.maxOut; prompt = m.map(x => x.content).join(' '); return '```json\n' + JSON.stringify(buono) + '\n```'; });
+  eq(r.fonte, 'ai'); eq(viste, 1); eq(r.chiamate, 1); eq(maxOut, 450); vero(r.tokenStimati > 450 && r.tokenStimati <= 600, 'token ' + r.tokenStimati);
+  vero(/equilibrio/.test(prompt) && /ESATTAMENTE 3/.test(prompt), 'prompt con keyword BM25');
+  eq(r.domande.length, 3); vero(r.domande.every(d => d.opzioni.length === 3), '3×3');
+  eq(r.domande[0].opzioni[0].delta.w_faded, 0.35); eq(r.domande[0].opzioni[1].delta.w_cornell, -0.25); eq(r.domande[0].opzioni[2].delta.w_x, undefined);
+  for (const [nome, ia] of [['JSON rotto', async () => '{"domande":[{"testo":'], ['2 domande', async () => JSON.stringify({ domande: buono.domande.slice(0, 2) })], ['429 su tutta la catena', async () => { throw new Error('429 quarantena'); }], ['offline', async () => { throw new TypeError('Failed to fetch'); }]]) {
+    const t0 = Date.now(), f = await P.generaDomandeCalibrazione({ materia: 'Diritto', archetipo: 'giuridico_economico' }, ia);
+    eq(f.fonte, 'default', nome); eq(f.tokenStimati, 0, nome); vero(Date.now() - t0 < 200, nome + ' istantaneo'); vero(/caso pratico/.test(f.domande[0].testo), nome + ': set per archetipo');
+  }
+  const z = await P.generaDomandeCalibrazione({ materia: 'X', archetipo: 'informatica_coding' });
+  eq(z.fonte, 'default'); eq(z.chiamate, 0); eq(z.tokenStimati, 0); eq(chiamateRete - rete0, 0, 'senza API key: 0 rete');
+  for (const a of ['stem_calcolo', 'scienze_sperimentali', 'umanistico_storico', 'giuridico_economico', 'lingue_letteratura', 'informatica_coding']) {
+    const d = P.domandeCalibrazioneDefault(a); eq(d.length, 3); vero(d.every(q => q.opzioni.length === 3 && q.opzioni.every(o => Object.values(o.delta).every(x => x >= -0.25 && x <= 0.35))), a);
+  }
+  const w0 = P.pesiIniziali({ canalePreferito: 'scrittura_schemi' }), w = P.applicaRisposte(w0, z.domande, [0, 0, 1]);
+  vero(w.w_cornell > w0.w_cornell && w.w_interleave < w0.w_interleave && Object.values(w).every(x => x >= 0.5 && x <= 1.5), 'pesi adattivi ' + JSON.stringify(w));
+  const ui = leggi('07-pianiai.ts');
+  vero(ui.includes("IA.testo(m as any, 'genera', { maxOut: x.maxOut }") && ui.includes('Pianificatore.generaDomandeCalibrazione') && !/mistral|openrouter/i.test(ui), 'catena «genera», niente Mistral/OpenRouter');
+  vero(/MAX_TOKEN_CALIBRAZIONE = 450/.test(leggi('07-pianificatore.ts')) && /BUDGET_CALIBRAZIONE = 600/.test(leggi('07-pianificatore.ts')), 'costanti budget');
 });
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();
 t('Pianificatore e interfaccia concatenati prima del quiz (uso solo a runtime)', () => vero(['07-pianificatore.ts', '07-pianiai.ts'].every(x => fl.indexOf(x) >= 0 && fl.indexOf(x) < fl.indexOf('07-quizapp.ts'))));

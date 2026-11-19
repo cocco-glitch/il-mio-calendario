@@ -3,6 +3,8 @@
 // Collega il modulo puro Pianificatore (07-pianificatore.ts) a: Google Calendar `primary` (sola lettura, opt-in),
 // Drive (PDF delle fonti), IA (catena «genera», 1 chiamata JSON ≤1800 token), statq (ipercorrezioni), IndexedDB.
 // Opt-in puro: un piano 'ai_neuro' nasce solo da «✨ Crea Piano Intelligente»; gli altri piani non vengono toccati.
+// v0.56 (BP5): intensità 1–5 + questionario 6+3 (6 domande locali, 3 dall'AI con 1 micro-call ≤600 token sulla catena
+// «genera», fallback per archetipo a 0 token), avvisi dei guard-rail biologici, Burnout Circuit Breaker post-quiz (0 token).
 // ============================================================
 
 const PianiAI = (() => {
@@ -53,6 +55,15 @@ const PianiAI = (() => {
 
   function salvaPiano(p: PkPianoAI): boolean { p.aggiornato = new Date().toISOString(); return Studio.importa(p); }
 
+  // ---------- v0.56 (BP5): profilo biopsicologico (solo su questo dispositivo) ----------
+  const CHIAVE_PROFILO = 'imc-profilo-bio';
+  function profiloSalvato(): ProfiloBiopsicologico | null {
+    try { const x = localStorage.getItem(CHIAVE_PROFILO); return x ? Pianificatore.normalizzaProfilo(JSON.parse(x)) : null; } catch (_) { return null; }
+  }
+  function salvaProfilo(p: ProfiloBiopsicologico): void { try { localStorage.setItem(CHIAVE_PROFILO, JSON.stringify(p)); } catch (_) { /* memoria piena o privata */ } }
+  /** Micro-call del Blocco B: catena «genera» di 07-ia (ordine e fornitori definiti in 07-ia.ts), max_tokens 450. */
+  const iaCalibrazione = (): DipPianificatore['ia'] => Dominio.senzaAI() ? undefined : (m, x) => IA.testo(m as any, 'genera', { maxOut: x.maxOut } as any).then(r => r.testo);
+
   // ---------- wizard «✨ Crea Piano Intelligente» ----------
   function apri(): void {
     const mats = codiciMaterie();
@@ -69,6 +80,35 @@ const PianiAI = (() => {
     const senza = Dominio.senzaAI();
     const usaAI = h('input', { type: 'checkbox', checked: !senza, disabled: senza }) as HTMLInputElement;
     const esito = h('div.tenue.piccolo');
+    // v0.56 (BP5): intensità 1–5 e questionario 6+3
+    const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)'] as [string, string]), '2', function () {
+      oreMax.value = String(Pianificatore.configLivello(+this.value).oreRealiMax); avvisiBio();
+    });
+    const prof0 = profiloSalvato() || Pianificatore.normalizzaProfilo({});
+    const campiBio = Pianificatore.DOMANDE_UNIVERSALI.map(d => ({ d, s: selettore(d.opzioni, String((prof0 as any)[d.campo]), () => avvisiBio()) }));
+    const profilo = (): ProfiloBiopsicologico => Pianificatore.normalizzaProfilo(Object.fromEntries(campiBio.map(x => [x.d.campo, x.s.value])));
+    const boxAvvisi = h('div.tenue.piccolo');
+    function avvisiBio(): void {
+      const g = Pianificatore.applicaGuardRailBiologici(+intensita.value, profilo());
+      boxAvvisi.textContent = (g.livello !== g.richiesto ? '🛡 Livello ' + g.richiesto + ' → ' + g.livello + '. ' : '') + g.avvisi.join(' ');
+    }
+    let domandeB: DomandaCalibrazione[] = [], scelteB: HTMLSelectElement[] = [];
+    const boxB = h('div');
+    const calibra = <HTMLButtonElement>h('button.btn.neutro', { onclick: async () => {
+      const m = materia.value; if (!m) return;
+      calibra.disabled = true; boxB.textContent = 'Preparo 3 domande sulla materia…';
+      try {
+        let testo = indice.value;
+        const ids = fonti.value.split(/[,\s]+/).map(idDaLink).filter(Boolean);
+        if (!testo.trim() && ids.length) { try { const f = await leggiFonte(ids[0]); if (f) testo = f.pagine.join('\n'); } catch (_) { /* fonte illeggibile */ } }
+        const seg = Pianificatore.segnaliIper(Stato.tutti('statq'), m);
+        const r = await Pianificatore.generaDomandeCalibrazione({ materia: nomeMateria(m), archetipo: Dominio.archetipoMateria(m), keyword: Pianificatore.paroleChiaveBM25(testo, 8), errori: seg.topErrori.slice(0, 3) }, usaAI.checked ? iaCalibrazione() : undefined);
+        domandeB = r.domande; svuota(boxB);
+        scelteB = r.domande.map(d => selettore([['', '—'] as [string, string]].concat(d.opzioni.map((o, i) => [String(i), o.testo] as [string, string])), ''));
+        r.domande.forEach((d, i) => boxB.append(riga(d.testo, scelteB[i])));
+        boxB.append(h('div.tenue.piccolo', null, r.fonte === 'ai' ? '~' + r.tokenStimati + ' tok · 1 chiamata (≤600).' : 'Domande pronte per l\'archetipo · 0 token' + (r.errore ? ' (AI non disponibile: ' + r.errore + ')' : '') + '.'));
+      } finally { calibra.disabled = false; }
+    } }, '🎯 3 domande sulla materia');
 
     const vincoli = (): VincoliPianoAI => {
       const m = materia.value;
@@ -78,6 +118,15 @@ const PianiAI = (() => {
         finestreSettimanali: giorni.filter(c => c.checked).map(c => ({ giornoSettimana: (c as any)._g, oraInizio: oraDa.value || '15:00', oraFine: oraA.value || '19:00' })),
         maxOreGiorno: parseFloat(oreMax.value) || 3,
       };
+    };
+    /** v0.56: vincoli + intensità dopo i guard-rail, profilo e pesi (Blocco A + B); ore/giorno mai oltre il livello. */
+    const vincoliBP5 = (): VincoliPianoAI => {
+      const v = vincoli(), p = profilo(), g = Pianificatore.applicaGuardRailBiologici(+intensita.value, p);
+      salvaProfilo(p);
+      v.livelloIntensita = g.livello; v.profiloBio = p;
+      v.pesi = Pianificatore.applicaRisposte(Pianificatore.pesiIniziali(p), domandeB, scelteB.map(s => s.value === '' ? null : +s.value));
+      v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(g.livello).oreRealiMax);
+      return v;
     };
     const mostraRimedi = (f: FattibilitaAI) => {
       svuota(esito);
@@ -93,14 +142,15 @@ const PianiAI = (() => {
     const crea = async (sh: { chiudi: () => void }) => {
       if (inCorso) return; inCorso = true;
       try {
-        const v = vincoli();
+        const v = vincoliBP5();
         if (!v.materiaCodice || !v.dataTarget || !v.finestreSettimanali.length) { avviso('Scegli materia, data e almeno un giorno.'); return; }
         if (!!imp().gcalLeggiPrimary !== primary.checked) { const i = imp(); i.gcalLeggiPrimary = primary.checked || undefined; Stato.salva(i); }
         esito.textContent = 'Calcolo la fattibilità (0 token)…';
         const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: usaAI.checked, testoIndice: indice.value, titolo: '🧠 ' + nomeMateria(v.materiaCodice) + ' entro ' + v.dataTarget }));
         if (!r.piano) { if (r.fatt.stato === 'critico') mostraRimedi(r.fatt); else esito.textContent = 'Nessun argomento trovato: incolla l\'indice o indica un PDF.'; return; }
         salvaPiano(r.piano);
-        avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : ''), 8000);
+        avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : '')
+          + ' · L' + (r.piano.livelloIntensita || '?') + (r.piano.avvisiBio ? ' · 🛡 ' + r.piano.avvisiBio.join(' ') : ''), 8000);
         sh.chiudi(); if (typeof disegna === 'function') disegna();
       } catch (e: any) { esito.textContent = 'Errore: ' + (e && e.message || e); }
       finally { inCorso = false; }
@@ -112,10 +162,13 @@ const PianiAI = (() => {
         h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[(c as any)._g])))),
           riga('Dalle', oraDa), riga('Alle', oraA), riga('Ore max/giorno', oreMax),
           riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))),
+        h('div.gruppo', null, riga('Intensità', intensita), ...campiBio.map(x => riga(x.d.testo, x.s)), boxAvvisi),
+        h('div.gruppo', null, calibra, boxB),
         indice, fonti,
         h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima, esito,
         h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
       salva: () => { crea(sh); return false; } });
+    avvisiBio();
   }
 
   // ---------- hook post-quiz (Stadio 5, 0 token) ----------
@@ -130,15 +183,38 @@ const PianiAI = (() => {
     }
   }
 
+  // ---------- v0.56 (BP5 §4.2): Burnout Circuit Breaker, 0 token ----------
+  /** Dopo un errore nel quiz (e all'apertura dei piani): chiude i de-load scaduti e, se la fatica scatta, attiva il de-load 48 h. */
+  function controllaFatica(): void {
+    const oggi = ymd(new Date()); let stats: any[] | null = null;
+    for (const p0 of pianiAI()) {
+      let p: PkPianoAI = p0;
+      const agg = Pianificatore.aggiornaDeload(p, oggi);
+      if (agg) { salvaPiano(agg); p = agg; if (!agg.deload!.attivo) avviso('🌱 De-load finito: torno al livello ' + agg.livelloIntensita + '.', 5000); }
+      if (!p.livelloIntensita || Studio.nascosto(p.id) || (p.deload && p.deload.attivo)) continue;
+      stats = stats || Stato.tutti('statq');
+      const f = Pianificatore.monitoraAffaticamento(stats, { oggi, materia: p.vincoliAI.materiaCodice });
+      if (!f.trigger) continue;
+      const d = Pianificatore.attivaDeload(p, { oggi, motivo: f.condA ? 'errori +' + Math.round((f.tasso2g - f.mediaStorica) * 100) + '% in 2 giorni' : 'ipercorrezioni ×2 in 48 h' });
+      if (!d) continue;
+      salvaPiano(d);
+      avviso('🛌 Circuit breaker: ' + d.deload!.motivo + '. Per 48 h livello ' + d.deload!.livelloRidotto + ': solo ripasso FSRS leggero + Wakeful Rest.', 9000);
+    }
+  }
+
   // ---------- azioni sul piano ----------
   function bottoni(p?: PkPiano): HTMLElement | null {
     const crea = h('button.btn.neutro', { onclick: () => apri() }, '✨ Crea Piano Intelligente');
     if (!eAI(p)) return crea;
     const nas = Studio.nascosto(p.id);
+    const dl = p.deload && p.deload.attivo ? p.deload : null;
     return h('span', null, crea,
+      p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null,
       h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'),
       h('button.btn.neutro', { onclick: async () => {
-        const r = await Pianificatore.creaPiano(p.vincoliAI, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
+        const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
+        const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
+        if (r.piano && p.deload) { r.piano.deload = p.deload; r.piano.vincoliAI = p.vincoliAI; }
         if (!r.piano) { avviso('⛔ Da oggi il piano è critico: ' + r.fatt.rimedi.map(x => x.testo).join(' · '), 9000); return; }
         salvaPiano(r.piano); avviso('Piano ricalcolato da oggi (0 token).'); disegna();
       } }, '↻ Ricalcola da oggi'),
@@ -147,5 +223,5 @@ const PianiAI = (() => {
       } }, '🗑 Elimina'));
   }
 
-  return { apri, dopoQuiz, bottoni, minutiAltriPiani, eAI };
+  return { apri, dopoQuiz, controllaFatica, bottoni, minutiAltriPiani, eAI };
 })();

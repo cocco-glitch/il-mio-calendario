@@ -134,6 +134,8 @@ const QuizApp = (() => {
     Stato.salva(r, true);
     // v0.55 (BP4 Stadio 5): illusione di competenza / risposta fortunata → anticipo L3/L4 nei piani ai_neuro (0 token)
     if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess') try { PianiAI.dopoQuiz(v.d.sk, v.caso); } catch (_) { /* il quiz non si blocca */ }
+    // v0.56 (BP5 §4.2): dopo un errore, Burnout Circuit Breaker sui piani con intensità (0 token)
+    if (!giusta) try { PianiAI.controllaFatica(); } catch (_) { /* il quiz non si blocca */ }
     const annulla = () => {
       const q = Stato.prendi<StatQ>(id); if (!q) return;
       const y = StatQC.mio(q, dev); y.xn++; if (giusta) y.xok++; StatQC.ricalcola(q);
