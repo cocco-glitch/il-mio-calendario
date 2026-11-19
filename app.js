@@ -11548,7 +11548,7 @@ const PianiAI = (() => {
     function apri() {
         const mats = codiciMaterie();
         const materia = selettore(mats.map(c => [c, nomeMateria(c)]), mats[0] || '');
-        const data = h('input', { type: 'date', value: ymd(piuGiorni(new Date(), 21)) });
+        const data = h('input', { type: 'date', value: ymd(piuGiorni(new Date(), 21)), min: ymd(piuGiorni(new Date(), 2)) });
         const partenza = selettore([['da_zero', 'Da zero'], ['ripasso', 'Ripasso'], ['raffinamento', 'Raffinamento']], 'da_zero');
         const obiettivo = selettore([['1', '1 · Comprensione'], ['2', '2 · Elaborazione'], ['3', '3 · Applicazione'], ['4', '4 · Transfer']], '4');
         const giorni = [1, 2, 3, 4, 5, 6, 0].map(g => { const c = h('input', { type: 'checkbox', checked: g !== 0 }); c._g = g; return c; });
@@ -11804,7 +11804,9 @@ const Pianificatore = (() => {
         const giorni = capacita(v, ctx.oggi, ctx.occupato || [], ctx.minutiAltriPiani);
         const disp = arr1(giorni.reduce((s, g) => s + g.minuti, 0) / 60 * BUFFER_DISP), nec = oreNecessarie(unita, v, ctx.segnali);
         const rapporto = arr1(nec / Math.max(0.5, disp));
-        const stato = rapporto <= 0.90 ? 'ottimale' : rapporto <= 1.15 ? 'serrato' : 'critico';
+        // v0.55.1: data obiettivo oggi, domani o già passata → non c'è nessun giorno di studio nuovo (target−1 è leggero)
+        const vicina = v.dataTarget <= piu(ctx.oggi, 1);
+        const stato = vicina ? 'critico' : rapporto <= 0.90 ? 'ottimale' : rapporto <= 1.15 ? 'serrato' : 'critico';
         const rimedi = [];
         if (stato === 'critico') {
             const lavoro = Math.max(1, giorni.filter(g => !g.leggero).length), mancano = Math.max(0, nec - disp);
@@ -11812,8 +11814,8 @@ const Pianificatore = (() => {
             rimedi.push({ tipo: 'sopravvivenza', livelloObiettivo: 1, testo: 'Modalità Sopravvivenza: solo comprensione (L1) + ripassi, circa ' + Math.round(sopr) + ' h invece di ' + Math.round(nec) + ' h.' });
             const extra = Math.ceil(mancano * 60 / BUFFER_DISP / lavoro / 5) * 5;
             rimedi.push({ tipo: 'piu_minuti', minutiExtra: extra, testo: 'Aggiungi circa ' + extra + ' minuti al giorno alle finestre di studio.' });
-            const media = Math.max(0.25, disp / lavoro), giorniInPiu = Math.ceil(mancano / media);
-            const nuova = piu(v.dataTarget, giorniInPiu);
+            const media = Math.max(0.25, disp / lavoro), giorniInPiu = Math.max(1, Math.ceil(mancano / media));
+            const nuova = piu(vicina ? piu(ctx.oggi, 1) : v.dataTarget, giorniInPiu); // mai una data nel passato
             rimedi.push({ tipo: 'sposta_data', nuovaData: nuova, testo: 'Sposta la data obiettivo al ' + nuova + ' (+' + giorniInPiu + ' giorni).' });
         }
         return { stato, rapporto, oreNecessarie: nec, oreDisponibili: disp, bufferPct: stato === 'serrato' ? 0.08 : stato === 'ottimale' ? 0.10 : 0, extraIper: !!(ctx.segnali && ctx.segnali.attiva), giorni, rimedi };
@@ -12020,6 +12022,12 @@ const Pianificatore = (() => {
         }
         return out;
     }
+    /** v0.55.1 — anti-ciclo: toglie i prerequisiti che puntano a unità successive nell'ordine di Kahn (archi all'indietro
+     *  di un ciclo U1↔U2) e quelli inesistenti. Senza, le unità in ciclo non avrebbero mai L1 «pronta». Copia, non muta. */
+    function sanitizzaPrereq(unita) {
+        const pos = new Map(ordineTopologico(unita).map((u, i) => [u.uid, i]));
+        return unita.map(u => ({ ...u, prereq: (u.prereq || []).filter((p, i, a) => p !== u.uid && pos.has(p) && pos.get(p) < pos.get(u.uid) && a.indexOf(p) === i) }));
+    }
     const s0 = (arch, densita, errori) => arr1((BASE_S0[arch] || 2.5) * (1.25 - 0.12 * densita) * (errori ? 0.65 : 1));
     function intervalliFsrs(S0) {
         const f = clamp(S0 / 2.5, 0.6, 1.4), out = [];
@@ -12028,7 +12036,8 @@ const Pianificatore = (() => {
         return out;
     }
     const pezzi = (min) => { const n = Math.max(1, Math.round(min / 45)); const m = Math.max(30, Math.min(50, Math.round(min / n))); return { n, m }; };
-    function compilaTimelineNeuro(unita, v, f, seg, o) {
+    function compilaTimelineNeuro(unita0, v, f, seg, o) {
+        const unita = sanitizzaPrereq(unita0 || []);
         const ob = clamp(v.livelloObiettivo || 4, 1, 4), molt = (MOLT[v.livelloPartenza] || 1) * (seg && seg.attiva ? 1.2 : 1);
         const cod = String(v.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = o.pid.replace(/^ai-/, '');
         const ordine = ordineTopologico(unita), errori = !!(seg && seg.attiva);
@@ -12228,7 +12237,7 @@ const Pianificatore = (() => {
         return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: m.errore };
     }
     return { segnaliIper, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
-        unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, intervalliFsrs, s0,
+        unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
         compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA };
 })();
 
