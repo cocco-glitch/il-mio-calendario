@@ -204,10 +204,11 @@ function apriAppunto(a?: Appunto, extra: Partial<Appunto> = {}, alRiassunto = fa
     if (s === 'cornell' || s === 'copri') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { cambiato = false; v.chiudi(); apriCornell(x, s === 'copri'); } }
     if (s === 'feyn') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { const sz = Appunti.sezioni(x); if (!sz.length) avviso('Scrivi prima qualcosa.'); else if (sz.length === 1) spiegamelo(x, sz[0]); else chiedi('Quale sezione?', sz.map(z => ({ testo: z.titolo, valore: z.id }))).then(id => { const z = sz.find(q => q.id === id); if (z) spiegamelo(x, z); }); } }
     if (s === 'airiass') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) aiRiassunto(x); }
+    if (s === 'quiz') { salvaOra(); const x = Stato.prendi<Appunto>(ap.id); if (x) { if (!x.testo.trim()) { avviso('Scrivi prima qualcosa.'); return; } cambiato = false; v.chiudi(); CreaQuiz.leggero({ titolo: x.titolo, appunto: x.id }); } }   // v0.58 (Q5)
     if (s === 'carte') { salvaOra(); avviaCarte(['mz-ap-' + ap.id.replace(/^ap-/, '')], ap.titolo); }
     if (s === 'del') { const x = Stato.prendi<Appunto>(ap.id); if (x) Appunti.elimina(x); cambiato = false; v.chiudi(); avviso('Appunto eliminato (la copia su Drive, se c\'è, resta).'); }
   };
-  v.barra.append(tendina('⋯', () => ([['🗣 Spiegamelo (Feynman)', 'feyn'], ['📑 Vista Cornell', 'cornell'], ['🧠 Copri e ricorda', 'copri'], ['✨ Riscontro AI sul riassunto', 'airiass'], ['🎙 Lezione audio', 'audio'], ['☁︎ Salva su Drive', 'drive'], ['🃏 Ripassa le sue carte', 'carte']] as [string, string][]).map(([t, k]) => ({ testo: t, azione: () => k === 'audio' ? audioOra() : azioneTesta(k) }))
+  v.barra.append(tendina('⋯', () => ([['🗣 Spiegamelo (Feynman)', 'feyn'], ['📑 Vista Cornell', 'cornell'], ['🧠 Copri e ricorda', 'copri'], ['✨ Riscontro AI sul riassunto', 'airiass'], ['🎙 Lezione audio', 'audio'], ['☁︎ Salva su Drive', 'drive'], ['🃏 Ripassa le sue carte', 'carte'], ['🎯 Quiz da questo appunto', 'quiz']] as [string, string][]).map(([t, k]) => ({ testo: t, azione: () => k === 'audio' ? audioOra() : azioneTesta(k) }))
     .concat([{ testo: '🗑 Elimina appunto', azione: () => azioneTesta('del'), pericolo: true } as any]), 'Azioni dell\'appunto'));
   const scambio = h('div.segmenti.appunto-modo');
   const leggiOra = () => { salvaOra(); if (!pagina) return; leggiScrittura(pagina.dati(), (t, come) => {

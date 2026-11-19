@@ -152,7 +152,7 @@ t('v0.57.1 Q1: cloze da appunto — {{x}} = risposta x, «q :: r» = domanda/ris
 t('v0.57.1 D1/D2/D3/D5/Q3/Q6: guardie statiche', () => {
   vero(/MATERIE_BASE\)\.filter\(\(\) => Drive\.eProprietario\(\)\)/.test(leggi('07-pianiai.ts')), 'D1 pianiai');
   vero(/Drive\.eProprietario\(\) \? \['Chimica'/.test(leggi('07-creaquiz.ts')), 'D2 creaquiz');
-  vero(/case 'studiaora': return Studio\.pkStep\(\)\.length \|\| [^\n]*'carta'/.test(leggi('08-viste.ts')), 'D3 Studia ora');
+  vero(/case 'studiaora': return widgetStudiaOra\(\)/.test(leggi('08-viste.ts')), 'D3 Studia ora (v0.58: sempre)');
   vero(/MATRICE_5_LIVELLI\.filter\(c => c\.livello <= 4\)/.test(leggi('07-pianiai.ts')), 'D5 wizard 1–4');
   vero(/for \(const c of carteNuove\) Stato\.elimina\(c\)/.test(leggi('07-quizapp.ts')) && /annullaPiani\(\)/.test(leggi('07-quizapp.ts')), 'Q3 annulla completo');
   vero(/dataset\.titolo === titolo/.test(leggi('07-studio.ts')), 'Q6 un solo visore');
@@ -203,7 +203,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.57.1', () => vero(/const VERSIONE = '0\.57\.1'/.test(leggi('09-main.ts'))));
+t('versione app 0.58.0', () => vero(/const VERSIONE = '0\.58\.0'/.test(leggi('09-main.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
@@ -545,6 +545,44 @@ t('A16 intervalliFsrs: ritenzione 0,9 invariata, più alta → intervalli più b
   vero(b.every((x, i) => i === 0 || x > b[i - 1]), 'intervalli strettamente crescenti');
 });
 t('U3 VERSIONE con patch (A8)', () => vero(/const VERSIONE = '\d+\.\d+\.\d+';/.test(leggi('09-main.ts')), 'VERSIONE x.y.z'));
+
+console.log('\n== v0.58 «Cosa faccio adesso» ==');
+t('v0.58 Q4: segnaliIper usa materiaQ (quiz creati in app «qc-…» contano per la loro materia)', () => {
+  const st = [{ sk: 'qc-abc', id: 'sq-1', materiaQ: 'C', n: 1, neuro: { tag: ['illusione_competenza'] } }];
+  vero(P.segnaliIper(st, 'C').illusioni === 1, 'qc con materiaQ conta per C');
+  eq(P.segnaliIper(st, 'B').illusioni, 0, 'non per altre materie');
+  eq(P.materiaSk({ sk: 'qc-abc' }), 'qc', 'senza materiaQ: prefisso');
+  eq(P.materiaSk({ sk: 'C-3.1-1' }), 'C', 'scheda classica');
+});
+await t('v0.58 Q2: QuizRifare.dovute — l\'illusione di oggi torna oggi, in testa', async () => {
+  const d = path.join(TMP, 'qr'); fs.mkdirSync(d);
+  fs.copyFileSync(path.join(SRC, '07-quizrifare.ts'), path.join(d, 'qr.ts'));
+  try { execSync('npx -y -p typescript@5.6.3 tsc --target es2020 --noEmitOnError false --outDir out qr.ts', { cwd: d, stdio: 'pipe' }); } catch (_) { /* tipi globali dell'app assenti: emette comunque */ }
+  const recs = [
+    { id: 'sq-1', sk: 'C-1-1', neuro: { due: '2026-11-17', tag: [] } },
+    { id: 'sq-2', sk: 'C-1-1', neuro: { due: OGGI, tag: ['illusione_competenza'] } },
+    { id: 'sq-3', sk: 'C-1-1', neuro: { due: '2026-11-25', tag: [] } },
+    { id: 'sq-4', sk: 'X-9-9', neuro: { due: '2026-11-01', tag: [] } },
+    { id: 'sq-5', sk: 'C-1-1', deleted: true, neuro: { due: '2026-11-01', tag: [] } },
+  ];
+  const sb = { console, Stato: { tutti: () => recs, prendi: () => null }, Dominio: { domandeDi: () => null }, trovaScheda: sk => sk === 'C-1-1' ? { pk: {}, m: 'C' } : null, ymd: () => OGGI };
+  vm.createContext(sb); vm.runInContext(fs.readFileSync(path.join(d, 'out', 'qr.js'), 'utf8') + '\n;this.QuizRifare = QuizRifare;', sb);
+  const ids = sb.QuizRifare.dovute(OGGI).map(s => s.id);
+  eq(ids, ['sq-2', 'sq-1'], 'illusione prima, futuro/irrisolvibile/eliminato esclusi');
+  eq(sb.QuizRifare.minuti(25), 10, 'massimo 10 minuti');
+});
+t('v0.58: guardie statiche (Adesso, scorciatoie PWA, quiz da appunto, pulsante Studio, wizard corto)', () => {
+  vero(/case 'studiaora': return widgetStudiaOra\(\)/.test(leggi('08-viste.ts')), 'Adesso sempre in Oggi');
+  const so = leggi('07-studiaora.ts');
+  vero(/section\.card\.adesso/.test(so) && /QuizRifare\.conta/.test(so) && /tipo === 'quiz'/.test(so), 'card Adesso + voce quiz');
+  const man = JSON.parse(fs.readFileSync(path.join(RADICE, 'public', 'manifest.webmanifest'), 'utf8'));
+  eq((man.shortcuts || []).map(s => s.url), ['./?az=studia', './?az=aggiungi', './?az=ripassa'], 'shortcuts');
+  vero(/function scorciatoiaAvvio/.test(leggi('09-main.ts')), 'gestione ?az=');
+  vero(/'🎯 Quiz da questo appunto'/.test(leggi('07-appunti.ts')) && /appunto\?: string/.test(leggi('07-creaquiz.ts')), 'quiz da appunto');
+  vero(/button\.cq-studio/.test(leggi('07-studio.ts')), 'pulsante Quiz in Studio');
+  vero(/details\.pai-avanzate/.test(leggi('07-pianiai.ts')), 'wizard: Avanzate chiuso');
+  vero(/hookIpercorrezione\(p, \{ oggi, sk, caso, materia: materiaDiSk\(sk\) \}\)/.test(leggi('07-pianiai.ts')), 'Q4 hook con materia');
+});
 
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();
 t('Pianificatore e interfaccia concatenati prima del quiz (uso solo a runtime)', () => vero(['07-pianificatore.ts', '07-pianiai.ts'].every(x => fl.indexOf(x) >= 0 && fl.indexOf(x) < fl.indexOf('07-quizapp.ts'))));

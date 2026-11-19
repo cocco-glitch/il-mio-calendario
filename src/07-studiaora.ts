@@ -9,7 +9,7 @@
 // Le pause sono inserite ogni ~25 minuti. Il timer della sessione parte con la durata scelta.
 // La sessione in corso si salva sul dispositivo (localStorage) per riprenderla.
 
-interface VoceSessione { tipo: 'ripasso' | 'carte' | 'appunto' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
+interface VoceSessione { tipo: 'ripasso' | 'carte' | 'quiz' | 'appunto' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
 interface SessioneOra { inizio: number; minuti: number; voci: VoceSessione[]; }
 
 const StudiaOra = (() => {
@@ -31,6 +31,9 @@ const StudiaOra = (() => {
     // 1b) flashcard di oggi (v0.18): circa 12 secondi a carta, massimo 15 minuti
     const nc = Carte.conta(); const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
     if (nc.ripasso + nc.nuove && Carte.mazzi().length) metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
+    // 1b') v0.58 (Q2): domande dei quiz con ripasso scaduto (illusioni di oggi comprese), ~1 min a domanda, max 10
+    const nq = QuizRifare.conta(ymd(giorno));
+    if (nq) metti({ tipo: 'quiz', titolo: '🎯 Quiz da rifare (' + nq + ')', sotto: (nq > QuizRifare.MAX ? 'Le ' + QuizRifare.MAX + ' più urgenti' : 'Le domande scadute') + ', prima le illusioni di competenza', min: Math.max(3, QuizRifare.minuti(nq)) });
     // 1c) appunti da ripassare (copri e ricorda): ~4 min ciascuno, al massimo 3
     for (const a of Appunti.appuntiDaRipassare().slice(0, 3)) metti({ tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto: 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni', min: 4, id: a.id });
     // 2) step del giorno
@@ -67,6 +70,7 @@ const StudiaOra = (() => {
 function eseguiVoce(v: VoceSessione): void {
   if (v.tipo === 'freddo' && v.k) { avviaProvaAFreddo(v.k); return; }
   if (v.tipo === 'carte') { avviaCarte(undefined, 'Flashcard'); return; }
+  if (v.tipo === 'quiz') { QuizRifare.avvia(); return; }
   if (v.tipo === 'appunto' && v.id) { const a = Stato.prendi<Appunto>(v.id); if (a) { apriCornell(a, true); return; } }
   if (v.id) { const t = trovaScheda(v.id); if (t) { apriScheda(t.pk, t.m, t.micro, t.s, v.tipo === 'ripasso' || v.tipo === 'errore'); return; } }
   avviso(v.sotto, 8000);
@@ -118,10 +122,50 @@ function widgetStudiaOra(): HTMLElement {
     return h('section.card', null, h('button.btn.studia-ora', { onclick: apriSessione }, '▶ Sessione in corso · ' + fatte + '/' + s.voci.length),
       prossima ? h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Prossima: ' + prossima.titolo) : null);
   }
-  return h('section.card', null, lungo(h('button.btn.studia-ora', { onclick: apriStudiaOra }, '▶ Studia ora'), () => [
-    { t: 'Ripassa le flashcard', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } },
-    { t: 'Rivedi gli errori', ic: 'avvertenza', f: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
-    { t: 'Studio libero con timer', ic: 'cronometro', f: () => Timer.avvia({ titolo: 'Studio libero' }) },
-    { t: 'Simulazione d\'esame', ic: 'quiz', f: () => apriSimulazioni() }], 'Studia ora'),
-    h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Scegli quanto tempo hai: l\'app compone la sessione migliore.'));
+  // v0.58: card «Adesso» — cosa fare ora in una riga, durata stimata e [Inizia] che avvia subito la sessione (2 tocchi da app chiusa)
+  // Il riassunto (2 composizioni della sessione) si calcola dopo il disegno: Oggi resta nel budget dei tempi (prestazioni.py).
+  const e = prossimoEsame(), durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
+  const inizia = () => { const a = adesso(); if (!a.minuti) { Timer.avvia({ titolo: 'Studio libero' }); return; } StudiaOra.avvia(a.minuti); setTimeout(apriSessione, 50); };
+  const btn = h('button.btn.studia-ora', { onclick: inizia }, '▶ Inizia');
+  setTimeout(() => {
+    if (!riassunto.isConnected) return;
+    const a = adesso(); riassunto.textContent = a.riassunto;
+    durata.textContent = a.minuti ? ' · ' + a.minuti + ' min' : ''; if (!a.minuti) btn.textContent = '▶ Studio libero con timer';
+  }, 0);
+  return h('section.card.adesso', null,
+    h('div.adesso-testa', null, h('b', null, 'Adesso'), durata,
+      e ? h('span.tenue.piccolo', null, ' · ' + (e.giorni === 0 ? 'esame oggi' : '−' + e.giorni + (e.giorni === 1 ? ' giorno' : ' giorni')) + ' a ' + e.nome + (e.stato ? ' · ' + e.stato : '')) : null),
+    riassunto,
+    h('div.bottoni', null, lungo(btn, () => [
+      { t: 'Scegli quanto tempo hai', ic: 'cronometro', f: () => apriStudiaOra() },
+      { t: 'Ripassa le flashcard', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } },
+      { t: 'Rivedi gli errori', ic: 'avvertenza', f: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
+      { t: 'Studio libero con timer', ic: 'cronometro', f: () => Timer.avvia({ titolo: 'Studio libero' }) },
+      { t: 'Simulazione d\'esame', ic: 'quiz', f: () => apriSimulazioni() }], 'Studia ora'),
+      h('button.btn-testo', { onclick: apriStudiaOra }, 'Altra durata')));
+}
+
+/** v0.58: la sessione consigliata adesso — la durata più corta (25/50/90) che contiene tutto il dovuto, e una riga di riassunto. */
+function adesso(giorno = oggi()): { minuti: number; riassunto: string } {
+  const lavoro = (vv: VoceSessione[]) => vv.filter(v => v.tipo !== 'pausa' && v.tipo !== 'richiamo');
+  const tutto = lavoro(StudiaOra.componi(90, giorno)), serve = tutto.reduce((s, v) => s + v.min, 0);
+  if (!tutto.length) return { minuti: 0, riassunto: 'Niente in scadenza: buon momento per avanzare o per una pausa vera.' };
+  const minuti = [25, 50, 90].find(m => serve + 5 <= m) || 90, voci = lavoro(StudiaOra.componi(minuti, giorno));
+  const n = (tipo: VoceSessione['tipo']) => voci.filter(v => v.tipo === tipo).length, pezzi: string[] = [];
+  const nc = Carte.conta(), nq = QuizRifare.conta(ymd(giorno));
+  if (n('ripasso')) pezzi.push(n('ripasso') + (n('ripasso') === 1 ? ' ripasso' : ' ripassi'));
+  if (n('carte')) pezzi.push((nc.ripasso + nc.nuove) + ' carte');
+  if (n('quiz')) pezzi.push(Math.min(nq, QuizRifare.MAX) + ' quiz da rifare');
+  if (n('appunto')) pezzi.push(n('appunto') + (n('appunto') === 1 ? ' appunto' : ' appunti'));
+  const st = voci.find(v => (v.tipo === 'scheda' || v.tipo === 'freddo') && v.k);
+  if (st && st.k) pezzi.push(Studio.etichetta(st.k));
+  if (n('errore')) pezzi.push(n('errore') + ' errori');
+  return { minuti, riassunto: pezzi.join(' + ') || voci[0].titolo };
+}
+/** v0.58: esame più vicino (oggi compreso) e stato rispetto al piano. */
+function prossimoEsame(): { nome: string; giorni: number; stato: string } | null {
+  const e = Stato.tutti<Esame>('esame').filter(x => !x.deleted && giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
+  if (!e) return null;
+  const r = Studio.pkPiani().length ? Studio.inRitardo().length : -1;
+  return { nome: e.nome.replace(/ semestre filtro$/i, ''), giorni: giorniA(e.data), stato: r < 0 ? '' : r ? 'indietro di ' + r + ' step' : 'in pari ✓' };
 }

@@ -216,12 +216,12 @@ const QuizApp = (() => {
   }
 
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi). */
-  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void }): Promise<void> {
+  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void; immagini?: Record<string, string> }): Promise<void> {
     const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { /* */ })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
     v.corpo.classList.add('qz');
     v.corpo.appendChild(h('div.vuoto.centro', null, 'Preparo le domande…'));
     let dati: { domande: DomB[]; immagini: Record<string, string>; fonte: string };
-    try { dati = gen ? { domande: gen(), immagini: {}, fonte: 'gen' } : await Banca.scheda(pk, m, micro, s); }
+    try { dati = gen ? { domande: gen(), immagini: (info && info.immagini) || {}, fonte: 'gen' } : await Banca.scheda(pk, m, micro, s); }
     catch (e: any) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e))); return; }
     if (!dati.domande.length) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, 'Nessuna domanda trovata.')); return; }
     const app = h('div.qz-app'); svuota(v.corpo);

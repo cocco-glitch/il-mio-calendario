@@ -49,6 +49,7 @@ with sync_playwright() as p:
     ok(r['mig'] == {'legacy': {'n': 9, 'ok': 1, 'xn': 0, 'xok': 0}, 'D': {'n': 1, 'ok': 0, 'xn': 0, 'xok': 0}} and r['nm'] == 10, 'migrazione: c.legacy dai vecchi n/ok, poi si conta per dispositivo')
 
     # --- quiz reale: risposta → contatore del dispositivo; annulla dal tocco sull'avviso ---
+    pg.wait_for_function("Studio.pkStep().length >= 3")   # v0.58: come gli altri test, si aspetta il caricamento degli step
     pg.evaluate("() => { const t = trovaScheda('C-3.1.1-1'); QuizApp.apri(t.pk, t.m, t.micro, t.s); }")
     pg.wait_for_selector('.qz-domanda', timeout=8000)
     pg.locator('.qz-opz-b').first.click()

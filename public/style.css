@@ -159,6 +159,11 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .griglia.uno .gr-ev { font-size: 14px; padding: 4px 8px; } .griglia.uno .gr-ev-ora { font-size: 12px; }
 .gr-adesso { position: absolute; left: 0; right: 0; height: 2px; background: var(--rosso); pointer-events: none; z-index: 2; }
 .gr-adesso::before { content: ""; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--rosso); }
+/* v0.58: card «Adesso» in Oggi, pulsante Quiz in Studio, «Avanzate» del wizard */
+.card.adesso { border-left: 3px solid var(--accento); }
+.adesso-testa { margin-bottom: 4px; }
+.pai-avanzate { margin: 8px 0; }
+.pai-avanzate > summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
 
 .agenda { display: flex; flex-direction: column; gap: 10px; padding-bottom: 96px; }
 .agenda-giorno { display: flex; gap: 12px; background: var(--sup); border-radius: var(--raggio); padding: 10px 12px; box-shadow: var(--ombra); }

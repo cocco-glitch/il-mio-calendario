@@ -316,7 +316,7 @@ const CreaQuiz = (() => {
       document.body.appendChild(i); i.click();
     });
   }
-  function leggero(pre: { materia?: string; stepId?: string; titolo?: string } = {}): void {
+  function leggero(pre: { materia?: string; stepId?: string; titolo?: string; appunto?: string } = {}): void {
     const v = visore('⚡ Creaquiz Leggero', () => { /* */ });
     const titolo = h('input.campo', { type: 'text', value: pre.titolo || '', placeholder: 'Titolo del quiz (es. «Enzimi — ripasso lampo»)' }) as HTMLInputElement;
     const materia = h('input.campo', { type: 'text', value: pre.materia || '', placeholder: 'Materia (es. Biologia)' }) as HTMLInputElement;
@@ -394,6 +394,11 @@ const CreaQuiz = (() => {
           h('button.chip', { type: 'button', onclick: () => QuizApp.esporta(archivio(), f, 'Quiz creati in app', Dominio.archetipoMateria(materia.value.trim())) }, n)))),
       pipe));
     aggiornaPipe();
+    // v0.58 (Q5): «🎯 Quiz da questo appunto» dal menu ⋯ dell'appunto → completamenti già pronti dai suoi punti chiave
+    if (pre.appunto) {
+      const a = app.find(x => x.id === pre.appunto) || Stato.prendi<Appunto>(pre.appunto);
+      if (a && !a.deleted) { if (app.includes(a)) selApp.value = a.id; if (!step.value.trim() && (a.micro || a.sub)) { step.value = String(a.micro || a.sub); aggiornaPipe(); } daCloze(a.testo); }
+    }
   }
 
   return { nuovo, elenco, apri, tutti, controlla, crea, leggero };

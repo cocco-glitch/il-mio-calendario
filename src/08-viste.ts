@@ -91,7 +91,7 @@ function taskDelGiorno(g: Date): Task[] {
 }
 
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET: [string, string][] = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Studia ora'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET: [string, string][] = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget(): string[] {
   const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
@@ -139,8 +139,8 @@ function vistaOggi(): HTMLElement {
         case 'tabelle': { const r = righeDelGiorno(g); return r.length ? scheda('Dalle tue tabelle', r.map(rigaTabellaGiorno)) : null; }
         case 'nota': return scheda('Nota del giorno', area);
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
-        // v0.57.1 (D3): anche con corsi propri, carte o appunti da ripassare, non solo con i pacchetti-step
-        case 'studiaora': return Studio.pkStep().length || Stato.tutti('materia').length || Stato.tutti('carta').length || Appunti.appuntiDaRipassare().length || StudiaOra.leggi() ? widgetStudiaOra() : null;
+        // v0.57.1 (D3) → v0.58: anche con corsi propri, carte, appunti o quiz da rifare (sempre)
+        case 'studiaora': return widgetStudiaOra();   // v0.58: card «Adesso» sempre in cima, anche senza pacchetti-step
         case 'carte': return widgetCarte();
         case 'appunti': return widgetAppunti();
         case 'ripassi': return widgetRipassi();

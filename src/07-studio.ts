@@ -489,6 +489,7 @@ function vistaStudio(): HTMLElement {
   const vai = (v: typeof UI.studioVista) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
   const inVista = voci.filter(([v], i) => i < 4 || UI.studioVista === v);
   const seg = h('div.segmenti.scorre', { role: 'tablist' }, inVista.map(([v, t]) => h('button' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', onclick: () => vai(v) }, t)),
+    h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'),   // v0.58 (Q5): visibile, non più solo in «Altro ▾»
     tendina('Altro ▾', () => (voci.slice(4).map(([v, t]) => ({ testo: t, attiva: UI.studioVista === v, azione: () => vai(v) })) as VoceTendina[]).concat([{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }]), 'Altre viste: statistiche, esami, syllabus, tabelle'));
   if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());
   if (UI.studioVista === 'tabelle') return h('div.pagina', null, seg, vistaTabelle());

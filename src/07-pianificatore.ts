@@ -121,11 +121,14 @@ const Pianificatore = (() => {
   // ---------- Stadio 1a: ipercorrezioni (neuro + legacy) ----------
   /** Legge i segnali di ipercorrezione da record statq: tag/ultimoCaso/daConsolidare di `neuro` (BP3), confidenceLog
    *  (certo+sbagliata, incerto+giusta) e i campi legacy (`iper`, `illusioni`, `ipercorrezioni`, `lucky`). */
+  /** v0.58 (Q4): materia di un record statq. I quiz creati in app (sk «qc-…») portano la materia in `materiaQ`
+   *  (la aggiunge PianiAI dal record qcreato); gli altri usano il prefisso della scheda `<materia>-<microstep>-<k>`. */
+  const materiaSk = (s: { sk?: unknown; materiaQ?: unknown } | null | undefined): string => s && s.materiaQ ? String(s.materiaQ) : String((s && s.sk) || '').split('-')[0].split('~')[0];
   function segnaliIper(stats: any[], materia?: string): SegnaliIper {
     let ill = 0, luck = 0, n = 0, ok = 0; const errori: { sk: string; peso: number }[] = [];
     for (const s of stats || []) {
       if (!s || s.deleted || typeof s !== 'object') continue;
-      const sk = String(s.sk || ''); if (materia && sk && sk.split('-')[0] !== materia) continue;
+      const sk = String(s.sk || ''); if (materia && sk && materiaSk(s) !== materia) continue;
       const nn = Math.max(0, +s.n || 0), oo = clamp(+s.ok || 0, 0, nn); n += nn; ok += oo;
       const ne = s.neuro || {}, tag: string[] = Array.isArray(ne.tag) ? ne.tag : [], log: any[] = Array.isArray(s.confidenceLog) ? s.confidenceLog : [];
       const illLog = log.filter(t => t && t.livelloCertezza === 3 && t.corretto === false).length;
@@ -658,7 +661,7 @@ const Pianificatore = (() => {
     let r2 = 0, e2 = 0, rv = 0, ev = 0, n = 0, ok = 0, iper48 = 0, iperPrima = 0;
     for (const s of stats || []) {
       if (!s || s.deleted || typeof s !== 'object') continue;
-      const sk = String(s.sk || ''); if (o.materia && sk && sk.split('-')[0] !== o.materia) continue;
+      const sk = String(s.sk || ''); if (o.materia && sk && materiaSk(s) !== o.materia) continue;
       const nn = Math.max(0, +s.n || 0); n += nn; ok += clamp(+s.ok || 0, 0, nn);
       const log: any[] = Array.isArray(s.confidenceLog) ? s.confidenceLog : [];
       let illLog48 = 0;
@@ -733,10 +736,10 @@ const Pianificatore = (() => {
   const clona = <T>(x: T): T => JSON.parse(JSON.stringify(x));
   /** Dopo un'illusione di competenza (o una risposta fortunata) su una materia del piano ai_neuro: anticipa di 24–48 h
    *  la prossima attività L3/L4 scambiandola con un buffer. Zero token; restituisce il piano nuovo (l'originale resta intatto). */
-  function hookIpercorrezione(piano: any, ctx: { oggi: string; sk?: string; uid?: string; caso: string }): { piano: PkPianoAI; k: string; da: string; a: string } | null {
+  function hookIpercorrezione(piano: any, ctx: { oggi: string; sk?: string; uid?: string; caso: string; materia?: string }): { piano: PkPianoAI; k: string; da: string; a: string } | null {
     if (!piano || piano.origine !== 'ai_neuro' || piano.pausa) return null;
     if (ctx.caso !== 'illusione_competenza' && ctx.caso !== 'lucky_guess') return null;
-    if (ctx.sk && piano.vincoliAI && String(ctx.sk).split('-')[0].split('~')[0] !== piano.vincoliAI.materiaCodice) return null;
+    if ((ctx.materia || ctx.sk) && piano.vincoliAI && (ctx.materia || materiaSk({ sk: ctx.sk })) !== piano.vincoliAI.materiaCodice) return null;
     const p: PkPianoAI = clona(piano), tutte = vociDi(p);
     const cand = tutte.filter(x => (x.v.livelloCognitivo === 3 || x.v.livelloCognitivo === 4) && !x.v.isRipassoFSRS && !x.v.isBuffer && x.g.data > ctx.oggi && (!ctx.uid || x.v.uid === ctx.uid))
       .sort((a, b) => a.g.data < b.g.data ? -1 : a.g.data > b.g.data ? 1 : (a.v.livelloCognitivo || 0) - (b.v.livelloCognitivo || 0));
@@ -787,7 +790,7 @@ const Pianificatore = (() => {
     return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: (m as any).errore };
   }
 
-  return { segnaliIper, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
+  return { segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
     unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
     compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
     // v0.56 (BP5)

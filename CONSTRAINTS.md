@@ -30,7 +30,7 @@ Scelte di partenza:
 | Dimensione | Regola | Comando | Quando | Perché questo numero |
 |---|---|---|---|---|
 | Tipi | 0 errori | `npx tsc --noEmit` | ogni modifica | oggi 0 |
-| Logica | 74/74 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.57.1: 74/74 |
+| Logica | 77/77 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.58.0: 77/77 |
 | End-to-end | 0 falliti, saltati ≤ quelli in «Eccezioni» | `bash test/tutti.sh 2>&1 \| tail -n 35` (include `csp`, `v057_bp6`, `prestazioni`) | prima di pubblicare | v0.57: 44 ok, 1 saltato |
 | Dipendenze (esterno) | 0 vulnerabilità high+ | `npm audit --audit-level=high` | prima di pubblicare | oggi 0; unico controllo non scritto da noi |
 | Build | `dist/sw.js` senza `__VERSIONE__`; `VERSIONE` ≠ quella pubblicata | test nuovo (A3, A8) | prima di pubblicare | il bug del SW è passato inosservato da Fase 1 |

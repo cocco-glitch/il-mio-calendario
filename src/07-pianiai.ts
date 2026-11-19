@@ -17,6 +17,15 @@ const PianiAI = (() => {
     const s = new Set<string>([...Object.keys(MATERIE_BASE).filter(() => Drive.eProprietario()), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
     return Array.from(s).filter(Boolean);
   }
+  /** v0.58 (Q4): codice materia di un quiz creato in app (sk «qc-…»), dal campo materia del record qcreato. */
+  function materiaDiSk(sk: string): string | undefined {
+    if (!/^qc-/.test(sk || '')) return undefined;
+    const r = Stato.prendi<QCreato>(sk); if (!r || r.deleted || !r.materia) return undefined;
+    const n = (x: string) => String(x || '').trim().toLowerCase();
+    return codiciMaterie().find(c => n(c) === n(r.materia) || n(nomeMateria(c)) === n(r.materia)) || r.materia;
+  }
+  /** I record statq con la materia dei quiz creati (materiaQ), per segnaliIper/monitoraAffaticamento. */
+  const statqConMateria = (): Array<StatQ & { materiaQ?: string }> => Stato.tutti<StatQ>('statq').map(s => { const m = materiaDiSk(s.sk); return m ? { ...s, materiaQ: m } : s; });
   /** Minuti già occupati quel giorno dagli altri piani attivi (non AI): v.min se c'è, altrimenti 45 per voce. */
   function minutiAltriPiani(data: string): number {
     let tot = 0;
@@ -48,7 +57,7 @@ const PianiAI = (() => {
     return {
       oggi: ymd(new Date()),
       occupato: (da, a) => GCal.occupatoPrimary(da, a),
-      minutiAltriPiani, statq: () => Stato.tutti('statq'), leggiFonte,
+      minutiAltriPiani, statq: statqConMateria, leggiFonte,
       ia: o.usaAI && !Dominio.senzaAI() ? (m, x) => IA.testo(m as any, 'genera', { maxOut: x.maxOut, archetipo: x.archetipo } as any).then(r => r.testo) : undefined,
       testoIndice: o.testoIndice, unita: o.unita, pid: o.pid, titolo: o.titolo,
       ritenzione: min => Ripassi.ritenzione(ymd(new Date()), min), intervallo: Ripassi.intervallo,   // v0.57 (A16): unica fonte
@@ -104,7 +113,7 @@ const PianiAI = (() => {
         let testo = indice.value;
         const ids = fonti.value.split(/[,\s]+/).map(idDaLink).filter(Boolean);
         if (!testo.trim() && ids.length) { try { const f = await leggiFonte(ids[0]); if (f) testo = f.pagine.join('\n'); } catch (_) { /* fonte illeggibile */ } }
-        const seg = Pianificatore.segnaliIper(Stato.tutti('statq'), m);
+        const seg = Pianificatore.segnaliIper(statqConMateria(), m);
         const r = await Pianificatore.generaDomandeCalibrazione({ materia: nomeMateria(m), archetipo: Dominio.archetipoMateria(m), keyword: Pianificatore.paroleChiaveBM25(testo, 8), errori: seg.topErrori.slice(0, 3) }, usaAI.checked ? iaCalibrazione() : undefined);
         domandeB = r.domande; svuota(boxB);
         scelteB = r.domande.map(d => selettore([['', '—'] as [string, string]].concat(d.opzioni.map((o, i) => [String(i), o.testo] as [string, string])), ''));
@@ -169,14 +178,18 @@ const PianiAI = (() => {
     const stima = h('div.tenue.piccolo', null, senza ? 'Modalità 100% senza AI: mappa dall\'indice locale, 0 token.' : 'Con l\'AI: ~3.200 tok · 1 chiamata (catena genera). Se fallisce: indice locale, 0 token.');
     const sh = foglio({ titolo: '✨ Crea Piano Intelligente', etichettaSalva: 'Crea',
       corpo: h('div.modulo', null,
-        h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Partenza', partenza), riga('Obiettivo', obiettivo)),
-        h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[(c as any)._g])))),
-          riga('Dalle', oraDa), riga('Alle', oraA), riga('Ore max/giorno', oreMax),
-          riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))),
-        h('div.gruppo', null, riga('Intensità', intensita), ...campiBio.map(x => riga(x.d.testo, x.s)), boxAvvisi),
-        h('div.gruppo', null, calibra, boxB),
-        indice, fonti,
-        h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima, esito,
+        // v0.58: 4 campi in vista; il resto (questionario incluso, facoltativo) in «Avanzate» chiuso
+        h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi),
+        h('details.pai-avanzate', null, h('summary', null, 'Avanzate (facoltative)'),
+          h('div.gruppo', null, riga('Partenza', partenza), riga('Obiettivo', obiettivo)),
+          h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[(c as any)._g])))),
+            riga('Dalle', oraDa), riga('Alle', oraA),
+            riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))),
+          h('div.gruppo', null, h('div.tenue.piccolo', null, 'Questionario facoltativo: affina intensità e pesi.'), ...campiBio.map(x => riga(x.d.testo, x.s))),
+          h('div.gruppo', null, calibra, boxB),
+          indice, fonti,
+          h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima),
+        esito,
         h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
       salva: () => { crea(sh); return false; } });
     avvisiBio();
@@ -189,7 +202,7 @@ const PianiAI = (() => {
     for (const p of pianiAI()) {
       if (Studio.nascosto(p.id)) continue;
       const copia = JSON.parse(JSON.stringify(p)) as PkPianoAI;
-      const r = Pianificatore.hookIpercorrezione(p, { oggi, sk, caso });
+      const r = Pianificatore.hookIpercorrezione(p, { oggi, sk, caso, materia: materiaDiSk(sk) });
       if (!r) continue;
       salvaPiano(r.piano); prima.push(copia);
       avviso('🧠 ' + (caso === 'illusione_competenza' ? 'Illusione di competenza' : 'Risposta fortunata') + ': anticipo l\'applicazione dal ' + r.da.slice(8, 10) + '/' + r.da.slice(5, 7) + ' al ' + r.a.slice(8, 10) + '/' + r.a.slice(5, 7) + '.', 6000);
@@ -206,7 +219,7 @@ const PianiAI = (() => {
       const agg = Pianificatore.aggiornaDeload(p, oggi);
       if (agg) { salvaPiano(agg); p = agg; if (!agg.deload!.attivo) avviso('🌱 De-load finito: torno al livello ' + agg.livelloIntensita + '.', 5000); }
       if (!p.livelloIntensita || Studio.nascosto(p.id) || (p.deload && p.deload.attivo)) continue;
-      stats = stats || Stato.tutti('statq');
+      stats = stats || statqConMateria();
       const f = Pianificatore.monitoraAffaticamento(stats, { oggi, materia: p.vincoliAI.materiaCodice });
       if (!f.trigger) continue;
       const d = Pianificatore.attivaDeload(p, { oggi, motivo: f.condA ? 'errori +' + Math.round((f.tasso2g - f.mediaStorica) * 100) + '% in 2 giorni' : 'ipercorrezioni ×2 in 48 h' });

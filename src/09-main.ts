@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.57.1';
+const VERSIONE = '0.58.0';
 
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
@@ -186,6 +186,16 @@ function controllaAvvisi(): void {
   }
 }
 
+/** v0.58: scorciatoie del manifest (`?az=studia|aggiungi|ripassa`): un tocco dall'icona → azione. Poi pulisce l'indirizzo. */
+function scorciatoiaAvvio(): void {
+  let az = '';
+  try { az = new URLSearchParams(location.search).get('az') || ''; } catch (e) { console.warn('scorciatoia: indirizzo illeggibile', e); }
+  if (!az) return;
+  try { history.replaceState(null, '', location.pathname); } catch (e) { console.warn('scorciatoia: replaceState', e); }
+  if (az === 'studia') { if (StudiaOra.leggi()) { apriSessione(); return; } const a = adesso(); if (a.minuti) { StudiaOra.avvia(a.minuti); setTimeout(apriSessione, 50); } else apriStudiaOra(); }
+  else if (az === 'aggiungi') apriNuovo();
+  else if (az === 'ripassa') avviaCarte(undefined, 'Flashcard');
+}
 async function avvia(): Promise<void> {
   await Stato.carica();
   applicaTema();
@@ -200,6 +210,7 @@ async function avvia(): Promise<void> {
   attivaSimboli();
   Tocco.attiva();
   disegna();
+  scorciatoiaAvvio();   // v0.58: scorciatoie PWA (tocco lungo sull'icona)
   setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500);   // v0.57 (A14)
   avvisoNovita();
   Drive.precarica();
