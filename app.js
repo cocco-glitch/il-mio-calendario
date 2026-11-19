@@ -1,5 +1,174 @@
 "use strict";
 // ============================================================
+// 01-json.ts — v0.57 (BP6 · A15): UNICO parser JSON dell'app (risposte AI, quiz incollati, pacchetti
+// .imcpack / pacchetto-studio, mappe del pianificatore). Prima c'erano tre copie divergenti
+// (IA.parseJsonSicuro, Neuro.parseTollerante, Pianificatore.leggiRisposta). Modulo PURO: niente DOM né rete.
+// - parseSicuro: <think>, fence, testo intorno → primo JSON bilanciato, LaTeX riparato; lancia se non c'è JSON.
+// - parseTollerante: parse diretto → riparazioni (fence, virgolette tipografiche, virgole finali) → riga per riga.
+// - recuperaArrayParziale: oggetti completi di un array troncato (risposta interrotta a metà).
+// - leggiFile: testo di un file JSON (BOM tollerato); null se illeggibile.
+// ============================================================
+const JsonAI = (() => {
+    /** BOM e caratteri di controllo (tranne \t \n \r) via. */
+    function pulisci(raw) { return String(raw == null ? '' : raw).replace(/^\uFEFF/, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''); }
+    const togliFence = (t) => t.replace(/```(?:json|javascript|js)?/gi, '');
+    const LATEX = new Set(('frac dfrac tfrac sqrt text textrm mathrm mathbf mathit operatorname times cdot div pm mp neq ne leq le geq ge approx sim propto infty partial nabla int sum prod lim log ln exp sin cos tan to rightarrow leftarrow Rightarrow rightleftharpoons leftrightarrow left right bar vec hat dot overline underline ' +
+        'alpha beta gamma Gamma delta Delta epsilon varepsilon zeta eta theta Theta iota kappa lambda Lambda mu nu xi Xi pi Pi rho sigma Sigma tau upsilon phi Phi varphi chi psi Psi omega Omega degree circ ce pu quad qquad newline not in notin cup cap subset forall exists rm bf it').split(' '));
+    /** Raddoppia i backslash del LaTeX SOLO dentro le stringhe JSON: `\\` già doppi, `\uXXXX` e i veri escape (\n, \t, \" …) restano. */
+    function riparaLatex(t) {
+        return t.replace(/"(?:[^"\\]|\\.)*"/gs, s => s.replace(/\\(\\|u[0-9a-fA-F]{4}|[a-zA-Z]+|[\s\S])/g, (m, x) => {
+            if (x === '\\' || /^u[0-9a-fA-F]{4}$/.test(x))
+                return m; // già escapato · unicode valido
+            if (!/^[a-zA-Z]/.test(x))
+                return '"/'.includes(x) ? m : '\\\\' + x; // \" \/ validi; \( \, \[ … sono LaTeX
+            if (LATEX.has(x))
+                return '\\\\' + x; // comando LaTeX intero (limite noto: \nu \tau \theta …)
+            if (/^[bfnrt]/.test(x))
+                return m; // vero escape JSON seguito da testo (es. \nnuovo)
+            return '\\\\' + x; // \l \s \c… invalidi in JSON → LaTeX
+        }));
+    }
+    /** Toglie <think>, fence ``` e testo intorno; estrae il PRIMO JSON bilanciato (fuori dalle stringhe), ripara il LaTeX, poi JSON.parse. */
+    function parseJsonSicuro(raw) {
+        let t = pulisci(raw).replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').replace(/```(?:json)?/gi, '');
+        const i = t.search(/[{[]/);
+        if (i < 0)
+            throw new Error('risposta non in JSON');
+        let d = 0, s = false, e = false, j = i;
+        for (; j < t.length; j++) {
+            const c = t[j];
+            if (s) {
+                if (e)
+                    e = false;
+                else if (c === '\\')
+                    e = true;
+                else if (c === '"')
+                    s = false;
+                continue;
+            }
+            if (c === '"')
+                s = true;
+            else if (c === '{' || c === '[')
+                d++;
+            else if (c === '}' || c === ']') {
+                d--;
+                if (!d)
+                    break;
+            }
+        }
+        t = t.slice(i, j + 1);
+        // sempre riparare prima: «\frac» è JSON valido (\f = form feed) ma va letto come LaTeX
+        try {
+            return JSON.parse(riparaLatex(t));
+        }
+        catch (_) {
+            throw new Error('risposta non in JSON valido');
+        }
+    }
+    function riparaJson(t) {
+        let s = togliFence(pulisci(t));
+        s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+        const a = s.search(/[\[{]/);
+        if (a < 0)
+            return s.trim();
+        const chiusa = s[a] === '[' ? ']' : '}', b = s.lastIndexOf(chiusa);
+        s = s.slice(a, b >= a ? b + 1 : undefined);
+        s = s.replace(/,\s*([}\]])/g, '$1');
+        return s;
+    }
+    function parseTollerante(t) {
+        const rip = [], raw = String(t || '');
+        try {
+            return { ok: true, dati: JSON.parse(raw), riparazioni: rip };
+        }
+        catch (_) { /* si ripara */ }
+        if (/```/.test(raw))
+            rip.push('blocco markdown rimosso');
+        const s = riparaJson(raw);
+        if (/,\s*[}\]]/.test(raw))
+            rip.push('virgole finali rimosse');
+        try {
+            return { ok: true, dati: JSON.parse(s), riparazioni: rip.concat(rip.length ? [] : ['caratteri spuri rimossi']) };
+        }
+        catch (_) { /* ultima prova: un oggetto per riga */ }
+        const righe = s.split('\n').map(x => x.trim().replace(/,$/, '')).filter(x => /^\{.*\}$/.test(x));
+        const v = [];
+        for (const r of righe) {
+            try {
+                v.push(JSON.parse(r));
+            }
+            catch (_) { /* riga scartata */ }
+        }
+        if (v.length)
+            return { ok: true, dati: v, riparazioni: rip.concat(['letto riga per riga']) };
+        return { ok: false, dati: null, riparazioni: rip };
+    }
+    /** Recupera gli oggetti completi di un array JSON troncato; «chiave» = nome dell'array cercato (es. 'unita'). */
+    function recuperaArrayParziale(raw, chiave = '') {
+        const s = String(raw || ''), k0 = chiave && s.indexOf(chiave) >= 0 ? s.indexOf('[', s.indexOf(chiave)) : s.indexOf('[');
+        if (k0 < 0)
+            return [];
+        const out = [];
+        let prof = 0, ini = -1, str = false, esc = false;
+        for (let k = k0 + 1; k < s.length; k++) {
+            const c = s[k];
+            if (str) {
+                if (esc)
+                    esc = false;
+                else if (c === '\\')
+                    esc = true;
+                else if (c === '"')
+                    str = false;
+                continue;
+            }
+            if (c === '"')
+                str = true;
+            else if (c === '{') {
+                if (prof === 0)
+                    ini = k;
+                prof++;
+            }
+            else if (c === '}') {
+                prof--;
+                if (prof === 0 && ini >= 0) {
+                    try {
+                        out.push(JSON.parse(s.slice(ini, k + 1)));
+                    }
+                    catch (_) { /* oggetto rotto */ }
+                    ini = -1;
+                }
+                if (prof < 0)
+                    break;
+            }
+            else if (c === ']' && prof === 0)
+                break;
+        }
+        return out;
+    }
+    /** Oggetto/array da testo AI o già oggetto: parseSicuro, poi tollerante; null se niente. */
+    function leggi(r) {
+        if (r && typeof r === 'object')
+            return r;
+        try {
+            return parseJsonSicuro(String(r || ''));
+        }
+        catch (_) {
+            const p = parseTollerante(String(r || ''));
+            return p.ok ? p.dati : null;
+        }
+    }
+    /** File JSON (pacchetti, .imcpack): BOM tollerato; null se illeggibile. */
+    function leggiFile(t) { try {
+        return JSON.parse(pulisci(t));
+    }
+    catch (_) {
+        const p = parseTollerante(t);
+        return p.ok ? p.dati : null;
+    } }
+    return { pulisci, riparaLatex, parseSicuro: parseJsonSicuro, riparaJson, parseTollerante, recuperaArrayParziale, leggi, leggiFile };
+})();
+
+// ============================================================
 // 01-util.ts — Utilità di base: DOM, date, id, markdown.
 // NOTA ARCHITETTURA: niente moduli/import. Tutti i file in src/ sono
 // "script" globali, compilati da tsc e concatenati in ordine di nome
@@ -113,7 +282,7 @@ function dataRelativa(d) {
 }
 // ---------- Markdown minimale (sicuro: prima escape, poi sostituzioni) ----------
 function esc(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); // v0.57: anche ' (attributi tra apici singoli)
 }
 function mdInline(s) {
     return esc(s)
@@ -254,6 +423,7 @@ const DB = (() => {
                         st.put(r);
                     tx.oncomplete = () => ok();
                     tx.onerror = () => ko(tx.error);
+                    tx.onabort = () => ko(tx.error || new Error('scrittura annullata (spazio esaurito?)')); // v0.56.2: mai una promessa appesa
                 });
             }
             for (const r of recs)
@@ -273,6 +443,7 @@ const DB = (() => {
                         st.delete(id);
                     tx.oncomplete = () => ok();
                     tx.onerror = () => ko(tx.error);
+                    tx.onabort = () => ko(tx.error || new Error('rimozione annullata'));
                 });
             }
             for (const id of ids)
@@ -685,13 +856,43 @@ function foglio(opz) {
     document.addEventListener('keydown', tasto);
     return { chiudi };
 }
-/** Dialogo di scelta (al posto di confirm/alert, che su iOS in PWA danno problemi). */
+/** Dialogo di scelta (al posto di confirm/alert, che su iOS in PWA danno problemi).
+ *  v0.57 (A11): <dialog>.showModal() → focus intrappolato, Esc = Annulla, sfondo inerte; il focus torna dov'era. */
 function chiedi(titolo, scelte, testo) {
     return new Promise(ok => {
-        const fine = (v) => { sfondo.remove(); ok(v); };
-        const sfondo = h('div.dialogo-sfondo', { onclick: (e) => { if (e.target === sfondo)
-                fine(null); } }, h('div.dialogo', { role: 'alertdialog' }, h('div.dialogo-titolo', null, titolo), testo ? h('div.dialogo-testo', null, testo) : null, scelte.map(s => h('button.btn' + (s.pericolo ? '.pericolo' : ''), { onclick: () => fine(s.valore) }, s.testo)), h('button.btn.neutro', { onclick: () => fine(null) }, 'Annulla')));
-        document.body.appendChild(sfondo);
+        const prima = document.activeElement;
+        let finito = false;
+        const fine = (v) => {
+            if (finito)
+                return;
+            finito = true;
+            try {
+                if (d.open)
+                    d.close();
+            }
+            catch (e) {
+                console.warn('chiedi: chiusura', e);
+            }
+            d.remove();
+            ok(v);
+            if (prima && typeof prima.focus === 'function' && document.contains(prima))
+                prima.focus();
+        };
+        const idT = 'dlg-' + Math.random().toString(36).slice(2, 8);
+        const d = h('dialog.dialogo-sfondo', { 'aria-labelledby': idT, onclick: (e) => { if (e.target === d)
+                fine(null); } }, h('div.dialogo', { role: 'document' }, h('div.dialogo-titolo', { id: idT }, titolo), testo ? h('div.dialogo-testo', null, testo) : null, scelte.map(s => h('button.btn' + (s.pericolo ? '.pericolo' : ''), { type: 'button', onclick: () => fine(s.valore) }, s.testo)), h('button.btn.neutro', { type: 'button', onclick: () => fine(null) }, 'Annulla')));
+        d.addEventListener('cancel', e => { e.preventDefault(); fine(null); }); // Esc
+        document.body.appendChild(d);
+        try {
+            d.showModal();
+        }
+        catch (e) {
+            console.warn('chiedi: showModal non disponibile', e);
+            d.setAttribute('open', '');
+        }
+        const primo = d.querySelector('.dialogo button');
+        if (primo)
+            primo.focus();
     });
 }
 /** Avviso temporaneo in alto. */
@@ -1422,14 +1623,56 @@ const G_APP_ID = '1032464441107';
 // drive.file: scrive solo i file creati dall'app. drive.readonly: LEGGE le cartelle di studio (quiz HTML, PDF dei libri,
 // pacchetti creati da Claude). L'app non può modificare né eliminare nulla fuori dalla sua cartella.
 const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly openid email';
-// Privacy "solo mia": l'app accetta solo questo account (oltre al blocco lato Google: progetto in Testing con un solo utente di test).
+// Privacy "solo mia": l'app accetta solo questi account (oltre al blocco lato Google: progetto in Testing con soli utenti di test).
 // v0.26: due account ammessi. Il proprietario vede anche il programma pubblicato col sito (Medicina);
-// il secondo account parte vuoto e riceve i suoi pacchetti dalla sua cartella Drive. Per ammettere
-// la seconda persona: scrivere il suo Gmail in SECONDO_ACCOUNT (minuscolo) e ripubblicare; deve
-// anche essere tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
-const PROPRIETARIO = 'cocco.haloa@gmail.com';
-const SECONDO_ACCOUNT = 'nicoleschirru@gmail.com';
-const ACCOUNT_AMMESSI = [PROPRIETARIO, SECONDO_ACCOUNT].filter(Boolean);
+// il secondo account parte vuoto e riceve i suoi pacchetti dalla sua cartella Drive.
+// v0.57 (U4/A12): nel sito pubblico solo l'hash SHA-256 dell'email minuscola, mai l'indirizzo in chiaro.
+// Per ammettere un account: `node -e "console.log(require('crypto').createHash('sha256').update('<gmail minuscolo>').digest('hex'))"`,
+// aggiungere l'hash qui e l'account tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
+const HASH_PROPRIETARIO = 'aa6b55d11a786b1b08a4606d7b72587a231c199a5f5ef22f1dc231635fca545e';
+const HASH_AMMESSI = [HASH_PROPRIETARIO, 'fce4085ef1d95714e8c92ca2a8fe1ec0080ebcdb6538af6c4fac8e0d06138a1d'];
+/** SHA-256 esadecimale (FIPS 180-4) di una stringa UTF-8. Sincrono: eProprietario() deve sempre riflettere l'email attuale. */
+function sha256Hex(testo) {
+    const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+    const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    const b = Array.from(new TextEncoder().encode(testo)), bit = b.length * 8;
+    b.push(0x80);
+    while (b.length % 64 !== 56)
+        b.push(0);
+    for (let i = 7; i >= 0; i--)
+        b.push(i > 3 ? 0 : (bit >>> (i * 8)) & 0xff);
+    const r = (x, n) => (x >>> n) | (x << (32 - n)), w = new Array(64);
+    for (let o = 0; o < b.length; o += 64) {
+        for (let i = 0; i < 16; i++)
+            w[i] = (b[o + i * 4] << 24) | (b[o + i * 4 + 1] << 16) | (b[o + i * 4 + 2] << 8) | b[o + i * 4 + 3];
+        for (let i = 16; i < 64; i++) {
+            const s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+        }
+        let [a, bb, c, d, e, f, g, hh] = H;
+        for (let i = 0; i < 64; i++) {
+            const t1 = (hh + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
+            const t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & bb) ^ (a & c) ^ (bb & c))) | 0;
+            hh = g;
+            g = f;
+            f = e;
+            e = (d + t1) | 0;
+            d = c;
+            c = bb;
+            bb = a;
+            a = (t1 + t2) | 0;
+        }
+        [a, bb, c, d, e, f, g, hh].forEach((x, i) => { H[i] = (H[i] + x) | 0; });
+    }
+    return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+}
+/** Hash dell'email (minuscola, senza spazi) con cui si confrontano gli account ammessi. */
+const hashEmail = (email) => sha256Hex(String(email || '').trim().toLowerCase());
 const CARTELLA_APP = 'Calendario personale';
 /** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
 function scopeAttuale() { try {
@@ -1690,7 +1933,8 @@ const Drive = (() => {
                 throw new Error('NOLOGIN');
             if (!stato.email) {
                 const email = await chiSono();
-                if (!ACCOUNT_AMMESSI.includes(email.toLowerCase())) {
+                const hh = hashEmail(email);
+                if (!HASH_AMMESSI.includes(hh)) {
                     try {
                         google.accounts.oauth2.revoke(token, () => { });
                     }
@@ -1703,7 +1947,7 @@ const Drive = (() => {
                 stato.email = email;
                 LS.set('email', stato.email);
                 if (typeof Studio !== 'undefined') {
-                    if (email.toLowerCase() !== PROPRIETARIO)
+                    if (hh !== HASH_PROPRIETARIO)
                         Studio.togliSito();
                     else
                         Studio.caricaDalSito();
@@ -1760,6 +2004,17 @@ const Drive = (() => {
                 if (!(await Privacy.dispositivo(stato.email)))
                     return;
                 await Privacy.pulisciAltrui(stato.email);
+                // v0.57 (A14): immagini incorporate → archivio allegati (prima di ricaricare dati.json, così il file resta leggero)
+                if (giro === 0 && typeof Allegati !== 'undefined') {
+                    try {
+                        await Allegati.migra();
+                        if (!solaLettura)
+                            await Allegati.caricaInAttesa();
+                    }
+                    catch (e) {
+                        console.warn('Allegati: sync rimandata', e);
+                    }
+                }
                 if (solaLettura)
                     break;
                 // 3. se ho qualcosa di più nuovo del remoto, ricarico
@@ -1849,6 +2104,8 @@ const Drive = (() => {
             : 'Finestra di Google chiusa.');
         client.requestAccessToken({ prompt: primaVolta ? 'select_account' : '', scope: scopeAttuale(), login_hint: stato.email || undefined });
     }
+    /** v0.57 (A6): al cambio account le cartelle e dati.json in cache sono dell'account precedente. */
+    function dimenticaCartelle() { cartelle = {}; idDati = ''; LS.set('cartelle', {}); LS.set('idDati', ''); }
     function logout() {
         if (token) {
             try {
@@ -1907,11 +2164,11 @@ const Drive = (() => {
     return {
         stato, ascolta(f) { ascoltatori.push(f); },
         sincronizza, programma, login, logout, precarica, ampliaPermessi,
-        caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
+        caricaAllegato, scegliConPicker, dimenticaCartelle, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
         elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle, api,
         get collegato() { return !!stato.email; },
         /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
-        eProprietario() { return stato.email ? stato.email.toLowerCase() === PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); }, // v0.26.2: senza account solo in prova locale
+        eProprietario() { return stato.email ? hashEmail(stato.email) === HASH_PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); }, // v0.26.2: senza account solo in prova locale
         /** true se c'è un token valido adesso (senza aprire finestre). */
         get pronto() { return !!token && Date.now() < scadenzaToken; },
     };
@@ -2598,12 +2855,53 @@ const Privacy = (() => {
         const br = /Edg\//.test(u) ? 'Edge' : /CriOS|Chrome/.test(u) ? 'Chrome' : /FxiOS|Firefox/.test(u) ? 'Firefox' : /Safari/.test(u) ? 'Safari' : '';
         return tipo + (br ? ' · ' + br : '');
     }
+    // v0.57 (A6): l'isolamento vale anche per localStorage e Cache Storage, non solo per i record.
+    // SENSIBILI = segreti e tracce dell'account (via anche con «Esci soltanto»); al cambio account o con
+    // «Esci e cancella» va via tutto tranne le preferenze del dispositivo in TIENI.
+    const SENSIBILI = ['imc-ai-keys', 'imc-groq-chiave', 'imc-gemini-chiave', 'imc-ai-uso', 'imc-gcal-inviati'];
+    const TIENI = new Set([KDEV, 'imc-records', 'pref-mano', 'imc-quiz-modo']);
+    /** Toglie da localStorage le chiavi dell'account. tutto=false: solo SENSIBILI. Restituisce quante ne ha tolte. */
+    function pulisciLocalStorage(tutto) {
+        const via = [];
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i) || '';
+                if (SENSIBILI.includes(k) || (tutto && !TIENI.has(k) && /^(imc-|trova-)/.test(k)))
+                    via.push(k);
+            }
+            via.forEach(k => localStorage.removeItem(k));
+        }
+        catch (e) {
+            console.warn('Privacy: localStorage non pulito', e);
+        }
+        return via.length;
+    }
+    /** Cancella anche i PDF dei libri in Cache Storage (sono file del Drive dell'account precedente). */
+    async function pulisciCache() {
+        try {
+            if (typeof caches !== 'undefined')
+                await caches.delete('imc-pdf');
+        }
+        catch (e) {
+            console.warn('Privacy: cache PDF non cancellata', e);
+        }
+    }
+    /** Tutto ciò che appartiene all'account precedente, su questo dispositivo. */
+    async function svuotaAccount() {
+        await Stato.svuotaLocale();
+        pulisciLocalStorage(true);
+        await pulisciCache();
+        if (typeof Allegati !== 'undefined')
+            await Allegati.svuota();
+        if (typeof Drive !== 'undefined' && Drive.dimenticaCartelle)
+            Drive.dimenticaCartelle();
+    }
     /** Chiamata appena si conosce l'account del login, PRIMA di unire i dati remoti. */
     async function primaDiUnire(email) {
         const e = email.toLowerCase(), prec = accLocale();
         let svuotato = false;
         if (prec && prec !== e) {
-            await Stato.svuotaLocale();
+            await svuotaAccount();
             svuotato = true;
         }
         else if (!prec) {
@@ -2652,8 +2950,8 @@ const Privacy = (() => {
     /** Per un account NON proprietario: elimina (con lapide → anche dal suo Drive) ciò che è del proprietario. */
     async function pulisciAltrui(email) {
         const e = email.toLowerCase();
-        if (!e || e === PROPRIETARIO)
-            return 0;
+        if (!e || hashEmail(e) === HASH_PROPRIETARIO)
+            return 0; // v0.57: confronto su hash dell'email ricevuta (non dell'account in sessione)
         const s = await caricaIdSito();
         let n = 0;
         const togli = (r) => { Stato.elimina(r.id); n++; };
@@ -2699,11 +2997,7 @@ const Privacy = (() => {
     async function dispositivo(email) {
         const id = idDispositivo(), d = Stato.rec.get(id);
         if (d && !d.deleted && d.revocato) {
-            await Stato.svuotaLocale();
-            try {
-                localStorage.removeItem(KLOC);
-            }
-            catch (_) { /* */ }
+            await svuotaAccount();
             Drive.logout();
             avviso('Questo dispositivo è stato scollegato dal tuo account: dati locali cancellati.', 10000);
             return false;
@@ -2720,13 +3014,13 @@ const Privacy = (() => {
             try {
                 await Drive.sincronizza(false);
             }
-            catch (_) { /* */ }
-            await Stato.svuotaLocale();
-            try {
-                localStorage.removeItem(KLOC);
+            catch (e) {
+                console.warn('Privacy: ultima sync non riuscita', e);
             }
-            catch (_) { /* */ }
+            await svuotaAccount();
         }
+        else
+            pulisciLocalStorage(false); // A6: le chiavi AI non restano a chi usa il dispositivo dopo
         Drive.logout();
         if (cancella)
             location.reload();
@@ -2742,7 +3036,7 @@ const Privacy = (() => {
             } } }, 'Scollega questo dispositivo')) : null))), Drive.collegato ? h('div.bottoni', null, h('button.btn.neutro', { onclick: async () => { const s = await chiedi('Uscire dall\'account su questo dispositivo?', [{ testo: 'Esci e cancella i dati da qui', valore: 'via', pericolo: true }, { testo: 'Esci soltanto', valore: 'esci' }], 'I dati restano al sicuro nel tuo Drive.'); if (s)
                 esci(s === 'via'); } }, 'Esci da questo dispositivo')) : null);
     }
-    return { primaDiUnire, pulisciAltrui, dispositivo, esci, sezione, idDispositivo, accLocale };
+    return { primaDiUnire, pulisciAltrui, dispositivo, esci, sezione, idDispositivo, accLocale, pulisciLocalStorage, svuotaAccount };
 })();
 
 // =====================================================================
@@ -3189,6 +3483,244 @@ const AIGen = (() => {
     return { genera, avvia, coda, sezione, controlla, esame, piuDebole, proposte };
 })();
 
+// ============================================================
+// 07-allegati.ts — v0.57 (BP6 · A14): immagini dei fogli a mano FUORI da dati.json.
+// Prima ogni pagina PDF/foto/risultato finiva come data-URL dentro il record → dati.json da ~7 MB a ogni sync.
+// Ora: il record tiene solo un riferimento «imc-img:<hash>»; i byte stanno in IndexedDB
+// ('imc-allegati') e, per gli altri dispositivi, su Drive in «Calendario personale/Allegati app/<hash>.img».
+// - Migrazione automatica e retrocompatibile (schemaVersion resta 2): un data-URL viene sostituito dal
+//   riferimento SOLO dopo che la scrittura in IndexedDB è riuscita. Se fallisce, il record resta com'era.
+// - Un'app vecchia che riceve un riferimento vede l'immagine mancante ma lo conserva così com'è: nessuna perdita.
+// - Mai eliminazioni su Drive: si caricano solo file nuovi (nome = hash del contenuto, quindi immutabili).
+// ============================================================
+const Allegati = (() => {
+    const PREFISSO = 'imc-img:';
+    const NOME_DB = 'imc-allegati';
+    const CARTELLA = 'Allegati app';
+    const CHIAVE_ATTESA = 'imc-allegati-attesa';
+    const mem = new Map(); // rif → data-URL (cache di sessione)
+    const inArrivo = new Map();
+    let dbp = null;
+    /** Hash sincrono a 64 bit (due FNV-1a) + lunghezza: stesso contenuto → stesso riferimento. */
+    function hash(s) {
+        let a = 0x811c9dc5, b = 0x01000193 ^ s.length;
+        for (let i = 0; i < s.length; i++) {
+            const c = s.charCodeAt(i);
+            a = Math.imul(a ^ c, 0x01000193);
+            b = Math.imul(b ^ c, 0x5bd1e995);
+            b ^= b >>> 15;
+        }
+        return (a >>> 0).toString(36) + (b >>> 0).toString(36) + s.length.toString(36);
+    }
+    const eRif = (s) => typeof s === 'string' && s.startsWith(PREFISSO);
+    const rifDi = (dataUrl) => PREFISSO + hash(dataUrl);
+    const nomeFile = (rif) => rif.slice(PREFISSO.length).replace(/[^a-z0-9]/gi, '') + '.img';
+    function db() {
+        if (!dbp)
+            dbp = new Promise(ok => {
+                try {
+                    const rq = indexedDB.open(NOME_DB, 1);
+                    rq.onupgradeneeded = () => { rq.result.createObjectStore('img'); };
+                    rq.onsuccess = () => ok(rq.result);
+                    rq.onerror = () => { console.warn('Allegati: IndexedDB non disponibile', rq.error); ok(null); };
+                    rq.onblocked = () => ok(null);
+                }
+                catch (e) {
+                    console.warn('Allegati: IndexedDB non disponibile', e);
+                    ok(null);
+                }
+            });
+        return dbp;
+    }
+    async function leggiIdb(rif) {
+        const d = await db();
+        if (!d)
+            return undefined;
+        return new Promise(ok => {
+            try {
+                const rq = d.transaction('img').objectStore('img').get(rif);
+                rq.onsuccess = () => ok(typeof rq.result === 'string' ? rq.result : undefined);
+                rq.onerror = () => ok(undefined);
+            }
+            catch (e) {
+                console.warn('Allegati: lettura fallita', e);
+                ok(undefined);
+            }
+        });
+    }
+    async function scriviIdb(rif, dataUrl) {
+        const d = await db();
+        if (!d)
+            return false;
+        return new Promise(ok => {
+            try {
+                const tx = d.transaction('img', 'readwrite');
+                tx.objectStore('img').put(dataUrl, rif);
+                tx.oncomplete = () => ok(true);
+                tx.onerror = () => ok(false);
+                tx.onabort = () => ok(false);
+            }
+            catch (e) {
+                console.warn('Allegati: scrittura fallita', e);
+                ok(false);
+            }
+        });
+    }
+    function attesa() { try {
+        const v = JSON.parse(localStorage.getItem(CHIAVE_ATTESA) || '[]');
+        return Array.isArray(v) ? v.filter(eRif) : [];
+    }
+    catch (_) {
+        return [];
+    } }
+    function salvaAttesa(l) { try {
+        localStorage.setItem(CHIAVE_ATTESA, JSON.stringify([...new Set(l)]));
+    }
+    catch (e) {
+        console.warn('Allegati: coda non salvata', e);
+    } }
+    /** Mette un data-URL nell'archivio. Ritorna il riferimento, o null se l'archivio non è scrivibile. */
+    async function metti(dataUrl) {
+        const rif = rifDi(dataUrl);
+        if (mem.get(rif) === dataUrl)
+            return rif;
+        if (!await scriviIdb(rif, dataUrl))
+            return null;
+        mem.set(rif, dataUrl);
+        salvaAttesa([...attesa(), rif]);
+        return rif;
+    }
+    /** Data-URL già in memoria (sincrono, per il disegno). */
+    const subito = (rif) => mem.get(rif);
+    /** Data-URL di un riferimento: memoria → IndexedDB → Drive (se collegato). Stringa vuota se introvabile. */
+    function risolvi(rif) {
+        const m = mem.get(rif);
+        if (m)
+            return Promise.resolve(m);
+        let p = inArrivo.get(rif);
+        if (p)
+            return p;
+        p = (async () => {
+            const loc = await leggiIdb(rif);
+            if (loc) {
+                mem.set(rif, loc);
+                return loc;
+            }
+            if (typeof Drive === 'undefined' || !Drive.stato.email)
+                return '';
+            try {
+                const cart = await Drive.sottocartella(CARTELLA);
+                const f = await Drive.trovaFile(nomeFile(rif), cart);
+                if (!f)
+                    return '';
+                const testo = await Drive.scaricaTesto(f.id);
+                if (!testo.startsWith('data:') || rifDi(testo) !== rif) {
+                    console.warn('Allegati: file su Drive non valido', rif);
+                    return '';
+                }
+                await scriviIdb(rif, testo);
+                mem.set(rif, testo);
+                return testo;
+            }
+            catch (e) {
+                console.warn('Allegati: download non riuscito', e);
+                return '';
+            }
+        })().finally(() => inArrivo.delete(rif));
+        inArrivo.set(rif, p);
+        return p;
+    }
+    /** Sostituisce i data-URL di un foglio a mano con riferimenti. true se ha cambiato qualcosa. */
+    async function esternalizzaMano(m) {
+        if (!m || !m.im || !m.im.length)
+            return false;
+        let cambiato = false;
+        for (const x of m.im) {
+            if (typeof x.s !== 'string' || !x.s.startsWith('data:'))
+                continue;
+            const rif = await metti(x.s);
+            if (rif) {
+                x.s = rif;
+                cambiato = true;
+            }
+        }
+        return cambiato;
+    }
+    const haIncorporate = (m) => !!(m && m.im && m.im.some(x => typeof x.s === 'string' && x.s.startsWith('data:')));
+    /** Alleggerisce un record (appunto con foglio a mano): data-URL → riferimenti, poi salva. */
+    async function alleggerisci(id) {
+        const a = Stato.prendi(id);
+        if (!a || !a.mano || !haIncorporate(a.mano))
+            return false;
+        const m = a.mano, copia = { ...m, im: (m.im || []).map(x => ({ ...x })) };
+        if (!await esternalizzaMano(copia))
+            return false;
+        const r = Stato.prendi(id);
+        if (!r)
+            return false;
+        r.mano = copia;
+        Stato.salva(r, true);
+        return true;
+    }
+    /** Migrazione all'avvio: tutti gli appunti con immagini incorporate. Ritorna quanti record sono stati alleggeriti. */
+    async function migra() {
+        let n = 0;
+        for (const a of Stato.tutti('appunto'))
+            if (haIncorporate(a.mano) && await alleggerisci(a.id))
+                n++;
+        return n;
+    }
+    /** Carica su Drive gli allegati in attesa (solo file nuovi: niente sovrascritture né eliminazioni). */
+    async function caricaInAttesa() {
+        const l = attesa();
+        if (!l.length || typeof Drive === 'undefined' || !Drive.stato.email)
+            return 0;
+        const cart = await Drive.sottocartella(CARTELLA);
+        const resto = [];
+        let n = 0;
+        for (const rif of l) {
+            try {
+                const dato = mem.get(rif) || await leggiIdb(rif);
+                if (!dato)
+                    continue; // sparito in locale: niente da caricare
+                if (!await Drive.trovaFile(nomeFile(rif), cart)) {
+                    await Drive.carica(nomeFile(rif), cart, dato, 'text/plain');
+                    n++;
+                }
+            }
+            catch (e) {
+                console.warn('Allegati: upload rimandato', e);
+                resto.push(rif);
+            }
+        }
+        salvaAttesa(resto);
+        return n;
+    }
+    /** Logout / cambio account: l'archivio locale appartiene all'account precedente. */
+    async function svuota() {
+        mem.clear();
+        inArrivo.clear();
+        salvaAttesa([]);
+        const d = await db();
+        if (!d)
+            return;
+        await new Promise(ok => {
+            try {
+                const tx = d.transaction('img', 'readwrite');
+                tx.objectStore('img').clear();
+                tx.oncomplete = () => ok();
+                tx.onerror = () => ok();
+                tx.onabort = () => ok();
+            }
+            catch (e) {
+                console.warn('Allegati: svuotamento non riuscito', e);
+                ok();
+            }
+        });
+    }
+    return { eRif, rifDi, metti, subito, risolvi, esternalizzaMano, alleggerisci, migra, caricaInAttesa, svuota, attesa, PREFISSO, CARTELLA };
+})();
+
 // 07-appunti.ts — Appunti (v0.28, fase 1).
 //
 // Ispirazione (scouting 13/11): RemNote (appunti e flashcard sono la stessa cosa: «domanda :: risposta»
@@ -3264,6 +3796,8 @@ const Appunti = (() => {
             a.micro = col.micro;
         }
         Stato.salva(a);
+        if (a.mano && a.mano.im && a.mano.im.length)
+            Allegati.alleggerisci(a.id).catch(e => console.warn('Allegati: alleggerimento rimandato', e)); // v0.57 (A14)
         return sincronizzaCarte(a);
     }
     function nuovo(extra = {}) { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', creato: ymd(new Date()), ...extra }; }
@@ -5531,7 +6065,7 @@ const CreaQuiz = (() => {
             if (f.mimeType === 'application/pdf') {
                 const L = await caricaPdfJs();
                 passo('Leggo «' + f.name + '»…');
-                const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()) }).promise;
+                const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()), isEvalSupported: false }).promise;
                 const grezze = [];
                 for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
                     if (i % 25 === 0)
@@ -6081,12 +6615,14 @@ function sezioneDomande() {
     const elenco = (filtro === 'ricorrenti' ? Domande.ricorrenti() : filtro === 'aperte' ? Domande.aperte() : Domande.tutte().filter(x => x.esito === 'giusta'))
         .sort((a, b) => b.volte - a.volte || (a.ultima < b.ultima ? 1 : -1));
     const nR = Domande.ricorrenti().length, nA = Domande.aperte().length, nG = Domande.tutte().length - nA;
+    // v0.57 (BP6 · INP): primo disegno con 20 domande (prima 60 → ~730 nodi nel solo Registro errori); le altre su richiesta
+    const quante = UI.domTutte ? 60 : 20;
     const voce = (x) => {
         const risp = h('div.dom-risposta', { hidden: true }, h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'), x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null, rigaAppuntoErrore(x), x.esito === 'sbagliata' ? h('div.bottoni', null, h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'), h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);
         return h('div.dom-voce', null, h('div.tenue.piccolo', null, gruppoDomanda(x) + ' · ' + x.titolo + ' · sbagliata ' + x.volte + (x.volte === 1 ? ' volta' : ' volte') + (x.giuste ? ' · giusta ' + x.giuste : '')), h('div.dom-q', null, x.q), h('button.btn-testo', { onclick: (e) => { risp.hidden = !risp.hidden; e.target.textContent = risp.hidden ? 'Prima prova a rispondere, poi mostra la risposta' : 'Nascondi'; } }, 'Prima prova a rispondere, poi mostra la risposta'), risp);
     };
     return h('section.card', null, h('h2.card-titolo', null, 'Domande sbagliate'), h('div.tenue.piccolo', null, 'Raccolte in automatico dai quiz fatti nell\'app (sezione «Da rivedere»). Ricorrenti = sbagliate almeno 2 volte: ripassale prima delle simulazioni.'), h('div.segmenti', null, h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR), h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA), h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)), nA ? h('button.btn.neutro', { onclick: () => { const n = Carte.daErrori(Domande.aperte()).length; if (n)
-            avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null, elenco.length ? elenco.slice(0, 60).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'));
+            avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null, elenco.length ? elenco.slice(0, quante).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'), elenco.length > quante && quante < 60 ? h('button.btn.neutro', { onclick: () => { UI.domTutte = true; disegna(); } }, 'Mostra altre ' + (Math.min(60, elenco.length) - quante)) : null);
 }
 
 // 07-dominio.ts — BP2 (v0.52): architettura multidominio universale e profili utente.
@@ -6428,7 +6964,7 @@ const Dominio = (() => {
         if (!f)
             return;
         try {
-            const r = importa(JSON.parse(await f.text()));
+            const r = importa(JsonAI.leggiFile(await f.text()));
             avviso('📦 «' + r.pk.titolo + '» importato: ' + r.domande + ' domande' + (r.carte ? ', ' + r.carte + ' flashcard' : '') + (r.scartate ? ' (' + r.scartate + ' scartate perché incomplete)' : '') + '. Lo trovi in Studio.', 7000);
         }
         catch (e) {
@@ -6509,23 +7045,32 @@ const Dominio = (() => {
         if (!cap.length)
             throw new Error('Non trovo capitoli nell\'indice: una riga per capitolo, es. «1.2 Titolo .... 34».');
         const d = distribuisci(cap, o.inizio || ymd(new Date()), o.esame, Math.max(0.5, o.oreGiorno || 2));
-        const nome = o.nome.trim() || 'Nuova materia', codice = nuovoCodice(nome);
+        const nome = o.nome.trim() || 'Nuova materia';
+        // v0.57 (A17): stesso nome di un corso proprio già creato → lo aggiorno invece di crearne un doppione
+        const esiste = Studio.pkStep().find(p => p.proprio && p.titolo.trim().toLowerCase() === nome.toLowerCase() && p.materie.length === 1);
+        const codice = esiste ? esiste.materie[0].m : nuovoCodice(nome);
         const arch = o.archetipo || indovinaArchetipo(nome) || 'scienze_sperimentali';
         Stato.salva({ id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome, colore: coloreMateria(codice), archetipo: arch }, true);
         const mat = { m: codice, nome, libro: '', sottostep: d.capitoli.map((c, i) => {
                 const n = '1.' + (i + 1);
                 return { k: codice + n, n, titolo: c.titolo, posizione: c.pagina != null ? 'p. ' + c.pagina : '', data: c.data, microstep: [{ n: n + '.1', schede: [] }] };
             }) };
-        const pk = { tipo: 'step', id: 'corso-' + uid().slice(0, 8), step: 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo: nome, aggiornato: ymd(new Date()), proprio: true,
+        const pk = { tipo: 'step', id: esiste ? esiste.id : 'corso-' + uid().slice(0, 8), step: esiste ? esiste.step : 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo: nome, aggiornato: ymd(new Date()), proprio: true,
             descrizione: 'Piano creato dall\'indice del libro (' + d.capitoli.length + ' argomenti, esame il ' + o.esame + ').', risorse: { libri: {}, quiz: {} }, materie: [mat] };
         pk.imc = { archetipo: arch };
         salvaPacchetto(pk);
-        Stato.salva({ id: 'esame-' + uid().slice(0, 8), type: 'esame', updatedAt: 0, nome: 'Esame di ' + nome, data: o.esame });
+        const esameVecchio = Stato.tutti('esame').find(e => e.nome === 'Esame di ' + nome);
+        if (esameVecchio) {
+            esameVecchio.data = o.esame;
+            Stato.salva(esameVecchio);
+        }
+        else
+            Stato.salva({ id: 'esame-' + uid().slice(0, 8), type: 'esame', updatedAt: 0, nome: 'Esame di ' + nome, data: o.esame });
         return { pk, capitoli: d.capitoli, avvisi: d.avvisi };
     }
     async function testoDaPdf(f) {
         const L = await caricaPdfJs();
-        const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise, righe = [];
+        const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise, righe = [];
         for (let p = 1; p <= Math.min(doc.numPages, 12); p++) {
             const c = await (await doc.getPage(p)).getTextContent();
             let y = null, r = '';
@@ -6627,7 +7172,7 @@ const Dominio = (() => {
         const opzArch = Object.values(ARCHETIPI_DISCIPLINARI).map(a => [a.id, ICONE_ARCHETIPO[a.id] + ' ' + a.etichetta]);
         const materie = codiciMaterie().map(c => riga(nomeMateria(c), selettore(opzArch, archetipoMateria(c), function () { impostaArchetipo(c, this.value); })));
         const propri = Studio.pkStep().filter(x => x.proprio);
-        return scheda('Profilo e materie', h('div.tenue.piccolo', null, p.ruolo === 'owner' ? '👑 Account proprietario: programma di Medicina e cartelle Chimica, Biologia, Fisica.' : '👤 Account personale: dati e cartella Drive separati.'), riga('Profilo di studio', mod), h('div.tenue.piccolo', null, 'Ritenzione FSRS ' + Math.round(p.ritenzioneTarget * 100) + '% · gruppi da ' + p.dimensioneMicroLotto + ' domande · spiegazioni ' + p.tonoSpiegazioneAI.replace('_', ' ')), materie.length ? h('div.gruppo', null, h('div.gruppo-titolo', null, 'Tipo di materia (guida AI e controlli senza AI)'), ...materie) : null, h('div.bottoni', null, h('button.btn.neutro', { onclick: () => wizardPiano() }, '🗓 Crea piano dal libro'), h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack')), propri.length ? h('div.chips', null, ...propri.map(x => h('button.chip', { onclick: () => scaricaPacchetto(x) }, '⬇ ' + x.titolo))) : null, senzaAI() ? h('div.tenue.piccolo', null, '🔌 Modalità 100% senza AI: calendario, ripassi FSRS, flashcard, pacchetti e controlli delle risposte funzionano senza chiavi.') : null);
+        return scheda('Profilo e materie', h('div.tenue.piccolo', null, p.ruolo === 'owner' ? '👑 Account proprietario: programma di Medicina e cartelle Chimica, Biologia, Fisica.' : '👤 Account personale: dati e cartella Drive separati.'), riga('Profilo di studio', mod), h('div.tenue.piccolo', null, 'Ritenzione FSRS ' + Math.round(p.ritenzioneTarget * 100) + '% · gruppi da ' + p.dimensioneMicroLotto + ' domande · spiegazioni ' + p.tonoSpiegazioneAI.replace('_', ' ')), materie.length ? h('div.gruppo', null, h('div.gruppo-titolo', null, 'Tipo di materia (guida AI e controlli senza AI)'), ...materie) : null, h('div.bottoni', null, h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano'), h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack')), propri.length ? h('div.chips', null, ...propri.map(x => h('button.chip', { onclick: () => scaricaPacchetto(x) }, '⬇ ' + x.titolo))) : null, senzaAI() ? h('div.tenue.piccolo', null, '🔌 Modalità 100% senza AI: calendario, ripassi FSRS, flashcard, pacchetti e controlli delle risposte funzionano senza chiavi.') : null);
     }
     return { ruolo, profilo, impostaModalita, ritenzioneProfilo, indovinaArchetipo, archetipoMateria, impostaArchetipo, catenaPreferita, promptTutor, senzaAI,
         normalizzaDomanda, valida, importa, esporta, universale, domandeDi, haDomande, importaDaFile, scaricaPacchetto,
@@ -6673,7 +7218,8 @@ function vistaErrori() {
             i.sogliaErrori = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 70));
             Stato.salva(i);
         } });
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, sezioneDomande(), Regole.sezioneTipici(), AIGen.sezione(), h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
+    return h('div.vista-errori', null, // v0.57 (BP6 · INP): le card fuori schermo non vengono impaginate (content-visibility)
+    sezioneDomande(), Regole.sezioneTipici(), AIGen.sezione(), h('section.card', null, h('div.tenue.piccolo', null, 'Qui finiscono le schede con punteggio sotto la soglia o segnate "da rifare". Rifalle e inserisci il nuovo punteggio: escono da sole. Compaiono anche nei giorni del piano di raffinamento.'), riga('Soglia', soglia, h('span.dopo', null, '%'))), lista.length ? null : vuoto('Nessuna scheda da rifare. 🎉'), Array.from(perMat.entries()).map(([m, xs]) => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m) } }, nomeMateria(m) + ' · ' + xs.length), xs.sort((a, b) => (Studio.prog(a.s.id).punteggio ?? 101) - (Studio.prog(b.s.id).punteggio ?? 101)).map(x => {
         const p = Studio.prog(x.s.id);
         return h('button.voce-lista', { onclick: () => apriScheda(x.pk, x.mat.m, x.mi.n, x.s) }, h('span.barra', { style: { background: coloreMateria(m) } }), h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, x.mi.n + ' · ' + x.s.titolo), h('span.voce-sotto', { style: { whiteSpace: 'normal' } }, (p.punteggio != null ? p.punteggio + '%' : 'segnata a mano') + (p.data ? ' · ' + fmt(daYmd(p.data), { day: 'numeric', month: 'short' }) : '') + (p.nota ? ' · ' + p.nota.slice(0, 60) : ''))));
     }))));
@@ -7338,11 +7884,25 @@ function apriGeneratore(base, sostituisci) {
     }
     disegnaPasso();
 }
-/** Pulsanti nella vista Piano: genera, e per i piani generati rigenera/elimina. */
+/** v0.57 (BP6 · T7-3): UN solo ingresso «＋ Crea piano» che offre le tre modalità (prima erano tre pulsanti sparsi). */
+async function scegliPiano() {
+    const m = await chiedi('＋ Crea piano', [
+        { testo: '✨ Genera un piano dalle tue schede', valore: 'gen' },
+        { testo: '✨ Crea Piano Intelligente (FSRS, livelli L1–L5)', valore: 'ai' },
+        { testo: '🗓 Crea piano dal libro (indice + data esame)', valore: 'libro' }
+    ], 'Scegli da dove partire: dalle schede già nei tuoi corsi, da vincoli e ritenzione su misura, oppure dall’indice di un libro.');
+    if (m === 'gen')
+        apriGeneratore();
+    else if (m === 'ai')
+        PianiAI.apri();
+    else if (m === 'libro')
+        Dominio.wizardPiano();
+}
+/** Pulsanti nella vista Piano: crea (ingresso unico), e per i piani generati rigenera/elimina. */
 function bottoniGeneratore(p) {
     const gen = p && /^gen-/.test(p.id) ? p : null;
     const nas = !!p && Studio.nascosto(p.id);
-    return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null, h('button.btn.neutro', { onclick: () => apriGeneratore() }, '✨ Genera un piano'), PianiAI.bottoni(p), // v0.55 (BP4): «✨ Crea Piano Intelligente» + Pausa / Ricalcola / Elimina dei piani ai_neuro
+    return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null, h('button.btn', { onclick: () => scegliPiano() }, '＋ Crea piano'), PianiAI.bottoni(p), // v0.55 (BP4): Pausa / Ricalcola / Elimina dei piani ai_neuro (la creazione passa da scegliPiano)
     p && Studio.pkPiani().length > 1 ? h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '👁 Mostra di nuovo' : '🙈 Nascondi') : null, gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null, gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') {
             Generatore.elimina(gen.id);
             UI.studioPiano = '';
@@ -7987,60 +8547,8 @@ const IA = (() => {
                 out.push({ nome: NOMI[p] + ' ' + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' }); });
         return out;
     }
-    // v0.45 (BP1 §4.6): lettura robusta del JSON restituito dai modelli.
-    const LATEX = new Set(('frac dfrac tfrac sqrt text textrm mathrm mathbf mathit operatorname times cdot div pm mp neq ne leq le geq ge approx sim propto infty partial nabla int sum prod lim log ln exp sin cos tan to rightarrow leftarrow Rightarrow rightleftharpoons leftrightarrow left right bar vec hat dot overline underline ' +
-        'alpha beta gamma Gamma delta Delta epsilon varepsilon zeta eta theta Theta iota kappa lambda Lambda mu nu xi Xi pi Pi rho sigma Sigma tau upsilon phi Phi varphi chi psi Psi omega Omega degree circ ce pu quad qquad newline not in notin cup cap subset forall exists rm bf it').split(' '));
-    /** Raddoppia i backslash del LaTeX SOLO dentro le stringhe JSON: `\\` già doppi, `\uXXXX` e i veri escape (\n, \t, \" …) restano. */
-    function riparaLatex(t) {
-        return t.replace(/"(?:[^"\\]|\\.)*"/gs, s => s.replace(/\\(\\|u[0-9a-fA-F]{4}|[a-zA-Z]+|[\s\S])/g, (m, x) => {
-            if (x === '\\' || /^u[0-9a-fA-F]{4}$/.test(x))
-                return m; // già escapato · unicode valido
-            if (!/^[a-zA-Z]/.test(x))
-                return '"/'.includes(x) ? m : '\\\\' + x; // \" \/ validi; \( \, \[ … sono LaTeX
-            if (LATEX.has(x))
-                return '\\\\' + x; // comando LaTeX intero (limite noto: \nu \tau \theta …)
-            if (/^[bfnrt]/.test(x))
-                return m; // vero escape JSON seguito da testo (es. \nnuovo)
-            return '\\\\' + x; // \l \s \c… invalidi in JSON → LaTeX
-        }));
-    }
-    /** Toglie <think>, fence ``` e testo intorno; estrae il PRIMO JSON bilanciato (fuori dalle stringhe), ripara il LaTeX, poi JSON.parse. */
-    function parseJsonSicuro(raw) {
-        let t = String(raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').replace(/```(?:json)?/gi, '');
-        const i = t.search(/[{[]/);
-        if (i < 0)
-            throw new Error('risposta non in JSON');
-        let d = 0, s = false, e = false, j = i;
-        for (; j < t.length; j++) {
-            const c = t[j];
-            if (s) {
-                if (e)
-                    e = false;
-                else if (c === '\\')
-                    e = true;
-                else if (c === '"')
-                    s = false;
-                continue;
-            }
-            if (c === '"')
-                s = true;
-            else if (c === '{' || c === '[')
-                d++;
-            else if (c === '}' || c === ']') {
-                d--;
-                if (!d)
-                    break;
-            }
-        }
-        t = t.slice(i, j + 1);
-        // sempre riparare prima: «\frac» è JSON valido (\f = form feed) ma va letto come LaTeX
-        try {
-            return JSON.parse(riparaLatex(t));
-        }
-        catch (_) {
-            throw new Error('risposta non in JSON valido');
-        }
-    }
+    // v0.45 (BP1 §4.6) → v0.57 (A15): il parser è uno solo, in 01-json.ts.
+    const parseJsonSicuro = (raw) => JsonAI.parseSicuro(raw);
     const json = parseJsonSicuro;
     /** Accorcia i messaggi di testo più lunghi finché il totale sta sotto `lim` caratteri (i brevi restano interi; immagini intatte). */
     function accorcia(msgs, lim) {
@@ -9218,9 +9726,21 @@ const CACHE_IMG = new Map();
 function imgPronta(s, poi) {
     let i = CACHE_IMG.get(s);
     if (!i) {
-        i = new Image();
-        i.src = s;
-        CACHE_IMG.set(s, i);
+        const img = new Image();
+        i = img;
+        CACHE_IMG.set(s, img);
+        if (!Allegati.eRif(s))
+            img.src = s; // v0.57 (A14): riferimento all'archivio allegati
+        else {
+            const u = Allegati.subito(s);
+            if (u)
+                img.src = u;
+            else
+                Allegati.risolvi(s).then(v => { if (v)
+                    img.src = v;
+                else
+                    CACHE_IMG.delete(s); });
+        }
     }
     if (i.complete && i.naturalWidth)
         return i;
@@ -10383,7 +10903,7 @@ function caricaPdfJs() {
 }
 async function pdfInImmagini(f, max = 20) {
     const L = await caricaPdfJs();
-    const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+    const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise;
     const n = Math.min(doc.numPages, max), pagine = [], testi = [];
     for (let i = 1; i <= n; i++) {
         const p = await doc.getPage(i), v0 = p.getViewport({ scale: 1 }), sc = 1000 / v0.width, v = p.getViewport({ scale: sc });
@@ -10546,11 +11066,13 @@ const Ripassi = (() => {
         const dd = d - W[6] * (g - 3) * (10 - d) / 9;
         return { d: lim(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), s: lim(s2, 0.1, 36500) };
     }
-    /** Ritenzione desiderata per un giorno: più alta nei 14 giorni prima di un esame. */
-    function ritenzione(giorno) {
-        const base = imp().ritenzione || Dominio.ritenzioneProfilo(); // v0.52: senza scelta manuale, la ritenzione del profilo (proprietario: 0,90 come prima)
+    /** v0.57 (A16): UNICA fonte della ritenzione desiderata (carte, appunti, pianificatore).
+     *  Ordine: scelta manuale → profilo cognitivo (Dominio) → minimo richiesto dal chiamante (es. livello
+     *  d'intensità del piano) → 0,95 nei 14 giorni prima di un esame. Sempre in [0,50; 0,99]. */
+    function ritenzione(giorno, minimo = 0) {
+        const base = Math.max(imp().ritenzione || Dominio.ritenzioneProfilo(), minimo); // v0.52: senza scelta manuale, la ritenzione del profilo (proprietario: 0,90 come prima)
         const vicino = Stato.tutti('esame').some(e => { const g = giorni(giorno, e.data); return g >= 0 && g <= 14; });
-        return vicino ? Math.max(base, 0.95) : base;
+        return lim(vicino ? Math.max(base, 0.95) : base, 0.5, 0.99);
     }
     // ---------- Unità di ripasso: il SOTTO-STEP (decisione dell'utente, 11/11) ----------
     // Ripassare ogni scheda costerebbe ~150 ore prima dell'esame; per sotto-step ~20 ore. Quando un
@@ -11272,44 +11794,9 @@ const Neuro = (() => {
         return out;
     }
     // ---------- 6b. parser JSON tollerante + alias ----------
-    function riparaJson(t) {
-        let s = String(t || '').replace(/^﻿/, '').replace(/```(?:json|javascript|js)?/gi, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
-        s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
-        const a = s.search(/[\[{]/);
-        if (a < 0)
-            return s.trim();
-        const chiusa = s[a] === '[' ? ']' : '}', b = s.lastIndexOf(chiusa);
-        s = s.slice(a, b >= a ? b + 1 : undefined);
-        s = s.replace(/,\s*([}\]])/g, '$1');
-        return s;
-    }
-    function parseTollerante(t) {
-        const rip = [], raw = String(t || '');
-        try {
-            return { ok: true, dati: JSON.parse(raw), riparazioni: rip };
-        }
-        catch (_) { /* si ripara */ }
-        if (/```/.test(raw))
-            rip.push('blocco markdown rimosso');
-        const s = riparaJson(raw);
-        if (/,\s*[}\]]/.test(raw))
-            rip.push('virgole finali rimosse');
-        try {
-            return { ok: true, dati: JSON.parse(s), riparazioni: rip.concat(rip.length ? [] : ['caratteri spuri rimossi']) };
-        }
-        catch (_) { /* ultima prova: un oggetto per riga */ }
-        const righe = s.split('\n').map(x => x.trim().replace(/,$/, '')).filter(x => /^\{.*\}$/.test(x));
-        const v = [];
-        for (const r of righe) {
-            try {
-                v.push(JSON.parse(r));
-            }
-            catch (_) { /* scarta */ }
-        }
-        if (v.length)
-            return { ok: true, dati: v, riparazioni: rip.concat(['letto riga per riga']) };
-        return { ok: false, dati: null, riparazioni: rip };
-    }
+    // v0.57 (A15): un solo parser, in 01-json.ts (qui restano i nomi storici).
+    const riparaJson = (t) => JsonAI.riparaJson(t);
+    const parseTollerante = (t) => JsonAI.parseTollerante(t);
     const prendi = (x, ...k) => { for (const n of k)
         if (x[n] !== undefined && x[n] !== null && x[n] !== '')
             return x[n]; return undefined; };
@@ -11519,7 +12006,7 @@ const PianiAI = (() => {
     async function leggiFonte(id) {
         const blob = await Drive.scaricaBlob(id);
         const lib = await caricaPdfJs();
-        const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+        const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
         const n = Math.min(15, pdf.numPages), pagine = [];
         for (let a = 1; a <= n; a += 4) {
             const lotto = await Promise.all(Array.from({ length: Math.min(4, n - a + 1) }, async (_, i) => {
@@ -11551,6 +12038,7 @@ const PianiAI = (() => {
             minutiAltriPiani, statq: () => Stato.tutti('statq'), leggiFonte,
             ia: o.usaAI && !Dominio.senzaAI() ? (m, x) => IA.testo(m, 'genera', { maxOut: x.maxOut, archetipo: x.archetipo }).then(r => r.testo) : undefined,
             testoIndice: o.testoIndice, unita: o.unita, pid: o.pid, titolo: o.titolo,
+            ritenzione: min => Ripassi.ritenzione(ymd(new Date()), min), intervallo: Ripassi.intervallo, // v0.57 (A16): unica fonte
         };
     }
     function salvaPiano(p) { p.aggiornato = new Date().toISOString(); return Studio.importa(p); }
@@ -11759,12 +12247,11 @@ const PianiAI = (() => {
     }
     // ---------- azioni sul piano ----------
     function bottoni(p) {
-        const crea = h('button.btn.neutro', { onclick: () => apri() }, '✨ Crea Piano Intelligente');
         if (!eAI(p))
-            return crea;
+            return null; // v0.57: si crea da «＋ Crea piano» (scegliPiano), qui solo le azioni del piano
         const nas = Studio.nascosto(p.id);
         const dl = p.deload && p.deload.attivo ? p.deload : null;
-        return h('span', null, crea, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
+        return h('span', null, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
                 const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
                 const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
                 if (r.piano && p.deload) {
@@ -12018,59 +12505,16 @@ const Pianificatore = (() => {
         return out;
     }
     // ---------- Stadio 3: mapping del curriculum (1 chiamata AI JSON, fallback TOC) ----------
-    /** Recupera gli oggetti completi di un array JSON troncato (risposta AI interrotta a metà). */
-    function recuperaArrayParziale(raw) {
-        const s = String(raw || ''), k0 = s.indexOf('unita') >= 0 ? s.indexOf('[', s.indexOf('unita')) : s.indexOf('[');
-        if (k0 < 0)
-            return [];
-        const out = [];
-        let prof = 0, ini = -1, str = false, esc = false;
-        for (let k = k0 + 1; k < s.length; k++) {
-            const c = s[k];
-            if (str) {
-                if (esc)
-                    esc = false;
-                else if (c === '\\')
-                    esc = true;
-                else if (c === '"')
-                    str = false;
-                continue;
-            }
-            if (c === '"')
-                str = true;
-            else if (c === '{') {
-                if (prof === 0)
-                    ini = k;
-                prof++;
-            }
-            else if (c === '}') {
-                prof--;
-                if (prof === 0 && ini >= 0) {
-                    try {
-                        out.push(JSON.parse(s.slice(ini, k + 1)));
-                    }
-                    catch (_) { /* oggetto rotto */ }
-                    ini = -1;
-                }
-                if (prof < 0)
-                    break;
-            }
-            else if (c === ']' && prof === 0)
-                break;
-        }
-        return out;
-    }
+    /** v0.57 (A15): parsing delegato all'unico parser (01-json.ts). */
+    const recuperaArrayParziale = (raw) => JsonAI.recuperaArrayParziale(raw, 'unita');
     function leggiRisposta(r) {
-        if (r && typeof r === 'object')
-            return Array.isArray(r) ? r : Array.isArray(r.unita) ? r.unita : [];
-        const s = String(r || '').replace(/```(?:json)?/g, '');
-        try {
-            const j = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
-            if (j && Array.isArray(j.unita))
-                return j.unita;
+        const j = JsonAI.leggi(r);
+        if (j) {
+            const l = Array.isArray(j) ? j : Array.isArray(j.unita) ? j.unita : null;
+            if (l)
+                return l;
         }
-        catch (_) { /* troncato */ }
-        return recuperaArrayParziale(s);
+        return typeof r === 'string' ? recuperaArrayParziale(r) : [];
     }
     /** Validazione e grounding: fileId solo tra le sorgenti note, prerequisiti solo tra uid esistenti, valori nei limiti. */
     function normalizzaUnita(lista, struttura) {
@@ -12154,8 +12598,11 @@ const Pianificatore = (() => {
         return unita.map(u => ({ ...u, prereq: (u.prereq || []).filter((p, i, a) => p !== u.uid && pos.has(p) && pos.get(p) < pos.get(u.uid) && a.indexOf(p) === i) }));
     }
     const s0 = (arch, densita, errori) => arr1((BASE_S0[arch] || 2.5) * (1.25 - 0.12 * densita) * (errori ? 0.65 : 1));
-    function intervalliFsrs(S0) {
-        const f = clamp(S0 / 2.5, 0.6, 1.4), out = [];
+    /** Ancoraggi di ripasso. Con «iv» (curva FSRS di Ripassi) gli intervalli si allungano/accorciano secondo la
+     *  ritenzione r rispetto al riferimento 0,90; senza, restano quelli di base (modulo puro nei test). */
+    function intervalliFsrs(S0, r = 0.9, iv) {
+        const k = iv && r !== 0.9 ? clamp(iv(100, r) / Math.max(1, iv(100, 0.9)), 0.4, 2) : 1;
+        const f = clamp(S0 / 2.5, 0.6, 1.4) * k, out = [];
         for (const g of INTERVALLI)
             out.push(Math.max(out.length ? out[out.length - 1] + 1 : 1, Math.round(g * f)));
         return out;
@@ -12270,7 +12717,7 @@ const Pianificatore = (() => {
                 if (pref.liv === 1 && pref.parte === pref.parti) {
                     dataL1.set(pref.u.uid, g.data);
                     const min = Math.max(15, Math.round(pref.u.minutiBase * molt * QUOTE[0] * QUOTA_RIPASSO / INTERVALLI.length / 5) * 5);
-                    intervalliFsrs(s0(v.archetipo, pref.u.densita, errori || !!pref.u.priorita)).forEach((gg, i) => {
+                    intervalliFsrs(s0(v.archetipo, pref.u.densita, errori || !!pref.u.priorita), o.ritenzione, o.intervallo).forEach((gg, i) => {
                         const d0r = piu(g.data, gg), d = (giorni.find(x => x.data >= d0r) || { data: '' }).data;
                         if (!d || d > ultimo)
                             return;
@@ -12523,14 +12970,10 @@ const Pianificatore = (() => {
     function leggiDomandeCalibrazione(r) {
         let j = r;
         if (typeof r === 'string') {
-            const s = r.replace(/```(?:json)?/g, '');
-            try {
-                j = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
-            }
-            catch (_) {
+            j = JsonAI.leggi(r);
+            if (!j)
                 return null;
-            }
-        }
+        } // v0.57 (A15)
         const arr = Array.isArray(j) ? j : j && Array.isArray(j.domande) ? j.domande : null;
         if (!arr || arr.length < 3)
             return null;
@@ -12773,7 +13216,8 @@ const Pianificatore = (() => {
         if (m.fonte === 'ai')
             fatt = calcolaFattibilita(v, m.unita, ctx);
         const pid = dip.pid || 'ai-' + Date.now().toString(36);
-        const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo });
+        const rMin = v.livelloIntensita ? MATRICE_5_LIVELLI[v.livelloIntensita - 1].ritenzioneTargetFSRS : 0;
+        const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo, ritenzione: dip.ritenzione ? dip.ritenzione(rMin) : undefined, intervallo: dip.intervallo });
         piano.fonteMappa = m.fonte;
         return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: m.errore };
     }
@@ -12947,6 +13391,68 @@ const Banca = (() => {
     }
     /** Domande nascoste di una scheda (per poterle ripristinare). */
     function nascoste(sk) { return Stato.tutti('modq').filter(r => r.sk === sk && r.nascosta && !r.deleted); }
+    // v0.57 (BP6): tetto alle copie locali delle schede estratte (localStorage è piccolo e condiviso con tutta l'app).
+    // LRU: indice «imc-banca-uso» (chiave → ultimo uso); oltre MAX_COPIE o MAX_BYTE si tolgono le meno usate.
+    const USO = 'imc-banca-uso', MAX_COPIE = 40, MAX_BYTE = 1.5 * 1024 * 1024;
+    function indiceUso() {
+        let u = {};
+        try {
+            u = JSON.parse(localStorage.getItem(USO) || '{}') || {};
+        }
+        catch (e) {
+            console.warn('Banca: indice LRU illeggibile', e);
+        }
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('imc-banca-') && k !== USO && !(k in u))
+                u[k] = 0;
+        }
+        return u;
+    }
+    function scriviUso(u) { try {
+        localStorage.setItem(USO, JSON.stringify(u));
+    }
+    catch (e) {
+        console.warn('Banca: indice LRU non salvato', e);
+    } }
+    function usaCopia(k) { const u = indiceUso(); u[k] = Date.now(); scriviUso(u); }
+    /** Toglie le copie meno usate finché restano ≤ maxCopie e ≤ maxByte (escluso «tieni»). Ritorna quante ne ha tolte. */
+    function potaCopie(tieni = '', maxCopie = MAX_COPIE, maxByte = MAX_BYTE) {
+        const u = indiceUso(), ch = Object.keys(u).filter(k => localStorage.getItem(k) !== null).sort((a, b) => u[a] - u[b]);
+        let byte = ch.reduce((t, k) => t + (localStorage.getItem(k) || '').length * 2, 0), n = 0;
+        for (const k of ch) {
+            if (ch.length - n <= maxCopie && byte <= maxByte)
+                break;
+            if (k === tieni)
+                continue;
+            byte -= (localStorage.getItem(k) || '').length * 2;
+            localStorage.removeItem(k);
+            delete u[k];
+            n++;
+        }
+        for (const k of Object.keys(u))
+            if (localStorage.getItem(k) === null)
+                delete u[k];
+        scriviUso(u);
+        return n;
+    }
+    function salvaCopia(k, v) {
+        for (let prova = 0; prova < 2; prova++) {
+            try {
+                localStorage.setItem(k, v);
+                usaCopia(k);
+                potaCopie(k);
+                return;
+            }
+            catch (e) {
+                if (prova) {
+                    console.warn('Banca: spazio esaurito, la scheda si riestrae la prossima volta', e);
+                    return;
+                }
+                potaCopie(k, MAX_COPIE / 2, MAX_BYTE / 2);
+            }
+        }
+    }
     /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
     async function scheda(pk, m, micro, s) {
         const imc = Dominio.domandeDi(s.id); // v0.52: domande importate da un pacchetto .imcpack (record 'bancaimc')
@@ -12960,25 +13466,25 @@ const Banca = (() => {
             const c = localStorage.getItem(K);
             if (c) {
                 const j = JSON.parse(c);
+                usaCopia(K);
                 return { domande: applica(j.domande, s.id), immagini: j.immagini || {}, fonte: 'copia' };
             }
         }
-        catch (_) { /* niente */ }
+        catch (e) {
+            console.warn('Banca: copia locale illeggibile', e);
+        }
         if (!Drive.pronto)
             throw new Error('Questa scheda non è ancora nella banca: accedi a Google per estrarla dal quiz.');
         const html = await Drive.scaricaTesto(await Studio.idQuiz(pk, m, micro, s));
         const r = await estraiDaHtml(html, s.id);
-        try {
-            localStorage.setItem(K, JSON.stringify(r));
-        }
-        catch (_) { /* spazio esaurito: la riestraggo la prossima volta */ }
+        salvaCopia(K, JSON.stringify(r));
         return { domande: applica(r.domande, s.id), immagini: r.immagini, fonte: 'estratta' };
     }
-    return { carica, scheda, estraiDaHtml, applica, nascoste };
+    return { carica, scheda, estraiDaHtml, applica, nascoste, potaCopie, salvaCopia };
 })();
 const QuizApp = (() => {
     const L = ['A', 'B', 'C', 'D', 'E'], LIVELLI = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
-    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); // v0.56.2: anche negli attributi
     const fmt = (s) => esc(s).replace(/_\{([^}]*)\}/g, '<sub>$1</sub>').replace(/\^\{([^}]*)\}/g, '<sup>$1</sup>');
     const fmtQ = (s) => fmt(s).replace(/(…+|\.\.\.\.+)/g, '<span class="qz-buco">________</span>');
     const normR = (s) => { let t = String(s).toLowerCase(); if (t.normalize)
@@ -13834,8 +14340,8 @@ function interpreta(frase, rif = new Date()) {
     const base = inizioGiorno(rif);
     let giorno = base, dataEsplicita = false, tipo = 'evento', tutto = false;
     let rr;
-    if (togli(/(^|\s)(ricorda(mi)?|promemoria|todo|da fare)(\s*:)?(?=\s)/).length)
-        tipo = 'task';
+    if (togli(/(^|\s)(ricorda(mi)?|promemoria|todo|da fare)(\s+(di|che|per))?(\s*:)?(?=\s)/).length)
+        tipo = 'task'; // v0.57: «ricordami di X» → «X», non «Di X»
     if (togli(/\s(tutto il giorno|tutta la giornata)(?=\s)/).length)
         tutto = true;
     // ricorrenze: "ogni giorno", "ogni settimana", "ogni mese", "ogni lunedì e giovedì", "ogni 2 settimane"
@@ -15055,11 +15561,14 @@ const Studio = (() => {
             } // invariato: non lo riscarico
             let j;
             try {
-                j = JSON.parse((await Drive.scaricaTesto(id)).replace(/^\uFEFF/, ''));
+                j = JsonAI.leggiFile(await Drive.scaricaTesto(id));
             }
-            catch (_) {
+            catch (e) {
+                console.warn('Studio: pacchetto non scaricato', e);
                 return false;
             }
+            if (!j)
+                return false;
             const lista = Array.isArray(j) ? j : j && Array.isArray(j.pacchetti) ? j.pacchetti : [j];
             let buoni = 0;
             for (const c of lista)
@@ -15402,7 +15911,7 @@ async function apriPdf(fileId, pagina, titolo) {
         pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
         const dati = await PdfCache.prendi(fileId, (f, t) => { stato.textContent = 'Scarico il PDF… ' + (t ? Math.round(f / t * 100) + '%' : Math.round(f / 1048576) + ' MB') + ' (solo la prima volta)'; });
         stato.textContent = 'Apro il PDF…';
-        const doc = await pdfjsLib.getDocument({ data: dati }).promise;
+        const doc = await pdfjsLib.getDocument({ data: dati, isEvalSupported: false }).promise; // v0.56.2: CVE-2024-4367 (pdf.js 3.11)
         let p = Math.min(Math.max(1, pagina), doc.numPages), zoom = 1, giro = 0;
         const tela = h('canvas.pdf-tela'), num = h('span.pdf-num');
         async function mostra() {
@@ -15589,6 +16098,9 @@ function vistaStudio() {
         const piani = Studio.pkPiani(), scelto = piani.find(p => p.id === UI.studioPiano) || piani.find(p => { const g = p.giorni; return g.length && ymd(oggi()) <= g[g.length - 1].data; }) || piano;
         return h('div.pagina', null, seg, indicatoreStudio(), piani.length > 1 ? h('div.chips', null, piani.map(p => h('button.chip' + (p.id === scelto.id ? '.attivo' : ''), { onclick: () => { UI.studioPiano = p.id; UI.pianoScorso = false; disegna(); } }, p.titolo))) : null, scelto.nota ? h('div.tenue.piccolo', null, scelto.nota) : null, bottoniGeneratore(scelto), Ripianifica.inRitardo(ymd(new Date()), scelto).length && scelto.id !== (Studio.pkPiano() || { id: '' }).id ? h('button.btn.neutro', { onclick: () => apriRipianifica(scelto) }, '↻ Ripianifica i ritardi di questo piano') : null, vistaPiano(scelto));
     }
+    // v0.56.2 (U8): senza pacchetto-piano la vista Piano resta raggiungibile, con i due pulsanti del generatore
+    if (UI.studioVista === 'piano')
+        return h('div.pagina.piano-vuoto', null, seg, vuoto('Nessun piano di studio ancora. Generane uno dalle tue schede o crea un piano intelligente su misura.'), bottoniGeneratore());
     if (UI.studioVista !== 'schede')
         UI.studioVista = 'schede';
     if (!pk && Drive.collegato && !window._pkAuto) { // v0.42: primo avvio di un nuovo account: cerca da solo i pacchetti nel Drive
@@ -15599,7 +16111,7 @@ function vistaStudio() {
         } }).catch(() => { });
     }
     if (!pk)
-        return h('div.pagina', null, seg, vuoto('Nessun corso di studio. Crea il tuo corso (qualsiasi materia o esame) oppure aggiorna i pacchetti dal Drive.'), h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio'), bottoneDrive());
+        return h('div.pagina', null, seg, primiPassi());
     const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
     return h('div.pagina', null, seg, indicatoreStudio(), h('div.chips', null, pks.map(p => h('button.chip' + (p.id === pk.id ? '.attivo' : ''), { onclick: () => { UI.studioStep = p.id; disegna(); } }, (p.proprio ? '★ ' : '') + p.titolo)), h('button.chip', { onclick: () => editorCorso() }, '+ Nuovo corso')), pk.proprio ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => editorCorso(pk) }, 'Modifica corso'), h('button.btn.neutro', { onclick: () => editorSottostep(pk) }, '+ Aggiungi argomento')) : null, pk.descrizione ? h('div.tenue.piccolo', null, pk.descrizione) : null, h('section.card', null, h('h2.card-titolo', null, pk.titolo + ' · totale'), h('div.numeri', null, numero(T.Pf + '/' + T.P, 'prioritarie'), numero(T.Rf + '/' + T.R, 'raffinamento'), numero(T.pagLette.size + '/' + T.pagT.size, 'pagine lette')), barra(T.Pf, T.P)), pk.materie.map(m => {
         const N = Studio.numeri(m.sottostep.flatMap(Studio.schedeDi));
@@ -15610,6 +16122,12 @@ function vistaStudio() {
     }), h('div.tenue.piccolo', null, 'pag. = prioritarie / raffinamento / totali (unione, non somma). Aggiornato: ' + pk.aggiornato + '.'), bottoneDrive());
 }
 function numero(v, eti) { return h('div.numero', null, h('strong', null, v), h('span', null, eti)); }
+/** v0.57 (BP6 · T7-1): onboarding minimo senza corsi (anche senza login / ospite): Corso → Piano → Quiz/Schede. */
+function primiPassi() {
+    const passo = (n, titolo, testo, azione) => h('li.primo-passo', null, h('strong', null, n + ' ' + titolo), h('div.tenue.piccolo', null, testo), azione);
+    return h('section.scheda.primi-passi', { 'aria-label': 'Primi passi nello Studio' }, h('h2', null, '👋 Primi passi'), h('ol', null, passo('1.', 'Crea un corso', 'Qualsiasi materia o esame: capitoli, schede e domande stanno nel corso.', h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio')), passo('2.', 'Crea un piano', 'Dall’indice del libro, dalle tue schede o su misura con i ripassi FSRS.', h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')), passo('3.', 'Studia con quiz e schede', 'Ogni giorno Oggi ti propone le schede del piano e i ripassi in scadenza.', null)), Drive.collegato ? bottoneDrive()
+        : h('div.tenue.piccolo', null, '🔒 Senza accesso i dati restano solo su questo dispositivo. Collega Google Drive (in alto) per il backup e gli altri dispositivi.'));
+}
 function bottoneDrive() {
     return h('button.btn.neutro', { onclick: async () => {
             if (serveGoogle())
@@ -16153,6 +16671,7 @@ const UI = {
     q: '',
     studioVista: 'schede',
     studioPiano: '',
+    domTutte: false, // v0.57: «Mostra altre» nell'elenco Errori
     copMateria: '',
     copStato: '',
     tabella: null,
@@ -16329,6 +16848,9 @@ function perGiorno(da, a) {
     }
     return m;
 }
+/** v0.57 (BP6 · INP): la cella del mese mostra ~12 caratteri; tagliare prima evita di impaginare testo invisibile
+ *  (al primo disegno la sagomatura del testo delle chip costava ~80 ms con CPU 4×). Il titolo intero resta nel dettaglio del giorno. */
+const chipMese = (t) => t.length > 18 ? t.slice(0, 18) : t;
 function vistaMese() {
     const primo = new Date(UI.data.getFullYear(), UI.data.getMonth(), 1);
     const inizio = lunedi(primo);
@@ -16351,7 +16873,7 @@ function vistaMese() {
                 UI.data = g;
                 disegna();
             } },
-        }, h('span.mese-num', null, String(g.getDate())), Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : coloreChiave(x.v.k) } }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k))), occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, o.ev.titolo)), occ.length > 2 ? h('span.mese-altro', null, '+' + (occ.length - 2)) : null, nTask ? h('span.mese-task', { title: nTask + ' promemoria' }) : null));
+        }, h('span.mese-num', null, String(g.getDate())), Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : coloreChiave(x.v.k) } }, chipMese(x.v.speciale ? x.v.t : Studio.etichetta(x.v.k)))), occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, chipMese(o.ev.titolo))), occ.length > 2 ? h('span.mese-altro', null, '+' + (occ.length - 2)) : null, nTask ? h('span.mese-task', { title: nTask + ' promemoria' }) : null));
     }
     // Sotto la griglia: dettaglio del giorno selezionato.
     const occSel = occorrenzeDelGiorno(UI.data), taskSel = taskDelGiorno(UI.data);
@@ -16853,14 +17375,33 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.56';
+const VERSIONE = '0.57.0';
+// ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
+/** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
+ *  con la superficie più critica del tema (--sup2) è ≥ 4,5:1. Un colore non esadecimale resta com'è. */
+function accentoTesto(hex, scuro) {
+    const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    if (!m)
+        return hex;
+    const rgb = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+    const lum = (c) => { const v = c.map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+    const fondo = lum(scuro ? [0x20, 0x24, 0x2d] : [0xec, 0xee, 0xf3]), verso = scuro ? 255 : 0;
+    const contrasto = (c) => { const a = lum(c); return (Math.max(a, fondo) + 0.05) / (Math.min(a, fondo) + 0.05); };
+    let c = rgb;
+    for (let p = 0.05; contrasto(c) < 4.5 && p <= 1.0001; p += 0.05)
+        c = rgb.map(x => Math.round(x + (verso - x) * p));
+    return '#' + c.map(x => x.toString(16).padStart(2, '0')).join('');
+}
+// ACCENTO-TESTO-FINE
 function applicaTema() {
     const i = imp();
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
     const r = document.documentElement, st = r.style;
     // v0.34: il vecchio blu predefinito passa al nuovo blu del rebranding
-    st.setProperty('--accento', !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento);
+    const accento = !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento;
+    st.setProperty('--accento', accento);
+    st.setProperty('--accento-testo', accentoTesto(accento, scuro)); // v0.56.2: testo accento ≥ 4,5:1 (WCAG AA) nei due temi
     r.dataset.animazioni = i.animazioni === 'no' ? 'no' : 'si';
     if (i.sfondo)
         st.setProperty('--bg', i.sfondo);
@@ -17100,6 +17641,7 @@ async function avvia() {
     attivaSimboli();
     Tocco.attiva();
     disegna();
+    setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500); // v0.57 (A14)
     avvisoNovita();
     Drive.precarica();
     Timer.parti();

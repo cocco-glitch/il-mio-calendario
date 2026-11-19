@@ -1,12 +1,13 @@
 // Service worker: tiene in cache i file dell'app per aprirla offline.
-// mwmv2g1f viene sostituita da build.mjs: a ogni build la cache si rinnova.
-const CACHE = 'imc-__VERSIONE__';
+// mwn1e0yg viene sostituita da build.mjs: a ogni build la cache si rinnova.
+const CACHE = 'imc-mwn1e0yg';
 const FILE = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icone/icona-180.png', 'icone/icona-192.png', 'icone/icona-512.png'];
 
 const PDFJS = ['pdf.min.js', 'pdf.worker.min.js'].map(f => 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/' + f);
 self.addEventListener('install', e => {
   // v0.50: niente skipWaiting qui: la nuova versione aspetta il tocco su «Aggiorna» (messaggio 'salta').
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILE)));
+  // v0.57: cache 'reload' = mai dalla cache HTTP del browser (eviterebbe file vecchi nella nuova versione)
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILE.map(f => new Request(f, { cache: 'reload' })))));
   // pdf.js è facoltativo: se la CDN non risponde l'install non deve fallire.
   caches.open('imc-lib').then(c => Promise.all(PDFJS.map(u => c.match(u).then(r => r || c.add(u)).catch(() => {})))).catch(() => {});
 });
