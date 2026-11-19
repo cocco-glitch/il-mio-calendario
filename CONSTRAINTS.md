@@ -30,11 +30,11 @@ Scelte di partenza:
 | Dimensione | Regola | Comando | Quando | Perché questo numero |
 |---|---|---|---|---|
 | Tipi | 0 errori | `npx tsc --noEmit` | ogni modifica | oggi 0 |
-| Logica | 77/77 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.58.0: 77/77 |
+| Logica | 80/80 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.58.4: 80/80 |
 | End-to-end | 0 falliti, saltati ≤ quelli in «Eccezioni» | `bash test/tutti.sh 2>&1 \| tail -n 35` (include `csp`, `v057_bp6`, `prestazioni`) | prima di pubblicare | v0.57: 44 ok, 1 saltato |
 | Dipendenze (esterno) | 0 vulnerabilità high+ | `npm audit --audit-level=high` | prima di pubblicare | oggi 0; unico controllo non scritto da noi |
 | Build | `dist/sw.js` senza `__VERSIONE__`; `VERSIONE` ≠ quella pubblicata | test nuovo (A3, A8) | prima di pubblicare | il bug del SW è passato inosservato da Fase 1 |
-| Peso | `app.js` ≤ 340 KB gzip | `test/prestazioni.py` | prima di pubblicare | v0.57: 315 KB; +8 % di margine |
+| Peso | `app.js` ≤ 306 KB gzip; `removeComments: true` in `tsconfig.json` | `test/prestazioni.py` + suite Node | prima di pubblicare | v0.58.4: 283 KB (era 338 con i commenti); +8 % di margine |
 | Tempi (CPU 4×, 4.655 record) | unione < 500 · Oggi < 130 · Agenda < 230 · Mese < 350 · Errori < 450 · Statistiche < 350 · salvataggio su Oggi < 80 ms · primo disegno di Mese ed Errori < 200 ms (INP) | `test/prestazioni.py` con `ok()` | prima di pubblicare | ~1,5× il peggiore misurato in T6; 200 ms = soglia INP «buono» |
 | Sicurezza | ogni `innerHTML` nuovo passa da `esc`/`md`/`htmlCarta`/`svgSicuro`; `getDocument` sempre con `isEvalSupported:false`; CSP senza `unsafe-eval`, `object-src 'none'`, `connect-src` senza jolly | grep nella suite Node + `test/v057_bp6.py` (XSS) + `test/csp.py` (unico test senza `bypass_csp`) | ogni task | T3-1/T3-2, A13 |
 | Accessibilità minima | ogni controllo con nome accessibile (oggi 0 senza nome su 60); dialoghi chiudibili con Esc; testo ≥ 4,5:1 nei due temi | `read_page` nel browser integrato + test Playwright nuovo | fine task UI | WCAG 2.1 AA, T8 |

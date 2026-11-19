@@ -7,7 +7,7 @@
     "outDir": "build-tmp",
     "rootDir": "src",
     "moduleDetection": "legacy",
-    "removeComments": false
+    "removeComments": true
   },
   "include": ["src/*.ts"]
 }

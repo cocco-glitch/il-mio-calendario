@@ -194,3 +194,6 @@ Chiavi Gemini nuove «AQ.» accettate (Bearer → x-goog-api-key → ?key=). I m
 - 2026-11-19 · Validatore locale (zero token) prima di «Importa», salvato nell'innesto (`rapporto`): bloccanti (opzioni ≠ 4, esatta fuori 0..3, ID duplicato nella stessa parte, JSON illeggibile) saltano solo la domanda/parte; avvisi (18/scheda, 18–25 schede, L1–L4 25/35/25/15 ±3, posizione di `esatta`, corretta più lunga >25%, gemelle, erroreTipico, spiegazioneDistrattori, fonti «da verificare», BRAC 45–50) non bloccano.
 - 2026-11-19 · Ripassi FSRS con `target` = id schede dell'app (+1/+3/+7 g); la data del pacchetto resta solo nella nota · come v0.58.1.
 - 2026-11-19 · Banca: già in IndexedDB (`bancaimc`), nessuno spostamento; misura 1.710 domande in 5 step: preparazione + salvataggio 24 ms.
+
+## v0.58.4 — Peso (19/11)
+- 2026-11-19 · `removeComments: true` in `tsconfig.json`: `app.js` 338 → 283 KB gzip senza cambiare codice · i commenti restano nel sorgente `src/`, nessun test leggeva commenti dalla build, nessun `/*!` di licenza in `src/` (pdf.js è caricato a parte). Soglia peso stretta a 306 KB (+8 %) e test Node che blocca il ritorno a `false`.

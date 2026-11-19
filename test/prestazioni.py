@@ -43,5 +43,5 @@ with sync_playwright() as p:
     print('dimensione dati.json: %d kB'%(pg.evaluate("JSON.stringify(Stato.esporta()).length")//1024)); print('lapidi rimosse:', pg.evaluate('Stato.pulisci()')); print('dopo la pulizia: %d kB'%(pg.evaluate("JSON.stringify(Stato.esporta()).length")//1024)); print('rientrano dalla sync:', pg.evaluate("Stato.unisci([{id:'ntf-0',type:'notifica',updatedAt:1,at:0,h:'x',titolo:'t',deleted:true}])"))
     print('errori:',errs or 'nessuno'); ok(not errs, 'nessun errore di pagina')
 kb = len(gzip.compress(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist', 'app.js'), 'rb').read(), 9)) / 1024
-ok(kb <= 340, 'app.js gzip <= 340 KB (%d KB)' % kb)
+ok(kb <= 306, 'app.js gzip <= 306 KB (%d KB)' % kb)
 print('TUTTO OK' if not err else '%d FALLITI' % len(err))
