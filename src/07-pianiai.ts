@@ -29,7 +29,7 @@ const PianiAI = (() => {
   async function leggiFonte(id: string): Promise<FonteTesto | null> {
     const blob = await Drive.scaricaBlob(id);
     const lib = await caricaPdfJs();
-    const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+    const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
     const n = Math.min(15, pdf.numPages), pagine: string[] = [];
     for (let a = 1; a <= n; a += 4) {
       const lotto = await Promise.all(Array.from({ length: Math.min(4, n - a + 1) }, async (_, i) => {

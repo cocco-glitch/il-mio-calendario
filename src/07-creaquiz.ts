@@ -55,7 +55,7 @@ const CreaQuiz = (() => {
     try {
       if (f.mimeType === 'application/pdf') {
         const L = await caricaPdfJs(); passo('Leggo «' + f.name + '»…');
-        const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()) }).promise;
+        const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()), isEvalSupported: false }).promise;
         const grezze: { i: number; t: string }[] = [];
         for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
           if (i % 25 === 0) passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);

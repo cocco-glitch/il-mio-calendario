@@ -348,7 +348,7 @@ async function apriPdf(fileId: string, pagina: number, titolo: string): Promise<
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
     const dati = await PdfCache.prendi(fileId, (f, t) => { stato.textContent = 'Scarico il PDF… ' + (t ? Math.round(f / t * 100) + '%' : Math.round(f / 1048576) + ' MB') + ' (solo la prima volta)'; });
     stato.textContent = 'Apro il PDF…';
-    const doc = await pdfjsLib.getDocument({ data: dati }).promise;
+    const doc = await pdfjsLib.getDocument({ data: dati, isEvalSupported: false }).promise;   // v0.56.2: CVE-2024-4367 (pdf.js 3.11)
     let p = Math.min(Math.max(1, pagina), doc.numPages), zoom = 1, giro = 0;
     const tela = h('canvas.pdf-tela') as HTMLCanvasElement, num = h('span.pdf-num');
     async function mostra(): Promise<void> {
@@ -501,6 +501,10 @@ function vistaStudio(): HTMLElement {
       Ripianifica.inRitardo(ymd(new Date()), scelto).length && scelto.id !== (Studio.pkPiano() || { id: '' }).id ? h('button.btn.neutro', { onclick: () => apriRipianifica(scelto) }, '↻ Ripianifica i ritardi di questo piano') : null,
       vistaPiano(scelto));
   }
+  // v0.56.2 (U8): senza pacchetto-piano la vista Piano resta raggiungibile, con i due pulsanti del generatore
+  if (UI.studioVista === 'piano') return h('div.pagina.piano-vuoto', null, seg,
+    vuoto('Nessun piano di studio ancora. Generane uno dalle tue schede o crea un piano intelligente su misura.'),
+    bottoniGeneratore());
   if (UI.studioVista !== 'schede') UI.studioVista = 'schede';
   if (!pk && Drive.collegato && !(window as any)._pkAuto) {   // v0.42: primo avvio di un nuovo account: cerca da solo i pacchetti nel Drive
     (window as any)._pkAuto = true;

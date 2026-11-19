@@ -167,3 +167,9 @@ Altro → Spiegazioni AI → «Memoria degli assistenti»: vedere e far dimentic
 
 ## v0.44.1 — Chiavi AI e modelli disponibili
 Chiavi Gemini nuove «AQ.» accettate (Bearer → x-goog-api-key → ?key=). I modelli non sono più fissi: GET /models di Groq e Gemini (ricordato 12 h) e per ogni ruolo il migliore che la chiave può usare; modelli ritirati o senza accesso saltati; anche Spiega.chat ripiega sui disponibili. Finestra «Pacchetti dal Drive» con tasto Fatto.
+
+## Audit pre-BP6 (19/11)
+- 2026-11-19 · v0.56.2 di sicurezza prima della BP6: pdf.js con `isEvalSupported:false`, SW `replaceAll`, `esc` unico nel quiz, suite Node nel deploy, `onabort` IndexedDB, `VERSIONE` vera, contrasto tema scuro (+ vista Piano raggiungibile se non già fatta) · tutte < 1 h, una è urgente (CVE-2024-4367).
+- 2026-11-19 · Asticella di qualità scritta in `CONSTRAINTS.md` (floor, soglie, cricchetti, eccezioni con scadenza) · evitare che le correzioni della BP6 abbassino i controlli.
+- 2026-11-19 · La BP6 parte dalle priorità dell'audit, non dalla blueprint originale: TECH-01 rinviata, TECH-02 = unificare le tre fonti di ritenzione, TECH-03 su `07-appunti.ts`, TECH-10 come estensione di `06-drive.ts` · alcune premesse della blueprint non corrispondono al codice.
+- 2026-11-19 · Scope Drive `drive.readonly` vs Picker + `drive.file`: ancora aperta, da decidere all'avvio della BP6.

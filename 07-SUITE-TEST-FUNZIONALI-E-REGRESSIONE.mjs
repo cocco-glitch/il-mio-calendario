@@ -185,7 +185,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.56', () => vero(/const VERSIONE = '0\.56'/.test(leggi('09-main.ts'))));
+t('versione app 0.56.2', () => vero(/const VERSIONE = '0\.56\.2'/.test(leggi('09-main.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
@@ -442,6 +442,68 @@ await t('testQuestionario6Piu3Fallback: 3 domande AI (≤600 token, max 450) e f
   vero(ui.includes("IA.testo(m as any, 'genera', { maxOut: x.maxOut }") && ui.includes('Pianificatore.generaDomandeCalibrazione') && !/mistral|openrouter/i.test(ui), 'catena «genera», niente Mistral/OpenRouter');
   vero(/MAX_TOKEN_CALIBRAZIONE = 450/.test(leggi('07-pianificatore.ts')) && /BUDGET_CALIBRAZIONE = 600/.test(leggi('07-pianificatore.ts')), 'costanti budget');
 });
+// ---------- v0.56.2: urgenze pre-BP6 (audit A1–A4, A7, A9, U8) ----------
+const tuttiSrc = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).map(f => [f, leggi(f)]);
+t('U5 pdf.js: ogni getDocument con isEvalSupported:false (CVE-2024-4367)', () => {
+  const chiamate = tuttiSrc.flatMap(([f, s]) => s.split('\n').filter(r => /\.getDocument\(/.test(r)).map(c => [f, c.trim()]));
+  vero(chiamate.length >= 5, 'trovate ' + chiamate.length + ' chiamate');
+  for (const [f, c] of chiamate) vero(/isEvalSupported:\s*false/.test(c), f + ': ' + c);
+});
+t('U7 service worker: replaceAll del segnaposto, nessun __VERSIONE__ rimasto', () => {
+  const b = fs.readFileSync(path.join(RADICE, 'build.mjs'), 'utf8');
+  vero(/readFileSync\('public\/sw\.js', 'utf8'\)\.replaceAll\('__VERSIONE__'/.test(b), 'build.mjs usa replaceAll');
+  const sw = fs.readFileSync(path.join(RADICE, 'public', 'sw.js'), 'utf8');
+  vero((sw.match(/__VERSIONE__/g) || []).length >= 2, 'il sorgente ha più segnaposti (il caso che rompeva replace)');
+  const fatto = sw.replaceAll('__VERSIONE__', 'x1');
+  vero(!fatto.includes('__VERSIONE__') && fatto.includes("const CACHE = 'imc-x1'"), 'nome cache sostituito');
+  const dist = path.join(RADICE, 'dist', 'sw.js');
+  if (fs.existsSync(dist)) vero(!fs.readFileSync(dist, 'utf8').includes('__VERSIONE__'), 'dist/sw.js senza __VERSIONE__');
+});
+t('U6 esc del quiz: niente uscita dagli attributi (abuse case XSS)', () => {
+  const riga = leggi('07-quizapp.ts').split('\n').find(r => /^\s*const esc = \(s: any\) =>/.test(r));
+  vero(riga, 'esc trovata');
+  const esc = vm.runInNewContext('(' + riga.replace(/^\s*const esc = \(s: any\) =>/, '(s) =>').replace(/;\s*(\/\/.*)?$/, '') + ')');
+  for (const p of ['" onmouseover="alert(1)', "' onfocus='alert(1)' autofocus x='", '"><img src=x onerror=alert(1)>', '<script>alert(1)</script>']) {
+    const e = esc(p); vero(!/["'<>]/.test(e), 'resta un carattere pericoloso in ' + e);
+    const html = '<button data-r="' + e + '" title=\'' + e + '\'>' + e + '</button>';
+    eq((html.match(/["']/g) || []).length, 4, 'solo le virgolette dei due attributi: ' + html);
+  }
+  eq(esc('a & b "c" \'d\''), 'a &amp; b &quot;c&quot; &#39;d&#39;');
+});
+t('IndexedDB: ogni transazione readwrite gestisce onabort (Stato.scritto() mai appeso)', () => {
+  const db = leggi('02-db.ts'), tx = (db.match(/transaction\('records', 'readwrite'\)/g) || []).length, ab = (db.match(/tx\.onabort = \(\) => ko\(/g) || []).length;
+  vero(tx >= 2, 'transazioni ' + tx); eq(ab, tx, 'onabort per transazione');
+});
+await t('Contrasto: --accento-testo ≥ 4,5:1 nei due temi, CSS usa il token per il testo', async () => {
+  const { createRequire } = await import('node:module');
+  const ts = createRequire(import.meta.url)('typescript');
+  const m = leggi('09-main.ts'), da = m.indexOf('// ACCENTO-TESTO-INIZIO'), a = m.indexOf('// ACCENTO-TESTO-FINE');
+  vero(da >= 0 && a > da, 'marcatori');
+  const js = ts.transpileModule(m.slice(da, a), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+  const f = vm.runInNewContext(js + '\naccentoTesto', { Math });
+  const lum = h => { const v = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(x => x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+  const cr = (x, y) => { const p = lum(x), q = lum(y); return (Math.max(p, q) + 0.05) / (Math.min(p, q) + 0.05); };
+  vero(cr('#2f6bea', '#151821') < 4.5, 'il caso dell\'audit (3,72) parte sotto soglia');
+  for (const acc of ['#2f6bea', '#6c8cff', '#000080', '#ff9500', '#34c759', '#8e8e93', '#ffd60a']) {
+    for (const [scuro, fondi] of [[true, ['#0e1014', '#151821', '#171a21', '#20242d']], [false, ['#ffffff', '#f4f5f8', '#eceef3']]]) {
+      const c = f(acc, scuro); for (const b of fondi) vero(cr(c, b) >= 4.5, acc + (scuro ? ' scuro' : ' chiaro') + ' → ' + c + ' su ' + b + ' = ' + cr(c, b).toFixed(2));
+    }
+  }
+  eq(f('var(--x)', true), 'var(--x)', 'non esadecimale invariato');
+  const css = fs.readFileSync(path.join(RADICE, 'public', 'style.css'), 'utf8');
+  vero(!/(^|[;{\s])color: var\(--accento\)/m.test(css), 'nessun testo con var(--accento) diretto');
+  vero(/--accento-testo: var\(--accento\)/.test(css) && /\.btn-testo \{ color: var\(--accento-testo\)/.test(css), 'token in :root e .btn-testo');
+});
+t('U8 vista Piano raggiungibile senza PkPiano, con i due pulsanti del generatore', () => {
+  const s = leggi('07-studio.ts'), g = leggi('07-generatore.ts'), pa = leggi('07-pianiai.ts');
+  const vuota = s.indexOf("if (UI.studioVista === 'piano') return h('div.pagina.piano-vuoto'"), redir = s.indexOf("if (UI.studioVista !== 'schede') UI.studioVista = 'schede';");
+  vero(vuota > 0 && vuota < redir, 'stato vuoto prima del rimando a Schede');
+  vero(/piano-vuoto'[\s\S]{0,300}bottoniGeneratore\(\)/.test(s), 'bottoniGeneratore() nello stato vuoto');
+  vero(g.includes("'✨ Genera un piano'") && g.includes('PianiAI.bottoni(p)'), 'Genera un piano + PianiAI.bottoni');
+  vero(pa.includes('Crea Piano Intelligente'), '«✨ Crea Piano Intelligente»');
+});
+t('U3 VERSIONE con patch (A8)', () => vero(/const VERSIONE = '\d+\.\d+\.\d+';/.test(leggi('09-main.ts')), 'VERSIONE x.y.z'));
+
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();
 t('Pianificatore e interfaccia concatenati prima del quiz (uso solo a runtime)', () => vero(['07-pianificatore.ts', '07-pianiai.ts'].every(x => fl.indexOf(x) >= 0 && fl.indexOf(x) < fl.indexOf('07-quizapp.ts'))));
 

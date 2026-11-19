@@ -24,7 +24,7 @@ mkdirSync('dist');
 cpSync('public', 'dist', { recursive: true });
 writeFileSync('dist/app.js', app);
 const versione = Date.now().toString(36);
-writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replace('__VERSIONE__', versione));
+writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replaceAll('__VERSIONE__', versione));   // v0.56.2: tutte le occorrenze (prima restava il segnaposto)
 writeFileSync('dist/.nojekyll', '');
 execSync('node studio/genera.mjs', { stdio: 'inherit' });
 cpSync('studio/pacchetti', 'dist/studio', { recursive: true });

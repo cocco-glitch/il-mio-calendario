@@ -736,7 +736,7 @@ function caricaPdfJs(): Promise<any> {
 }
 async function pdfInImmagini(f: File, max = 20): Promise<{ pagine: { s: string; w: number; h: number }[]; testo: string }> {
   const L = await caricaPdfJs();
-  const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+  const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise;
   const n = Math.min(doc.numPages, max), pagine: { s: string; w: number; h: number }[] = [], testi: string[] = [];
   for (let i = 1; i <= n; i++) {
     const p = await doc.getPage(i), v0 = p.getViewport({ scale: 1 }), sc = 1000 / v0.width, v = p.getViewport({ scale: sc });

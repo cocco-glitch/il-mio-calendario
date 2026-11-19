@@ -68,6 +68,7 @@ const DB = (() => {
           for (const r of recs) st.put(r);
           tx.oncomplete = () => ok();
           tx.onerror = () => ko(tx.error);
+          tx.onabort = () => ko(tx.error || new Error('scrittura annullata (spazio esaurito?)'));   // v0.56.2: mai una promessa appesa
         });
       }
       for (const r of recs) mem[r.id] = r;
@@ -82,7 +83,7 @@ const DB = (() => {
         return new Promise((ok, ko) => {
           const tx = idb!.transaction('records', 'readwrite'), st = tx.objectStore('records');
           for (const id of ids) st.delete(id);
-          tx.oncomplete = () => ok(); tx.onerror = () => ko(tx.error);
+          tx.oncomplete = () => ok(); tx.onerror = () => ko(tx.error); tx.onabort = () => ko(tx.error || new Error('rimozione annullata'));
         });
       }
       for (const id of ids) delete mem[id];

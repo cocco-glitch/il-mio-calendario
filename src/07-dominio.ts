@@ -376,7 +376,7 @@ const Dominio = (() => {
   }
   async function testoDaPdf(f: File): Promise<string> {
     const L = await caricaPdfJs();
-    const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise, righe: string[] = [];
+    const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise, righe: string[] = [];
     for (let p = 1; p <= Math.min(doc.numPages, 12); p++) {
       const c = await (await doc.getPage(p)).getTextContent(); let y: number | null = null, r = '';
       for (const it of c.items as any[]) { const yy = Math.round(it.transform[5]); if (y !== null && Math.abs(yy - y) > 2) { righe.push(r); r = ''; } r += (r && !r.endsWith(' ') ? ' ' : '') + it.str; y = yy; }

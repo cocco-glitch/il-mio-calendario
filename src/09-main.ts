@@ -2,7 +2,23 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.56';
+const VERSIONE = '0.56.2';
+
+// ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
+/** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
+ *  con la superficie più critica del tema (--sup2) è ≥ 4,5:1. Un colore non esadecimale resta com'è. */
+function accentoTesto(hex: string, scuro: boolean): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return hex;
+  const rgb = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+  const lum = (c: number[]) => { const v = c.map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+  const fondo = lum(scuro ? [0x20, 0x24, 0x2d] : [0xec, 0xee, 0xf3]), verso = scuro ? 255 : 0;
+  const contrasto = (c: number[]) => { const a = lum(c); return (Math.max(a, fondo) + 0.05) / (Math.min(a, fondo) + 0.05); };
+  let c = rgb;
+  for (let p = 0.05; contrasto(c) < 4.5 && p <= 1.0001; p += 0.05) c = rgb.map(x => Math.round(x + (verso - x) * p));
+  return '#' + c.map(x => x.toString(16).padStart(2, '0')).join('');
+}
+// ACCENTO-TESTO-FINE
 
 function applicaTema(): void {
   const i = imp();
@@ -10,7 +26,9 @@ function applicaTema(): void {
   document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
   const r = document.documentElement, st = r.style;
   // v0.34: il vecchio blu predefinito passa al nuovo blu del rebranding
-  st.setProperty('--accento', !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento);
+  const accento = !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento;
+  st.setProperty('--accento', accento);
+  st.setProperty('--accento-testo', accentoTesto(accento, scuro));   // v0.56.2: testo accento ≥ 4,5:1 (WCAG AA) nei due temi
   r.dataset.animazioni = (i as any).animazioni === 'no' ? 'no' : 'si';
   if (i.sfondo) st.setProperty('--bg', i.sfondo); else st.removeProperty('--bg');
   const FONT: Record<string, string> = { sistema: '', arrotondato: 'ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif', serif: 'ui-serif, "New York", Georgia, "Times New Roman", serif', mono: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' };
