@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.58.5';
+const VERSIONE = '0.58.6';
 
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
@@ -155,7 +155,7 @@ function avvisoNovita(): void {
     if (localStorage.getItem('imc-novita-035')) return;
     if (!Stato.tutti<Task>('task').length && !Stato.tutti<Nota>('nota').length) { localStorage.setItem('imc-novita-035', '1'); return; }
   } catch (_) { return; }
-  chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], '• Scorri col dito a destra o sinistra per passare da una sezione all\'altra.\n• Tieni premuto un pulsante della barra, un esame o una voce del piano: compaiono le scorciatoie collegate.\n• Promemoria e Note ora sono in Altro (in alto) e restano nei riquadri di Oggi.\n• Nelle pagine a mano: due dita per ingrandire.')
+  chiedi('Nuova grafica', [{ testo: 'Ho capito', valore: 'ok' }], '• Scorri col dito a destra o sinistra per passare da una sezione all\'altra.\n• Tieni premuto un pulsante della barra, un esame o una voce del piano: compaiono le scorciatoie collegate.\n• Promemoria e Note ora sono nella sezione Altro della barra e restano nei riquadri di Oggi.\n• Nelle pagine a mano: due dita per ingrandire.')
     .then(() => { try { localStorage.setItem('imc-novita-035', '1'); } catch (_) { /* niente */ } });
 }
 

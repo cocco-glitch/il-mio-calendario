@@ -241,9 +241,9 @@ const CreaQuiz = (() => {
     if (!Spiega.attiva && !IA.gemini) { avviso('Serve una chiave AI gratuita: Altro → Spiegazioni AI.', 6000); return; }
     // v0.57.1 (D2): materie fisse solo per il proprietario; per gli altri solo dai propri dati (corsi + pacchetti)
     const materie = Array.from(new Set((Drive.eProprietario() ? ['Chimica', 'Biologia', 'Fisica'] : Stato.tutti<MateriaRec>('materia').map(m => m.nome)).concat(Stato.tutti<Rec>('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m: any) => m.nome))).filter(Boolean)));
-    if (!materie.length) materie.push('Studio');
     const arg = h('input.campo', { type: 'text', value: pre.argomento || '', placeholder: 'Argomento preciso (es. «leve del corpo umano e guadagno meccanico»)' }) as HTMLInputElement;
-    const mat = h('select.campo', null, ...materie.map(m => h('option', { value: m, selected: pre.materia ? n2(pre.materia) === n2(m) : false }, m))) as HTMLSelectElement;
+    // v0.58.6 (U4): niente più «Studio» d'ufficio: elenco vuoto → si scrive il nome, che crea la materia (riappare la volta dopo)
+    const mat = campoMateria(materie.map(m => [m, m] as [string, string]), materie.find(m => pre.materia && n2(pre.materia) === n2(m)) || '', nome => { materiaPerNome(nome); return nome.trim(); });
     let cosa = pre.cosa || 'misto';
     const cose: [string, string][] = [['misto', 'Misto (come le schede)'], ['teoria', 'Teoria e definizioni'], ['problemi', 'Problemi con calcoli'], ['trabocchetti', 'Trabocchetti']];
     const chips = h('div.chips', null, ...cose.map(([k, t]) => h('button.chip' + (k === cosa ? '.attivo' : ''), { type: 'button', onclick: (e: Event) => { cosa = k; chips.querySelectorAll('.chip').forEach(c => c.classList.remove('attivo')); (e.target as HTMLElement).classList.add('attivo'); } }, t)));
@@ -260,14 +260,14 @@ const CreaQuiz = (() => {
         h('span', null, h('b', null, f.name), h('span.tenue.piccolo', null, ' · ' + (f.cartella ? '«' + f.cartella + '» · ' : '') + f.perche.slice(0, 3).join(', '))))));
     };
     const fs = foglio({ titolo: '✨ Crea un quiz', etichettaSalva: 'Crea', corpo: h('div.modulo', null,
-      h('label', null, 'Argomento', arg), h('label', null, 'Materia', mat), h('div', null, h('div.piccolo', null, 'Cosa vuoi'), chips), h('label', null, 'Aiuta la ricerca (facoltativo)', extra),
+      h('label', null, 'Argomento', arg), h('label', null, 'Materia', mat.el), h('div', null, h('div.piccolo', null, 'Cosa vuoi'), chips), h('label', null, 'Aiuta la ricerca (facoltativo)', extra),
       h('div.tenue.piccolo', null, '💡 Più l\'argomento è preciso, migliori sono le fonti e le domande: nomina il capitolo o la lezione, aggiungi sinonimi e il nome del libro o del docente.'),
       h('button.btn.neutro', { type: 'button', onclick: cercaFonti }, '🔎 Cerca le fonti nel Drive'), stato, box),
       salva: () => {
         const scelte = fonti.filter(f => f.usa);
         if (!scelte.length) { avviso('Prima cerca e scegli almeno una fonte.'); return false; }
         const nM = cosa === 'problemi' ? 12 : 12, nF = 6;
-        avvia({ argomento: arg.value.trim(), materia: mat.value, cosa: ({ misto: 'mix di teoria, applicazioni, trabocchetti e problemi come nelle schede', teoria: 'soprattutto teoria e definizioni (Sbarramento), qualche applicativa', problemi: 'soprattutto problemi con calcoli (Problema), con passaggi numerici completi', trabocchetti: 'soprattutto trabocchetti sugli errori tipici' } as any)[cosa], extra: extra.value.trim(), fonti: scelte, nMcq: nM, nFill: nF });
+        avvia({ argomento: arg.value.trim(), materia: mat.value || 'Studio', cosa: ({ misto: 'mix di teoria, applicazioni, trabocchetti e problemi come nelle schede', teoria: 'soprattutto teoria e definizioni (Sbarramento), qualche applicativa', problemi: 'soprattutto problemi con calcoli (Problema), con passaggi numerici completi', trabocchetti: 'soprattutto trabocchetti sugli errori tipici' } as any)[cosa], extra: extra.value.trim(), fonti: scelte, nMcq: nM, nFill: nF });
       } });
     void fs;
     if (pre.argomento) setTimeout(cercaFonti, 200);

@@ -128,9 +128,22 @@ function vistaOggi(): HTMLElement {
   const domani = piuGiorni(g, 1);
   const occDomani = occorrenzeDelGiorno(domani);
 
+  // v0.58.6 (U10): chi non ha ancora nessun dato vede un solo riquadro «Inizia in 3 passi» al posto dei riquadri vuoti;
+  // chi usa già agenda o note (ma non ha corsi) lo vede sopra i riquadri soliti, finché non lo nasconde.
+  const senzaCorsi = !Studio.pkStep().length;
+  const vuotoTotale = senzaCorsi && !Stato.tutti<Rec>('evento').some(r => !r.deleted) && !Stato.tutti<Rec>('task').some(r => !r.deleted) && !Stato.tutti<Rec>('nota').some(r => !r.deleted);
+  if (vuotoTotale) return h('div.pagina', null,
+    h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))),
+    campoRapido(),
+    iniziaIn3Passi(),
+    occ.length ? scheda('Impegni di oggi', occ.map(o => rigaOcc(o, g))) : null,
+    tasks.length ? scheda('Promemoria', tasks.map(rigaTask)) : null,
+    occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null);
+
   return h('div.pagina', null,
     h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))),
     campoRapido(),
+    senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null,
     ordineWidget().map(w => {
       switch (w) {
         case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
@@ -152,6 +165,23 @@ function vistaOggi(): HTMLElement {
       return null;
     }),
   );
+}
+
+/** v0.58.6 (U10): corso → piano → prima sessione; sparisce da sola al primo corso. */
+function guidaNascosta(): boolean { try { return localStorage.getItem('imc-guida-3passi') === 'no'; } catch (_) { return false; } }
+function iniziaIn3Passi(nascondibile = false): HTMLElement {
+  const conPiano = Studio.pkPiani().length > 0;   // anche i piani «ai_neuro» sono pacchetti-piano
+  const passo = (n: string, titolo: string, testo: string, fatto: boolean, azione: HTMLElement | null) =>
+    h('li.primo-passo' + (fatto ? '.fatto' : ''), null, h('strong', null, (fatto ? '✓ ' : n + ' ') + titolo), h('div.tenue.piccolo', null, testo), fatto ? null : azione);
+  return h('section.scheda.primi-passi.inizia-3', { 'aria-label': 'Inizia in 3 passi' },
+    h('h2', null, '👋 Inizia in 3 passi'),
+    h('ol', null,
+      passo('1.', 'Crea un corso', 'Una materia o un esame: lì metti capitoli, schede e domande.', false, h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso')),
+      passo('2.', 'Crea un piano', 'Dalla data d’esame o dall’indice del libro: la materia si crea anche lì.', conPiano, h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')),
+      passo('3.', 'Fai la prima sessione', 'Da domani qui trovi «Studia ora» con le schede del giorno e i ripassi.', false, null)),
+    nascondibile ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => {
+      try { localStorage.setItem('imc-guida-3passi', 'no'); } catch (_) { /* senza memoria locale: torna alla prossima apertura */ }
+      disegna(); } }, 'Nascondi')) : null);
 }
 
 // ---------- CALENDARIO ----------

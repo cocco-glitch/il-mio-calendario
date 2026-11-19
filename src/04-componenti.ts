@@ -93,12 +93,15 @@ function chiedi(titolo: string, scelte: { testo: string; valore: string; pericol
 
 /** Avviso temporaneo in basso, sopra barra e timer (v0.58.5: in alto copriva Cerca/+ e Annulla/Salva dei fogli).
  *  Al massimo 2 visibili; lo stesso testo non si ripete (sostituisce il precedente). */
-function avviso(testo: string, durataMs = 4000, alTocco?: () => void): void {
+function avviso(testo: string, durataMs = 4000, alTocco?: () => void, azioni?: { testo: string; fn: () => void }[]): void {
   let zona = document.getElementById('avvisi');
   if (!zona) { zona = h('div', { id: 'avvisi', 'aria-live': 'polite' }); document.body.appendChild(zona); }
-  for (const vecchio of Array.from(zona.children)) if (vecchio.textContent === testo) vecchio.remove();
+  for (const vecchio of Array.from(zona.children)) if ((vecchio as HTMLElement).dataset.testo === testo) vecchio.remove();
   while (zona.children.length >= 2) (zona.querySelector('.avviso:not(.fisso)') || zona.firstElementChild!).remove();   // gli avvisi senza scadenza restano per ultimi
-  const el = h('div.avviso' + (durataMs > 0 ? '' : '.fisso'), { onclick: () => { el.remove(); if (alTocco) alTocco(); } }, testo);
+  const el = h('div.avviso' + (durataMs > 0 ? '' : '.fisso'), { 'data-testo': testo, onclick: () => { el.remove(); if (alTocco) alTocco(); } }, testo);
+  // v0.58.6 (U7): azioni esplicite (es. «Annulla», «Modifica») come pulsanti nel toast
+  if (azioni && azioni.length) el.appendChild(h('span.avviso-azioni', null, azioni.map(a =>
+    h('button.avviso-azione', { type: 'button', onclick: (e: Event) => { e.stopPropagation(); el.remove(); a.fn(); } }, a.testo))));
   zona.appendChild(el);
   if (durataMs > 0) setTimeout(() => el.remove(), durataMs);
 }

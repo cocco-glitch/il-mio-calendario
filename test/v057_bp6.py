@@ -143,8 +143,8 @@ with sync_playwright() as p:
     ok(pg.locator('button:has-text("Crea Piano Intelligente")').count() == 0 and pg.locator('button:has-text("＋ Crea piano")').count() >= 1, 'vista Piano: un solo pulsante di creazione')
     pg.click('button:has-text("＋ Crea piano")'); pg.wait_for_selector('dialog.dialogo-sfondo[open]')
     t = pg.inner_text('dialog.dialogo-sfondo')
-    ok('Genera un piano' in t and 'Crea Piano Intelligente' in t and 'Crea piano dal libro' in t, 'scegliPiano: le tre modalità in un dialogo')
-    pg.click('dialog.dialogo-sfondo button:has-text("Crea Piano Intelligente")'); pg.wait_for_timeout(250)
+    ok('Ho una data d’esame' in t and 'Parto dall’indice del libro' in t, 'scegliPiano: le modalità in lingua comune in un dialogo')
+    pg.click('dialog.dialogo-sfondo button:has-text("Ho una data d’esame")'); pg.wait_for_timeout(250)
     ok('Crea Piano Intelligente' in pg.inner_text('body'), 'scelta «Intelligente» apre la procedura di PianiAI')
     pg.evaluate("document.querySelectorAll('.visore, .foglio-sfondo, dialog').forEach(e => e.remove())")
     bt = pg.evaluate("""(() => { const n = PianiAI.bottoni(undefined); const ai = { id: 'ai-x', titolo: 'X', tipo: 'ai_neuro', giorni: [], vincoliAI: {} };

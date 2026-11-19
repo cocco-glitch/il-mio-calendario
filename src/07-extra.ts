@@ -231,6 +231,31 @@ function nuovoCodice(nome: string): string {
   let i = 2; while (usati.has(base.slice(0, 3) + 'X'.repeat(i - 1))) i++; return base.slice(0, 3) + 'X'.repeat(i - 1);
 }
 
+/** v0.58.6 (U4): codice della materia con quel nome (maiuscole e accenti a parte); se non esiste crea il record `materia`. */
+function materiaPerNome(nome: string): string {
+  const n = norm(nome.trim()); if (!n) return '';
+  const r = Stato.tutti<MateriaRec>('materia').find(m => !m.deleted && norm(m.nome) === n);
+  if (r) return r.codice;
+  const codice = nuovoCodice(nome);
+  Stato.salva({ id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome: nome.trim(), colore: coloreMateria(codice) } as MateriaRec);
+  return codice;
+}
+/** v0.58.6 (U4): scelta della materia senza vicoli ciechi. Elenco vuoto → campo di testo; altrimenti elenco + «＋ Nuova materia…».
+ *  `value` restituisce il valore dell'opzione scelta oppure `perNome(testo scritto)` (che crea la materia se serve); '' se manca. */
+function campoMateria(opzioni: [string, string][], valore: string, perNome: (nome: string) => string): { el: HTMLElement; readonly value: string } {
+  const testo = h('input.campo-materia-nuova', { type: 'text', placeholder: "Nome della materia o dell'esame", 'aria-label': 'Nuova materia', autocomplete: 'off' }) as HTMLInputElement;
+  const daTesto = (): string => {
+    const t = testo.value.trim(); if (!t) return '';
+    const gia = opzioni.find(o => norm(o[1]) === norm(t) || norm(o[0]) === norm(t));
+    return gia ? gia[0] : perNome(t);
+  };
+  if (!opzioni.length) return { el: testo, get value() { return daTesto(); } };
+  const NUOVA = '__nuova__';
+  const sel = selettore([...opzioni, [NUOVA, '＋ Nuova materia…']], opzioni.some(o => o[0] === valore) ? valore : opzioni[0][0], () => { testo.hidden = sel.value !== NUOVA; if (!testo.hidden) testo.focus(); });
+  testo.hidden = true;
+  return { el: h('span.campo-materia', null, sel, testo), get value() { return sel.value === NUOVA ? daTesto() : sel.value; } };
+}
+
 function editorCorso(pk0?: PkStep): void {
   const pk: PkStep = pk0 ? JSON.parse(JSON.stringify(pk0)) : { tipo: 'step', id: 'corso-' + uid().slice(0, 8), step: 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo: '', aggiornato: ymd(new Date()), proprio: true, risorse: { libri: {}, quiz: {} }, materie: [] };
   const titolo = h('input.titolo-grande', { type: 'text', placeholder: 'Es. Anatomia I, Inglese B2, Patente…', value: pk.titolo }) as HTMLInputElement;

@@ -247,11 +247,15 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
 
 /** v0.57 (BP6 · T7-3): UN solo ingresso «＋ Crea piano» che offre le tre modalità (prima erano tre pulsanti sparsi). */
 async function scegliPiano(): Promise<void> {
+  // v0.58.6 (U5): tre voci in lingua comune, niente sigle; «dalle schede» solo se ci sono schede nei corsi
+  const schede = tutteLeSchede().length > 0;
   const m = await chiedi('＋ Crea piano', [
-    { testo: '✨ Genera un piano dalle tue schede', valore: 'gen' },
-    { testo: '✨ Crea Piano Intelligente (FSRS, livelli L1–L5)', valore: 'ai' },
-    { testo: '🗓 Crea piano dal libro (indice + data esame)', valore: 'libro' }],
-    'Scegli da dove partire: dalle schede già nei tuoi corsi, da vincoli e ritenzione su misura, oppure dall’indice di un libro.');
+    { testo: '📅 Ho una data d’esame', valore: 'ai' },
+    { testo: '📖 Parto dall’indice del libro', valore: 'libro' },
+    ...(schede ? [{ testo: '🗂 Uso le schede dei miei corsi', valore: 'gen' }] : [])],
+    ['📅 Ti chiedo materia, data e quando puoi studiare: l’app distribuisce studio e ripassi.',
+      '📖 Incolli l’indice: un capitolo per riga, con le date fino all’esame.',
+      ...(schede ? ['🗂 Mette in fila le schede che hai già nei corsi.'] : [])].join('\n'));
   if (m === 'gen') apriGeneratore(); else if (m === 'ai') PianiAI.apri(); else if (m === 'libro') Dominio.wizardPiano();
 }
 

@@ -554,10 +554,12 @@ function primiPassi(): HTMLElement {
     h('h2', null, '👋 Primi passi'),
     h('ol', null,
       passo('1.', 'Crea un corso', 'Qualsiasi materia o esame: capitoli, schede e domande stanno nel corso.', h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio')),
-      passo('2.', 'Crea un piano', 'Dall’indice del libro, dalle tue schede o su misura con i ripassi FSRS.', h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')),
+      passo('2.', 'Crea un piano', 'Dalla data d’esame, dall’indice del libro o dalle tue schede: la materia si crea anche lì.', h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')),
       passo('3.', 'Studia con quiz e schede', 'Ogni giorno Oggi ti propone le schede del piano e i ripassi in scadenza.', null)),
     Drive.collegato ? bottoneDrive()
-      : h('div.tenue.piccolo', null, '🔒 Senza accesso i dati restano solo su questo dispositivo. Collega Google Drive (in alto) per il backup e gli altri dispositivi.'));
+      // v0.58.6 (U3): il pulsante Drive non è «in alto» ma in Altro: qui un pulsante diretto (login dal tocco, niente await prima)
+      : h('div', null, h('div.tenue.piccolo', null, '🔒 Senza accesso i dati restano solo su questo dispositivo. Collega Google Drive per il backup e gli altri dispositivi (anche da Altro → Google Drive).'),
+          h('div.bottoni', null, h('button.btn.neutro', { onclick: () => Drive.login() }, 'Collega Google Drive'))));
 }
 
 function bottoneDrive(): HTMLElement {

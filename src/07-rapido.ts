@@ -128,7 +128,8 @@ function campoRapido(): HTMLElement {
   const anteprima = h('div.rapido-anteprima');
   const invia = () => {
     const f = campo.value.trim(); if (!f) return;
-    if (Assistente.eRapida(f)) { const r = interpreta(f)!; const rec = creaDaRapido(r); campo.value = ''; anteprima.textContent = ''; avviso('Creato: ' + descriviRapido(r), 5000, () => rec.type === 'task' ? apriTask(rec as Task) : apriEvento(rec as Evento)); return; }
+    if (Assistente.eRapida(f)) { const r = interpreta(f)!; const rec = creaDaRapido(r); campo.value = ''; anteprima.textContent = ''; const apri = (): void => { const att = Stato.prendi<Rec>(rec.id); if (att && !att.deleted) { if (att.type === 'task') apriTask(att as Task); else apriEvento(att as Evento); } };
+      avviso('Creato: ' + descriviRapido(r), 7000, apri, [{ testo: 'Annulla', fn: () => { Stato.elimina(rec.id); avviso('Annullato.'); } }, { testo: 'Modifica', fn: apri }]); return; }
     campo.value = ''; anteprima.textContent = ''; Assistente.chiedi(f);
   };
   const campo = h('input.rapido', { type: 'text', placeholder: 'Chiedi o aggiungi… (es. «crea un quiz sulle leve»)', enterKeyHint: 'go', autocomplete: 'off',

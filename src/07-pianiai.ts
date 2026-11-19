@@ -79,7 +79,7 @@ const PianiAI = (() => {
   // ---------- wizard «✨ Crea Piano Intelligente» ----------
   function apri(): void {
     const mats = codiciMaterie();
-    const materia = selettore(mats.map(c => [c, nomeMateria(c)] as [string, string]), mats[0] || '');
+    const materia = campoMateria(mats.map(c => [c, nomeMateria(c)] as [string, string]), mats[0] || '', materiaPerNome);   // v0.58.6 (U4): mai un elenco vuoto
     const data = h('input', { type: 'date', value: ymd(piuGiorni(new Date(), 21)), min: ymd(piuGiorni(new Date(), 2)) }) as HTMLInputElement;
     const partenza = selettore([['da_zero', 'Da zero'], ['ripasso', 'Ripasso'], ['raffinamento', 'Raffinamento']], 'da_zero');
     const obiettivo = selettore([['1', '1 · Comprensione'], ['2', '2 · Elaborazione'], ['3', '3 · Applicazione'], ['4', '4 · Transfer']], '4');
@@ -108,7 +108,7 @@ const PianiAI = (() => {
     let domandeB: DomandaCalibrazione[] = [], scelteB: HTMLSelectElement[] = [];
     const boxB = h('div');
     const calibra = <HTMLButtonElement>h('button.btn.neutro', { onclick: async () => {
-      const m = materia.value; if (!m) return;
+      const m = materia.value; if (!m) { avviso('Scrivi il nome della materia.'); return; }
       calibra.disabled = true; boxB.textContent = 'Preparo 3 domande sulla materia…';
       try {
         let testo = indice.value;
@@ -156,7 +156,7 @@ const PianiAI = (() => {
       if (inCorso) return; inCorso = true;
       try {
         const v = vincoliBP5();
-        if (!v.materiaCodice || !v.dataTarget || !v.finestreSettimanali.length) { avviso('Scegli materia, data e almeno un giorno.'); return; }
+        if (!v.materiaCodice || !v.dataTarget || !v.finestreSettimanali.length) { avviso(!v.materiaCodice ? 'Scrivi il nome della materia.' : 'Scegli la data e almeno un giorno.'); return; }
         if (!!imp().gcalLeggiPrimary !== primary.checked) {
           const i = imp(), attiva = primary.checked; i.gcalLeggiPrimary = attiva || undefined; Stato.salva(i);
           // v0.56.1: opt-in → consenso incrementale subito (prima del calcolo); se negato si torna indietro, così il rinnovo
@@ -168,7 +168,12 @@ const PianiAI = (() => {
         }
         esito.textContent = 'Calcolo la fattibilità (0 token)…';
         const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: usaAI.checked, testoIndice: indice.value, titolo: '🧠 ' + nomeMateria(v.materiaCodice) + ' entro ' + v.dataTarget }));
-        if (!r.piano) { if (r.fatt.stato === 'critico') mostraRimedi(r.fatt); else esito.textContent = 'Nessun argomento trovato: incolla l\'indice o indica un PDF.'; return; }
+        if (!r.piano) { if (r.fatt.stato === 'critico') mostraRimedi(r.fatt); else {
+          // v0.58.6 (U4): materia nuova senza argomenti → niente vicolo cieco: apro «Avanzate» sul campo indice
+          esito.textContent = 'Per questa materia mi serve l’indice: incollalo qui sotto, un capitolo per riga, e tocca di nuovo Crea.';
+          const av = indice.closest('details') as HTMLDetailsElement | null; if (av) av.open = true;
+          indice.focus(); indice.scrollIntoView({ block: 'center' });
+        } return; }
         salvaPiano(r.piano);
         avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : '')
           + ' · L' + (r.piano.livelloIntensita || '?') + (r.piano.avvisiBio ? ' · 🛡 ' + r.piano.avvisiBio.join(' ') : ''), 8000);
@@ -180,7 +185,7 @@ const PianiAI = (() => {
     const sh = foglio({ titolo: '✨ Crea Piano Intelligente', etichettaSalva: 'Crea',
       corpo: h('div.modulo', null,
         // v0.58: 4 campi in vista; il resto (questionario incluso, facoltativo) in «Avanzate» chiuso
-        h('div.gruppo', null, riga('Materia', materia), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi),
+        h('div.gruppo', null, riga('Materia', materia.el), riga('Data obiettivo', data), riga('Ore max/giorno', oreMax), riga('Intensità', intensita), boxAvvisi),
         h('details.pai-avanzate', null, h('summary', null, 'Avanzate (facoltative)'),
           h('div.gruppo', null, riga('Partenza', partenza), riga('Obiettivo', obiettivo)),
           h('div.gruppo', null, riga('Giorni', h('span', null, ...giorni.map(c => h('label', { style: { marginRight: '6px' } }, c, GIORNI[(c as any)._g])))),
