@@ -16,7 +16,7 @@ def groq(route):
     route.fulfill(status=200, body=json.dumps({'choices': [{'message': {'content': 'Spiegazione AI di prova'}}]}), headers={'content-type': 'application/json', 'access-control-allow-origin': '*'})
 try:
     with sync_playwright() as p:
-        b = p.chromium.launch(); pg = b.new_page(viewport={'width': 390, 'height': 844})
+        b = p.chromium.launch(); pg = b.new_page(bypass_csp=True, viewport={'width': 390, 'height': 844})
         pg.add_init_script("try { localStorage.setItem('imc-quiz-modo','esame') } catch (e) {}")   # v0.54: quiz senza passo di certezza (default neuro)
         pg.on('pageerror', lambda e: errori.append(str(e)))
         pg.route('https://api.groq.com/**', groq)

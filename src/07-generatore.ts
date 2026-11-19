@@ -245,13 +245,23 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
   disegnaPasso();
 }
 
-/** Pulsanti nella vista Piano: genera, e per i piani generati rigenera/elimina. */
+/** v0.57 (BP6 · T7-3): UN solo ingresso «＋ Crea piano» che offre le tre modalità (prima erano tre pulsanti sparsi). */
+async function scegliPiano(): Promise<void> {
+  const m = await chiedi('＋ Crea piano', [
+    { testo: '✨ Genera un piano dalle tue schede', valore: 'gen' },
+    { testo: '✨ Crea Piano Intelligente (FSRS, livelli L1–L5)', valore: 'ai' },
+    { testo: '🗓 Crea piano dal libro (indice + data esame)', valore: 'libro' }],
+    'Scegli da dove partire: dalle schede già nei tuoi corsi, da vincoli e ritenzione su misura, oppure dall’indice di un libro.');
+  if (m === 'gen') apriGeneratore(); else if (m === 'ai') PianiAI.apri(); else if (m === 'libro') Dominio.wizardPiano();
+}
+
+/** Pulsanti nella vista Piano: crea (ingresso unico), e per i piani generati rigenera/elimina. */
 function bottoniGeneratore(p?: PkPiano): HTMLElement {
   const gen = p && /^gen-/.test(p.id) ? p as PianoGen : null;
   const nas = !!p && Studio.nascosto(p.id);
   return h('div', null, nas ? h('div.tenue.piccolo', null, '🙈 Piano nascosto: non compare in Oggi, nel calendario, nei ritardi e nei ripassi.') : null, h('div.bottoni', null,
-    h('button.btn.neutro', { onclick: () => apriGeneratore() }, '✨ Genera un piano'),
-    PianiAI.bottoni(p),   // v0.55 (BP4): «✨ Crea Piano Intelligente» + Pausa / Ricalcola / Elimina dei piani ai_neuro
+    h('button.btn', { onclick: () => scegliPiano() }, '＋ Crea piano'),
+    PianiAI.bottoni(p),   // v0.55 (BP4): Pausa / Ricalcola / Elimina dei piani ai_neuro (la creazione passa da scegliPiano)
     p && Studio.pkPiani().length > 1 ? h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '👁 Mostra di nuovo' : '🙈 Nascondi') : null,
     gen ? h('button.btn.neutro', { onclick: () => apriGeneratore({ ...gen.generato, inizio: gen.generato.inizio < ymd(new Date()) ? ymd(new Date()) : gen.generato.inizio, argomenti: gen.generato.argomenti.filter(k => /^TXT-/.test(k) || !Studio.stepFatto(k, gen)) }, gen.id) }, '↻ Rigenera con i dati di oggi') : null,
     gen ? h('button.btn.neutro', { onclick: async () => { if (await chiedi('Eliminare «' + gen.titolo + '»?', [{ testo: 'Elimina il piano', valore: 'si', pericolo: true }], 'Le schede fatte e i punteggi restano: sparisce solo il calendario.') === 'si') { Generatore.elimina(gen.id); UI.studioPiano = ''; disegna(); } } }, '🗑 Elimina') : null));

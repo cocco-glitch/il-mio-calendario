@@ -263,26 +263,9 @@ const Neuro = (() => {
   }
 
   // ---------- 6b. parser JSON tollerante + alias ----------
-  function riparaJson(t: string): string {
-    let s = String(t || '').replace(/^﻿/, '').replace(/```(?:json|javascript|js)?/gi, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
-    s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
-    const a = s.search(/[\[{]/); if (a < 0) return s.trim();
-    const chiusa = s[a] === '[' ? ']' : '}', b = s.lastIndexOf(chiusa); s = s.slice(a, b >= a ? b + 1 : undefined);
-    s = s.replace(/,\s*([}\]])/g, '$1');
-    return s;
-  }
-  function parseTollerante(t: string): { ok: boolean; dati: any; riparazioni: string[] } {
-    const rip: string[] = [], raw = String(t || '');
-    try { return { ok: true, dati: JSON.parse(raw), riparazioni: rip }; } catch (_) { /* si ripara */ }
-    if (/```/.test(raw)) rip.push('blocco markdown rimosso');
-    const s = riparaJson(raw);
-    if (/,\s*[}\]]/.test(raw)) rip.push('virgole finali rimosse');
-    try { return { ok: true, dati: JSON.parse(s), riparazioni: rip.concat(rip.length ? [] : ['caratteri spuri rimossi']) }; } catch (_) { /* ultima prova: un oggetto per riga */ }
-    const righe = s.split('\n').map(x => x.trim().replace(/,$/, '')).filter(x => /^\{.*\}$/.test(x));
-    const v: any[] = []; for (const r of righe) { try { v.push(JSON.parse(r)); } catch (_) { /* scarta */ } }
-    if (v.length) return { ok: true, dati: v, riparazioni: rip.concat(['letto riga per riga']) };
-    return { ok: false, dati: null, riparazioni: rip };
-  }
+  // v0.57 (A15): un solo parser, in 01-json.ts (qui restano i nomi storici).
+  const riparaJson = (t: string): string => JsonAI.riparaJson(t);
+  const parseTollerante = (t: string) => JsonAI.parseTollerante(t);
   const prendi = (x: any, ...k: string[]) => { for (const n of k) if (x[n] !== undefined && x[n] !== null && x[n] !== '') return x[n]; return undefined; };
   /** Una domanda in formato qualsiasi (alias it/en) → DomB; null se inutilizzabile. */
   function daAlias(x: any, sk: string): any | null {

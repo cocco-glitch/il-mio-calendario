@@ -16,7 +16,7 @@ ROMA = datetime.timezone(datetime.timedelta(hours=1))
 def ts(s): return str(int(datetime.datetime.fromisoformat(s).replace(tzinfo=ROMA).timestamp()))
 
 def apri(p, quando):
-    ctx = p.chromium.launch().new_context(viewport={'width': 390, 'height': 844}, locale='it-IT', timezone_id='Europe/Rome')
+    ctx = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, locale='it-IT', timezone_id='Europe/Rome')
     inviati = []
     def ntfy(r):
         try: inviati.append(json.loads(r.request.post_data or '{}'))

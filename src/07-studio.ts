@@ -130,7 +130,7 @@ const Studio = (() => {
       if (visti.has(id)) return false; visti.add(id);
       const noto = MemoriaIA.migliori('ricerca', 'pacchetto', 200).find(x => x.v && x.v.id === id);
       if (noto && mod && noto.v.modifiedTime === mod && noto.v.importato) { ultimiTrovati.push(...(noto.v.titoli || []).map((t: any) => ({ nome, cartella, tipo: t.tipo, titolo: t.titolo }))); return true; }   // invariato: non lo riscarico
-      let j: any; try { j = JSON.parse((await Drive.scaricaTesto(id)).replace(/^\uFEFF/, '')); } catch (_) { return false; }
+      let j: any; try { j = JsonAI.leggiFile(await Drive.scaricaTesto(id)); } catch (e) { console.warn('Studio: pacchetto non scaricato', e); return false; } if (!j) return false;
       const lista = Array.isArray(j) ? j : j && Array.isArray(j.pacchetti) ? j.pacchetti : [j];
       let buoni = 0;
       for (const c of lista) if (c && c.formato === 'pacchetto-studio') { buoni++; if (importa(c)) n++; ultimiTrovati.push({ nome, cartella, tipo: c.tipo, titolo: c.titolo || c.id }); }
@@ -510,7 +510,7 @@ function vistaStudio(): HTMLElement {
     (window as any)._pkAuto = true;
     Studio.caricaDaDrive().then(n => { if (n) { avviso('☁︎ Trovati nel tuo Drive ' + n + ' pacchetti di studio.'); disegna(); } }).catch(() => { /* senza accesso */ });
   }
-  if (!pk) return h('div.pagina', null, seg, vuoto('Nessun corso di studio. Crea il tuo corso (qualsiasi materia o esame) oppure aggiorna i pacchetti dal Drive.'), h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio'), bottoneDrive());
+  if (!pk) return h('div.pagina', null, seg, primiPassi());
 
   const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
   return h('div.pagina', null, seg, indicatoreStudio(),
@@ -535,6 +535,20 @@ function vistaStudio(): HTMLElement {
     bottoneDrive());
 }
 function numero(v: string, eti: string): HTMLElement { return h('div.numero', null, h('strong', null, v), h('span', null, eti)); }
+/** v0.57 (BP6 · T7-1): onboarding minimo senza corsi (anche senza login / ospite): Corso → Piano → Quiz/Schede. */
+function primiPassi(): HTMLElement {
+  const passo = (n: string, titolo: string, testo: string, azione: HTMLElement | null) =>
+    h('li.primo-passo', null, h('strong', null, n + ' ' + titolo), h('div.tenue.piccolo', null, testo), azione);
+  return h('section.scheda.primi-passi', { 'aria-label': 'Primi passi nello Studio' },
+    h('h2', null, '👋 Primi passi'),
+    h('ol', null,
+      passo('1.', 'Crea un corso', 'Qualsiasi materia o esame: capitoli, schede e domande stanno nel corso.', h('button.btn', { onclick: () => editorCorso() }, '+ Nuovo corso di studio')),
+      passo('2.', 'Crea un piano', 'Dall’indice del libro, dalle tue schede o su misura con i ripassi FSRS.', h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano')),
+      passo('3.', 'Studia con quiz e schede', 'Ogni giorno Oggi ti propone le schede del piano e i ripassi in scadenza.', null)),
+    Drive.collegato ? bottoneDrive()
+      : h('div.tenue.piccolo', null, '🔒 Senza accesso i dati restano solo su questo dispositivo. Collega Google Drive (in alto) per il backup e gli altri dispositivi.'));
+}
+
 function bottoneDrive(): HTMLElement {
   return h('button.btn.neutro', { onclick: async () => {
     if (serveGoogle()) return;

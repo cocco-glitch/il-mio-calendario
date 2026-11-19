@@ -13,7 +13,7 @@ def ok(c, m):
     print(('  ok  ' if c else ' FAIL ') + m)
     if not c: err.append(m)
 with sync_playwright() as p:
-    pg = p.chromium.launch().new_context(viewport={'width': 820, 'height': 1100}, locale='it-IT').new_page()
+    pg = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 820, 'height': 1100}, locale='it-IT').new_page()
     pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.goto(URL); pg.wait_for_selector('.tabbar')
     r = pg.evaluate('''() => [Calcolo.formatta(Calcolo.valuta('12*3,5')), Calcolo.formatta(Calcolo.valuta('2(3+1)^2')), Calcolo.formatta(Calcolo.valuta('sin(30)')), Calcolo.formatta(Calcolo.valuta('√16 + 10%')),

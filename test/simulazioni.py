@@ -17,7 +17,7 @@ QUIZ = r'''<!doctype html><html><head><meta charset="utf-8"></head><body><main i
 <script>document.getElementById('fine').onclick=function(){document.getElementById('app').innerHTML='<section class="card"><div class="score"><div class="big">24<small> / 31</small></div><div class="pct">77% di risposte corrette</div></div><div class="levels"><div class="lvrow"><span>Sbarramento</span><span class="bar"></span><span class="n">10/11</span></div><div class="lvrow"><span>Completamento</span><span class="bar"></span><span class="n">9/16</span></div><p class="weak"><b>Punto debole:</b> Completamento (7 errori su 16, 44%)</p></div></section>'};</script></body></html>'''
 
 with sync_playwright() as p:
-    ctx = p.chromium.launch().new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome')
+    ctx = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome')
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.clock.install(time='2026-11-22T09:00:00+01:00')
     pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("!!Studio.pkPiano()")

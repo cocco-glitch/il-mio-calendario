@@ -29,16 +29,19 @@ fs.writeFileSync(path.join(TMP, 'stub.d.ts'), 'interface Rec { id: string; type:
   + 'interface VocePiano { k: string; t: string; d?: string; speciale?: boolean; }\n'
   + 'interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }\n'
   + "interface PkPiano { tipo: 'piano'; id: string; modo?: string; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; }\n");
+fs.copyFileSync(path.join(SRC, '01-json.ts'), path.join(TMP, 'json.ts'));   // v0.57 (A15): parser unico usato da Neuro e Pianificatore
 fs.copyFileSync(path.join(SRC, '07-neuro.ts'), path.join(TMP, 'neuro.ts'));
 fs.copyFileSync(path.join(SRC, '07-pianificatore.ts'), path.join(TMP, 'pianificatore.ts'));
 try {
-  execSync('npx -y -p typescript@5.6.3 tsc --target es2020 --lib es2020 --strict --noEmitOnError false --outDir out stub.d.ts neuro.ts pianificatore.ts', { cwd: TMP, stdio: 'pipe' });
+  execSync('npx -y -p typescript@5.6.3 tsc --target es2020 --lib es2020 --strict --noEmitOnError false --outDir out stub.d.ts json.ts neuro.ts pianificatore.ts', { cwd: TMP, stdio: 'pipe' });
 } catch (e) { console.log('⚠️ tsc sui moduli puri:\n' + String(e.stdout || e.message).slice(0, 2000)); }
+const JS_JSON = fs.readFileSync(path.join(TMP, 'out', 'json.js'), 'utf8');
 const JS = fs.readFileSync(path.join(TMP, 'out', 'neuro.js'), 'utf8');
 const JS_PIAN = fs.readFileSync(path.join(TMP, 'out', 'pianificatore.js'), 'utf8');
 let chiamateRete = 0;
 const sandbox = { console, fetch: async () => { chiamateRete++; throw new Error('rete vietata nei test'); }, Math, Date, JSON, Promise, Set, Map };
 vm.createContext(sandbox);
+vm.runInContext(JS_JSON + '\n;this.JsonAI = JsonAI;', sandbox);
 vm.runInContext(JS + '\n;this.Neuro = Neuro;', sandbox);
 vm.runInContext(JS_PIAN + '\n;this.Pianificatore = Pianificatore;', sandbox);
 const N = sandbox.Neuro, P = sandbox.Pianificatore;
@@ -185,7 +188,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.56.2', () => vero(/const VERSIONE = '0\.56\.2'/.test(leggi('09-main.ts'))));
+t('versione app 0.57.0', () => vero(/const VERSIONE = '0\.57\.0'/.test(leggi('09-main.ts'))));
 
 // ================= BP4 — Pianificatore Neuro-Algoritmico Ibrido =================
 console.log('\n== BP4 Pianificatore Neuro-Algoritmico Ibrido ==');
@@ -298,7 +301,7 @@ await t('testIsolamentoPianiEsistenti: opt-in ai_neuro, altri piani intatti, buf
   vero(!tutteVoci(P.consumaBuffer(p, [ri[0].buffer])).some(v => v.k === ri[0].buffer) && tutteVoci(p).some(v => v.k === ri[0].buffer), 'buffer consumato su copia');
   const rp = leggi('07-ripianifica.ts'), ui = leggi('07-pianiai.ts'), gen = leggi('07-generatore.ts');
   vero(rp.includes('Pianificatore.riassorbi') && rp.includes('Pianificatore.consumaBuffer') && rp.includes('isRipassoFSRS'), 'Ripianifica usa buffer e salta FSRS');
-  vero(gen.includes('PianiAI.bottoni(p)') && ui.includes('✨ Crea Piano Intelligente'), 'pulsante opt-in');
+  vero(gen.includes('PianiAI.bottoni(p)') && gen.includes('PianiAI.apri()') && ui.includes('✨ Crea Piano Intelligente'), 'pulsante opt-in (da «＋ Crea piano»)');
   vero(ui.includes("Stato.elimina('pk-' + p.id)") && !/Stato\.elimina\((?!'pk-' \+ p\.id)/.test(ui), 'Elimina tocca solo pk-<id>');
   vero(ui.includes("IA.testo(m as any, 'genera'") && ui.includes('Dominio.senzaAI()'), 'router «genera» e modalità senza AI');
 });
@@ -499,8 +502,32 @@ t('U8 vista Piano raggiungibile senza PkPiano, con i due pulsanti del generatore
   const vuota = s.indexOf("if (UI.studioVista === 'piano') return h('div.pagina.piano-vuoto'"), redir = s.indexOf("if (UI.studioVista !== 'schede') UI.studioVista = 'schede';");
   vero(vuota > 0 && vuota < redir, 'stato vuoto prima del rimando a Schede');
   vero(/piano-vuoto'[\s\S]{0,300}bottoniGeneratore\(\)/.test(s), 'bottoniGeneratore() nello stato vuoto');
-  vero(g.includes("'✨ Genera un piano'") && g.includes('PianiAI.bottoni(p)'), 'Genera un piano + PianiAI.bottoni');
+  vero(g.includes("'＋ Crea piano'") && g.includes('PianiAI.bottoni(p)'), 'Crea piano + PianiAI.bottoni');
+  // v0.57 (BP6 · T7-3): un solo ingresso con le tre modalità, niente pulsanti di creazione duplicati
+  vero(/function scegliPiano[\s\S]{0,900}apriGeneratore\(\)[\s\S]{0,80}PianiAI\.apri\(\)[\s\S]{0,80}Dominio\.wizardPiano\(\)/.test(g), 'scegliPiano offre generatore, intelligente e libro');
+  vero(!pa.includes("onclick: () => apri() }, '✨ Crea Piano Intelligente'") && !leggi('07-dominio.ts').includes("'🗓 Crea piano dal libro'),"), 'nessun ingresso duplicato');
   vero(pa.includes('Crea Piano Intelligente'), '«✨ Crea Piano Intelligente»');
+});
+console.log('\n== BP6 · A15/A16 parser JSON unico e ritenzione unica ==');
+const J = sandbox.JsonAI;
+t('A15 JsonAI.leggi: recinto ```json, virgole finali, LaTeX', () => {
+  eq(JSON.stringify(J.leggi('Ecco:\n```json\n{"a": [1, 2,], "f": "\\\\frac{1}{2}",}\n```')), '{"a":[1,2],"f":"\\\\frac{1}{2}"}');
+  vero(J.leggi('nessun json') === null || J.leggi('nessun json') === undefined, 'testo libero → nessun dato inventato');
+});
+t('A15 JsonAI.leggiFile (.imcpack) tollera BOM e rifiuta il non-JSON', () => {
+  eq(J.leggiFile('﻿{"v": 1}').v, 1);
+  let rotto = false; try { const r = J.leggiFile('<html>'); rotto = r == null; } catch (_) { rotto = true; } vero(rotto, 'file non JSON segnalato');
+});
+t('A15 recuperaArrayParziale: risposta AI troncata → elementi completi', () => {
+  const r = J.recuperaArrayParziale('{"unita": [{"t": "a"}, {"t": "b"}, {"t": "c', 'unita'); eq(r.map(x => x.t).join(','), 'a,b');
+  eq(P.recuperaArrayParziale, J.recuperaArrayParziale, 'il pianificatore usa lo stesso parser');
+});
+t('A16 intervalliFsrs: ritenzione 0,9 invariata, più alta → intervalli più brevi', () => {
+  const iv = (s, r) => s * 9 * (1 / r - 1);   // stessa forma di Ripassi.intervallo
+  eq(JSON.stringify(P.intervalliFsrs(2.5, 0.9, iv)), JSON.stringify(P.intervalliFsrs(2.5)), '0,9 = curva base');
+  const a = P.intervalliFsrs(2.5, 0.9, iv), b = P.intervalliFsrs(2.5, 0.97, iv);
+  vero(b.reduce((x, y) => x + y) < a.reduce((x, y) => x + y), a + ' vs ' + b);
+  vero(b.every((x, i) => i === 0 || x > b[i - 1]), 'intervalli strettamente crescenti');
 });
 t('U3 VERSIONE con patch (A8)', () => vero(/const VERSIONE = '\d+\.\d+\.\d+';/.test(leggi('09-main.ts')), 'VERSIONE x.y.z'));
 

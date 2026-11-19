@@ -80,6 +80,37 @@ const Banca = (() => {
   /** Domande nascoste di una scheda (per poterle ripristinare). */
   function nascoste(sk: string): ModQ[] { return Stato.tutti<ModQ>('modq').filter(r => r.sk === sk && r.nascosta && !r.deleted); }
 
+  // v0.57 (BP6): tetto alle copie locali delle schede estratte (localStorage è piccolo e condiviso con tutta l'app).
+  // LRU: indice «imc-banca-uso» (chiave → ultimo uso); oltre MAX_COPIE o MAX_BYTE si tolgono le meno usate.
+  const USO = 'imc-banca-uso', MAX_COPIE = 40, MAX_BYTE = 1.5 * 1024 * 1024;
+  function indiceUso(): Record<string, number> {
+    let u: Record<string, number> = {};
+    try { u = JSON.parse(localStorage.getItem(USO) || '{}') || {}; } catch (e) { console.warn('Banca: indice LRU illeggibile', e); }
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('imc-banca-') && k !== USO && !(k in u)) u[k] = 0; }
+    return u;
+  }
+  function scriviUso(u: Record<string, number>): void { try { localStorage.setItem(USO, JSON.stringify(u)); } catch (e) { console.warn('Banca: indice LRU non salvato', e); } }
+  function usaCopia(k: string): void { const u = indiceUso(); u[k] = Date.now(); scriviUso(u); }
+  /** Toglie le copie meno usate finché restano ≤ maxCopie e ≤ maxByte (escluso «tieni»). Ritorna quante ne ha tolte. */
+  function potaCopie(tieni = '', maxCopie = MAX_COPIE, maxByte = MAX_BYTE): number {
+    const u = indiceUso(), ch = Object.keys(u).filter(k => localStorage.getItem(k) !== null).sort((a, b) => u[a] - u[b]);
+    let byte = ch.reduce((t, k) => t + (localStorage.getItem(k) || '').length * 2, 0), n = 0;
+    for (const k of ch) {
+      if (ch.length - n <= maxCopie && byte <= maxByte) break;
+      if (k === tieni) continue;
+      byte -= (localStorage.getItem(k) || '').length * 2; localStorage.removeItem(k); delete u[k]; n++;
+    }
+    for (const k of Object.keys(u)) if (localStorage.getItem(k) === null) delete u[k];
+    scriviUso(u);
+    return n;
+  }
+  function salvaCopia(k: string, v: string): void {
+    for (let prova = 0; prova < 2; prova++) {
+      try { localStorage.setItem(k, v); usaCopia(k); potaCopie(k); return; }
+      catch (e) { if (prova) { console.warn('Banca: spazio esaurito, la scheda si riestrae la prossima volta', e); return; } potaCopie(k, MAX_COPIE / 2, MAX_BYTE / 2); }
+    }
+  }
+
   /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
   async function scheda(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<{ domande: DomB[]; immagini: Record<string, string>; fonte: string }> {
     const imc = Dominio.domandeDi(s.id);   // v0.52: domande importate da un pacchetto .imcpack (record 'bancaimc')
@@ -87,14 +118,14 @@ const Banca = (() => {
     const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
     if (B && B.schede[s.id]) return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
     const K = 'imc-banca-' + s.id;
-    try { const c = localStorage.getItem(K); if (c) { const j = JSON.parse(c); return { domande: applica(j.domande, s.id), immagini: j.immagini || {}, fonte: 'copia' }; } } catch (_) { /* niente */ }
+    try { const c = localStorage.getItem(K); if (c) { const j = JSON.parse(c); usaCopia(K); return { domande: applica(j.domande, s.id), immagini: j.immagini || {}, fonte: 'copia' }; } } catch (e) { console.warn('Banca: copia locale illeggibile', e); }
     if (!Drive.pronto) throw new Error('Questa scheda non è ancora nella banca: accedi a Google per estrarla dal quiz.');
     const html = await Drive.scaricaTesto(await Studio.idQuiz(pk, m, micro, s));
     const r = await estraiDaHtml(html, s.id);
-    try { localStorage.setItem(K, JSON.stringify(r)); } catch (_) { /* spazio esaurito: la riestraggo la prossima volta */ }
+    salvaCopia(K, JSON.stringify(r));
     return { domande: applica(r.domande, s.id), immagini: r.immagini, fonte: 'estratta' };
   }
-  return { carica, scheda, estraiDaHtml, applica, nascoste };
+  return { carica, scheda, estraiDaHtml, applica, nascoste, potaCopie, salvaCopia };
 })();
 
 const QuizApp = (() => {

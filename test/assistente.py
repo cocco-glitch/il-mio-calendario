@@ -17,7 +17,7 @@ FONTE = ("Una leva è una macchina semplice costituita da un'asta rigida che pu�
          "Nelle leve di terzo genere la forza motrice è applicata tra il fulcro e la resistenza: sono svantaggiose ma permettono movimenti ampi e rapidi, come l'avambraccio flesso dal bicipite. "
          "Il guadagno meccanico di una leva è il rapporto tra il braccio della forza motrice e il braccio della forza resistente.")
 with sync_playwright() as p:
-    pg = p.chromium.launch().new_context(viewport={'width': 420, 'height': 900}, locale='it-IT').new_page()
+    pg = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 420, 'height': 900}, locale='it-IT').new_page()
     pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.goto(URL); pg.wait_for_selector('.tabbar')
     pg.evaluate("localStorage.setItem('imc-groq-chiave', 'gsk_test')")

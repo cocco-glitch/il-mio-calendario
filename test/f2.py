@@ -31,7 +31,7 @@ def passo(st, g, t):
     return (cl(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), cl(s2, 0.1, 36500))
 
 with sync_playwright() as p:
-    ctx = p.chromium.launch().new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome')
+    ctx = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome')
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.clock.install(time='2026-11-11T09:00:00+01:00')
     pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("Studio.pkStep().length >= 3")

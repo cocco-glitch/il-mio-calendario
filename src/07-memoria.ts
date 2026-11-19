@@ -43,11 +43,13 @@ const Ripassi = (() => {
     return { d: lim(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), s: lim(s2, 0.1, 36500) };
   }
 
-  /** Ritenzione desiderata per un giorno: più alta nei 14 giorni prima di un esame. */
-  function ritenzione(giorno: string): number {
-    const base = imp().ritenzione || Dominio.ritenzioneProfilo();   // v0.52: senza scelta manuale, la ritenzione del profilo (proprietario: 0,90 come prima)
+  /** v0.57 (A16): UNICA fonte della ritenzione desiderata (carte, appunti, pianificatore).
+   *  Ordine: scelta manuale → profilo cognitivo (Dominio) → minimo richiesto dal chiamante (es. livello
+   *  d'intensità del piano) → 0,95 nei 14 giorni prima di un esame. Sempre in [0,50; 0,99]. */
+  function ritenzione(giorno: string, minimo = 0): number {
+    const base = Math.max(imp().ritenzione || Dominio.ritenzioneProfilo(), minimo);   // v0.52: senza scelta manuale, la ritenzione del profilo (proprietario: 0,90 come prima)
     const vicino = Stato.tutti<Esame>('esame').some(e => { const g = giorni(giorno, e.data); return g >= 0 && g <= 14; });
-    return vicino ? Math.max(base, 0.95) : base;
+    return lim(vicino ? Math.max(base, 0.95) : base, 0.5, 0.99);
   }
 
   // ---------- Unità di ripasso: il SOTTO-STEP (decisione dell'utente, 11/11) ----------

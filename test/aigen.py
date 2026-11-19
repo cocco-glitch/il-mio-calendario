@@ -36,7 +36,7 @@ def rispondi(route):
     route.fulfill(status=200, content_type='application/json', body=json.dumps({"choices": [{"message": {"content": json.dumps(c)}}]}))
 try:
     with sync_playwright() as p:
-        b = p.chromium.launch(); pg = b.new_page(viewport={'width': 390, 'height': 844})
+        b = p.chromium.launch(); pg = b.new_page(bypass_csp=True, viewport={'width': 390, 'height': 844})
         pg.on('pageerror', lambda e: errori.append(str(e)))
         pg.route('https://api.groq.com/**', rispondi)
         pg.goto('http://localhost:8771/index.html'); pg.wait_for_function("Studio.pkStep().length >= 3", timeout=20000)

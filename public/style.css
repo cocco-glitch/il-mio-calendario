@@ -4,6 +4,8 @@
   --accento: #6c8cff;
   --accento-testo: var(--accento);   /* v0.56.2: lo calcola applicaTema() per il contrasto AA */
   --raggio: 14px;
+  /* v0.57 (BP6): scala tipografica (token). --fs-xs/--fw-xs = coppia già usata in Oggi: il Mese non crea istanze di font nuove (−65 ms al primo disegno) */
+  --fs-xs: 10px; --fw-xs: 600; --fs-s: 12px; --fs-m: 13px; --fs-l: 16px;
   --bg: #f4f5f8; --sup: #ffffff; --sup2: #eceef3; --linea: #dde0e8;
   --testo: #171a21; --tenue: #636b7a; --rosso: #d43c5c;
   --ombra: 0 1px 2px rgba(20, 24, 40, .06), 0 4px 16px rgba(20, 24, 40, .06);
@@ -120,16 +122,16 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .cal-nav { display: flex; align-items: center; }
 .cal-titolo { flex: 1; text-align: center; font-size: 18px; font-weight: 700; min-height: 44px; }
 .mese { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--linea); border-radius: var(--raggio); overflow: hidden; border: 1px solid var(--linea); }
-.mese-eti { background: var(--sup); text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--tenue); padding: 6px 0; }
+.mese-eti { background: var(--sup); text-align: center; font-size: var(--fs-xs); font-weight: var(--fw-xs); text-transform: uppercase; color: var(--tenue); padding: 6px 0; }
 .mese-cella { background: var(--sup); min-height: 74px; padding: 3px 2px; display: flex; flex-direction: column; gap: 2px; align-items: stretch; position: relative; overflow: hidden; }
 .mese-cella.fuori { background: color-mix(in srgb, var(--sup) 55%, var(--bg)); } .mese-cella.fuori .mese-num { color: var(--tenue); }
 .mese-cella.sel { box-shadow: inset 0 0 0 2px var(--accento); }
 .mese-num { align-self: center; width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 14px; font-weight: 600; }
 .mese-cella.oggi .mese-num { background: var(--accento); color: #fff; }
-.mese-chip { display: block; font-size: 10.5px; font-weight: 600; line-height: 1.25; padding: 1px 4px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: clip; text-align: left;
+.mese-chip { display: block; font-size: var(--fs-xs); font-weight: var(--fw-xs); line-height: 1.25; padding: 1px 4px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: clip; text-align: left;
   background: color-mix(in srgb, var(--c) 24%, var(--sup)); border-left: 3px solid var(--c); }
 .mese-chip.task { background: transparent; border-left-style: dotted; }
-.mese-altro { font-size: 10px; color: var(--tenue); padding-left: 4px; }
+.mese-altro { font-size: var(--fs-xs); font-weight: var(--fw-xs); color: var(--tenue); padding-left: 4px; }
 .mese-task { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--rosso); }
 
 .griglia { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--sup); border-radius: var(--raggio) var(--raggio) 0 0; overflow: hidden; }
@@ -140,7 +142,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .gr-num { width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; font-weight: 700; }
 .gr-giorno.oggi .gr-num { background: var(--accento); color: #fff; }
 .gr-fascia { border-bottom: 1px solid var(--linea); min-height: 26px; }
-.gr-fascia-eti { font-size: 10px; color: var(--tenue); text-align: right; padding: 6px 6px 0 0; }
+.gr-fascia-eti { font-size: var(--fs-xs); color: var(--tenue); text-align: right; padding: 6px 6px 0 0; }
 .gr-fascia-col { display: flex; flex-direction: column; gap: 2px; padding: 3px 1px; min-width: 0; border-left: 1px solid var(--linea); }
 .gr-scroll { overflow-y: auto; flex: 1; min-height: 0; -webkit-overflow-scrolling: touch; padding-bottom: 90px; }
 .gr-corpo { position: relative; }
@@ -203,11 +205,17 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .interruttore input:focus-visible + span { outline: 2px solid var(--accento); outline-offset: 2px; }
 
 .dialogo-sfondo { align-items: center; padding: 20px; z-index: 30; }
+/* v0.57 (A11): chiedi() usa <dialog> modale (top layer): azzero lo stile del browser, lo sfondo scuro resta quello di .dialogo-sfondo */
+dialog.dialogo-sfondo { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; color: inherit; }
+dialog.dialogo-sfondo:not([open]) { display: none; }
+dialog.dialogo-sfondo::backdrop { background: transparent; }
 .dialogo { background: var(--sup); border-radius: 18px; padding: 18px; width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 8px; }
 .dialogo-titolo { font-size: 18px; font-weight: 750; text-align: center; }
 .dialogo-testo { color: var(--tenue); text-align: center; margin-bottom: 6px; }
 
 #avvisi { position: fixed; top: calc(env(safe-area-inset-top) + 8px); left: 10px; right: 10px; z-index: 40; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+/* v0.57: con un visore aperto (quiz, appunto…) gli avvisi vanno in basso: in alto coprirebbero «Chiudi» */
+body:has(.visore) #avvisi { top: auto; bottom: calc(env(safe-area-inset-bottom) + 12px); flex-direction: column-reverse; }
 .avviso { pointer-events: auto; background: var(--testo); color: var(--bg); padding: 11px 16px; border-radius: 14px; font-weight: 600; font-size: 15px; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); max-width: 480px; animation: su .2s ease-out; }
 
 /* ---------- PC / tablet largo: barra laterale al posto della tab bar ---------- */
@@ -234,7 +242,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .allegato { flex: 1; min-width: 0; text-align: left; padding: 10px 4px; color: var(--accento-testo); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Studio ---------- */
-.tab-eti { white-space: nowrap; } @media (max-width: 420px) { .tab-eti { font-size: 10px; } }
+.tab-eti { white-space: nowrap; } @media (max-width: 420px) { .tab-eti { font-size: var(--fs-xs); } }
 .barra-av { height: 6px; border-radius: 3px; background: var(--sup2); overflow: hidden; margin: 6px 0 2px; } .barra-av > div { height: 100%; border-radius: 3px; transition: width .2s; }
 .numeri { display: flex; gap: 8px; } .numero { flex: 1; display: flex; flex-direction: column; } .numero strong { font-size: 20px; font-variant-numeric: tabular-nums; } .numero span { font-size: 12px; color: var(--tenue); }
 .voce-lista.sotto { align-items: center; padding: 10px 0; } .totale-riga { border-top: 1px solid var(--linea); padding-top: 8px; font-size: 13px; font-weight: 650; }
@@ -247,14 +255,14 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .filtro { background: var(--sup); border-radius: var(--raggio); padding: 0 14px; border: 0; }
 .indicatore { width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; font-weight: 650; font-size: 14px; }
 .indicatore.pari { background: color-mix(in srgb, #2fbf8f 16%, transparent); color: #1f9a71; } .indicatore.ritardo { background: color-mix(in srgb, var(--rosso) 14%, transparent); color: var(--rosso); }
-.mese-chip.studio { background: color-mix(in srgb, var(--c) 85%, #000 0%); color: #fff; border-left-color: transparent; font-weight: 750; }
+.mese-chip.studio { background: color-mix(in srgb, var(--c) 85%, #000 0%); color: #fff; border-left-color: transparent; font-weight: var(--fw-xs); }
 .visore { position: fixed; inset: 0; z-index: 25; background: var(--bg); display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); }
 .visore-testa { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-bottom: 1px solid var(--linea); }
 .visore-titolo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 14px; }
 .visore-strumenti { display: flex; align-items: center; } .pdf-num { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 62px; text-align: center; }
 .visore-corpo { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; } .visore-corpo.pdf { background: #555; text-align: center; padding: 4px; }
 .visore-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; } .pdf-tela { background: #fff; display: inline-block; }
-.blocco strong { font-size: 10px; letter-spacing: 0; }
+.blocco strong { font-size: var(--fs-xs); letter-spacing: 0; }
 .etichetta.stato-e { background: color-mix(in srgb, #2fbf8f 18%, transparent); color: #1f9a71; } .etichetta.stato-i { background: color-mix(in srgb, #e9a23b 22%, transparent); color: #b87710; } .etichetta.stato-n { background: color-mix(in srgb, var(--rosso) 15%, transparent); color: var(--rosso); }
 .segmenti button { font-size: 13px; }
 
@@ -304,9 +312,9 @@ body:has(#timer-barra) .fab { bottom: calc(var(--tab-h) + env(safe-area-inset-bo
 .grafico { display: flex; align-items: flex-end; gap: 4px; height: 120px; margin: 10px 0 4px; }
 .grafico .colonna { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; gap: 2px; }
 .grafico .pila { flex: 1; width: 100%; display: flex; flex-direction: column-reverse; background: var(--sup2); border-radius: 4px; overflow: hidden; }
-.grafico span { font-size: 10px; color: var(--tenue); font-variant-numeric: tabular-nums; }
+.grafico span { font-size: var(--fs-xs); color: var(--tenue); font-variant-numeric: tabular-nums; }
 .esame-giorni { width: 52px; flex: none; text-align: center; font-size: 24px; font-weight: 800; color: var(--accento-testo); line-height: 1; display: flex; flex-direction: column; }
-.esame-giorni small { font-size: 10px; color: var(--tenue); font-weight: 700; text-transform: uppercase; }
+.esame-giorni small { font-size: var(--fs-xs); color: var(--tenue); font-weight: 700; text-transform: uppercase; }
 .voce-lista.passato { opacity: .55; }
 
 .gr-ev { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
@@ -850,3 +858,9 @@ button, a, .chip, [role=tab], .nota-tessera { touch-action: manipulation; }   /*
 .memia-amb summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
 .memia-voce { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; background: var(--sup2); font-size: 14px; margin: 4px 0; }
 .memia-voce span { min-width: 0; overflow-wrap: anywhere; }
+/* v0.57 (BP6 · T7-1): primi passi nello Studio senza corsi */
+.primi-passi ol { margin: 0; padding-left: 1.2em; display: grid; gap: 12px; }
+.primi-passi .primo-passo { display: grid; gap: 4px; justify-items: start; }
+/* v0.57 (BP6 · INP): Registro errori — le card sotto la piega si impaginano solo quando entrano nello schermo */
+.vista-errori { display: flex; flex-direction: column; gap: 10px; }
+.vista-errori > section.card ~ section.card { content-visibility: auto; contain-intrinsic-size: auto 480px; }

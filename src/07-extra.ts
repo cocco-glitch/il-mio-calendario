@@ -31,7 +31,7 @@ function vistaErrori(): HTMLElement {
   const soglia = h('input', { type: 'number', min: '0', max: '100', value: String(sogliaErrori()), inputMode: 'numeric', onchange: (e: Event) => {
     const i = imp() as any; i.sogliaErrori = Math.max(0, Math.min(100, parseInt((e.target as HTMLInputElement).value, 10) || 70)); Stato.salva(i);
   } });
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+  return h('div.vista-errori', null,   // v0.57 (BP6 · INP): le card fuori schermo non vengono impaginate (content-visibility)
     sezioneDomande(),
     Regole.sezioneTipici(),
     AIGen.sezione(),

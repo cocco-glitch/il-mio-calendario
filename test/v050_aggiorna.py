@@ -18,7 +18,8 @@ sw = open(os.path.join(QUI, '..', 'public', 'sw.js'), encoding='utf-8').read()
 install = re.search(r"addEventListener\('install'.*?\n\}\);", sw, re.S).group(0)
 ok('skipWaiting' not in re.sub(r'//.*', '', install), 'install senza skipWaiting')
 ok("e.data === 'salta'" in sw and 'self.skipWaiting()' in sw, "skipWaiting solo sul messaggio 'salta'")
-ok('imc-lib' in install and 'waitUntil(caches.open(CACHE).then(c => c.addAll(FILE)))' in install, 'pdf.js fuori dal waitUntil critico')
+ok('imc-lib' in install and "waitUntil(caches.open(CACHE).then(c => c.addAll(FILE.map(f => new Request(f, { cache: 'reload' })))))" in install
+   and 'imc-lib' not in install.split('waitUntil(')[1].split(chr(10))[0], 'pdf.js fuori dal waitUntil critico; precache con cache reload (v0.57)')
 
 FINTI = """(opz) => {
   const ev = (o) => { o.ascolta = {}; o.addEventListener = (t, f) => { (o.ascolta[t] = o.ascolta[t] || []).push(f); }; o.lancia = (t) => (o.ascolta[t] || []).forEach(f => f()); return o; };
@@ -32,7 +33,7 @@ FINTI = """(opz) => {
 conta = lambda pg: pg.locator('#avvisi .avviso', has_text='Nuova versione pronta').count()
 with sync_playwright() as p:
     b = p.chromium.launch()
-    ctx = b.new_context(viewport={'width': 390, 'height': 844})
+    ctx = b.new_context(bypass_csp=True, viewport={'width': 390, 'height': 844})
     ctx.route('**/cdnjs.cloudflare.com/**', lambda r: r.abort())
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.goto(URL); pg.wait_for_selector('.tabbar')

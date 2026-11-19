@@ -21,14 +21,45 @@ const G_APP_ID = '1032464441107';
 // drive.file: scrive solo i file creati dall'app. drive.readonly: LEGGE le cartelle di studio (quiz HTML, PDF dei libri,
 // pacchetti creati da Claude). L'app non può modificare né eliminare nulla fuori dalla sua cartella.
 const G_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly openid email';
-// Privacy "solo mia": l'app accetta solo questo account (oltre al blocco lato Google: progetto in Testing con un solo utente di test).
+// Privacy "solo mia": l'app accetta solo questi account (oltre al blocco lato Google: progetto in Testing con soli utenti di test).
 // v0.26: due account ammessi. Il proprietario vede anche il programma pubblicato col sito (Medicina);
-// il secondo account parte vuoto e riceve i suoi pacchetti dalla sua cartella Drive. Per ammettere
-// la seconda persona: scrivere il suo Gmail in SECONDO_ACCOUNT (minuscolo) e ripubblicare; deve
-// anche essere tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
-const PROPRIETARIO = 'cocco.haloa@gmail.com';
-const SECONDO_ACCOUNT = 'nicoleschirru@gmail.com';
-const ACCOUNT_AMMESSI = [PROPRIETARIO, SECONDO_ACCOUNT].filter(Boolean);
+// il secondo account parte vuoto e riceve i suoi pacchetti dalla sua cartella Drive.
+// v0.57 (U4/A12): nel sito pubblico solo l'hash SHA-256 dell'email minuscola, mai l'indirizzo in chiaro.
+// Per ammettere un account: `node -e "console.log(require('crypto').createHash('sha256').update('<gmail minuscolo>').digest('hex'))"`,
+// aggiungere l'hash qui e l'account tra gli «utenti di prova» del progetto Google Cloud (vedi docs/SECONDA-PERSONA.md).
+const HASH_PROPRIETARIO = 'aa6b55d11a786b1b08a4606d7b72587a231c199a5f5ef22f1dc231635fca545e';
+const HASH_AMMESSI = [HASH_PROPRIETARIO, 'fce4085ef1d95714e8c92ca2a8fe1ec0080ebcdb6538af6c4fac8e0d06138a1d'];
+/** SHA-256 esadecimale (FIPS 180-4) di una stringa UTF-8. Sincrono: eProprietario() deve sempre riflettere l'email attuale. */
+function sha256Hex(testo: string): string {
+  const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const b = Array.from(new TextEncoder().encode(testo)), bit = b.length * 8;
+  b.push(0x80); while (b.length % 64 !== 56) b.push(0);
+  for (let i = 7; i >= 0; i--) b.push(i > 3 ? 0 : (bit >>> (i * 8)) & 0xff);
+  const r = (x: number, n: number) => (x >>> n) | (x << (32 - n)), w = new Array<number>(64);
+  for (let o = 0; o < b.length; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = (b[o + i * 4] << 24) | (b[o + i * 4 + 1] << 16) | (b[o + i * 4 + 2] << 8) | b[o + i * 4 + 3];
+    for (let i = 16; i < 64; i++) {
+      const s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+    }
+    let [a, bb, c, d, e, f, g, hh] = H;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (hh + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
+      const t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & bb) ^ (a & c) ^ (bb & c))) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0;
+    }
+    [a, bb, c, d, e, f, g, hh].forEach((x, i) => { H[i] = (H[i] + x) | 0; });
+  }
+  return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+}
+/** Hash dell'email (minuscola, senza spazi) con cui si confrontano gli account ammessi. */
+const hashEmail = (email: string): string => sha256Hex(String(email || '').trim().toLowerCase());
 const CARTELLA_APP = 'Calendario personale';
 /** Permessi richiesti: si aggiunge Google Calendar solo se lo specchio è attivo. */
 function scopeAttuale(): string { try { return G_SCOPE + (imp().gcal ? ' https://www.googleapis.com/auth/calendar.app.created' : '') + (imp().gcalLeggiPrimary ? ' ' + GCAL_SCOPE_LETTURA : ''); } catch (_) { return G_SCOPE; } }
@@ -241,7 +272,8 @@ const Drive = (() => {
       if (!await tokenValido(forzaLogin)) throw new Error('NOLOGIN');
       if (!stato.email) {
         const email = await chiSono();
-        if (!ACCOUNT_AMMESSI.includes(email.toLowerCase())) {
+        const hh = hashEmail(email);
+        if (!HASH_AMMESSI.includes(hh)) {
           try { google.accounts.oauth2.revoke(token, () => { /* ok */ }); } catch (_) { /* niente */ }
           token = '';
           throw new Error('Questa app è privata: l\'account ' + email + ' non è autorizzato.');
@@ -249,7 +281,7 @@ const Drive = (() => {
         // v0.44 privacy: se su questo dispositivo c'erano i dati di un altro account, si cancellano PRIMA di unire
         await Privacy.primaDiUnire(email);
         stato.email = email; LS.set('email', stato.email);
-        if (typeof Studio !== 'undefined') { if (email.toLowerCase() !== PROPRIETARIO) Studio.togliSito(); else Studio.caricaDalSito(); }
+        if (typeof Studio !== 'undefined') { if (hh !== HASH_PROPRIETARIO) Studio.togliSito(); else Studio.caricaDalSito(); }
       }
       await preparaCartelle();
 
@@ -277,6 +309,8 @@ const Drive = (() => {
         Stato.unisci(remoti);
         if (!(await Privacy.dispositivo(stato.email))) return;
         await Privacy.pulisciAltrui(stato.email);
+        // v0.57 (A14): immagini incorporate → archivio allegati (prima di ricaricare dati.json, così il file resta leggero)
+        if (giro === 0 && typeof Allegati !== 'undefined') { try { await Allegati.migra(); if (!solaLettura) await Allegati.caricaInAttesa(); } catch (e) { console.warn('Allegati: sync rimandata', e); } }
         if (solaLettura) break;
         // 3. se ho qualcosa di più nuovo del remoto, ricarico
         const remotiMap = new Map(remoti.map(r => [r.id, r.updatedAt || 0]));
@@ -338,6 +372,8 @@ const Drive = (() => {
       : 'Finestra di Google chiusa.');
     client.requestAccessToken({ prompt: primaVolta ? 'select_account' : '', scope: scopeAttuale(), login_hint: stato.email || undefined });
   }
+  /** v0.57 (A6): al cambio account le cartelle e dati.json in cache sono dell'account precedente. */
+  function dimenticaCartelle(): void { cartelle = {}; idDati = ''; LS.set('cartelle', {}); LS.set('idDati', ''); }
   function logout(): void {
     if (token) { try { google.accounts.oauth2.revoke(token, () => { /* ok */ }); } catch (_) { /* niente */ } }
     token = ''; stato.email = ''; stato.ultimoSync = 0;
@@ -382,11 +418,11 @@ const Drive = (() => {
   return {
     stato, ascolta(f: () => void) { ascoltatori.push(f); },
     sincronizza, programma, login, logout, precarica, ampliaPermessi,
-    caricaAllegato, scegliConPicker, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
+    caricaAllegato, scegliConPicker, dimenticaCartelle, scaricaBlob, scaricaTesto, elenca, trovaFile, carica, idCartella, sottocartella, preparaCartelle, tokenValido,
     elencaTutti, elencaCompleti, esportaCsv, cerca, cercaCartelle, api,
     get collegato() { return !!stato.email; },
     /** v0.26: proprietario dell'app, o nessun account ancora collegato (anteprima, primo avvio). */
-    eProprietario(): boolean { return stato.email ? stato.email.toLowerCase() === PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); },  // v0.26.2: senza account solo in prova locale
+    eProprietario(): boolean { return stato.email ? hashEmail(stato.email) === HASH_PROPRIETARIO : (['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:'); },  // v0.26.2: senza account solo in prova locale
     /** true se c'è un token valido adesso (senza aprire finestre). */
     get pronto() { return !!token && Date.now() < scadenzaToken; },
   };

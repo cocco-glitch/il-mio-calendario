@@ -1,6 +1,6 @@
 # Constraints — il-mio-calendario
 
-Ultima revisione: 2026-11-19 (audit pre-BP6, approvata dall'utente). Valori misurati su v0.56.1 (a97f1d3).
+Ultima revisione: 2026-11-19 (BP6, v0.57.0): Logica 72, E4 chiusa, CSP e budget dei tempi verificati da test. Prima revisione: audit pre-BP6 su v0.56.1 (a97f1d3).
 Dettaglio delle voci A1–A27 citate sotto: rapporto di audit pre-BP6 (sezione S5 · T10).
 
 Scelte di partenza:
@@ -14,7 +14,7 @@ Scelte di partenza:
   (gli script iniettati negli iframe, `07-cattura.ts:31`, `07-simulazioni.ts:78`, `07-studio.ts:291`, sono esclusi: vedi E1).
 - Nessun test saltato o tolto senza motivo nel messaggio di commit (oggi saltato: solo `spiegazioni.py`, vedi E2).
 - Nessun segreto nel sorgente (chiavi AI, token). La chiave API Google pubblica del Picker è ammessa (E3).
-- Nessun dato personale di terzi nel sito pubblico (email in chiaro: oggi 2, vedi E4).
+- Nessun dato personale di terzi nel sito pubblico (email in chiaro: 0 da v0.57, confronto su hash SHA-256).
 - Questo file non si indebolisce nello stesso commit della modifica che falliva.
 
 ## Vincoli inviolabili (da CLAUDE.md, con il controllo che li verifica)
@@ -23,29 +23,29 @@ Scelte di partenza:
 | `schemaVersion` retrocompatibile | `test/v049_versione.py` | prima di pubblicare |
 | Mai DELETE su Drive | `test/sync.py:104`, `v049_versione.py:115` | prima di pubblicare |
 | Calendar: lettura solo `primary`, scrittura solo specchio | `test/fase4.py` + grep statico nella suite Node | prima di pubblicare |
-| Isolamento account (record **e** localStorage) | `test/secondo.py` + test nuovo cambio account (dopo A6) | prima di pubblicare |
+| Isolamento account (record **e** localStorage, chiavi AI, allegati) | `test/secondo.py` + `test/v057_bp6.py` (cambio account) | prima di pubblicare |
 | Id schede stabili | suite Node | ogni task |
 
 ## Soglie con numero
 | Dimensione | Regola | Comando | Quando | Perché questo numero |
 |---|---|---|---|---|
 | Tipi | 0 errori | `npx tsc --noEmit` | ogni modifica | oggi 0 |
-| Logica | 61/61 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | oggi 61/61 |
-| End-to-end | 0 falliti, saltati ≤ quelli in «Eccezioni» | `bash test/tutti.sh 2>&1 \| tail -n 35` | prima di pubblicare | oggi 41 ok, 1 saltato |
+| Logica | 72/72 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.57: 72/72 |
+| End-to-end | 0 falliti, saltati ≤ quelli in «Eccezioni» | `bash test/tutti.sh 2>&1 \| tail -n 35` (include `csp`, `v057_bp6`, `prestazioni`) | prima di pubblicare | v0.57: 44 ok, 1 saltato |
 | Dipendenze (esterno) | 0 vulnerabilità high+ | `npm audit --audit-level=high` | prima di pubblicare | oggi 0; unico controllo non scritto da noi |
 | Build | `dist/sw.js` senza `__VERSIONE__`; `VERSIONE` ≠ quella pubblicata | test nuovo (A3, A8) | prima di pubblicare | il bug del SW è passato inosservato da Fase 1 |
-| Peso | `app.js` ≤ 340 KB gzip | test nuovo in `prestazioni.py` | prima di pubblicare | oggi 314 KB; +8 % di margine |
-| Tempi (CPU 4×, 4.655 record) | unione < 500 · Oggi < 130 · Agenda < 230 · Mese < 350 · Errori < 450 · Statistiche < 350 · salvataggio su Oggi < 80 ms | `test/prestazioni.py` con `ok()` | prima di pubblicare | ~1,5× il peggiore misurato in T6 |
-| Sicurezza | ogni `innerHTML` nuovo passa da `esc`/`md`/`htmlCarta`/`svgSicuro`; `getDocument` sempre con `isEvalSupported:false` | grep nella suite Node + test abuse case (A18) | ogni task | T3-1/T3-2 |
+| Peso | `app.js` ≤ 340 KB gzip | `test/prestazioni.py` | prima di pubblicare | v0.57: 315 KB; +8 % di margine |
+| Tempi (CPU 4×, 4.655 record) | unione < 500 · Oggi < 130 · Agenda < 230 · Mese < 350 · Errori < 450 · Statistiche < 350 · salvataggio su Oggi < 80 ms · primo disegno di Mese ed Errori < 200 ms (INP) | `test/prestazioni.py` con `ok()` | prima di pubblicare | ~1,5× il peggiore misurato in T6; 200 ms = soglia INP «buono» |
+| Sicurezza | ogni `innerHTML` nuovo passa da `esc`/`md`/`htmlCarta`/`svgSicuro`; `getDocument` sempre con `isEvalSupported:false`; CSP senza `unsafe-eval`, `object-src 'none'`, `connect-src` senza jolly | grep nella suite Node + `test/v057_bp6.py` (XSS) + `test/csp.py` (unico test senza `bypass_csp`) | ogni task | T3-1/T3-2, A13 |
 | Accessibilità minima | ogni controllo con nome accessibile (oggi 0 senza nome su 60); dialoghi chiudibili con Esc; testo ≥ 4,5:1 nei due temi | `read_page` nel browser integrato + test Playwright nuovo | fine task UI | WCAG 2.1 AA, T8 |
 
 ## Misurati, a cricchetto (non devono peggiorare)
 | Metrica | Oggi | Direzione |
 |---|---|---|
-| `any` in `src/` (`as any` + `: any`) | 407 | non sale |
+| `any` in `src/` (`as any` + `: any`) | 406 (v0.57; era 407) | non sale |
 | Righe > 400 caratteri in `src/` (`awk 'length>400' src/*.ts \| wc -l`) | 29 | non sale |
 | Colori hex fuori dai token in `style.css` | 99 | non sale |
-| `font-size` distinti | 24 | non sale |
+| `font-size` distinti | 24 | non sale; i nuovi usano i token `--fs-*`/`--fw-xs` |
 | Contrasto accento tema scuro | 3,72:1 | sale fino a ≥ 4,5 (A9) |
 
 ## Eccezioni
@@ -54,7 +54,7 @@ Scelte di partenza:
 | E1 | `catch {}` vuoto | stringhe di script iniettati negli iframe dei quiz | toppa localStorage dentro sandbox | nessuna (non è codice dell'app) |
 | E2 | test saltato | `test/spiegazioni.py` | manca la fixture del quiz | 2027-02-17 (fixture in BP6, A18) |
 | E3 | segreto nel sorgente | chiave API Google (`06-drive.ts:19`) | pubblica per natura; limitata in Cloud Console (A27) | rivedere 2027-02-17 |
-| E4 | dati di terzi | email in `06-drive.ts:29-30` | sostituire con hash (A12) | 2027-02-17 |
+| ~~E4~~ | dati di terzi | email in `06-drive.ts` | **chiusa in v0.57**: confronto su hash SHA-256 | — |
 
 ## Come si controlla l'asticella
 A ogni revisione: `git diff` di questo file rispetto al punto di partenza del ramo; cercare `.skip`/`SALTATO` nuovi, test tolti,

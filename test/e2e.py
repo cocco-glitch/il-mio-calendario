@@ -14,7 +14,7 @@ def ok(c, m):
     if not c: err.append(m)
 with sync_playwright() as p:
     b = p.chromium.launch()
-    ctx = b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome', color_scheme='dark', has_touch=True)
+    ctx = b.new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome', color_scheme='dark', has_touch=True)
     pg = ctx.new_page()
     pg.on('console', lambda m: m.type == 'error' and 'ERR_TUNNEL' not in m.text and err.append('console: ' + m.text))
     pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
@@ -113,7 +113,7 @@ with sync_playwright() as p:
     ok(r['ex'] == ['2026-11-11','2026-11-13'], 'eccezione esclusa')
 
     # PC
-    pc = b.new_context(viewport={'width': 1280, 'height': 800}, locale='it-IT', timezone_id='Europe/Rome').new_page()
+    pc = b.new_context(bypass_csp=True, viewport={'width': 1280, 'height': 800}, locale='it-IT', timezone_id='Europe/Rome').new_page()
     pc.goto(URL.replace('index.html', 'anteprima.html')); pc.wait_for_selector('.tabbar')
     pc.click('.tabbar >> text=Calendario'); pc.screenshot(path='test/10-pc-mese.png')
     ok(pc.locator('.mese-cella').count() >= 35, 'anteprima a file unico funziona su PC')

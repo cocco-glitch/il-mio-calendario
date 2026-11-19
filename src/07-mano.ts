@@ -94,7 +94,11 @@ interface VistaMano { ox: number; oy: number; w: number; h: number; passo: numbe
 const CACHE_IMG = new Map<string, HTMLImageElement>();
 function imgPronta(s: string, poi?: () => void): HTMLImageElement | null {
   let i = CACHE_IMG.get(s);
-  if (!i) { i = new Image(); i.src = s; CACHE_IMG.set(s, i); }
+  if (!i) {
+    const img = new Image(); i = img; CACHE_IMG.set(s, img);
+    if (!Allegati.eRif(s)) img.src = s;                     // v0.57 (A14): riferimento all'archivio allegati
+    else { const u = Allegati.subito(s); if (u) img.src = u; else Allegati.risolvi(s).then(v => { if (v) img.src = v; else CACHE_IMG.delete(s); }); }
+  }
   if (i.complete && i.naturalWidth) return i;
   if (poi) i.addEventListener('load', poi, { once: true });
   return null;

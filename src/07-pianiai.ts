@@ -50,6 +50,7 @@ const PianiAI = (() => {
       minutiAltriPiani, statq: () => Stato.tutti('statq'), leggiFonte,
       ia: o.usaAI && !Dominio.senzaAI() ? (m, x) => IA.testo(m as any, 'genera', { maxOut: x.maxOut, archetipo: x.archetipo } as any).then(r => r.testo) : undefined,
       testoIndice: o.testoIndice, unita: o.unita, pid: o.pid, titolo: o.titolo,
+      ritenzione: min => Ripassi.ritenzione(ymd(new Date()), min), intervallo: Ripassi.intervallo,   // v0.57 (A16): unica fonte
     };
   }
 
@@ -212,11 +213,10 @@ const PianiAI = (() => {
 
   // ---------- azioni sul piano ----------
   function bottoni(p?: PkPiano): HTMLElement | null {
-    const crea = h('button.btn.neutro', { onclick: () => apri() }, '✨ Crea Piano Intelligente');
-    if (!eAI(p)) return crea;
+    if (!eAI(p)) return null;   // v0.57: si crea da «＋ Crea piano» (scegliPiano), qui solo le azioni del piano
     const nas = Studio.nascosto(p.id);
     const dl = p.deload && p.deload.attivo ? p.deload : null;
-    return h('span', null, crea,
+    return h('span', null,
       p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null,
       h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'),
       h('button.btn.neutro', { onclick: async () => {

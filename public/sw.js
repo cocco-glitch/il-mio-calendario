@@ -6,7 +6,8 @@ const FILE = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
 const PDFJS = ['pdf.min.js', 'pdf.worker.min.js'].map(f => 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/' + f);
 self.addEventListener('install', e => {
   // v0.50: niente skipWaiting qui: la nuova versione aspetta il tocco su «Aggiorna» (messaggio 'salta').
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILE)));
+  // v0.57: cache 'reload' = mai dalla cache HTTP del browser (eviterebbe file vecchi nella nuova versione)
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILE.map(f => new Request(f, { cache: 'reload' })))));
   // pdf.js è facoltativo: se la CDN non risponde l'install non deve fallire.
   caches.open('imc-lib').then(c => Promise.all(PDFJS.map(u => c.match(u).then(r => r || c.add(u)).catch(() => {})))).catch(() => {});
 });

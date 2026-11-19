@@ -33,7 +33,7 @@ PACK = {
 }
 
 with sync_playwright() as p:
-    pg = p.chromium.launch().new_context(viewport={'width': 420, 'height': 900}, locale='it-IT').new_page()
+    pg = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 420, 'height': 900}, locale='it-IT').new_page()
     pg.add_init_script("try { localStorage.setItem('imc-quiz-modo','esame') } catch (e) {}")   # v0.54: quiz senza passo di certezza (default neuro)
     pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.goto(URL); pg.wait_for_selector('.tabbar')
@@ -156,7 +156,7 @@ with sync_playwright() as p:
     r = pg.evaluate("() => { const k = IA.tutteChiavi(); return [Dominio.senzaAI(), Object.keys(k).filter(p => k[p]).length]; }")
     ok(r[0] == (r[1] == 0), 'senzaAI() vero solo senza chiavi: %s' % r)
     pg.evaluate("vai('altro'); UI.altroSez = 'studio'; disegna()"); pg.wait_for_timeout(300)
-    ok(pg.locator('text=Profilo e materie').count() >= 1 and pg.locator('text=Importa .imcpack').count() >= 1 and pg.locator('text=Crea piano dal libro').count() >= 1, 'Altro → Studio: profilo, import pacchetti e piano dal libro')
+    ok(pg.locator('text=Profilo e materie').count() >= 1 and pg.locator('text=Importa .imcpack').count() >= 1 and pg.locator('text=＋ Crea piano').count() >= 1, 'Altro → Studio: profilo, import pacchetti e piano dal libro')
     ok(pg.locator('text=100% senza AI').count() >= 1, 'senza chiavi: avviso «100% senza AI» nelle impostazioni')
     pg.evaluate("localStorage.setItem('imc-groq-chiave', 'gsk_test')")
     ok(pg.evaluate("Dominio.senzaAI()") is False, 'con una chiave la modalità senza AI si disattiva')

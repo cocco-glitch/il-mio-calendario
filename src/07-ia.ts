@@ -167,33 +167,8 @@ const IA = (() => {
     return out;
   }
 
-  // v0.45 (BP1 §4.6): lettura robusta del JSON restituito dai modelli.
-  const LATEX = new Set(('frac dfrac tfrac sqrt text textrm mathrm mathbf mathit operatorname times cdot div pm mp neq ne leq le geq ge approx sim propto infty partial nabla int sum prod lim log ln exp sin cos tan to rightarrow leftarrow Rightarrow rightleftharpoons leftrightarrow left right bar vec hat dot overline underline ' +
-    'alpha beta gamma Gamma delta Delta epsilon varepsilon zeta eta theta Theta iota kappa lambda Lambda mu nu xi Xi pi Pi rho sigma Sigma tau upsilon phi Phi varphi chi psi Psi omega Omega degree circ ce pu quad qquad newline not in notin cup cap subset forall exists rm bf it').split(' '));
-  /** Raddoppia i backslash del LaTeX SOLO dentro le stringhe JSON: `\\` già doppi, `\uXXXX` e i veri escape (\n, \t, \" …) restano. */
-  function riparaLatex(t: string): string {
-    return t.replace(/"(?:[^"\\]|\\.)*"/gs, s => s.replace(/\\(\\|u[0-9a-fA-F]{4}|[a-zA-Z]+|[\s\S])/g, (m, x: string) => {
-      if (x === '\\' || /^u[0-9a-fA-F]{4}$/.test(x)) return m;      // già escapato · unicode valido
-      if (!/^[a-zA-Z]/.test(x)) return '"/'.includes(x) ? m : '\\\\' + x;   // \" \/ validi; \( \, \[ … sono LaTeX
-      if (LATEX.has(x)) return '\\\\' + x;                           // comando LaTeX intero (limite noto: \nu \tau \theta …)
-      if (/^[bfnrt]/.test(x)) return m;                              // vero escape JSON seguito da testo (es. \nnuovo)
-      return '\\\\' + x;                                             // \l \s \c… invalidi in JSON → LaTeX
-    }));
-  }
-  /** Toglie <think>, fence ``` e testo intorno; estrae il PRIMO JSON bilanciato (fuori dalle stringhe), ripara il LaTeX, poi JSON.parse. */
-  function parseJsonSicuro(raw: string): any {
-    let t = String(raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').replace(/```(?:json)?/gi, '');
-    const i = t.search(/[{[]/); if (i < 0) throw new Error('risposta non in JSON');
-    let d = 0, s = false, e = false, j = i;
-    for (; j < t.length; j++) {
-      const c = t[j];
-      if (s) { if (e) e = false; else if (c === '\\') e = true; else if (c === '"') s = false; continue; }
-      if (c === '"') s = true; else if (c === '{' || c === '[') d++; else if (c === '}' || c === ']') { d--; if (!d) break; }
-    }
-    t = t.slice(i, j + 1);
-    // sempre riparare prima: «\frac» è JSON valido (\f = form feed) ma va letto come LaTeX
-    try { return JSON.parse(riparaLatex(t)); } catch (_) { throw new Error('risposta non in JSON valido'); }
-  }
+  // v0.45 (BP1 §4.6) → v0.57 (A15): il parser è uno solo, in 01-json.ts.
+  const parseJsonSicuro = (raw: string) => JsonAI.parseSicuro(raw);
   const json = parseJsonSicuro;
   /** Accorcia i messaggi di testo più lunghi finché il totale sta sotto `lim` caratteri (i brevi restano interi; immagini intatte). */
   function accorcia<T extends { content: any }>(msgs: T[], lim: number): T[] {

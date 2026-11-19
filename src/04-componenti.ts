@@ -63,19 +63,31 @@ function foglio(opz: {
   return { chiudi };
 }
 
-/** Dialogo di scelta (al posto di confirm/alert, che su iOS in PWA danno problemi). */
+/** Dialogo di scelta (al posto di confirm/alert, che su iOS in PWA danno problemi).
+ *  v0.57 (A11): <dialog>.showModal() → focus intrappolato, Esc = Annulla, sfondo inerte; il focus torna dov'era. */
 function chiedi(titolo: string, scelte: { testo: string; valore: string; pericolo?: boolean }[], testo?: string): Promise<string | null> {
   return new Promise(ok => {
-    const fine = (v: string | null) => { sfondo.remove(); ok(v); };
-    const sfondo = h('div.dialogo-sfondo', { onclick: (e: Event) => { if (e.target === sfondo) fine(null); } },
-      h('div.dialogo', { role: 'alertdialog' },
-        h('div.dialogo-titolo', null, titolo),
+    const prima = document.activeElement as HTMLElement | null;
+    let finito = false;
+    const fine = (v: string | null) => {
+      if (finito) return; finito = true;
+      try { if (d.open) d.close(); } catch (e) { console.warn('chiedi: chiusura', e); }
+      d.remove(); ok(v);
+      if (prima && typeof prima.focus === 'function' && document.contains(prima)) prima.focus();
+    };
+    const idT = 'dlg-' + Math.random().toString(36).slice(2, 8);
+    const d = h('dialog.dialogo-sfondo', { 'aria-labelledby': idT, onclick: (e: Event) => { if (e.target === d) fine(null); } },
+      h('div.dialogo', { role: 'document' },
+        h('div.dialogo-titolo', { id: idT }, titolo),
         testo ? h('div.dialogo-testo', null, testo) : null,
-        scelte.map(s => h('button.btn' + (s.pericolo ? '.pericolo' : ''), { onclick: () => fine(s.valore) }, s.testo)),
-        h('button.btn.neutro', { onclick: () => fine(null) }, 'Annulla'),
+        scelte.map(s => h('button.btn' + (s.pericolo ? '.pericolo' : ''), { type: 'button', onclick: () => fine(s.valore) }, s.testo)),
+        h('button.btn.neutro', { type: 'button', onclick: () => fine(null) }, 'Annulla'),
       ),
-    );
-    document.body.appendChild(sfondo);
+    ) as HTMLDialogElement;
+    d.addEventListener('cancel', e => { e.preventDefault(); fine(null); });   // Esc
+    document.body.appendChild(d);
+    try { d.showModal(); } catch (e) { console.warn('chiedi: showModal non disponibile', e); d.setAttribute('open', ''); }
+    const primo = d.querySelector<HTMLButtonElement>('.dialogo button'); if (primo) primo.focus();
   });
 }
 

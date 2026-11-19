@@ -303,7 +303,7 @@ const Dominio = (() => {
   async function importaDaFile(): Promise<void> {
     const f = await scegliFile('.json,.imcpack,application/json'); if (!f) return;
     try {
-      const r = importa(JSON.parse(await f.text()));
+      const r = importa(JsonAI.leggiFile(await f.text()));
       avviso('📦 «' + r.pk.titolo + '» importato: ' + r.domande + ' domande' + (r.carte ? ', ' + r.carte + ' flashcard' : '') + (r.scartate ? ' (' + r.scartate + ' scartate perché incomplete)' : '') + '. Lo trovi in Studio.', 7000);
     } catch (e: any) { avviso('Pacchetto: ' + (e.message || e), 6000); }
   }
@@ -360,18 +360,23 @@ const Dominio = (() => {
   function creaPiano(o: { nome: string; testo: string; esame: string; oreGiorno: number; archetipo?: ArchetipoDisciplinare; inizio?: string }): { pk: PkStep; capitoli: Capitolo[]; avvisi: string[] } {
     const cap = estraiCapitoli(o.testo); if (!cap.length) throw new Error('Non trovo capitoli nell\'indice: una riga per capitolo, es. «1.2 Titolo .... 34».');
     const d = distribuisci(cap, o.inizio || ymd(new Date()), o.esame, Math.max(0.5, o.oreGiorno || 2));
-    const nome = o.nome.trim() || 'Nuova materia', codice = nuovoCodice(nome);
+    const nome = o.nome.trim() || 'Nuova materia';
+    // v0.57 (A17): stesso nome di un corso proprio già creato → lo aggiorno invece di crearne un doppione
+    const esiste = Studio.pkStep().find(p => p.proprio && p.titolo.trim().toLowerCase() === nome.toLowerCase() && p.materie.length === 1);
+    const codice = esiste ? esiste.materie[0].m : nuovoCodice(nome);
     const arch = o.archetipo || indovinaArchetipo(nome) || 'scienze_sperimentali';
     Stato.salva({ id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome, colore: coloreMateria(codice), archetipo: arch } as MateriaRec, true);
     const mat: MateriaS = { m: codice, nome, libro: '', sottostep: d.capitoli.map((c, i) => {
       const n = '1.' + (i + 1);
       return { k: codice + n, n, titolo: c.titolo, posizione: c.pagina != null ? 'p. ' + c.pagina : '', data: c.data, microstep: [{ n: n + '.1', schede: [] }] } as SottoS;
     }) };
-    const pk: PkStep = { tipo: 'step', id: 'corso-' + uid().slice(0, 8), step: 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo: nome, aggiornato: ymd(new Date()), proprio: true,
+    const pk: PkStep = { tipo: 'step', id: esiste ? esiste.id : 'corso-' + uid().slice(0, 8), step: esiste ? esiste.step : 1000 + Studio.pkStep().filter(p => p.proprio).length, titolo: nome, aggiornato: ymd(new Date()), proprio: true,
       descrizione: 'Piano creato dall\'indice del libro (' + d.capitoli.length + ' argomenti, esame il ' + o.esame + ').', risorse: { libri: {}, quiz: {} }, materie: [mat] };
     (pk as any).imc = { archetipo: arch };
     salvaPacchetto(pk);
-    Stato.salva({ id: 'esame-' + uid().slice(0, 8), type: 'esame', updatedAt: 0, nome: 'Esame di ' + nome, data: o.esame } as any);
+    const esameVecchio = Stato.tutti<any>('esame').find(e => e.nome === 'Esame di ' + nome);
+    if (esameVecchio) { esameVecchio.data = o.esame; Stato.salva(esameVecchio); }
+    else Stato.salva({ id: 'esame-' + uid().slice(0, 8), type: 'esame', updatedAt: 0, nome: 'Esame di ' + nome, data: o.esame } as Esame);
     return { pk, capitoli: d.capitoli, avvisi: d.avvisi };
   }
   async function testoDaPdf(f: File): Promise<string> {
@@ -454,7 +459,7 @@ const Dominio = (() => {
       h('div.tenue.piccolo', null, 'Ritenzione FSRS ' + Math.round(p.ritenzioneTarget * 100) + '% · gruppi da ' + p.dimensioneMicroLotto + ' domande · spiegazioni ' + p.tonoSpiegazioneAI.replace('_', ' ')),
       materie.length ? h('div.gruppo', null, h('div.gruppo-titolo', null, 'Tipo di materia (guida AI e controlli senza AI)'), ...materie) : null,
       h('div.bottoni', null,
-        h('button.btn.neutro', { onclick: () => wizardPiano() }, '🗓 Crea piano dal libro'),
+        h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano'),
         h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack')),
       propri.length ? h('div.chips', null, ...propri.map(x => h('button.chip', { onclick: () => scaricaPacchetto(x) }, '⬇ ' + x.titolo))) : null,
       senzaAI() ? h('div.tenue.piccolo', null, '🔌 Modalità 100% senza AI: calendario, ripassi FSRS, flashcard, pacchetti e controlli delle risposte funzionano senza chiavi.') : null);

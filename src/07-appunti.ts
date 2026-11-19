@@ -50,6 +50,7 @@ const Appunti = (() => {
     a.titolo = a.titolo.trim() || (a.testo.trim().split('\n')[0] || 'Appunto').replace(/^#+\s*/, '').slice(0, 60);
     const col = Carte.collega(a.titolo); if (col.sub) { a.sub = col.sub; a.micro = col.micro; }
     Stato.salva(a);
+    if (a.mano && a.mano.im && a.mano.im.length) Allegati.alleggerisci(a.id).catch(e => console.warn('Allegati: alleggerimento rimandato', e));   // v0.57 (A14)
     return sincronizzaCarte(a);
   }
   function nuovo(extra: Partial<Appunto> = {}): Appunto { return { id: 'ap-' + uid(), type: 'appunto', updatedAt: 0, titolo: '', testo: '', creato: ymd(new Date()), ...extra }; }

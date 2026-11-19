@@ -82,6 +82,10 @@ interface DipPianificatore {
   /** Minuti già impegnati da altri piani in quel giorno. */
   minutiAltriPiani?: (data: string) => number;
   statq?: () => any[];
+  /** v0.57 (A16): unica fonte di ritenzione = Ripassi.ritenzione (il minimo è quello del livello d'intensità). */
+  ritenzione?: (minimo: number) => number;
+  /** v0.57 (A16): curva FSRS di Ripassi (giorni per stabilità s e ritenzione r). */
+  intervallo?: (s: number, r: number) => number;
   leggiFonte?: (fileId: string) => Promise<FonteTesto | null>;
   /** Router AI (catena «genera»): riceve i messaggi e { maxOut: 1800 }; restituisce testo o JSON. Assente = 0 token. */
   ia?: (msgs: { role: string; content: string }[], o: { maxOut: number; archetipo?: string }) => Promise<any>;
@@ -261,26 +265,12 @@ const Pianificatore = (() => {
   }
 
   // ---------- Stadio 3: mapping del curriculum (1 chiamata AI JSON, fallback TOC) ----------
-  /** Recupera gli oggetti completi di un array JSON troncato (risposta AI interrotta a metà). */
-  function recuperaArrayParziale(raw: string): any[] {
-    const s = String(raw || ''), k0 = s.indexOf('unita') >= 0 ? s.indexOf('[', s.indexOf('unita')) : s.indexOf('[');
-    if (k0 < 0) return [];
-    const out: any[] = []; let prof = 0, ini = -1, str = false, esc = false;
-    for (let k = k0 + 1; k < s.length; k++) {
-      const c = s[k];
-      if (str) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') str = false; continue; }
-      if (c === '"') str = true;
-      else if (c === '{') { if (prof === 0) ini = k; prof++; }
-      else if (c === '}') { prof--; if (prof === 0 && ini >= 0) { try { out.push(JSON.parse(s.slice(ini, k + 1))); } catch (_) { /* oggetto rotto */ } ini = -1; } if (prof < 0) break; }
-      else if (c === ']' && prof === 0) break;
-    }
-    return out;
-  }
+  /** v0.57 (A15): parsing delegato all'unico parser (01-json.ts). */
+  const recuperaArrayParziale = (raw: string) => JsonAI.recuperaArrayParziale(raw, 'unita');
   function leggiRisposta(r: any): any[] {
-    if (r && typeof r === 'object') return Array.isArray(r) ? r : Array.isArray(r.unita) ? r.unita : [];
-    const s = String(r || '').replace(/```(?:json)?/g, '');
-    try { const j = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); if (j && Array.isArray(j.unita)) return j.unita; } catch (_) { /* troncato */ }
-    return recuperaArrayParziale(s);
+    const j = JsonAI.leggi(r);
+    if (j) { const l = Array.isArray(j) ? j : Array.isArray(j.unita) ? j.unita : null; if (l) return l; }
+    return typeof r === 'string' ? recuperaArrayParziale(r) : [];
   }
   /** Validazione e grounding: fileId solo tra le sorgenti note, prerequisiti solo tra uid esistenti, valori nei limiti. */
   function normalizzaUnita(lista: any[], struttura: string): UnitaAI[] {
@@ -349,15 +339,18 @@ const Pianificatore = (() => {
     return unita.map(u => ({ ...u, prereq: (u.prereq || []).filter((p, i, a) => p !== u.uid && pos.has(p) && pos.get(p)! < pos.get(u.uid)! && a.indexOf(p) === i) }));
   }
   const s0 =(arch: string, densita: number, errori: boolean) => arr1((BASE_S0[arch] || 2.5) * (1.25 - 0.12 * densita) * (errori ? 0.65 : 1));
-  function intervalliFsrs(S0: number): number[] {
-    const f = clamp(S0 / 2.5, 0.6, 1.4), out: number[] = [];
+  /** Ancoraggi di ripasso. Con «iv» (curva FSRS di Ripassi) gli intervalli si allungano/accorciano secondo la
+   *  ritenzione r rispetto al riferimento 0,90; senza, restano quelli di base (modulo puro nei test). */
+  function intervalliFsrs(S0: number, r = 0.9, iv?: (s: number, r: number) => number): number[] {
+    const k = iv && r !== 0.9 ? clamp(iv(100, r) / Math.max(1, iv(100, 0.9)), 0.4, 2) : 1;
+    const f = clamp(S0 / 2.5, 0.6, 1.4) * k, out: number[] = [];
     for (const g of INTERVALLI) out.push(Math.max(out.length ? out[out.length - 1] + 1 : 1, Math.round(g * f)));
     return out;
   }
   interface Compito { u: UnitaAI; liv: 1 | 2 | 3 | 4; parte: number; parti: number; min: number; ordine: number; }
   const pezzi = (min: number) => { const n = Math.max(1, Math.round(min / 45)); const m = Math.max(30, Math.min(50, Math.round(min / n))); return { n, m }; };
 
-  function compilaTimelineNeuro(unita0: UnitaAI[], v: VincoliPianoAI, f: FattibilitaAI, seg: SegnaliIper | null, o: { oggi: string; pid: string; titolo?: string }): PkPianoAI {
+  function compilaTimelineNeuro(unita0: UnitaAI[], v: VincoliPianoAI, f: FattibilitaAI, seg: SegnaliIper | null, o: { oggi: string; pid: string; titolo?: string; ritenzione?: number; intervallo?: (s: number, r: number) => number }): PkPianoAI {
     const unita = sanitizzaPrereq(unita0 || []);
     const ob = clamp(v.livelloObiettivo || 4, 1, 4), molt = (MOLT[v.livelloPartenza] || 1) * (seg && seg.attiva ? 1.2 : 1);
     const cod = String(v.materiaCodice || 'X').toUpperCase().replace(/[^A-Z]/g, '') || 'X', pidC = o.pid.replace(/^ai-/, '');
@@ -431,7 +424,7 @@ const Pianificatore = (() => {
         if (pref.liv === 1 && pref.parte === pref.parti) {
           dataL1.set(pref.u.uid, g.data);
           const min = Math.max(15, Math.round(pref.u.minutiBase * molt * QUOTE[0] * QUOTA_RIPASSO / INTERVALLI.length / 5) * 5);
-          intervalliFsrs(s0(v.archetipo, pref.u.densita, errori || !!pref.u.priorita)).forEach((gg, i) => {
+          intervalliFsrs(s0(v.archetipo, pref.u.densita, errori || !!pref.u.priorita), o.ritenzione, o.intervallo).forEach((gg, i) => {
             const d0r = piu(g.data, gg), d = (giorni.find(x => x.data >= d0r) || { data: '' }).data; if (!d || d > ultimo) return;
             ripassi.push({ data: d, voce: { k: cod + '~' + pidC + '~' + pref.u.uid + '~R' + (i + 1), t: '🔁 Ripasso ' + (i + 1) + ' · ' + pref.u.titolo, uid: pref.u.uid, livelloCognitivo: 1, isRipassoFSRS: true, min, sorgenteRef: ref(pref.u) } });
           });
@@ -625,7 +618,7 @@ const Pianificatore = (() => {
   /** Parsing tollerante: esattamente 3 domande × 3 opzioni, delta limitati; altrimenti null (→ fallback). */
   function leggiDomandeCalibrazione(r: any): DomandaCalibrazione[] | null {
     let j: any = r;
-    if (typeof r === 'string') { const s = r.replace(/```(?:json)?/g, ''); try { j = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); } catch (_) { return null; } }
+    if (typeof r === 'string') { j = JsonAI.leggi(r); if (!j) return null; }   // v0.57 (A15)
     const arr = Array.isArray(j) ? j : j && Array.isArray(j.domande) ? j.domande : null;
     if (!arr || arr.length < 3) return null;
     const out: DomandaCalibrazione[] = [];
@@ -788,7 +781,8 @@ const Pianificatore = (() => {
     const m = dip.unita ? { unita: dip.unita, fonte: 'toc' as const, chiamate: 0, tokenStimati: 0 } : await mappaCurriculumAI(struttura, v, seg, dip.ia);
     if (m.fonte === 'ai') fatt = calcolaFattibilita(v, m.unita, ctx);
     const pid = dip.pid || 'ai-' + Date.now().toString(36);
-    const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo });
+    const rMin = v.livelloIntensita ? MATRICE_5_LIVELLI[v.livelloIntensita - 1].ritenzioneTargetFSRS : 0;
+    const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo, ritenzione: dip.ritenzione ? dip.ritenzione(rMin) : undefined, intervallo: dip.intervallo });
     piano.fonteMappa = m.fonte;
     return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: (m as any).errore };
   }

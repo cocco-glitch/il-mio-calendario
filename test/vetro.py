@@ -14,7 +14,7 @@ def ok(c, m):
     if not c: err.append(m)
 with sync_playwright() as p:
     b = p.chromium.launch()
-    ctx = b.new_context(viewport={'width': 390, 'height': 844}, locale='it-IT', timezone_id='Europe/Rome')
+    ctx = b.new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, locale='it-IT', timezone_id='Europe/Rome')
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.clock.install(time='2026-11-12T09:00:00+01:00')
     pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("!!Studio.pkPiano()")
@@ -33,7 +33,7 @@ with sync_playwright() as p:
     pg.evaluate("UI.altroSez='aspetto'; vai('altro')"); pg.wait_for_timeout(200)
     pg.locator('.riga', has_text='Effetto vetro').locator('select').select_option('no'); pg.wait_for_timeout(200)
     ok(pg.evaluate("document.documentElement.dataset.vetro") == 'no' and pg.evaluate("getComputedStyle(document.querySelector('.tabbar')).position") != 'fixed', 'disattivato: superfici piene, barra normale')
-    ctx2 = b.new_context(viewport={'width': 390, 'height': 844}, reduced_motion='reduce')
+    ctx2 = b.new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, reduced_motion='reduce')
     pg2 = ctx2.new_page(); pg2.goto(URL); pg2.wait_for_selector('.tabbar'); pg2.wait_for_timeout(500); pg2.evaluate("vai('note')")
     ok(pg2.evaluate("getComputedStyle(document.querySelector('main.entra > .pagina')).animationName") == 'none', 'movimento ridotto rispettato')
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))

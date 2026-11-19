@@ -96,7 +96,7 @@ function dataRelativa(d: Date): string {
 
 // ---------- Markdown minimale (sicuro: prima escape, poi sostituzioni) ----------
 function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');   // v0.57: anche ' (attributi tra apici singoli)
 }
 function mdInline(s: string): string {
   return esc(s)

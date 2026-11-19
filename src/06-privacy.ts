@@ -33,11 +33,37 @@ const Privacy = (() => {
     const br = /Edg\//.test(u) ? 'Edge' : /CriOS|Chrome/.test(u) ? 'Chrome' : /FxiOS|Firefox/.test(u) ? 'Firefox' : /Safari/.test(u) ? 'Safari' : '';
     return tipo + (br ? ' · ' + br : '');
   }
+  // v0.57 (A6): l'isolamento vale anche per localStorage e Cache Storage, non solo per i record.
+  // SENSIBILI = segreti e tracce dell'account (via anche con «Esci soltanto»); al cambio account o con
+  // «Esci e cancella» va via tutto tranne le preferenze del dispositivo in TIENI.
+  const SENSIBILI = ['imc-ai-keys', 'imc-groq-chiave', 'imc-gemini-chiave', 'imc-ai-uso', 'imc-gcal-inviati'];
+  const TIENI = new Set([KDEV, 'imc-records', 'pref-mano', 'imc-quiz-modo']);
+  /** Toglie da localStorage le chiavi dell'account. tutto=false: solo SENSIBILI. Restituisce quante ne ha tolte. */
+  function pulisciLocalStorage(tutto: boolean): number {
+    const via: string[] = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i) || '';
+        if (SENSIBILI.includes(k) || (tutto && !TIENI.has(k) && /^(imc-|trova-)/.test(k))) via.push(k);
+      }
+      via.forEach(k => localStorage.removeItem(k));
+    } catch (e) { console.warn('Privacy: localStorage non pulito', e); }
+    return via.length;
+  }
+  /** Cancella anche i PDF dei libri in Cache Storage (sono file del Drive dell'account precedente). */
+  async function pulisciCache(): Promise<void> {
+    try { if (typeof caches !== 'undefined') await caches.delete('imc-pdf'); } catch (e) { console.warn('Privacy: cache PDF non cancellata', e); }
+  }
+  /** Tutto ciò che appartiene all'account precedente, su questo dispositivo. */
+  async function svuotaAccount(): Promise<void> {
+    await Stato.svuotaLocale(); pulisciLocalStorage(true); await pulisciCache(); if (typeof Allegati !== 'undefined') await Allegati.svuota();
+    if (typeof Drive !== 'undefined' && Drive.dimenticaCartelle) Drive.dimenticaCartelle();
+  }
   /** Chiamata appena si conosce l'account del login, PRIMA di unire i dati remoti. */
   async function primaDiUnire(email: string): Promise<boolean> {
     const e = email.toLowerCase(), prec = accLocale();
     let svuotato = false;
-    if (prec && prec !== e) { await Stato.svuotaLocale(); svuotato = true; }
+    if (prec && prec !== e) { await svuotaAccount(); svuotato = true; }
     else if (!prec) {
       // dispositivo di una versione precedente: tolgo i record marcati con un altro account
       const altrui = Stato.esporta().filter(r => (r as any).acc && (r as any).acc !== e).map(r => r.id);
@@ -66,7 +92,7 @@ const Privacy = (() => {
   /** Per un account NON proprietario: elimina (con lapide → anche dal suo Drive) ciò che è del proprietario. */
   async function pulisciAltrui(email: string): Promise<number> {
     const e = email.toLowerCase();
-    if (!e || e === PROPRIETARIO) return 0;
+    if (!e || hashEmail(e) === HASH_PROPRIETARIO) return 0;   // v0.57: confronto su hash dell'email ricevuta (non dell'account in sessione)
     const s = await caricaIdSito(); let n = 0;
     const togli = (r: Rec) => { Stato.elimina(r.id); n++; };
     for (const r0 of Stato.esporta()) {
@@ -87,7 +113,7 @@ const Privacy = (() => {
   async function dispositivo(email: string): Promise<boolean> {
     const id = idDispositivo(), d = Stato.rec.get(id) as Dispositivo | undefined;
     if (d && !d.deleted && d.revocato) {
-      await Stato.svuotaLocale(); try { localStorage.removeItem(KLOC); } catch (_) { /* */ }
+      await svuotaAccount();
       Drive.logout(); avviso('Questo dispositivo è stato scollegato dal tuo account: dati locali cancellati.', 10000);
       return false;
     }
@@ -97,7 +123,8 @@ const Privacy = (() => {
   }
   /** Uscita sicura: scollega l'account e (se scelto) cancella tutto da questo dispositivo. */
   async function esci(cancella: boolean): Promise<void> {
-    if (cancella) { try { await Drive.sincronizza(false); } catch (_) { /* */ } await Stato.svuotaLocale(); try { localStorage.removeItem(KLOC); } catch (_) { /* */ } }
+    if (cancella) { try { await Drive.sincronizza(false); } catch (e) { console.warn('Privacy: ultima sync non riuscita', e); } await svuotaAccount(); }
+    else pulisciLocalStorage(false);   // A6: le chiavi AI non restano a chi usa il dispositivo dopo
     Drive.logout();
     if (cancella) location.reload();
   }
@@ -112,5 +139,5 @@ const Privacy = (() => {
           d.id !== mio && !d.revocato ? h('div', null, h('button.btn-testo', { onclick: async () => { if (await chiedi('Scollegare «' + d.nome + '»?', [{ testo: 'Scollega', valore: 'si', pericolo: true }], 'Alla prossima apertura cancellerà i tuoi dati ed uscirà dall\'account.') === 'si') { d.revocato = true; Stato.salva(d); disegna(); } } }, 'Scollega questo dispositivo')) : null))),
       Drive.collegato ? h('div.bottoni', null, h('button.btn.neutro', { onclick: async () => { const s = await chiedi('Uscire dall\'account su questo dispositivo?', [{ testo: 'Esci e cancella i dati da qui', valore: 'via', pericolo: true }, { testo: 'Esci soltanto', valore: 'esci' }], 'I dati restano al sicuro nel tuo Drive.'); if (s) esci(s === 'via'); } }, 'Esci da questo dispositivo')) : null);
   }
-  return { primaDiUnire, pulisciAltrui, dispositivo, esci, sezione, idDispositivo, accLocale };
+  return { primaDiUnire, pulisciAltrui, dispositivo, esci, sezione, idDispositivo, accLocale, pulisciLocalStorage, svuotaAccount };
 })();

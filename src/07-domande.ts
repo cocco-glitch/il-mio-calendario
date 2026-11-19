@@ -66,6 +66,8 @@ function sezioneDomande(): HTMLElement {
   const elenco = (filtro === 'ricorrenti' ? Domande.ricorrenti() : filtro === 'aperte' ? Domande.aperte() : Domande.tutte().filter(x => x.esito === 'giusta'))
     .sort((a, b) => b.volte - a.volte || (a.ultima < b.ultima ? 1 : -1));
   const nR = Domande.ricorrenti().length, nA = Domande.aperte().length, nG = Domande.tutte().length - nA;
+  // v0.57 (BP6 · INP): primo disegno con 20 domande (prima 60 → ~730 nodi nel solo Registro errori); le altre su richiesta
+  const quante = UI.domTutte ? 60 : 20;
   const voce = (x: Domanda) => {
     const risp = h('div.dom-risposta', { hidden: true },
       h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'),
@@ -87,5 +89,6 @@ function sezioneDomande(): HTMLElement {
       h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { (UI as any).domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA),
       h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { (UI as any).domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)),
     nA ? h('button.btn.neutro', { onclick: () => { const n = Carte.daErrori(Domande.aperte()).length; if (n) avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null,
-    elenco.length ? elenco.slice(0, 60).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'));
+    elenco.length ? elenco.slice(0, quante).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'),
+    elenco.length > quante && quante < 60 ? h('button.btn.neutro', { onclick: () => { UI.domTutte = true; disegna(); } }, 'Mostra altre ' + (Math.min(60, elenco.length) - quante)) : null);
 }

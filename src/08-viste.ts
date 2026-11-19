@@ -18,6 +18,7 @@ const UI = {
   q: '',
   studioVista: 'schede' as 'schede' | 'carte' | 'piano' | 'errori' | 'statistiche' | 'esami' | 'syllabus' | 'tabelle',
   studioPiano: '',
+  domTutte: false,   // v0.57: «Mostra altre» nell'elenco Errori
   copMateria: '',
   copStato: '',
   tabella: null as string | null,
@@ -213,6 +214,9 @@ function perGiorno(da: Date, a: Date): Map<string, Occ[]> {
   return m;
 }
 
+/** v0.57 (BP6 · INP): la cella del mese mostra ~12 caratteri; tagliare prima evita di impaginare testo invisibile
+ *  (al primo disegno la sagomatura del testo delle chip costava ~80 ms con CPU 4×). Il titolo intero resta nel dettaglio del giorno. */
+const chipMese = (t: string) => t.length > 18 ? t.slice(0, 18) : t;
 function vistaMese(): HTMLElement {
   const primo = new Date(UI.data.getFullYear(), UI.data.getMonth(), 1);
   const inizio = lunedi(primo);
@@ -232,8 +236,8 @@ function vistaMese(): HTMLElement {
       onclick: () => { if (stessoGiorno(g, UI.data)) vai('cal', 'giorno', g); else { UI.data = g; disegna(); } },
     },
       h('span.mese-num', null, String(g.getDate())),
-      Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : coloreChiave(x.v.k) } }, x.v.speciale ? x.v.t : Studio.etichetta(x.v.k))),
-      occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, o.ev.titolo)),
+      Studio.vociDelGiorno(g).slice(0, 2).map(x => h('span.mese-chip.studio', { style: { '--c': x.v.speciale ? '#7c8597' : coloreChiave(x.v.k) } }, chipMese(x.v.speciale ? x.v.t : Studio.etichetta(x.v.k)))),
+      occ.slice(0, 2).map(o => h('span.mese-chip', { style: { '--c': coloreEvento(o.ev) } }, chipMese(o.ev.titolo))),
       occ.length > 2 ? h('span.mese-altro', null, '+' + (occ.length - 2)) : null,
       nTask ? h('span.mese-task', { title: nTask + ' promemoria' }) : null,
     ));

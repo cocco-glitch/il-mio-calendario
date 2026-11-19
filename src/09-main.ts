@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.56.2';
+const VERSIONE = '0.57.0';
 
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
@@ -200,6 +200,7 @@ async function avvia(): Promise<void> {
   attivaSimboli();
   Tocco.attiva();
   disegna();
+  setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500);   // v0.57 (A14)
   avvisoNovita();
   Drive.precarica();
   Timer.parti();

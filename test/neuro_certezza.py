@@ -12,7 +12,7 @@ for _ in range(100):
 errori, rete_ai = [], []
 try:
     with sync_playwright() as p:
-        b = p.chromium.launch(); pg = b.new_page(viewport={'width': 390, 'height': 844})
+        b = p.chromium.launch(); pg = b.new_page(bypass_csp=True, viewport={'width': 390, 'height': 844})
         pg.add_init_script("try { localStorage.setItem('imc-quiz-modo','neuro') } catch (e) {}")   # Allenamento Neuro (certezza)
         pg.on('pageerror', lambda e: errori.append(str(e)))
         for host in ['api.groq.com', 'generativelanguage.googleapis.com', 'api.xkiro.com', 'api.cohere.com', 'router.requesty.ai', 'api.cerebras.ai', 'api.sambanova.ai']:

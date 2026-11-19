@@ -13,7 +13,7 @@ def ok(c, m):
     print(('  ok  ' if c else ' FAIL ') + m)
     if not c: err.append(m)
 with sync_playwright() as p:
-    ctx = p.chromium.launch().new_context(viewport={'width': 800, 'height': 1200}, device_scale_factor=1.5, is_mobile=True, has_touch=True, locale='it-IT')
+    ctx = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 800, 'height': 1200}, device_scale_factor=1.5, is_mobile=True, has_touch=True, locale='it-IT')
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     cdp = ctx.new_cdp_session(pg)
     def touch(tipo, pts): cdp.send('Input.dispatchTouchEvent', {'type': tipo, 'touchPoints': [{'x': x, 'y': y, 'id': i} for i, (x, y) in enumerate(pts)]})

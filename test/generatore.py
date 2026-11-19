@@ -14,7 +14,7 @@ def ok(c, m):
     if not c: err.append(m)
 
 with sync_playwright() as p:
-    ctx = p.chromium.launch().new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome')
+    ctx = p.chromium.launch().new_context(bypass_csp=True, viewport={'width': 390, 'height': 844}, device_scale_factor=2, locale='it-IT', timezone_id='Europe/Rome')
     pg = ctx.new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
     pg.clock.install(time='2026-11-12T09:00:00+01:00')
     pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("!!Studio.pkPiano() && Studio.pkStep().length >= 3")
@@ -28,7 +28,7 @@ with sync_playwright() as p:
 
     # --- procedura guidata con la proposta iniziale (raffinamento tra i due appelli) ---
     pg.evaluate("UI.studioVista = 'piano'; vai('studio')"); pg.wait_for_timeout(200)
-    pg.click('text=Genera un piano'); pg.wait_for_selector('.gen-passi')
+    pg.click('text=＋ Crea piano'); pg.click('.dialogo button:has-text("Genera un piano")'); pg.wait_for_selector('.gen-passi')
     pg.screenshot(path='test/gen-esame.png')
     ok(pg.input_value('.visore input[type=date] >> nth=0') == '2027-01-10' and pg.input_value('.visore input[type=date] >> nth=1') == '2026-12-11', 'proposta: dal 11/12 al secondo appello 10/01')
     ok(pg.locator('.segmenti button.attivo', has_text='Raffinamento').count() == 1, 'proposta: modo raffinamento')

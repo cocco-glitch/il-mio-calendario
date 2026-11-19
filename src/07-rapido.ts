@@ -32,7 +32,7 @@ function interpreta(frase: string, rif = new Date()): Rapido | null {
   let giorno = base, dataEsplicita = false, tipo: Rapido['tipo'] = 'evento', tutto = false;
   let rr: Ricorrenza | undefined;
 
-  if (togli(/(^|\s)(ricorda(mi)?|promemoria|todo|da fare)(\s*:)?(?=\s)/).length) tipo = 'task';
+  if (togli(/(^|\s)(ricorda(mi)?|promemoria|todo|da fare)(\s+(di|che|per))?(\s*:)?(?=\s)/).length) tipo = 'task';   // v0.57: «ricordami di X» → «X», non «Di X»
   if (togli(/\s(tutto il giorno|tutta la giornata)(?=\s)/).length) tutto = true;
 
   // ricorrenze: "ogni giorno", "ogni settimana", "ogni mese", "ogni lunedì e giovedì", "ogni 2 settimane"
