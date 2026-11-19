@@ -302,6 +302,26 @@ await t('testIsolamentoPianiEsistenti: opt-in ai_neuro, altri piani intatti, buf
   vero(ui.includes("Stato.elimina('pk-' + p.id)") && !/Stato\.elimina\((?!'pk-' \+ p\.id)/.test(ui), 'Elimina tocca solo pk-<id>');
   vero(ui.includes("IA.testo(m as any, 'genera'") && ui.includes('Dominio.senzaAI()'), 'router «genera» e modalità senza AI');
 });
+await t('testGuardRailBP4: prereq in ciclo sanificati prima di Kahn, data obiettivo ≤ domani → critico senza AI', async () => {
+  const ciclo = [
+    { uid: 'U1', titolo: 'A', prereq: ['U3'], densita: 3, minutiBase: 60, concettiChiave: [] },
+    { uid: 'U2', titolo: 'B', prereq: ['U1', 'U2'], densita: 3, minutiBase: 60, concettiChiave: [] },
+    { uid: 'U3', titolo: 'C', prereq: ['U2'], densita: 3, minutiBase: 60, concettiChiave: [] },
+  ];
+  const c0 = JSON.stringify(ciclo), san = P.sanitizzaPrereq(ciclo);
+  eq(c0, JSON.stringify(ciclo), 'input non mutato');
+  const pos = new Map(san.map(u => [u.uid, P.ordineTopologico(san).findIndex(x => x.uid === u.uid)]));
+  vero(san.every(u => u.prereq.every(p => pos.get(p) < pos.get(u.uid))), 'niente archi all\'indietro: ' + JSON.stringify(san.map(u => u.prereq)));
+  const r = await P.creaPiano(V(), { oggi: OGGI, unita: ciclo, pid: 'ai-ciclo' });
+  vero(r.piano, 'piano creato'); const voci = tutteVoci(r.piano);
+  for (const u of ciclo) vero(voci.some(v => v.uid === u.uid && v.livelloCognitivo === 1 && !v.isRipassoFSRS), u.uid + ' pianificata nonostante il ciclo');
+  for (const target of ['2026-11-18', OGGI, '2026-11-20']) {
+    let ia = 0;
+    const x = await P.creaPiano(V({ dataTarget: target }), { oggi: OGGI, unita: UNITA, ia: async () => { ia++; return '[]'; } });
+    eq(x.fatt.stato, 'critico', 'target ' + target); vero(x.piano === null && ia === 0, 'nessun piano, 0 AI');
+    const nd = x.fatt.rimedi.find(m => m.tipo === 'sposta_data').nuovaData; vero(nd >= '2026-11-21', 'nuova data futura: ' + nd);
+  }
+});
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();
 t('Pianificatore e interfaccia concatenati prima del quiz (uso solo a runtime)', () => vero(['07-pianificatore.ts', '07-pianiai.ts'].every(x => fl.indexOf(x) >= 0 && fl.indexOf(x) < fl.indexOf('07-quizapp.ts'))));
 

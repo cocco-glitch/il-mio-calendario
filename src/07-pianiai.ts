@@ -57,7 +57,7 @@ const PianiAI = (() => {
   function apri(): void {
     const mats = codiciMaterie();
     const materia = selettore(mats.map(c => [c, nomeMateria(c)] as [string, string]), mats[0] || '');
-    const data = h('input', { type: 'date', value: ymd(piuGiorni(new Date(), 21)) }) as HTMLInputElement;
+    const data = h('input', { type: 'date', value: ymd(piuGiorni(new Date(), 21)), min: ymd(piuGiorni(new Date(), 2)) }) as HTMLInputElement;
     const partenza = selettore([['da_zero', 'Da zero'], ['ripasso', 'Ripasso'], ['raffinamento', 'Raffinamento']], 'da_zero');
     const obiettivo = selettore([['1', '1 · Comprensione'], ['2', '2 · Elaborazione'], ['3', '3 · Applicazione'], ['4', '4 · Transfer']], '4');
     const giorni = [1, 2, 3, 4, 5, 6, 0].map(g => { const c = h('input', { type: 'checkbox', checked: g !== 0 }) as HTMLInputElement; (c as any)._g = g; return c; });
