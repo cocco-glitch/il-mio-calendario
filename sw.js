@@ -1,6 +1,6 @@
 // Service worker: tiene in cache i file dell'app per aprirla offline.
-// mwn1e0yg viene sostituita da build.mjs: a ogni build la cache si rinnova.
-const CACHE = 'imc-mwn1e0yg';
+// mwnf1h02 viene sostituita da build.mjs: a ogni build la cache si rinnova.
+const CACHE = 'imc-mwnf1h02';
 const FILE = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icone/icona-180.png', 'icone/icona-192.png', 'icone/icona-512.png'];
 
 const PDFJS = ['pdf.min.js', 'pdf.worker.min.js'].map(f => 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/' + f);

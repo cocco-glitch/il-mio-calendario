@@ -6352,7 +6352,10 @@ const CreaQuiz = (() => {
             avviso('Serve una chiave AI gratuita: Altro → Spiegazioni AI.', 6000);
             return;
         }
-        const materie = Array.from(new Set(['Chimica', 'Biologia', 'Fisica'].concat(Stato.tutti('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m) => m.nome)).filter(Boolean))));
+        // v0.57.1 (D2): materie fisse solo per il proprietario; per gli altri solo dai propri dati (corsi + pacchetti)
+        const materie = Array.from(new Set((Drive.eProprietario() ? ['Chimica', 'Biologia', 'Fisica'] : Stato.tutti('materia').map(m => m.nome)).concat(Stato.tutti('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m) => m.nome))).filter(Boolean)));
+        if (!materie.length)
+            materie.push('Studio');
         const arg = h('input.campo', { type: 'text', value: pre.argomento || '', placeholder: 'Argomento preciso (es. «leve del corpo umano e guadagno meccanico»)' });
         const mat = h('select.campo', null, ...materie.map(m => h('option', { value: m, selected: pre.materia ? n2(pre.materia) === n2(m) : false }, m)));
         let cosa = pre.cosa || 'misto';
@@ -11766,13 +11769,41 @@ const Neuro = (() => {
     const STOP = new Set('della delle degli dello dalla dalle dagli nella nelle negli sulla sulle questo questa quello quella perché quando mentre anche ancora sempre molto essere hanno viene sono stato stata tutti tutte altri altre loro come dove però quindi infatti'.split(' '));
     /** Cloze dalle frasi chiave: **termine** se c'è, altrimenti la parola lunga più rara della frase. */
     function cloze(testo, o = {}) {
-        const frasi = String(testo || '').replace(/\r/g, '').split(/(?<=[.!?])\s+|\n+/).map(x => x.trim().replace(/^[-*•]\s*/, '')).filter(x => x.length >= 30 && x.length <= 260);
+        const out = [], visti = new Set(), max = o.max || 8, resto = [];
+        const aggiungi = (q, r, lv, e) => {
+            if (out.length >= max || !q || !r || visti.has(n2Cz(q)))
+                return;
+            visti.add(n2Cz(q));
+            const d = { id: 'q-cz-' + hashTesto(q), sk: o.sk || '', t: 'fill', lv, q, a: [r], show: r, e: [e], bloomLevel: 1, gen: true };
+            if (o.stepId)
+                d.stepId = o.stepId;
+            out.push(d);
+        };
+        // v0.57.1 (Q1): sintassi degli appunti prima dell'euristica. «domanda :: risposta» → domanda con la sua risposta;
+        // {{parola}} → completamento con risposta «parola» (le graffe non restano mai visibili). I template {{x:1:9}} / {{=…}} non sono toccati.
+        const GRAFFA = /\{\{(?!\s*=)(?![^}]*:)\s*([^}]+?)\s*\}\}/g;
+        for (const riga of String(testo || '').replace(/\r/g, '').split('\n')) {
+            const x = riga.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '');
+            const qr = /^(.+?)\s::\s(.+)$/.exec(x);
+            if (qr) {
+                aggiungi(qr[1].trim(), qr[2].trim(), 'Domanda', 'Risposta: ' + qr[2].trim());
+                continue;
+            }
+            const g = Array.from(x.matchAll(GRAFFA));
+            if (g.length) {
+                const pulita = x.replace(GRAFFA, '$1');
+                g.forEach((m, i) => { let k = 0; aggiungi(x.replace(GRAFFA, (_m, p) => k++ === i ? '……' : p), m[1], 'Completamento', 'In sintesi: ' + pulita); });
+                continue;
+            }
+            resto.push(riga);
+        }
+        const testoResto = resto.join('\n');
+        const frasi = testoResto.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim().replace(/^[-*•]\s*/, '')).filter(x => x.length >= 30 && x.length <= 260 && !x.includes('{{'));
         const freq = new Map();
-        for (const w of String(testo).toLowerCase().match(/[a-zà-ù]{7,}/g) || [])
+        for (const w of testoResto.toLowerCase().match(/[a-zà-ù]{7,}/g) || [])
             freq.set(w, (freq.get(w) || 0) + 1);
-        const out = [], visti = new Set();
         for (const f of frasi) {
-            if (out.length >= (o.max || 8))
+            if (out.length >= max)
                 break;
             let term = (/\*\*([^*]{2,40})\*\*/.exec(f) || [])[1] || '';
             if (!term) {
@@ -11786,13 +11817,11 @@ const Neuro = (() => {
             const pulita = f.replace(/\*\*/g, ''), q = pulita.replace(term, '……');
             if (q === pulita)
                 continue;
-            const d = { id: 'q-cz-' + hashTesto(q), sk: o.sk || '', t: 'fill', lv: 'Completamento', q, a: [term], show: term, e: ['In sintesi: ' + pulita], bloomLevel: 1, gen: true };
-            if (o.stepId)
-                d.stepId = o.stepId;
-            out.push(d);
+            aggiungi(q, term, 'Completamento', 'In sintesi: ' + pulita);
         }
         return out;
     }
+    const n2Cz = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
     // ---------- 6b. parser JSON tollerante + alias ----------
     // v0.57 (A15): un solo parser, in 01-json.ts (qui restano i nomi storici).
     const riparaJson = (t) => JsonAI.riparaJson(t);
@@ -11986,7 +12015,8 @@ const PianiAI = (() => {
     const eAI = (p) => !!p && p.origine === 'ai_neuro';
     const pianiAI = () => Studio.pkPiani().filter(eAI);
     function codiciMaterie() {
-        const s = new Set([...Object.keys(MATERIE_BASE), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
+        // v0.57.1 (D1): le materie del proprietario solo al proprietario, come 07-dominio.ts
+        const s = new Set([...Object.keys(MATERIE_BASE).filter(() => Drive.eProprietario()), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
         return Array.from(s).filter(Boolean);
     }
     /** Minuti già occupati quel giorno dagli altri piani attivi (non AI): v.min se c'è, altrimenti 45 per voce. */
@@ -12076,7 +12106,8 @@ const PianiAI = (() => {
         const usaAI = h('input', { type: 'checkbox', checked: !senza, disabled: senza });
         const esito = h('div.tenue.piccolo');
         // v0.56 (BP5): intensità 1–5 e questionario 6+3
-        const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)']), '2', function () {
+        // v0.57.1 (D5): il livello 5 «Sprint» contraddice il Burnout Breaker → il wizard offre 1–4 (il modulo puro lo conserva per i piani vecchi)
+        const intensita = selettore(Pianificatore.MATRICE_5_LIVELLI.filter(c => c.livello <= 4).map(c => [String(c.livello), c.livello + ' · ' + c.nome + ' (' + c.oreRealiMin + '–' + c.oreRealiMax + ' h)']), '2', function () {
             oreMax.value = String(Pianificatore.configLivello(+this.value).oreRealiMax);
             avvisiBio();
         });
@@ -12132,10 +12163,10 @@ const PianiAI = (() => {
         const vincoliBP5 = () => {
             const v = vincoli(), p = profilo(), g = Pianificatore.applicaGuardRailBiologici(+intensita.value, p);
             salvaProfilo(p);
-            v.livelloIntensita = g.livello;
+            v.livelloIntensita = Math.min(4, g.livello);
             v.profiloBio = p;
             v.pesi = Pianificatore.applicaRisposte(Pianificatore.pesiIniziali(p), domandeB, scelteB.map(s => s.value === '' ? null : +s.value));
-            v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(g.livello).oreRealiMax);
+            v.maxOreGiorno = Math.min(v.maxOreGiorno, Pianificatore.configLivello(v.livelloIntensita).oreRealiMax);
             return v;
         };
         const mostraRimedi = (f) => {
@@ -12206,17 +12237,22 @@ const PianiAI = (() => {
         avvisiBio();
     }
     // ---------- hook post-quiz (Stadio 5, 0 token) ----------
+    /** v0.57.1 (Q3): restituisce una funzione che rimette i piani com'erano prima dell'anticipo («Annulla» del quiz). */
     function dopoQuiz(sk, caso) {
-        const oggi = ymd(new Date());
+        const oggi = ymd(new Date()), prima = [];
         for (const p of pianiAI()) {
             if (Studio.nascosto(p.id))
                 continue;
+            const copia = JSON.parse(JSON.stringify(p));
             const r = Pianificatore.hookIpercorrezione(p, { oggi, sk, caso });
             if (!r)
                 continue;
             salvaPiano(r.piano);
+            prima.push(copia);
             avviso('🧠 ' + (caso === 'illusione_competenza' ? 'Illusione di competenza' : 'Risposta fortunata') + ': anticipo l\'applicazione dal ' + r.da.slice(8, 10) + '/' + r.da.slice(5, 7) + ' al ' + r.a.slice(8, 10) + '/' + r.a.slice(5, 7) + '.', 6000);
         }
+        return () => { for (const p of prima)
+            salvaPiano(p); };
     }
     // ---------- v0.56 (BP5 §4.2): Burnout Circuit Breaker, 0 token ----------
     /** Dopo un errore nel quiz (e all'apertura dei piani): chiude i de-load scaduti e, se la fatica scatta, attiva il de-load 48 h. */
@@ -12252,7 +12288,7 @@ const PianiAI = (() => {
         const nas = Studio.nascosto(p.id);
         const dl = p.deload && p.deload.attivo ? p.deload : null;
         return h('span', null, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
-                const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
+                const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Math.min(4, Pianificatore.livelloEffettivo(p, ymd(new Date()))) } : p.vincoliAI;
                 const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
                 if (r.piano && p.deload) {
                     r.piano.deload = p.deload;
@@ -13537,11 +13573,14 @@ const QuizApp = (() => {
         }
         Stato.salva(r, true);
         // v0.55 (BP4 Stadio 5): illusione di competenza / risposta fortunata → anticipo L3/L4 nei piani ai_neuro (0 token)
+        let annullaPiani = null, carteNuove = [];
         if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess')
             try {
-                PianiAI.dopoQuiz(v.d.sk, v.caso);
+                annullaPiani = PianiAI.dopoQuiz(v.d.sk, v.caso);
             }
-            catch (_) { /* il quiz non si blocca */ }
+            catch (e) {
+                console.warn('dopoQuiz', e);
+            }
         // v0.56 (BP5 §4.2): dopo un errore, Burnout Circuit Breaker sui piani con intensità (0 token)
         if (!giusta)
             try {
@@ -13574,6 +13613,16 @@ const QuizApp = (() => {
                     delete q.scelte[scelta];
             }
             Stato.salva(q, true);
+            // v0.57.1 (Q3): annulla anche la carta «trappola» appena creata e l'anticipo nei piani ai_neuro
+            for (const c of carteNuove)
+                Stato.elimina(c);
+            if (annullaPiani)
+                try {
+                    annullaPiani();
+                }
+                catch (e) {
+                    console.warn('annulla piani', e);
+                }
         };
         // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
         if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {
@@ -13581,6 +13630,7 @@ const QuizApp = (() => {
             if (r.scelte && r.scelte[o] === 2) {
                 const perche = v.d.ew && v.d.ew[oi - 1] ? v.d.ew[oi - 1] : '';
                 const n = Carte.daErrori([{ schedaId: v.d.sk, q: testoPiano(v.d.q) + '\n\nTrappola in cui sei caduto 2 volte: «' + testoPiano(v.d.o[oi]) + '»', giusta: testoPiano(v.d.o[0]), spieg: perche ? 'Perché «' + testoPiano(v.d.o[oi]) + '» è sbagliata: ' + perche : '' }]);
+                carteNuove = n;
                 if (n.length)
                     avviso('🪤 Stessa trappola per la seconda volta: aggiunta alle flashcard degli errori.', 5000);
             }
@@ -15766,10 +15816,16 @@ const Studio = (() => {
 })();
 // ---------- Visore a tutto schermo (quiz e PDF) ----------
 function visore(titolo, alChiudi) {
+    // v0.57.1 (Q6): doppio tocco → un solo visore. Lo stesso titolo aperto da < 1 s sostituisce il precedente (senza alChiudi).
+    for (const vecchio of Array.from(document.querySelectorAll('.visore')))
+        if (vecchio.dataset.titolo === titolo && Date.now() - Number(vecchio.dataset.aperto || 0) < 1000)
+            vecchio.remove();
     const corpo = h('div.visore-corpo'), barra = h('div.visore-strumenti');
     const chiudi = () => { el.remove(); if (alChiudi)
         alChiudi(); };
     const el = h('div.visore', null, h('div.visore-testa', null, h('button.btn-testo', { onclick: chiudi }, 'Chiudi'), h('div.foglio-titolo.visore-titolo', null, titolo), barra), corpo);
+    el.dataset.titolo = titolo;
+    el.dataset.aperto = String(Date.now());
     document.body.appendChild(el);
     return { corpo, barra, chiudi };
 }
@@ -16780,7 +16836,8 @@ function vistaOggi() {
             }
             case 'nota': return scheda('Nota del giorno', area);
             case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
-            case 'studiaora': return Studio.pkStep().length ? widgetStudiaOra() : null;
+            // v0.57.1 (D3): anche con corsi propri, carte o appunti da ripassare, non solo con i pacchetti-step
+            case 'studiaora': return Studio.pkStep().length || Stato.tutti('materia').length || Stato.tutti('carta').length || Appunti.appuntiDaRipassare().length || StudiaOra.leggi() ? widgetStudiaOra() : null;
             case 'carte': return widgetCarte();
             case 'appunti': return widgetAppunti();
             case 'ripassi': return widgetRipassi();
@@ -17375,7 +17432,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
 // ============================================================
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
-const VERSIONE = '0.57.0';
+const VERSIONE = '0.57.1';
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
  *  con la superficie più critica del tema (--sup2) è ≥ 4,5:1. Un colore non esadecimale resta com'è. */
