@@ -178,25 +178,3 @@ function chipRicordo(k: string): HTMLElement | null {
   return h('span.chip-ricordo', { style: { color: coloreRicordo(r), borderColor: coloreRicordo(r) }, title: 'Probabilità di ricordare questo sotto-step oggi' }, '🧠 ' + Math.round(r * 100) + '%');
 }
 
-/** Riquadro "Ripassi di oggi" (schermata Oggi). */
-function widgetRipassi(): HTMLElement | null {
-  const r = Ripassi.delGiorno();
-  if (!r.oggi.length && !r.fatti.length) return null;
-  const proposta = (k: string) => { const sc = Ripassi.schedaDaProporre(k); return sc ? trovaScheda(sc.id) : null; };
-  const riga = (x: { k: string; r: number }) => {
-    const t = proposta(x.k), sub = Studio.trovaSotto(x.k);
-    if (!t || !sub) return null;
-    return h('button.voce-lista', { onclick: () => apriScheda(t.pk, t.m, t.micro, t.s, true) },
-      h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, Studio.etichetta(x.k) + ' · ' + sub.sub.titolo),
-        h('span.voce-sotto', null, 'Rifai: ' + t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ') · ricordo ', h('b', { style: { color: coloreRicordo(x.r) } }, Math.round(x.r * 100) + '%'))),
-      icona('dx', 18));
-  };
-  const primo = r.oggi.map(x => proposta(x.k)).find(Boolean);
-  return scheda('Ripassi di oggi',
-    h('div.tenue.piccolo', null, r.oggi.length
-      ? r.oggi.length + (r.oggi.length === 1 ? ' sotto-step' : ' sotto-step') + ' · circa ' + r.minuti + ' min. Rifai la scheda proposta (va bene anche «rifai solo gli errori») e scrivi il punteggio: l\'app decide quando riproporre il sotto-step.'
-      : '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.'),
-    r.oggi.map(riga),
-    r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null,
-    primo ? h('div.bottoni', null, h('button.btn', { onclick: () => apriScheda(primo.pk, primo.m, primo.micro, primo.s, true) }, '▶ Inizia')) : null);
-}

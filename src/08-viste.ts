@@ -91,7 +91,7 @@ function taskDelGiorno(g: Date): Task[] {
 }
 
 // ---------- OGGI (Home/Dashboard) ----------
-const WIDGET: [string, string][] = [['ripassi', 'Ripassi di oggi'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['carte', 'Flashcard di oggi'], ['appunti', 'Appunti da ripassare'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
+const WIDGET: [string, string][] = [['ripassi', 'Ripassa (sotto-step, carte, quiz, appunti)'], ['chiusura', 'Chiudi la giornata (sera)'], ['studiaora', 'Adesso (Studia ora)'], ['esami', 'Prossimi esami'], ['impegni', 'Impegni di oggi'], ['studio', 'Studio di oggi'], ['timer', 'Timer e tempo di studio'], ['errori', 'Schede da rifare'], ['promemoria', 'Promemoria'], ['tabelle', 'Dalle tue tabelle'], ['nota', 'Nota del giorno'], ['domani', 'Domani']];
 /** Riquadri di Oggi nell'ordine scelto, senza quelli nascosti (quelli nuovi in fondo). */
 function ordineWidget(): string[] {
   const i = imp(), ord = (i.widget || []).filter(w => WIDGET.some(x => x[0] === w));
@@ -154,9 +154,7 @@ function vistaOggi(): HTMLElement {
         case 'domani': return occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null;
         // v0.57.1 (D3) → v0.58: anche con corsi propri, carte, appunti o quiz da rifare (sempre)
         case 'studiaora': return widgetStudiaOra();   // v0.58: card «Adesso» sempre in cima, anche senza pacchetti-step
-        case 'carte': return widgetCarte();
-        case 'appunti': return widgetAppunti();
-        case 'ripassi': return widgetRipassi();
+        case 'ripassi': return widgetRipassa();   // v0.59: coda unica al posto di ripassi, carte e appunti
         case 'chiusura': return widgetChiusura();
         case 'esami': return widgetEsami();
         case 'timer': return widgetTimer();
@@ -712,7 +710,7 @@ function sezioneStudio(salva: SalvaImp): HTMLElement {
     riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')),
     riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')),
     riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')),
-    h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassi di oggi) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
+    h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassa) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
 }
 
 // ---------- Trascinamento degli eventi (vista Giorno/Settimana) ----------

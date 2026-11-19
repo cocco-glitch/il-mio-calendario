@@ -103,7 +103,7 @@ with sync_playwright() as p:
 
     # --- integrazioni ---
     pg.evaluate("vai('oggi')"); pg.wait_for_timeout(200)
-    ok(pg.locator('text=Flashcard di oggi').count() == 1, 'widget in Oggi')
+    ok(pg.locator('.card.ripassa', has_text='carte').count() == 1, 'carte nel riquadro «Ripassa» di Oggi (v0.59)')
     ok(any(v['tipo'] == 'carte' for v in pg.evaluate("StudiaOra.componi(60)")), 'voce in «Studia ora»')
     pg.evaluate("UI.studioStep = Studio.pkStep()[1].id; UI.studioSub = 'C2.2'; UI.studioVista = 'schede'; vai('studio')"); pg.wait_for_timeout(200)
     ok(pg.locator('button', has_text='Flashcard di Chi 2.2').count() == 1, 'sotto-step Chi 2.2: pulsante flashcard')

@@ -429,13 +429,6 @@ async function importaAppunti(): Promise<void> {
   disegna();
 }
 
-/** Riquadro in Oggi. */
-function widgetAppunti(): HTMLElement | null {
-  const l = Appunti.appuntiDaRipassare(); if (!l.length) return null;
-  return scheda('Appunti da ripassare', h('div.tenue.piccolo', null, l.length + (l.length === 1 ? ' appunto' : ' appunti') + ' · copri, ricorda, scopri'),
-    l.slice(0, 3).map(a => h('button.voce-lista', { onclick: () => apriCornell(a, true) }, h('span.voce-corpo', null, h('span.voce-titolo', null, a.sub ? segnoMateria(a.sub) : null, a.titolo), h('span.voce-sotto', null, Appunti.daRipassare(a).length + ' sezioni')))));
-}
-
 // ---------- v0.32: collegamenti [[…]] ----------
 function conLink(html: string): string { return html.replace(/\[\[([^\]]+)\]\]/g, (_t, x) => '<a href="#" class="ap-link" data-ap="' + esc(x) + '">' + esc(x) + '</a>'); }
 function attivaLink(el: HTMLElement, prima?: () => void): void {

@@ -1,4 +1,4 @@
-# Test F2 (v0.8): ripassi con FSRS, riquadro "Ripassi di oggi", tetto giornaliero, correzioni.
+# Test F2 (v0.8): ripassi con FSRS, riquadro "Ripassi di oggi" (v0.59: «Ripassa (N)»), tetto giornaliero, correzioni.
 import os, http.server, threading, functools, json, math
 from playwright.sync_api import sync_playwright
 RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist')
@@ -79,13 +79,13 @@ with sync_playwright() as p:
     # 4) Riquadro in Oggi, in cima
     pg.evaluate("vai('oggi')"); pg.wait_for_timeout(300)
     titoli = pg.eval_on_selector_all('.card-titolo', 'els => els.map(e => e.textContent)')
-    ok(titoli and titoli[0] == 'Ripassi di oggi', 'riquadro ripassi in cima a Oggi (dopo «Studia ora»): %s' % titoli[:3])
-    t0 = pg.locator('.card', has_text='Ripassi di oggi').inner_text()
+    ok(titoli and titoli[0].strip().startswith('Ripassa ('), 'riquadro «Ripassa (N)» (v0.59) in cima a Oggi (dopo «Studia ora»): %s' % titoli[:3])
+    t0 = pg.locator('.card.ripassa').inner_text()
     ok('Chi 2.1' in t0 and 'Rifai:' in t0, 'riga: sotto-step e scheda da rifare')
     pg.screenshot(path='test/f2-oggi.png', full_page=True)
 
     # 5) Apro il ripasso: data di oggi, punteggio vuoto; chiudere senza punteggio non conta
-    pg.locator('.card', has_text='Ripassi di oggi').locator('.voce-lista').first.click(); pg.wait_for_selector('.foglio')
+    pg.locator('.card.ripassa .voce-lista', has_text='Rifai:').first.click(); pg.wait_for_selector('.foglio')
     ok('Ripasso' in pg.inner_text('.foglio'), 'foglio in modalità ripasso')
     vals = pg.eval_on_selector_all('.foglio input[type=date], .foglio input[type=number]', 'els => els.map(e => e.value)')
     ok(vals == ['2026-11-11', ''], 'data di oggi e punteggio vuoto: %s' % vals)

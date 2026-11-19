@@ -449,10 +449,3 @@ function rigaCarte(k: string): HTMLElement | null {
   return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaCarte(mz.map(m => m.id), Studio.etichetta(k)) }, '🃏 Flashcard di ' + Studio.etichetta(k) + ' (' + (n.nuove + n.ripasso) + ' oggi / ' + n.totale + ')'));
 }
 
-/** Riquadro in Oggi. */
-function widgetCarte(): HTMLElement | null {
-  if (!Carte.mazzi().length) return null;
-  const n = Carte.conta(); if (!(n.nuove + n.ripasso)) return null;
-  return scheda('Flashcard di oggi', h('div.tenue.piccolo', null, n.ripasso + ' da ripassare + ' + n.nuove + ' nuove · circa ' + Math.max(2, Math.round((n.ripasso + n.nuove) * 0.2)) + ' min'),
-    h('div.bottoni', null, h('button.btn', { onclick: () => avviaCarte(undefined, 'Tutti i mazzi') }, '▶ Ripassa')));
-}

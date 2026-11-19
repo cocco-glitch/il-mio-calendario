@@ -89,7 +89,7 @@ with sync_playwright() as p:
     pg.clock.set_fixed_time('2026-11-14T09:00:00+01:00')
     ok(any(v['tipo'] == 'appunto' for v in pg.evaluate("StudiaOra.componi(90)")), 'domani: appunti in «Studia ora»')
     pg.evaluate("vai('oggi')"); pg.wait_for_timeout(200)
-    ok(pg.locator('text=Appunti da ripassare').count() == 1, 'riquadro in Oggi')
+    ok(pg.locator('.card.ripassa', has_text='appunt').count() == 1, 'appunti nel riquadro «Ripassa» di Oggi (v0.59)')
     pg.evaluate('''() => { const s = Studio.schedeDi(Studio.trovaSotto('C2.2').sub)[0];
       Stato.salva({ id: 'dom-x', type: 'domanda', updatedAt: 0, schedaId: s.id, titolo: 't', q: 'Calore latente di vaporizzazione?', giusta: '2260 J/g', volte: 1, giuste: 0, ultima: '2026-11-13', esito: 'sbagliata' }); }''')
     ok(len(pg.evaluate("Appunti.errori(Appunti.tutti().find(a => a.sub === 'C2.2'))")) == 1, 'errori del quiz dello stesso step')

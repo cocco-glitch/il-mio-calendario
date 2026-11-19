@@ -2,14 +2,14 @@
 //
 // Un tasto in cima a Oggi: scegli quanto tempo hai (25/50/90 min) e l'app compone la sessione,
 // una cosa alla volta, in quest'ordine:
-//  1. ripassi di oggi più a rischio (al massimo ~40% del tempo, richiamo con memoria "tiepida");
+//  1. la coda unica dei ripassi (CodaRipasso, v0.59): sotto-step (al massimo ~40% del tempo), carte, quiz, appunti, piano;
 //  2. step del giorno: prova a freddo se lo step non è iniziato, poi le prioritarie da fare in ordine;
 //  3. schede da rifare (errori), se avanza tempo;
 //  4. 5 minuti finali di richiamo a memoria (cosa ho imparato? scrivo una domanda).
 // Le pause sono inserite ogni ~25 minuti. Il timer della sessione parte con la durata scelta.
 // La sessione in corso si salva sul dispositivo (localStorage) per riprenderla.
 
-interface VoceSessione { tipo: 'ripasso' | 'carte' | 'quiz' | 'appunto' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
+interface VoceSessione { tipo: 'ripasso' | 'carte' | 'quiz' | 'appunto' | 'piano' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean; }
 interface SessioneOra { inizio: number; minuti: number; voci: VoceSessione[]; }
 
 const StudiaOra = (() => {
@@ -21,21 +21,14 @@ const StudiaOra = (() => {
     const out: VoceSessione[] = [];
     let resto = minuti - 5;                                     // 5 min finali di richiamo
     const metti = (v: VoceSessione) => { if (resto >= v.min) { out.push(v); resto -= v.min; return true; } return false; };
-    // 1) ripassi più a rischio, max ~40% del tempo
-    let tettoRip = Math.max(MIN, Math.round(minuti * 0.4));
-    for (const x of Ripassi.delGiorno(ymd(giorno)).oggi) {
-      if (tettoRip < MIN) break;
-      const sc = Ripassi.schedaDaProporre(x.k); if (!sc) continue;
-      if (metti({ tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ricordo ' + Math.round(x.r * 100) + '%', min: MIN, k: x.k, id: sc.id })) tettoRip -= MIN;
+    // 1) v0.59: la coda unica (CodaRipasso) in ordine di rischio × vicinanza dell'esame, con i tetti di prima:
+    //    sotto-step ≤ ~40% del tempo, flashcard 5–15 min, quiz ~1 min a domanda (max 10), appunti al massimo 3, ripassi del piano
+    let tettoRip = Math.max(MIN, Math.round(minuti * 0.4)), nAp = 0;
+    for (const e of CodaRipasso.dovuti(ymd(giorno))) {
+      if (e.sorgente === 'step') { if (tettoRip >= MIN && metti(e.voce)) tettoRip -= MIN; }
+      else if (e.sorgente === 'appunti') { if (nAp < 3) { nAp++; metti(e.voce); } }
+      else metti(e.voce);
     }
-    // 1b) flashcard di oggi (v0.18): circa 12 secondi a carta, massimo 15 minuti
-    const nc = Carte.conta(); const minC = Math.min(15, Math.max(5, Math.round((nc.ripasso + nc.nuove) * 0.2)));
-    if (nc.ripasso + nc.nuove && Carte.mazzi().length) metti({ tipo: 'carte', titolo: '🃏 Flashcard', sotto: nc.ripasso + ' da ripassare + ' + nc.nuove + ' nuove', min: minC });
-    // 1b') v0.58 (Q2): domande dei quiz con ripasso scaduto (illusioni di oggi comprese), ~1 min a domanda, max 10
-    const nq = QuizRifare.conta(ymd(giorno));
-    if (nq) metti({ tipo: 'quiz', titolo: '🎯 Quiz da rifare (' + nq + ')', sotto: (nq > QuizRifare.MAX ? 'Le ' + QuizRifare.MAX + ' più urgenti' : 'Le domande scadute') + ', prima le illusioni di competenza', min: Math.max(3, QuizRifare.minuti(nq)) });
-    // 1c) appunti da ripassare (copri e ricorda): ~4 min ciascuno, al massimo 3
-    for (const a of Appunti.appuntiDaRipassare().slice(0, 3)) metti({ tipo: 'appunto', titolo: '🧠 ' + a.titolo, sotto: 'Copri e ricorda · ' + Appunti.daRipassare(a).length + ' sezioni', min: 4, id: a.id });
     // 2) step del giorno
     for (const vg of Studio.vociDelGiorno(giorno)) {
       if (vg.v.speciale || vg.p.modo === 'raffinamento') continue;
@@ -71,6 +64,7 @@ function eseguiVoce(v: VoceSessione): void {
   if (v.tipo === 'freddo' && v.k) { avviaProvaAFreddo(v.k); return; }
   if (v.tipo === 'carte') { avviaCarte(undefined, 'Flashcard'); return; }
   if (v.tipo === 'quiz') { QuizRifare.avvia(); return; }
+  if (v.tipo === 'piano' && v.id) { apriPianoDi(v.id); return; }
   if (v.tipo === 'appunto' && v.id) { const a = Stato.prendi<Appunto>(v.id); if (a) { apriCornell(a, true); return; } }
   if (v.id) { const t = trovaScheda(v.id); if (t) { apriScheda(t.pk, t.m, t.micro, t.s, v.tipo === 'ripasso' || v.tipo === 'errore'); return; } }
   avviso(v.sotto, 8000);
@@ -157,6 +151,7 @@ function adesso(giorno = oggi()): { minuti: number; riassunto: string } {
   if (n('carte')) pezzi.push((nc.ripasso + nc.nuove) + ' carte');
   if (n('quiz')) pezzi.push(Math.min(nq, QuizRifare.MAX) + ' quiz da rifare');
   if (n('appunto')) pezzi.push(n('appunto') + (n('appunto') === 1 ? ' appunto' : ' appunti'));
+  if (n('piano')) pezzi.push(n('piano') + (n('piano') === 1 ? ' ripasso del piano' : ' ripassi del piano'));
   const st = voci.find(v => (v.tipo === 'scheda' || v.tipo === 'freddo') && v.k);
   if (st && st.k) pezzi.push(Studio.etichetta(st.k));
   if (n('errore')) pezzi.push(n('errore') + ' errori');
