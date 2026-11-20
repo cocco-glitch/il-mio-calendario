@@ -1,4 +1,657 @@
 "use strict";
+const Centro = (() => {
+    const s = (x) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
+    const slug = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z]+/g, '');
+    const nelloStep = (m, step) => /^\d+(\.\d+)*$/.test(m) && m.startsWith(step + '.');
+    const due = (n) => String(n).padStart(2, '0');
+    const prefisso = (o) => slug(o.materia) + '-' + s(o.step);
+    const nomeParte = (o, da, a = da) => prefisso(o) + '-s' + da + (a !== da ? '-' + a : '');
+    const codiceDi = (o) => s(o.codice).toUpperCase().replace(/[^A-Z]/g, '') || 'X';
+    function daPiano(p, step) {
+        step = s(step);
+        const avvisi = [...(p.avvisi || [])], schede = [], blocchi = [], numeri = [];
+        for (const b of p.blocchi || []) {
+            const micro = b.copre.flatMap(c => c.micro);
+            const dentro = b.codice === step || nelloStep(b.codice, step) || micro.some(m => nelloStep(m, step));
+            if (!dentro) {
+                avvisi.push('Blocco ' + b.codice + ' (' + b.titolo + ') non è dello step ' + step + ': ignorato');
+                continue;
+            }
+            blocchi.push(b.titolo);
+            const cat = /raffin/i.test(b.titolo) ? 'raffinamento' : 'prioritaria';
+            for (const c of b.copre) {
+                const validi = c.micro.filter(m => nelloStep(m, step)), fuori = c.micro.filter(m => !nelloStep(m, step));
+                if (fuori.length)
+                    avvisi.push('Microstep fuori dallo step ' + step + ': ' + fuori.join(', ') + (validi.length ? '' : ' → scheda in ' + step + '.1'));
+                for (const n of c.schede) {
+                    numeri.push(n);
+                    schede.push({ n, micro: validi.length ? validi : [step + '.1'], categoria: cat, blocco: b.titolo });
+                }
+            }
+        }
+        if (numeri.some((n, i) => n !== i + 1)) {
+            avvisi.push('Schede rinumerate 1–' + schede.length + ' nell\'ordine del piano (erano ' + numeri.map(n => 'S' + n).join(' ') + ')');
+            schede.forEach((x, i) => { x.n = i + 1; });
+        }
+        if (!schede.length)
+            avvisi.push('Nessuna scheda per lo step ' + step);
+        return { step, schede, blocchi, avvisi };
+    }
+    function schede(p, o) {
+        const cod = codiceDi(o);
+        return p.schede.map(x => ({ n: x.n, sigla: 'S' + due(x.n), id: cod + '-' + x.micro[0] + '-' + x.n, micro: x.micro.slice(), categoria: x.categoria, blocco: x.blocco }));
+    }
+    const dataBreve = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s(d)); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; };
+    function ripartisci(tot, pesi) {
+        const somma = pesi.reduce((a, b) => a + b, 0) || 1;
+        const out = pesi.map(p => Math.floor(tot * p / somma));
+        let resto = tot - out.reduce((a, b) => a + b, 0);
+        for (let i = 0; resto > 0 && out.length; i = (i + 1) % out.length, resto--)
+            out[i]++;
+        return out;
+    }
+    function chiusura(p, o) {
+        const pref = prefisso(o), cod = codiceDi(o), step = s(o.step) || p.step, per = o.perScheda || 18, minB = o.minBlocco || 50;
+        const sigla = (n) => pref + '-S' + due(n);
+        const perMicro = new Map();
+        for (const x of p.schede) {
+            const l = perMicro.get(x.micro[0]) || [];
+            l.push(x);
+            perMicro.set(x.micro[0], l);
+        }
+        const nBlocchi = Math.max(1, p.blocchi.length), durata = nBlocchi * minB;
+        const voci = [...perMicro.entries()], minuti = ripartisci(durata, voci.map(([, l]) => l.length));
+        const sottoSchede = voci.map(([micro, l], i) => ({
+            codice: micro, titolo: l[0].blocco || micro, microstep: [...new Set(l.flatMap(x => x.micro))], durataMin: minuti[i], wakefulRestMin: 12,
+            schedePrioritarie: l.filter(x => x.categoria === 'prioritaria').map(x => sigla(x.n)), schedeRaffinamento: l.filter(x => x.categoria === 'raffinamento').map(x => sigla(x.n)),
+        }));
+        const prio = p.schede.filter(x => x.categoria === 'prioritaria').map(x => sigla(x.n)), raff = p.schede.filter(x => x.categoria === 'raffinamento').map(x => sigla(x.n));
+        const tutte = p.schede.map(x => sigla(x.n)), base = prio.length ? prio : tutte;
+        const titolo = s(o.titolo) || p.blocchi[0] || step, data = dataBreve(o.data || '');
+        const programma = {};
+        if (data)
+            programma.formatoGeneraMjs = [cod + '|' + (s(o.unita) || 'UD' + step.split('.')[0]) + '|' + titolo + '|' + p.schede.length + '|' + step + '|' + data];
+        programma.pianoStrutturato = {
+            materiaCodice: cod, step, origine: 'ai_neuro', durataTotaleMin: durata, blocchiBRAC: nBlocchi, sottoSchede,
+            ancoraggiRipassoFSRS: [{ intervallo: '+1g', target: base }, { intervallo: '+3g', target: base }, { intervallo: '+7g', target: raff.length ? raff : tutte }],
+        };
+        const meta = { schemaVersion: 2, origine: 'centro', materia: s(o.materia), codiceMateria: cod, unita: s(o.unita) || 'UD' + step.split('.')[0], stepId: pref, sottoStep: step, titolo,
+            domandeTotali: p.schede.length * per, ripartizioneSchede: { totale: p.schede.length } };
+        if (s(o.archetipo))
+            meta.archetipo = s(o.archetipo);
+        return { meta, programmaCalendario: programma };
+    }
+    const arrivata = (x) => x.stato === 'arrivata';
+    function passoDi(r) {
+        if (!s(r.materia) || !s(r.step))
+            return 1;
+        const sc = r.schede || [], e = r.esiti || {};
+        if (!r.piano || !sc.length)
+            return 2;
+        if (!sc.every(arrivata))
+            return 3;
+        if (!e.controllato)
+            return 4;
+        if ((e.daCorreggere || 0) > 0)
+            return 5;
+        return e.provato ? 7 : 6;
+    }
+    const prossimaScheda = (r) => ((r.schede || []).filter(x => !arrivata(x)).sort((a, b) => a.n - b.n)[0] || { n: 0 }).n;
+    const cmpNum = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) {
+        const d = (x[i] || 0) - (y[i] || 0);
+        if (d)
+            return d;
+    } return 0; };
+    const DATA_FISSA = '2000-01-01';
+    function albero(gruppi) {
+        const perCartella = new Map();
+        for (const g of gruppi) {
+            const cartella = (g.files[0] && g.files[0].cartella) || '';
+            const st = { chiave: g.chiave, step: g.step, sotto: '', stato: g.stato, schede: 0, domande: 0, microstep: [] };
+            try {
+                const tr = ImportaDrive.traduci(ImportaParti.unisci(g).pacchetto, DATA_FISSA), dom = new Map(tr.banche.map(b => [b.sk, b.domande.length]));
+                st.sotto = tr.sotto;
+                st.domande = tr.domande;
+                st.microstep = tr.sub.microstep.map(m => ({ n: m.n, schede: m.schede.map(x => x.k), domande: m.schede.reduce((a, x) => a + (dom.get(x.id) || 0), 0) }));
+                st.schede = st.microstep.reduce((a, m) => a + m.schede.length, 0);
+            }
+            catch (e) {
+                st.errore = e.message;
+            }
+            const l = perCartella.get(cartella) || [];
+            l.push(st);
+            perCartella.set(cartella, l);
+        }
+        return [...perCartella.entries()].sort(([a], [b]) => a.localeCompare(b, 'it'))
+            .map(([cartella, steps]) => ({ cartella, steps: steps.sort((a, b) => cmpNum(a.sotto, b.sotto) || a.step.localeCompare(b.step)) }));
+    }
+    function filtra(j, scelti) {
+        const out = JSON.parse(JSON.stringify(j)), ok = new Set(scelti.map(s));
+        const ps = (out.programmaCalendario && out.programmaCalendario.pianoStrutturato) || null;
+        const quiz = Array.isArray(out.quiz) ? out.quiz : [], tieni = (x) => ok.has(s(x.codice || x.sottoStep));
+        const sez = (Array.isArray(out.sottoSchede) ? out.sottoSchede : ps && Array.isArray(ps.sottoSchede) ? ps.sottoSchede : []).filter(x => x && tieni(x));
+        const ampliato = quiz.some(q => q && ImportaParti.numScheda(q.scheda));
+        let resta, bersaglio = null;
+        if (ampliato) {
+            const numeri = new Set();
+            for (const m of ImportaDrive.traduci(j, DATA_FISSA).sub.microstep)
+                if (ok.has(m.n))
+                    for (const x of m.schede)
+                        numeri.add(x.k);
+            const primo = ImportaParti.numScheda((quiz.find(q => q && ImportaParti.numScheda(q.scheda)) || {}).scheda);
+            resta = q => numeri.has(ImportaParti.numScheda(q.scheda) || primo);
+            bersaglio = t => numeri.has(ImportaParti.numScheda(t));
+        }
+        else {
+            const ids = new Set(sez.flatMap(x => [...(x.schedePrioritarie || []), ...(x.schedeRaffinamento || []), ...(x.rangeId || [])].map(s)));
+            resta = q => ids.has(s(q.id)) || ok.has(s(q.sottoStep));
+        }
+        out.quiz = quiz.filter(q => q && resta(q));
+        if (Array.isArray(out.sottoSchede))
+            out.sottoSchede = out.sottoSchede.filter(x => x && tieni(x));
+        if (ps) {
+            if (Array.isArray(ps.sottoSchede))
+                ps.sottoSchede = ps.sottoSchede.filter(x => x && tieni(x));
+            const min = sez.reduce((a, x) => a + (Number(x.durataMin || x.durataBracMin) || 0), 0);
+            if (min > 0)
+                ps.durataTotaleMin = min;
+            if (bersaglio && Array.isArray(ps.ancoraggiRipassoFSRS)) {
+                const b = bersaglio;
+                ps.ancoraggiRipassoFSRS = ps.ancoraggiRipassoFSRS.filter(a => a).map(a => Array.isArray(a.target) && a.target.length ? { ...a, target: a.target.filter(t => b(s(t))) } : a)
+                    .filter(a => !Array.isArray(a.target) || a.target.length);
+            }
+        }
+        out.meta = { ...(out.meta || {}), domandeTotali: out.quiz.length };
+        return out;
+    }
+    return { prefisso, nomeParte, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra };
+})();
+
+const CentroUI = (() => {
+    const PASSI = ['Obiettivo', 'Piano', 'Quiz', 'Controllo', 'Correggi', 'Prova', 'Importa'];
+    const RE_STEP = /^\d+(\.\d+)*$/;
+    const FORMATI_QUIZ = ['quiz-v3', 'quiz-v2', 'quiz-058', 'parte'];
+    const vaiScheda = (x) => vai(x);
+    const PER = () => PROFILO_STANDARD.perScheda;
+    const SEGNO = { err: '⛔', warn: '⚠️', info: 'ℹ️' };
+    const sig = (n) => 'S' + String(n).padStart(2, '0');
+    const simbolo = (x) => x.stato === 'arrivata' ? '✅' : x.stato === 'interrotta' ? '✂️' : '⏳';
+    const statoTesto = (x) => x.stato === 'arrivata' ? 'arrivata' : x.stato === 'interrotta' ? 'interrotta' : 'da fare';
+    const aperte = () => Stato.tutti('creazione').filter(r => !r.deleted && !(r.esiti && r.esiti.importato))
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const pref = (r) => Centro.prefisso({ materia: r.nomeMateria, step: r.step });
+    const idParte = (r, n) => 'prq-' + pref(r) + '-s' + n;
+    function parteDi(r, n) {
+        const p = Stato.prendi(idParte(r, n));
+        return p && !p.deleted ? p : null;
+    }
+    function domande(r) {
+        const qs = [], daScheda = new Map();
+        for (const x of r.schede || []) {
+            const p = parteDi(r, x.n);
+            if (p)
+                for (const q of p.quiz) {
+                    qs.push(q);
+                    daScheda.set(String(q.id), x.n);
+                }
+        }
+        return { qs, daScheda };
+    }
+    function salvaDomande(r, qs, daScheda) {
+        const per = new Map();
+        for (const q of qs) {
+            const n = daScheda.get(String(q.id));
+            if (n) {
+                const l = per.get(n) || [];
+                l.push(q);
+                per.set(n, l);
+            }
+        }
+        for (const [n, l] of per) {
+            const p = parteDi(r, n);
+            if (p)
+                Stato.salva({ ...p, quiz: l }, true);
+        }
+    }
+    function controlla(qs, avvisi = false) {
+        const v = Validatore.valida(qs), visti = new Set(), problemi = [];
+        const tutti = [...[...v.bloccanti].flatMap(([id, ms]) => ms.map(msg => ({ sev: 'err', id, msg }))), ...v.qualita, ...v.insieme];
+        for (const p of tutti) {
+            const k = p.id + '|' + p.msg;
+            if (!visti.has(k)) {
+                visti.add(k);
+                problemi.push(p);
+            }
+        }
+        const corr = DiagnosiQuiz.promptCorrezione(qs, problemi, { avvisi });
+        return { v, problemi, corr };
+    }
+    const elencoProblemi = (problemi, etichetta, max = 40) => problemi.length
+        ? h('ul.piccolo.centro-avvisi', { 'aria-label': etichetta }, ...problemi.slice(0, max).map(p => h('li', null, SEGNO[p.sev] + ' ' + p.id + ' — ' + p.msg)), problemi.length > max ? h('li.tenue', null, '…e altri ' + (problemi.length - max)) : null)
+        : null;
+    function apri() {
+        let rec = aperte()[0] || null;
+        let passo = rec ? Centro.passoDi(rec) : 1;
+        const indicatore = h('p.centro-passo', { role: 'status', 'aria-live': 'polite' });
+        const indietro = h('button.chip', { type: 'button', 'aria-label': 'Torna al passo precedente' }, '← Indietro');
+        const zona = h('div.centro-zona');
+        indietro.addEventListener('click', () => { if (passo > 1)
+            vai(passo - 1); });
+        let nota = null;
+        let registroRip = [];
+        function salva(r) { Stato.salva(r, true); rec = r; }
+        function vai(n) {
+            passo = Math.max(1, Math.min(7, n));
+            indicatore.textContent = 'Passo ' + passo + ' di 7 · ' + PASSI[passo - 1] + (rec ? ' — ' + rec.nomeMateria + ' · step ' + rec.step : '');
+            indietro.disabled = passo === 1;
+            svuota(zona);
+            const corpo = passo === 1 ? passoObiettivo() : passo === 2 ? passoPiano() : passo === 3 ? passoQuiz()
+                : passo === 4 ? passoControllo() : passo === 5 ? passoCorreggi() : passo === 6 ? passoProva() : passoImporta();
+            if (nota) {
+                corpo.insertBefore(nota, corpo.firstChild);
+                nota = null;
+            }
+            zona.appendChild(corpo);
+            const primo = zona.querySelector('input, select, textarea, button');
+            if (primo)
+                primo.focus({ preventScroll: true });
+        }
+        function passoObiettivo() {
+            const materie = Stato.tutti('materia').filter(m => !m.deleted).sort((a, b) => a.nome.localeCompare(b.nome));
+            const cm = campoMateria(materie.map(m => [m.codice, m.nome]), rec ? rec.materia : '', materiaPerNome);
+            const sel = cm.el.querySelector('select');
+            if (sel)
+                sel.setAttribute('aria-label', 'Materia');
+            const step = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'es. 3.3', 'aria-label': 'Step (es. 3.3)', value: rec ? rec.step : '' });
+            const titolo = h('input', { type: 'text', placeholder: 'Titolo dello step (facoltativo)', 'aria-label': 'Titolo dello step', value: (rec && rec.titolo) || '' });
+            const data = h('input', { type: 'date', 'aria-label': 'Data prevista', value: (rec && rec.data) || '' });
+            const intens = selettore([['leggera', 'Leggera (10–14 schede)'], ['standard', 'Standard (18–25 schede)'], ['intensa', 'Intensa (24–30 schede)']], (rec && rec.intensita) || 'standard');
+            intens.setAttribute('aria-label', 'Intensità');
+            const opzArch = Object.values(ARCHETIPI_DISCIPLINARI).map(a => [a.id, ICONE_ARCHETIPO[a.id] + ' ' + a.etichetta]);
+            const codiceScelto = () => sel && sel.value !== '__nuova__' ? sel.value : '';
+            const arch = selettore(opzArch, codiceScelto() ? Dominio.archetipoMateria(codiceScelto()) : 'scienze_sperimentali');
+            arch.setAttribute('aria-label', 'Tipo di materia (archetipo)');
+            if (sel)
+                sel.addEventListener('change', () => { const c = codiceScelto(); if (c)
+                    arch.value = Dominio.archetipoMateria(c); });
+            const nomeMat = () => {
+                const c = codiceScelto();
+                if (c)
+                    return (materie.find(m => m.codice === c) || { nome: '' }).nome;
+                const t = cm.el.querySelector('input.campo-materia-nuova');
+                return t ? t.value.trim() : '';
+            };
+            const fonti = StrumentiQuiz.raccoltaFonti(nomeMat, rec ? rec.fonti : undefined);
+            const altri = aperte().filter(r => !rec || r.id !== rec.id);
+            const riprendi = altri.length ? h('div', null, h('p.piccolo.tenue', null, 'Altri step in corso:'), h('div.chips', null, ...altri.slice(0, 8).map(r => h('button.chip', { type: 'button', onclick: () => { rec = r; vai(Centro.passoDi(r)); } }, r.nomeMateria + ' · ' + r.step + ' (passo ' + Centro.passoDi(r) + ')')))) : null;
+            const nuovo = rec ? h('button.chip', { type: 'button', onclick: () => { rec = null; vai(1); } }, '＋ Nuovo step') : null;
+            function avanti() {
+                const codice = cm.value;
+                if (!codice) {
+                    avviso('Scegli o scrivi la materia.');
+                    return;
+                }
+                const st = step.value.trim();
+                if (!RE_STEP.test(st)) {
+                    avviso('Scrivi lo step come numero, es. 3.3.');
+                    step.focus();
+                    return;
+                }
+                const m = Stato.prendi('mat-' + codice), nome = m ? m.nome : codice;
+                if (eArchetipo(arch.value) && (!m || m.archetipo !== arch.value))
+                    Dominio.impostaArchetipo(codice, arch.value);
+                const id = 'cre-' + Centro.prefisso({ materia: nome, step: st });
+                const gia = Stato.prendi(id);
+                const base = gia && !gia.deleted ? gia : { id, type: 'creazione', updatedAt: 0, materia: codice, nomeMateria: nome, step: st, schede: [], esiti: {} };
+                salva({ ...base, materia: codice, nomeMateria: nome, step: st, titolo: titolo.value.trim() || undefined, data: data.value || undefined,
+                    intensita: intens.value, fonti: fonti.valori() });
+                vai(Math.max(2, Centro.passoDi(rec)));
+            }
+            return h('div.centro-passo-corpo', null, h('p.piccolo.tenue', null, 'Scegli la materia e lo step: l\'app prepara il prompt del piano, poi quello di ogni scheda.'), riprendi, nuovo, h('label.piccolo', null, 'Materia'), cm.el, h('div.chips', null, step, data), titolo, intens, h('label.piccolo', null, 'Tipo di materia'), arch, h('h3.centro-sotto', null, 'Fonti'), fonti.el, h('button.btn', { type: 'button', onclick: avanti }, 'Avanti →'));
+        }
+        function opzioniMP(r) {
+            const fv = r.fonti || { libri: [], slide: [], guide: [], indici: [], quiz: [], vietati: [] };
+            const dos = StrumentiQuiz.regoleDossier(r.nomeMateria, r.materia, r.step, [...fv.libri.flatMap(l => l.pdf), ...fv.slide, ...fv.guide, ...fv.indici, ...fv.quiz]);
+            const arch = Dominio.archetipoMateria(r.materia);
+            const opz = { materia: r.nomeMateria, codice: r.materia, step: r.step, titolo: r.titolo, data: r.data, intensita: r.intensita,
+                archetipo: arch, etichettaArchetipo: ARCHETIPI_DISCIPLINARI[arch].etichetta, tono: Dominio.profilo().tonoSpiegazioneAI,
+                libri: fv.libri, slide: fv.slide, guide: fv.guide, indici: fv.indici, quizEsistenti: fv.quiz, vietati: [...new Set([...fv.vietati, ...StrumentiQuiz.esclusi()])],
+                idEsistenti: StrumentiQuiz.idGiaUsati(), dossier: dos.problemi.length ? [] : dos.regole };
+            return { opz, dos };
+        }
+        function rispostaAI(etichetta, segnaposto, bottone, leggi) {
+            const ta = h('textarea', { rows: 6, placeholder: segnaposto, 'aria-label': etichetta, spellcheck: 'false' });
+            const daFile = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': etichetta + ' da un file' });
+            daFile.addEventListener('change', async () => { const f = daFile.files && daFile.files[0]; if (f) {
+                ta.value = await f.text();
+                leggi(ta.value);
+            } daFile.value = ''; });
+            return h('div.centro-passo-corpo', null, ta, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => leggi(ta.value) }, bottone), daFile));
+        }
+        const notaDi = (righe) => h('div.centro-nota', { role: 'status' }, ...righe.map(t => h('p.piccolo', null, t)));
+        const copiabile = (testo, etichetta, bottone) => {
+            const out = h('textarea', { rows: 5, readonly: true, 'aria-label': etichetta, spellcheck: 'false' });
+            out.value = testo;
+            return [h('button.btn', { type: 'button', onclick: () => { StrumentiQuiz.copia(testo, out); } }, bottone), out];
+        };
+        function passoPiano() {
+            const r = rec;
+            const { opz, dos } = opzioniMP(r);
+            const testoPrompt = MasterPrompt.costruisciPiano(opz);
+            const out = h('textarea', { rows: 6, readonly: true, 'aria-label': 'Prompt del piano da copiare nell\'AI' });
+            out.value = testoPrompt;
+            const copia = h('button.btn', { type: 'button', onclick: () => { StrumentiQuiz.copia(testoPrompt, out); } }, '📋 Copia il prompt del piano');
+            const incolla = h('textarea', { rows: 6, placeholder: 'Incolla qui la risposta dell\'AI (il piano)…', 'aria-label': 'Risposta dell\'AI con il piano' });
+            const daFile = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Apri la risposta dell\'AI da un file' });
+            daFile.addEventListener('change', async () => { const f = daFile.files && daFile.files[0]; if (f) {
+                incolla.value = await f.text();
+                leggi();
+            } daFile.value = ''; });
+            const esito = h('div', { role: 'status', 'aria-live': 'polite' });
+            const anteprima = h('div.centro-anteprima');
+            let piano = r.piano ? JSON.parse(JSON.stringify(r.piano)) : null;
+            function leggi() {
+                const l = Contratto.leggi(incolla.value);
+                svuota(esito);
+                if (l.formato !== 'piano-v1' && l.formato !== 'piano-righe') {
+                    esito.appendChild(h('p.piccolo', null, '⛔ Non trovo un piano. ' + (l.errori[0] || 'Serve il blocco piano-v1 (o le righe @B / COPRE).')));
+                    return;
+                }
+                piano = Centro.daPiano(Contratto.aPiano(l), r.step);
+                disegna();
+            }
+            function disegna() {
+                svuota(anteprima);
+                if (!piano)
+                    return;
+                const p = piano;
+                const rinumera = () => p.schede.forEach((x, i) => { x.n = i + 1; });
+                if (p.avvisi.length)
+                    anteprima.appendChild(h('ul.piccolo.centro-avvisi', { 'aria-label': 'Avvisi sul piano' }, ...p.avvisi.map(a => h('li', null, '⚠️ ' + a))));
+                anteprima.appendChild(h('p.piccolo', null, h('b', null, p.schede.length + ' schede'), ' · ' + p.blocchi.length + ' blocchi: correggi microstep e categoria se serve.'));
+                const lista = h('ol.centro-schede', { 'aria-label': 'Schede del piano' });
+                p.schede.forEach((x, i) => {
+                    const micro = h('input', { type: 'text', value: x.micro.join(', '), 'aria-label': 'Microstep della scheda S' + x.n, size: 8 });
+                    micro.addEventListener('change', () => {
+                        const v = micro.value.split(/[,;\s]+/).map(m => m.trim()).filter(Boolean), ok = v.filter(m => RE_STEP.test(m) && m.startsWith(p.step + '.'));
+                        if (!ok.length) {
+                            avviso('Microstep dello step ' + p.step + ', es. ' + p.step + '.1');
+                            micro.value = x.micro.join(', ');
+                            return;
+                        }
+                        x.micro = ok;
+                        micro.value = ok.join(', ');
+                    });
+                    const cat = selettore([['prioritaria', 'Prioritaria'], ['raffinamento', 'Raffinamento']], x.categoria, function () { x.categoria = this.value; });
+                    cat.setAttribute('aria-label', 'Categoria della scheda S' + x.n);
+                    const togli = h('button.btn-ico', { type: 'button', 'aria-label': 'Togli la scheda S' + x.n, onclick: () => { p.schede.splice(i, 1); rinumera(); disegna(); } }, '✕');
+                    lista.appendChild(h('li.riga-tra', null, h('span', null, h('b', null, 'S' + String(x.n).padStart(2, '0')), h('span.piccolo.tenue', null, ' ' + x.blocco)), h('span.chips', null, micro, cat, togli)));
+                });
+                anteprima.appendChild(lista);
+                const aggiungi = h('button.chip', { type: 'button', onclick: () => {
+                        const ult = p.schede[p.schede.length - 1];
+                        p.schede.push({ n: p.schede.length + 1, micro: ult ? ult.micro.slice() : [p.step + '.1'], categoria: 'prioritaria', blocco: ult ? ult.blocco : (p.blocchi[0] || p.step) });
+                        disegna();
+                    } }, '＋ Aggiungi scheda');
+                const approva = h('button.btn', { type: 'button', onclick: () => {
+                        if (!p.schede.length) {
+                            avviso('Il piano non ha schede.');
+                            return;
+                        }
+                        salva({ ...r, piano: p, schede: p.schede.map(x => ({ n: x.n, stato: 'da-fare' })), esiti: {} });
+                        avviso('Piano salvato: ' + p.schede.length + ' schede.');
+                        vai(3);
+                    } }, '✅ Approva il piano');
+                anteprima.appendChild(h('div.chips', null, aggiungi, approva));
+            }
+            if (piano)
+                disegna();
+            return h('div.centro-passo-corpo', null, h('p.piccolo.tenue', null, '1) Copia il prompt e incollalo nella chat dell\'AI, allegando le fonti. 2) Incolla qui la risposta: l\'app numera le schede e ti mostra il piano.'), dos.problemi.length ? h('p.piccolo', null, '⛔ Il dossier conteneva dati identificativi: nel prompt non è stato messo.') : null, copia, out, h('h3.centro-sotto', null, 'Risposta dell\'AI'), incolla, h('div.chips', null, h('button.chip', { type: 'button', onclick: leggi }, '🔍 Leggi il piano'), daFile), esito, anteprima);
+        }
+        let scelta = 0, coppia = true;
+        function passoQuiz() {
+            const r = rec, sc = r.schede || [], piano = r.piano;
+            if (!piano || !sc.length) {
+                vai(2);
+                return h('div');
+            }
+            const delPiano = (n) => piano.schede.find(x => x.n === n);
+            const flusso = (n) => sc.find(x => x.n === n);
+            const n0 = scelta && flusso(scelta) ? scelta : Centro.prossimaScheda(r);
+            const tutte = !n0;
+            const cur = n0 ? flusso(n0) : null, continua = !!cur && cur.stato === 'interrotta';
+            const succ = cur && !continua && coppia ? flusso(n0 + 1) : undefined;
+            const bersaglio = cur ? [n0, ...(succ && succ.stato === 'da-fare' ? [succ.n] : [])] : [];
+            const lista = h('ol.centro-schede', { 'aria-label': 'Schede dello step' }, ...sc.map(x => {
+                const p = delPiano(x.n), parte = x.stato !== 'da-fare' ? parteDi(r, x.n) : null, n = parte ? parte.quiz.length : 0;
+                const etich = x.stato === 'interrotta' ? '✂️ Continua da qui' : x.stato === 'arrivata' ? '↻ Riscrivi' : '✍️ Scrivi';
+                const aria = x.stato === 'interrotta' ? 'Continua la scheda ' + sig(x.n) + ' da dove si è interrotta' : (x.stato === 'arrivata' ? 'Riscrivi' : 'Scrivi') + ' la scheda ' + sig(x.n);
+                const attiva = bersaglio.includes(x.n);
+                return h('li.riga-tra' + (attiva ? '.centro-attiva' : ''), { 'aria-current': attiva ? 'true' : undefined }, h('span', null, simbolo(x) + ' ', h('b', null, sig(x.n)), h('span.piccolo.tenue', null, ' ' + (p ? p.micro[0] + ' · ' + p.categoria : '') + ' · ' + statoTesto(x) + (n ? ' (' + n + '/' + PER() + ')' : ''))), h('button.chip', { type: 'button', 'aria-label': aria, onclick: () => { scelta = x.n; vai(3); } }, etich));
+            }));
+            const arrivate = sc.filter(x => x.stato === 'arrivata').length;
+            const testa = h('p.piccolo', null, h('b', null, arrivate + ' di ' + sc.length + ' schede arrivate'), ' · ✅ arrivata · ✂️ interrotta · ⏳ da fare');
+            if (tutte)
+                return h('div.centro-passo-corpo', null, testa, lista, h('p.piccolo', null, 'Tutte le schede sono arrivate: ora l\'app le controlla.'), h('button.btn', { type: 'button', onclick: () => vai(4) }, 'Avanti: Controllo →'));
+            const casella = h('input', { type: 'checkbox', checked: coppia || undefined });
+            casella.addEventListener('change', () => { coppia = casella.checked; vai(3); });
+            let testoPrompt;
+            if (continua) {
+                const gia = (parteDi(r, n0) || { quiz: [] }).quiz, ult = gia[gia.length - 1];
+                const ultimo = ult ? String(ult.domanda || ult.id || '').slice(0, 160) : undefined;
+                testoPrompt = Contratto.continua({ formato: 'quiz-v3', dati: { step: pref(r), scheda: sig(n0), quiz: gia }, blocchi: [], riparazioni: [],
+                    troncato: true, ultimoCompleto: ultimo, avvisi: [], errori: [] }, { perScheda: PER() });
+            }
+            else {
+                const lst = bersaglio.map(n => delPiano(n)).filter((x) => !!x);
+                testoPrompt = MasterPrompt.costruisciSchede(opzioniMP(r).opz, lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })));
+            }
+            const titolo = (continua ? 'Continua ' : 'Prompt per ') + bersaglio.map(sig).join(' e ');
+            return h('div.centro-passo-corpo', null, testa, lista, h('h3.centro-sotto', null, titolo), continua ? h('p.piccolo.tenue', null, 'Incolla questo prompt nella stessa chat: l\'AI scrive solo le domande che mancano.')
+                : h('label.riga-tra.piccolo', null, '2 schede per messaggio (36 domande)', casella), ...copiabile(testoPrompt, 'Prompt da copiare nell\'AI per ' + bersaglio.map(sig).join(' e '), continua ? '📋 Copia «continua da qui»' : '📋 Copia il prompt'), h('h3.centro-sotto', null, 'Risposta dell\'AI'), rispostaAI('Risposta dell\'AI con le schede ' + bersaglio.map(sig).join(' e '), 'Incolla qui la risposta (anche la chat intera)…', '📥 Leggi la risposta', t => leggiSchede(r, t, bersaglio, continua)));
+        }
+        function leggiSchede(r, testo, bersaglio, continua) {
+            const l = Contratto.leggi(testo), piano = r.piano;
+            if (!FORMATI_QUIZ.includes(l.formato)) {
+                avviso('⛔ Non trovo domande di quiz. ' + (l.errori[0] || (l.formato === 'ignoto' ? 'Serve il blocco JSON con «quiz».' : 'È un ' + l.formato + '.')), 6000);
+                return;
+            }
+            const d = (l.dati && typeof l.dati === 'object' ? l.dati : {}), nuove = (Array.isArray(d.quiz) ? d.quiz : []);
+            let dati = d;
+            if (continua) {
+                const gia = (parteDi(r, bersaglio[0]) || { quiz: [] }).quiz, testi = new Set(gia.map(q => String(q.domanda || '').trim()));
+                const solo = nuove.filter(q => !testi.has(String(q.domanda || '').trim()));
+                dati = { ...d, scheda: sig(bersaglio[0]), quiz: [...gia, ...solo.map(q => ({ ...q, scheda: q.scheda || sig(bersaglio[0]) }))] };
+            }
+            const qs = Contratto.aQuiz({ ...l, dati }, { step: pref(r), scheda: bersaglio[0] });
+            const perScheda = new Map(), fuori = [];
+            for (const q of qs) {
+                const n = ImportaParti.numScheda(q.scheda) || bersaglio[0], p = piano.schede.find(x => x.n === n);
+                if (!p) {
+                    if (!fuori.includes(n))
+                        fuori.push(n);
+                    continue;
+                }
+                const lst = perScheda.get(n) || [];
+                lst.push({ ...q, categoria: p.categoria, sottoStep: q.sottoStep || p.micro[0] });
+                perScheda.set(n, lst);
+            }
+            if (!perScheda.size) {
+                avviso('⛔ Nessuna domanda delle schede del piano in questa risposta.', 6000);
+                return;
+            }
+            const righe = [], schede = (r.schede || []).map(x => ({ ...x }));
+            for (const [n, lst] of [...perScheda].sort((a, b) => a[0] - b[0])) {
+                const id = idParte(r, n), gia = Stato.prendi(id);
+                Stato.salva({ id, type: 'parteq', updatedAt: gia ? gia.updatedAt : 0, cre: r.id, parte: Centro.nomeParte({ materia: r.nomeMateria, step: r.step }, n), scheda: n, quiz: lst }, true);
+                const x = schede.find(s => s.n === n), ok = lst.length >= PER();
+                x.stato = ok ? 'arrivata' : 'interrotta';
+                x.parteId = id;
+                righe.push((ok ? '✅ ' : '✂️ ') + sig(n) + ': ' + lst.length + ' domande' + (ok ? '' : ' su ' + PER() + ' — premi «Continua da qui»'));
+            }
+            if (fuori.length)
+                righe.push('⚠️ Ignorate le domande di ' + fuori.map(sig).join(', ') + ': non sono nel piano.');
+            for (const n of bersaglio)
+                if (!perScheda.has(n))
+                    righe.push('⏳ ' + sig(n) + ': nessuna domanda arrivata.');
+            if (l.riparazioni.length)
+                righe.push('🔧 ' + l.riparazioni.join(' · '));
+            for (const a of l.avvisi.slice(0, 5))
+                righe.push('⚠️ ' + a);
+            salva({ ...r, schede, esiti: {} });
+            scelta = 0;
+            nota = notaDi(righe);
+            registroRip = [];
+            vai(3);
+        }
+        function passoControllo() {
+            const r = rec, { qs: grezze, daScheda } = domande(r);
+            const rip = Validatore.ripara(grezze);
+            if (rip.log.length) {
+                salvaDomande(r, rip.qs, daScheda);
+                registroRip = [...registroRip, ...rip.log];
+            }
+            const qs = rip.qs, { v, problemi, corr } = controlla(qs);
+            const daCorreggere = corr.nDomande;
+            salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere } });
+            const err = problemi.filter(p => p.sev === 'err'), warn = problemi.filter(p => p.sev !== 'err');
+            return h('div.centro-passo-corpo', null, h('p.piccolo', null, h('b', null, qs.length + ' domande'), ' · pronte da importare ' + v.pronte + ' · da correggere con patch ' + daCorreggere), registroRip.length ? h('details', null, h('summary.piccolo', null, '🔧 Riparazioni automatiche già fatte: ' + registroRip.length), h('ul.piccolo.tenue.centro-avvisi', { 'aria-label': 'Riparazioni automatiche' }, ...registroRip.map(t => h('li', null, t)))) : null, err.length ? h('h3.centro-sotto', null, '⛔ Da rifare') : null, elencoProblemi(err, 'Problemi da rifare'), corr.manuali.length ? h('p.piccolo', null, '✋ Da sistemare a mano (le patch non bastano): ' + corr.manuali.map(p => p.id + ' — ' + p.msg).join('; ')) : null, warn.length ? h('details', null, h('summary.piccolo', null, '⚠️ Avvisi di qualità: ' + warn.length), elencoProblemi(warn, 'Avvisi di qualità')) : null, !problemi.length ? h('p.piccolo', null, '✅ Nessun problema trovato.') : null, h('div.chips', null, daCorreggere ? h('button.btn', { type: 'button', onclick: () => vai(5) }, 'Correggi ' + daCorreggere + (daCorreggere === 1 ? ' domanda →' : ' domande →'))
+                : h('button.btn', { type: 'button', onclick: () => vai(6) }, 'Avanti: Prova →'), h('button.chip', { type: 'button', onclick: () => vai(4) }, '🔁 Ricontrolla'), h('button.chip', { type: 'button', onclick: () => vai(3) }, '📋 Torna alle schede')));
+        }
+        let conAvvisi = false;
+        function passoCorreggi() {
+            const r = rec, { qs, daScheda } = domande(r), { corr } = controlla(qs, conAvvisi);
+            const casella = h('input', { type: 'checkbox', checked: conAvvisi || undefined });
+            casella.addEventListener('change', () => { conAvvisi = casella.checked; vai(5); });
+            function applica(t) {
+                const lp = DiagnosiQuiz.leggiPatch(t);
+                if ('errore' in lp) {
+                    avviso('⛔ ' + lp.errore, 6000);
+                    return;
+                }
+                const ap = DiagnosiQuiz.applicaPatch(qs, lp.patch);
+                salvaDomande(r, ap.qs, daScheda);
+                const dopo = controlla(ap.qs), resta = dopo.corr.nDomande;
+                salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere: resta } });
+                const righe = ['🩹 Patch applicate a ' + ap.n + (ap.n === 1 ? ' domanda' : ' domande') + '.',
+                    ...(ap.mancanti.length ? ['⚠️ Id non trovati: ' + ap.mancanti.join(', ')] : []),
+                    resta ? '⛔ Restano ' + resta + ' domande da correggere: ecco il nuovo prompt.' : '✅ Ricontrollo superato: nessuna domanda da correggere.'];
+                nota = notaDi(righe);
+                vai(resta ? 5 : 6);
+            }
+            return h('div.centro-passo-corpo', null, h('p.piccolo.tenue', null, '1) Copia il prompt di correzione nella stessa chat: l\'AI rimanda solo i campi da rifare. 2) Incolla le patch: l\'app le applica e ricontrolla.'), h('label.riga-tra.piccolo', null, 'Chiedi di correggere anche gli avvisi', casella), h('p.piccolo', null, h('b', null, corr.nDomande + (corr.nDomande === 1 ? ' domanda' : ' domande')), ' nel prompt'), ...copiabile(corr.testo, 'Prompt di correzione da copiare nell\'AI', '📋 Copia il prompt di correzione'), corr.manuali.length ? h('p.piccolo', null, '✋ Da sistemare a mano: ' + corr.manuali.map(p => p.id + ' — ' + p.msg).join('; ')) : null, corr.globali.length ? h('p.piccolo', null, '⚠️ Squilibri d\'insieme (non si correggono con patch): ' + corr.globali.slice(0, 5).map(p => p.id + ' — ' + p.msg).join('; ')) : null, h('h3.centro-sotto', null, 'Patch dell\'AI'), rispostaAI('Patch JSON dell\'AI', 'Incolla qui le patch ([{"id":"…","campo":"…"}])…', '🩹 Applica le patch', applica), h('div.chips', null, h('button.chip', { type: 'button', onclick: () => vai(4) }, '🔁 Ricontrolla'), h('button.chip', { type: 'button', 'aria-label': 'Prosegui senza correggere: le domande bloccate non si importano',
+                onclick: () => { salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere: 0 } }); vai(6); } }, '⏭ Prosegui senza correggere')));
+        }
+        const provate = new Set();
+        function domandeProva(r, n) {
+            const p = parteDi(r, n), qs = p ? p.quiz : [], sk = 'prova-' + pref(r) + '-s' + n;
+            const lista = qs.map(q => ImportaDrive.domanda(q, sk, pref(r))).filter((d) => !!d);
+            return { lista, escluse: qs.length - lista.length };
+        }
+        function prova(r, n) {
+            const { lista } = domandeProva(r, n), p = r.piano.schede.find(x => x.n === n);
+            if (!lista.length) {
+                avviso('Nessuna domanda valida da provare in ' + sig(n) + '.');
+                return;
+            }
+            const pk = { tipo: 'step', id: 'prova', step: 0, titolo: '', aggiornato: '', risorse: { libri: {}, quiz: {} }, materie: [] };
+            const s = { id: 'prova-' + pref(r) + '-s' + n, k: n, n: (r.schede || []).length, titolo: 'Prova ' + sig(n), tipo: 'P', problemi: false, pagine: '', quizFile: '' };
+            provate.add(n);
+            fg.chiudi();
+            QuizApp.apri(pk, r.materia, p ? p.micro[0] : r.step, s, () => lista, { occh: '🧪 Prova · ' + r.nomeMateria + ' ' + r.step + ' · ' + sig(n) + ' · senza statistiche',
+                titolo: 'Prova della scheda ' + sig(n), prova: true, chiudi: () => { apriFoglio(); vai(6); } });
+        }
+        function passoProva() {
+            const r = rec, sc = r.schede || [], piano = r.piano;
+            const lista = h('ol.centro-schede', { 'aria-label': 'Schede da provare' }, ...sc.map(x => {
+                const p = piano.schede.find(y => y.n === x.n), { lista: l, escluse } = domandeProva(r, x.n);
+                return h('li.riga-tra', null, h('span', null, (provate.has(x.n) ? '🧪 ' : simbolo(x) + ' '), h('b', null, sig(x.n)), h('span.piccolo.tenue', null, ' ' + (p ? p.micro[0] : '') + ' · ' + l.length + ' domande' + (escluse ? ' (' + escluse + ' bloccate escluse)' : '') + (provate.has(x.n) ? ' · provata' : ''))), h('button.chip', { type: 'button', 'aria-label': 'Prova la scheda ' + sig(x.n) + ' nel quiz in app', disabled: l.length ? undefined : true, onclick: () => prova(r, x.n) }, '▶ Prova la scheda'));
+            }));
+            const avanti = () => { salva({ ...r, esiti: { ...(r.esiti || {}), provato: true } }); vai(7); };
+            return h('div.centro-passo-corpo', null, h('p.piccolo.tenue', null, 'Fai il quiz di una scheda come lo vedrà lo studente. È una prova: non salva statistiche, ripassi né flashcard.'), lista, h('div.chips', null, h('button.btn', { type: 'button', onclick: avanti }, provate.size ? 'Avanti: Importa →' : 'Salta la prova: Importa →'), h('button.chip', { type: 'button', onclick: () => vai(4) }, '🔁 Torna al controllo')));
+        }
+        const CARTELLA = '🏗️ Centro di creazione';
+        function letture(r) {
+            const step = pref(r), quando = (n) => new Date(n || 0).toISOString();
+            const parti = (r.schede || []).filter(x => x.stato !== 'da-fare').map(x => parteDi(r, x.n)).filter((p) => !!p)
+                .map(p => ({ id: p.id, name: p.parte + '.json', cartella: CARTELLA, modificato: quando(p.updatedAt), tipo: 'parte', step, json: { parte: p.parte, quiz: p.quiz } }));
+            const ch = Centro.chiusura(r.piano, { materia: r.nomeMateria, codice: r.materia, step: r.step, titolo: r.titolo, data: r.data, archetipo: Dominio.archetipoMateria(r.materia), perScheda: PER() });
+            return [...parti, { id: 'chi-' + r.id, name: step + '-chiusura.json', cartella: CARTELLA, modificato: '', tipo: 'chiusura', step, json: ch }];
+        }
+        function passoImporta() {
+            const r = rec, g = ImportaParti.raggruppa(letture(r)).find(x => x.tipo === 'parti');
+            const esito = h('div.centro-nota', { role: 'status', hidden: true }), zona = h('div');
+            if (!g)
+                return h('div.centro-passo-corpo', null, h('p.piccolo', null, 'Nessuna scheda arrivata da importare.'), h('button.chip', { type: 'button', onclick: () => vai(3) }, '← Torna ai quiz'));
+            const [cart] = Centro.albero([g]), st = cart.steps[0];
+            const spunte = [];
+            const conta = h('p.piccolo', { 'aria-live': 'polite' }), tutto = h('input', { type: 'checkbox', 'aria-label': 'Tutto lo step ' + st.sotto });
+            const vaiBtn = h('button.btn', { type: 'button' }, 'Avanti: dove lo metto? →');
+            const scelti = () => spunte.filter(x => x.el.checked);
+            function aggiorna() {
+                const sel = scelti(), sch = sel.reduce((a, x) => a + x.schede, 0), dom = sel.reduce((a, x) => a + x.domande, 0);
+                tutto.checked = sel.length === spunte.length;
+                tutto.indeterminate = sel.length > 0 && sel.length < spunte.length;
+                conta.textContent = sel.length ? 'Selezionati: ' + sel.length + ' microstep · ' + sch + (sch === 1 ? ' scheda' : ' schede') + ' · ' + dom + ' domande' : 'Seleziona almeno un microstep.';
+                vaiBtn.disabled = !sel.length;
+                svuota(zona);
+            }
+            const voci = st.microstep.map(m => {
+                const el = h('input', { type: 'checkbox', 'aria-label': 'Microstep ' + m.n });
+                el.checked = true;
+                el.addEventListener('change', aggiorna);
+                spunte.push({ n: m.n, el, schede: m.schede.length, domande: m.domande });
+                return h('li', null, h('label', null, el, ' ' + m.n + ' ', h('span.piccolo.tenue', null, m.schede.map(sig).join(', ') + ' · ' + m.domande + ' domande')));
+            });
+            tutto.checked = true;
+            tutto.addEventListener('change', () => { for (const x of spunte)
+                x.el.checked = tutto.checked; aggiorna(); });
+            vaiBtn.addEventListener('click', () => {
+                const u = ImportaParti.unisci(g), pk = Centro.filtra(u.pacchetto, scelti().map(x => x.n));
+                const rapporto = ImportaParti.valida(pk, { bloccanti: u.bloccanti, duplicati: u.duplicati, completo: true });
+                let t;
+                try {
+                    t = ImportaDrive.traduci(pk);
+                }
+                catch (e) {
+                    esito.hidden = false;
+                    esito.textContent = '✗ ' + e.message;
+                    return;
+                }
+                const prima = Stato.prendi('inn-' + t.k);
+                svuota(zona);
+                zona.appendChild(ImportaDrive.pannelloScelta(t.k, t.nome + ' ' + t.sotto + ' · ' + t.titolo, ImportaDrive.proponi(t), prima ? { corso: prima.corso, piano: prima.piano, data: prima.data } : null, prima ? 'Reimporta' : 'Inserisci', sc => {
+                    const inn = ImportaDrive.salva(t, sc, CARTELLA, { accumula: true, rapporto });
+                    salva({ ...r, esiti: { ...(r.esiti || {}), importato: true } });
+                    svuota(zona);
+                    esito.hidden = false;
+                    svuota(esito);
+                    const ns = t.sub.microstep.reduce((a, m) => a + m.schede.length, 0);
+                    esito.append(h('p', null, '✓ ' + t.domande + ' domande · ' + ns + (ns === 1 ? ' scheda' : ' schede') + ' nei tuoi programmi (' + inn.k + ').'), h('p.piccolo.tenue', null, prima ? 'Reimport: aggiornate le schede già presenti, nessun doppione.' : 'Le trovi in Oggi e in «Studia ora» nel giorno scelto.'), h('button.chip', { type: 'button', onclick: () => { fg.chiudi(); vaiScheda('oggi'); } }, '📅 Vai a Oggi'));
+                }));
+                const b = zona.querySelector('select, button');
+                if (b)
+                    b.focus({ preventScroll: true });
+            });
+            aggiorna();
+            return h('div.centro-passo-corpo', null, h('p.piccolo.tenue', null, 'Scegli cosa importare. Il file di chiusura (sotto-schede, ripassi +1/+3/+7 g, durata) lo scrive l\'app dal piano approvato.'), h('ul.centro-albero', { 'aria-label': 'Cosa importare' }, h('li', null, h('span.piccolo.tenue', null, '📁 ' + cart.cartella), h('ul', null, h('li', null, h('label.forte', null, tutto, ' ' + r.nomeMateria + ' ' + st.sotto + ' ', h('span.piccolo.tenue', null, st.schede + ' schede · ' + st.domande + ' domande')), h('ul', null, ...voci))))), st.errore ? h('p.piccolo', null, '⚠️ ' + st.errore) : null, conta, h('div.chips', null, vaiBtn, h('button.chip', { type: 'button', onclick: () => vai(6) }, '← Torna alla prova')), zona, esito);
+        }
+        function impostazioni() {
+            const ta = h('textarea', { rows: 4, 'aria-label': 'Fonti escluse, una per riga' });
+            const stato = h('p.piccolo.tenue', { role: 'status' });
+            const carica = () => { ta.value = StrumentiQuiz.esclusi().join('\n'); };
+            carica();
+            return h('details.centro-impostazioni', null, h('summary.piccolo', null, '⚙️ Impostazioni del Centro'), h('p.piccolo.tenue', null, 'Fonti escluse (eserciziari commerciali): l\'AI non deve usarle e i file con questi nomi non entrano tra le fonti. Una per riga.'), ta, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(ta.value.split('\n')); carica(); stato.textContent = '✓ Lista salvata (' + StrumentiQuiz.esclusi().length + ').'; } }, '💾 Salva lista'), h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(null); carica(); stato.textContent = 'Ripristinata la lista predefinita.'; } }, '↺ Predefiniti')), stato);
+        }
+        const corpo = h('div.centro', null, h('div.riga-tra', null, indicatore, indietro), zona, impostazioni());
+        let fg = { chiudi: () => undefined };
+        const apriFoglio = () => { fg = foglio({ titolo: '🏗️ Centro di creazione', corpo }); };
+        apriFoglio();
+        vai(passo);
+    }
+    return { apri };
+})();
+
 const CHIAVI_QUIZ = ['id', 'stepId', 'sottoStep', 'scheda', 'categoria', 'livelloCognitivo', 'livello', 'tipoItem', 'coppiaGemellaId', 'erroreTipico',
     'domanda', 'opzioni', 'esatta', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte', 'sourceRef'];
 const Contratto = (() => {
@@ -1199,31 +1852,37 @@ const MasterPrompt = (() => {
         }
         return parti.join(' ');
     }
-    function costruisci(o) {
+    const SBARRA = '==========================================================';
+    const sezione = (S, t) => S.push('', SBARRA, t, SBARRA);
+    const elenco = (xs, max = 12) => xs.slice(0, max).map(x => '«' + x + '»').join(', ') + (xs.length > max ? ' e altri ' + (xs.length - max) : '');
+    function base(o) {
         const mat = String(o.materia || 'Materia').trim(), ms = slug(mat) || 'materia', cod = String(o.codice || mat.charAt(0)).toUpperCase();
-        const step = String(o.step || '1.1').trim(), pref = ms + '-' + step, ud = o.unita || 'UD' + step.split('.')[0];
-        const arch = o.archetipo || 'scienze_sperimentali', [smin, smax] = RANGE_SCHEDE[o.intensita || 'standard'];
-        const pm = o.perMessaggio === 1 ? 1 : 2, nx = prossimo(o.idEsistenti || [], pref);
-        const libri = o.libri || [], slide = o.slide || [], quiz = o.quizEsistenti || [], vietati = o.vietati || [];
-        const blocchi = smax <= 14 ? '2–3' : '3–4', durata = smax <= 14 ? '~95–140' : '~185–190';
-        const elenco = (xs, max = 12) => xs.slice(0, max).map(x => '«' + x + '»').join(', ') + (xs.length > max ? ' e altri ' + (xs.length - max) : '');
+        const step = String(o.step || '1.1').trim(), arch = o.archetipo || 'scienze_sperimentali';
+        return { mat, ms, cod, step, pref: ms + '-' + step, ud: o.unita || 'UD' + step.split('.')[0], arch };
+    }
+    const RUOLO = 'Sei l\'architetto didattico e neuroscientifico dell\'app di studio «il-mio-calendario». Lavori in AUTONOMIA: nessuno allungherà o correggerà il tuo output a mano (un controllo automatico scarta ciò che non rispetta il formato). Quantità e qualità qui sotto sono obbligatorie. Tutto in italiano, niente chiacchiere.';
+    const rigaMateria = (o) => { const b = base(o); return ' - Materia: ' + b.mat + ' (codice ' + b.cod + ', id in minuscolo «' + b.ms + '») · archetipo: ' + (o.etichettaArchetipo || b.arch) + '.'; };
+    function righeStudente(o, classico = false) {
         const S = [];
-        const sez = (t) => S.push('', '==========================================================', t, '==========================================================');
-        S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)', 'Il TUO UNICO PRODOTTO sono blocchi ```json scritti qui in chat: le SCHEDE DI QUIZ e, alla fine dello step, il blocco di CHIUSURA (sotto-schede BRAC, ripassi, righe calendario). L\'app ricostruisce tutto da sola quando il file viene importato.', 'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app. Se stai per scriverne, fermati e torna alle schede.', 'Prima risposta: esegui subito la Fase 1 (tabella + righe calendario) e poi la prima consegna di schede, senza introduzioni.');
-        S.push('', 'RUOLO', 'Sei l\'architetto didattico e neuroscientifico dell\'app di studio «il-mio-calendario». Lavori in AUTONOMIA: nessuno allungherà o correggerà il tuo output a mano (un controllo automatico scarta ciò che non rispetta il formato). Quantità e qualità qui sotto sono obbligatorie. Tutto in italiano, niente chiacchiere.', registro(o.tono || 'tecnico_accademico'));
-        sez('TARGET (già compilato dall\'app)');
-        S.push(' - Materia: ' + mat + ' (codice ' + cod + ', id in minuscolo «' + ms + '») · archetipo: ' + (o.etichettaArchetipo || arch) + '.', ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.', ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).', ' - Prima scheda: S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (le schede precedenti esistono già: non riscriverle)' : '') + '.');
         if (o.dossier && o.dossier.length)
-            S.push(' - Dossier dello studente (calcolato dall\'app sui suoi quiz, già deciso: applica queste regole senza ricalcolare nulla):', ...o.dossier.map(r => '   • ' + r));
+            S.push(' - Dossier dello studente (calcolato dall\'app sui suoi quiz, già deciso: ' + (classico ? 'applica queste regole senza ricalcolare nulla' : 'applica queste regole così come sono') + '):', ...o.dossier.map(r => '   • ' + r));
         else if (o.puntiDeboli && o.puntiDeboli.length)
             S.push(' - Punti deboli misurati dall\'app (risposte corrette < 60%): ' + o.puntiDeboli.join('; ') + '. Dedica a questi argomenti almeno una scheda in più, con più L3 (trabocchetti) e confutazioni molto esplicite.');
         if (o.note)
             S.push(' - Richieste dello studente: ' + o.note);
-        sez('COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
-        S.push(' - «📥 Importa quiz da Drive» legge i .json nelle cartelle che finiscono in «quiz»: domanda → testo, opzioni → 4 risposte (la corretta la scrivi SEMPRE in `opzioni[0]`, l\'app la sposta in una posizione bilanciata), ' +
-            'spiegazione → correzione passo-passo divisa nelle sezioni COSA CHIEDE / CONCETTO E MECCANISMO / IN SINTESI, fonte → riferimento, livello (NUMERO 1–4) → livello di Bloom.', ' - L\'app MESCOLA le opzioni: per questo le confutazioni vanno in `spiegazioneDistrattori` (l\'app le mostra accanto all\'opzione scelta) e le lettere dentro `spiegazione` le riscrive l\'app dopo aver mescolato.', ' - «Allenamento Neuro»: certezza 1/2/3 dopo ogni risposta; sicuro+sbagliato = illusione di competenza → la domanda torna oggi in «Quiz da rifare» con la confutazione del distrattore scelto e il tuo `erroreTipico`.', ' - Interleaving per step e livello; coppie gemelle (`gemella`) e `distractorTypes` alimentano trabocchetti e statistiche.', ' - ID, step, sotto-step, posizione dell\'esatta, conteggi e controlli li fa l\'app: tu scrivi SOLO il contenuto. Reimportare aggiorna, non duplica.');
-        sez('FASE 0 — ALLINEAMENTO (a ogni nuova chat)');
-        S.push('Leggi sul Drive collegato, in quest\'ordine:');
+        return S;
+    }
+    const COMPATIBILITA = [
+        ' - «📥 Importa quiz da Drive» legge i .json nelle cartelle che finiscono in «quiz»: domanda → testo, opzioni → 4 risposte (la corretta la scrivi SEMPRE in `opzioni[0]`, l\'app la sposta in una posizione bilanciata), ' +
+            'spiegazione → correzione passo-passo divisa nelle sezioni COSA CHIEDE / CONCETTO E MECCANISMO / IN SINTESI, fonte → riferimento, livello (NUMERO 1–4) → livello di Bloom.',
+        ' - L\'app MESCOLA le opzioni: per questo le confutazioni vanno in `spiegazioneDistrattori` (l\'app le mostra accanto all\'opzione scelta) e le lettere dentro `spiegazione` le riscrive l\'app dopo aver mescolato.',
+        ' - «Allenamento Neuro»: certezza 1/2/3 dopo ogni risposta; sicuro+sbagliato = illusione di competenza → la domanda torna oggi in «Quiz da rifare» con la confutazione del distrattore scelto e il tuo `erroreTipico`.',
+        ' - Interleaving per step e livello; coppie gemelle (`gemella`) e `distractorTypes` alimentano trabocchetti e statistiche.',
+        ' - ID, step, sotto-step, posizione dell\'esatta, conteggi e controlli li fa l\'app: tu scrivi SOLO il contenuto. Reimportare aggiorna, non duplica.'
+    ];
+    function fonti(o, intro) {
+        const { mat } = base(o), quiz = o.quizEsistenti || [], slide = o.slide || [], vietati = o.vietati || [], libri = o.libri || [];
+        const S = [intro];
         let k = 1;
         if (quiz.length)
             S.push(' ' + (k++) + '. Quiz già esistenti (non duplicare argomenti già coperti): ' + elenco(quiz) + '.');
@@ -1243,13 +1902,58 @@ const MasterPrompt = (() => {
             S.push('', 'MAPPA LIBRI E PAGINE — misurata dall\'app:');
             libri.forEach(l => S.push(rigaLibro(l)));
         }
+        return S;
+    }
+    function regoleScheda(o, calcoli) {
+        const { mat, arch } = base(o);
+        return [' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.',
+            ' - NON scrivere id, stepId, sottoStep, esatta, livelloCognitivo, sourceRef: li aggiunge l\'app.',
+            '', 'LIVELLI — segui questa SEQUENZA per le 18 domande di ogni scheda (1ª, 2ª, … 18ª): ' + SEQUENZA_LIVELLI.join(', ') + '.',
+            ' - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.',
+            ' - Coppie gemelle: due domande su concetti speculari, in schede diverse, con la stessa etichetta `"gemella": "G1"` (poi G2, G3…); circa 1 coppia ogni 3 schede.',
+            ' - `erroreTipico` sempre valorizzato: l\'errore di ragionamento dietro il distrattore principale.',
+            '', 'REGOLE DI QUALITÀ (il controllo automatico le verifica)',
+            ' Q-A. La risposta corretta va SEMPRE in `opzioni[0]`: la posizione la sceglie l\'app.',
+            ' Q-B. La corretta NON deve essere la più lunga: scrivila breve e allunga i distrattori.',
+            ' Q-C. Distrattori plausibili, ognuno nato da un errore preciso; il testo della corretta non deve stare dentro un distrattore. Mai «tutte/nessuna delle precedenti».',
+            ' Q-D. Nessun duplicato o quasi-duplicato, né nello step né rispetto a ciò che esiste già. Stile = appello vero.',
+            ' ' + regolaArchetipo(arch, mat),
+            ' Q-F. Italiano corretto; pedici/apici come `_{2}` e `^{2}`; risultati numerici semplici con unità SI.',
+            calcoli,
+            '', 'CAMPO `spiegazione` (lunga e completa, almeno un paragrafo pieno; nei calcoli tutti i passaggi), con queste etichette ESATTE in maiuscolo:',
+            ' COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «testo» … PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]',
+            ' Scrivi le lettere come se la corretta fosse A (cioè `opzioni[0]`): l\'app le riscrive dopo aver mescolato. La citazione [[…]] è uguale a `fonte`.',
+            ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.'];
+    }
+    const ESEMPIO = '{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …",' +
+        '"domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],' +
+        '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]",' +
+        '"spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}';
+    const AUTOVERIFICA = [' [ ] Livelli nell\'ordine della sequenza; la corretta in opzioni[0], breve, non contenuta in un distrattore.',
+        ' [ ] Ogni spiegazione ha le 5 etichette, è completa, ha RISPOSTA ESATTA: A) e la citazione [[…]] uguale a `fonte`.',
+        ' [ ] JSON valido: doppi apici, nessuna virgola finale; nessuna pagina «da verificare».'];
+    function costruisci(o) {
+        const { mat, ms, cod, step, pref, ud, arch } = base(o), [smin, smax] = RANGE_SCHEDE[o.intensita || 'standard'];
+        const pm = o.perMessaggio === 1 ? 1 : 2, nx = prossimo(o.idEsistenti || [], pref);
+        const blocchi = smax <= 14 ? '2–3' : '3–4', durata = smax <= 14 ? '~95–140' : '~185–190';
+        const S = [];
+        const sez = (t) => sezione(S, t);
+        S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)', 'Il TUO UNICO PRODOTTO sono blocchi ```json scritti qui in chat: le SCHEDE DI QUIZ e, alla fine dello step, il blocco di CHIUSURA (sotto-schede BRAC, ripassi, righe calendario). L\'app ricostruisce tutto da sola quando il file viene importato.', 'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app. Se stai per scriverne, fermati e torna alle schede.', 'Prima risposta: esegui subito la Fase 1 (tabella + righe calendario) e poi la prima consegna di schede, senza introduzioni.');
+        S.push('', 'RUOLO', RUOLO, registro(o.tono || 'tecnico_accademico'));
+        sez('TARGET (già compilato dall\'app)');
+        S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.', ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).', ' - Prima scheda: S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (le schede precedenti esistono già: non riscriverle)' : '') + '.');
+        S.push(...righeStudente(o, true));
+        sez('COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
+        S.push(...COMPATIBILITA);
+        sez('FASE 0 — ALLINEAMENTO (a ogni nuova chat)');
+        S.push(...fonti(o, 'Leggi sul Drive collegato, in quest\'ordine:'));
         sez('FASE 1 — ANALISI AUTONOMA DELLO STEP (senza chiedere approvazione)');
         S.push(' P1. Analizza l\'argomento da syllabus, libro, slide e appelli.', ' P2. Stabilisci i MICROSTEP (' + step + '.1, ' + step + '.2, …) che coprono tutto lo step senza sovrapposizioni e senza duplicare ciò che esiste già.', ' P3. Per OGNI microstep decidi quante schede servono in base ai suoi ambiti: numero NON uniforme, minimo 2, 3–4 se ha molti ambiti.');
         if (conCalcoli(arch, mat))
             S.push(' P4. Dove compare una formula, un rapporto o un calcolo: schede dedicate «Problemi su …» OLTRE a quelle teoriche.');
         S.push(' P5. Verifica la copertura di ogni microstep e riempi i buchi.', ' P6. Dividi le schede in PRIORITARIE (~70%) e RAFFINAMENTO (~30%).', ' Soglia obbligatoria: ' + smin + '–' + smax + ' schede in tutto. Raggruppa i microstep in ' + blocchi + ' SOTTOSCHEDE = blocchi BRAC da 45–50 min.', ' Output della Fase 1 (primo messaggio, poi procedi): a) righe calendario `' + cod + '|' + ud + '|ARGOMENTO|N|' + step + '|' + (o.data || 'da definire') + '`; b) tabella microstep → n. schede → prioritarie/raffinamento → pagine del libro → sotto-scheda; c) totale schede e domande.');
         sez('FASE 2 — GENERAZIONE A SCHEDE');
-        S.push(' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.', ' - NON scrivere id, stepId, sottoStep, esatta, livelloCognitivo, sourceRef: li aggiunge l\'app.', '', 'LIVELLI — segui questa SEQUENZA per le 18 domande di ogni scheda (1ª, 2ª, … 18ª): ' + SEQUENZA_LIVELLI.join(', ') + '.', ' - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.', ' - Coppie gemelle: due domande su concetti speculari, in schede diverse, con la stessa etichetta `"gemella": "G1"` (poi G2, G3…); circa 1 coppia ogni 3 schede.', ' - `erroreTipico` sempre valorizzato: l\'errore di ragionamento dietro il distrattore principale.', '', 'REGOLE DI QUALITÀ (il controllo automatico le verifica)', ' Q-A. La risposta corretta va SEMPRE in `opzioni[0]`: la posizione la sceglie l\'app.', ' Q-B. La corretta NON deve essere la più lunga: scrivila breve e allunga i distrattori.', ' Q-C. Distrattori plausibili, ognuno nato da un errore preciso; il testo della corretta non deve stare dentro un distrattore. Mai «tutte/nessuna delle precedenti».', ' Q-D. Nessun duplicato o quasi-duplicato, né nello step né rispetto a ciò che esiste già. Stile = appello vero.', ' ' + regolaArchetipo(arch, mat), ' Q-F. Italiano corretto; pedici/apici come `_{2}` e `^{2}`; risultati numerici semplici con unità SI.', ' Q-G. Ogni calcolo deve tornare: ricalcola e verifica l\'ordine di grandezza prima di consegnare.', '', 'CAMPO `spiegazione` (lunga e completa, almeno un paragrafo pieno; nei calcoli tutti i passaggi), con queste etichette ESATTE in maiuscolo:', ' COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «testo» … PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]', ' Scrivi le lettere come se la corretta fosse A (cioè `opzioni[0]`): l\'app le riscrive dopo aver mescolato. La citazione [[…]] è uguale a `fonte`.', ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.');
+        S.push(...regoleScheda(o, ' Q-G. Ogni calcolo deve tornare: ricalcola e verifica l\'ordine di grandezza prima di consegnare.'));
         sez('FASE 3 — CONSEGNA (niente troncamenti)');
         S.push(' - Un messaggio = ' + (pm === 2 ? '2 schede (36 domande); se il limite di output tronca il JSON, scendi a 1 scheda' : '1 scheda (18 domande)') + '. MAI accorciare spiegazioni o ridurre domande.', ' - Formato di ogni messaggio:', '   1. `STEP ' + ms + ' ' + step + ' · SCHEDA <n>' + (pm === 2 ? ' e <n+1>' : '') + ' di <N> · microstep <x.y.z>`', '   2. UN SOLO blocco ```json valido (doppi apici, zero virgole finali, nessun commento): { "formato": "quiz-v3", "parte": "' + pref + '-s<n>' + (pm === 2 ? '-<n+1>' : '') + '", "quiz": [ … ] } con `"scheda": "S<n>"` e `"categoria": "prioritaria"|"raffinamento"` in ogni domanda', '      Campi di ogni domanda: ' + CHIAVI_V3.join(', ') + ' (gemella solo se fa parte di una coppia).', '      livello = NUMERO 1–4 dalla sequenza; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, per opzioni[1], [2], [3].', '   3. `STATO: schede consegnate X/N — prossimo: <microstep>. Scrivi "avanti".`', ' - Dopo «avanti» consegni le schede successive: niente riassunti né conferme.', ' - Ultimo messaggio dello step: blocco ```json di CHIUSURA:', '   { "meta": { "schemaVersion": 2, "materia": "' + mat + '", "codiceMateria": "' + cod + '", "unita": "' + ud + '", "stepId": "' + pref + '", "sottoStep": "' + step + '", "titolo": "…", "archetipo": "' + arch + '", "fonti": [ … ] },', '     "programmaCalendario": { "formatoGeneraMjs": [ "' + cod + '|' + ud + '|…|N|' + step + '|…" ], "pianoStrutturato": { "materiaCodice": "' + cod + '", "step": "' + step + '", "origine": "ai_neuro", "durataTotaleMin": N, "blocchiBRAC": N,', '       "sottoSchede": [ { "codice": "' + step + '.<k>", "titolo": "…", "microstep": ["…"], "durataMin": 45|50, "wakefulRestMin": 12, "schedePrioritarie": ["' + pref + '-S01"], "schedeRaffinamento": ["…"], "fonte": "[[Manuale, pp. …]]" } ],', '       "ancoraggiRipassoFSRS": [ { "intervallo": "+1g", "target": [ID scheda], "livello": "L3" }, { "intervallo": "+3g", "target": [ID scheda], "livello": "L3-L4" }, { "intervallo": "+7g", "target": [ID scheda], "livello": "Raffinamento" } ] } } }', '   Ogni scheda compare in esattamente una sotto-scheda. Il file si chiama `' + ms + '_' + step.replace(/\./g, '_') + '_quiz_e_calendario.json` e va nella cartella «' + mat + ' quiz».');
         if (o.tabella) {
@@ -1259,19 +1963,85 @@ const MasterPrompt = (() => {
         if (o.gem)
             S.push('', 'Se le istruzioni del Gem chiedono id, esatta o conteggi (regole vecchie), valgono QUESTE: formato quiz-v3, giusta in opzioni[0].');
         sez('ESEMPIO DI FORMATO (non copiarne il contenuto: imita struttura e livello di dettaglio)');
-        S.push('{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …",' +
-            '"domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],' +
-            '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]",' +
-            '"spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}');
+        S.push(ESEMPIO);
         sez('AUTOVERIFICA PRIMA DI OGNI CONSEGNA');
-        S.push(' [ ] Livelli nell\'ordine della sequenza; la corretta in opzioni[0], breve, non contenuta in un distrattore.', ' [ ] Ogni spiegazione ha le 5 etichette, è completa, ha RISPOSTA ESATTA: A) e la citazione [[…]] uguale a `fonte`.', ' [ ] JSON valido: doppi apici, nessuna virgola finale; nessuna pagina «da verificare».', 'Non contare e non riepilogare: i conteggi e i controlli li fa l\'app. Parti ora dalla FASE 0.');
+        S.push(...AUTOVERIFICA, 'Non contare e non riepilogare: i conteggi e i controlli li fa l\'app. Parti ora dalla FASE 0.');
         return S.join('\n');
     }
-    return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci };
+    function costruisciPiano(o) {
+        const { mat, step, arch } = base(o), [smin, smax] = RANGE_SCHEDE[o.intensita || 'standard'];
+        const blocchi = smax <= 14 ? '2–3' : '3–4';
+        const S = [];
+        S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)', 'Il TUO UNICO PRODOTTO è il PIANO dello step: UN SOLO blocco ```json in formato piano-v1 (oppure le righe @B / COPRE descritte sotto). Niente domande in questo messaggio: le schede le chiederà l\'app dopo, una alla volta.', 'NON PRODURRE MAI: teoria, riassunti, tabelle di ore, date, righe di calendario, file. Rispondi subito con il piano, senza introduzioni.');
+        S.push('', 'RUOLO', RUOLO);
+        sezione(S, 'TARGET (già compilato dall\'app)');
+        S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.', ' - Schede: ' + smin + '–' + smax + ' in tutto (1 scheda = 18 domande, scritte dopo), raggruppate in ' + blocchi + ' blocchi di studio da 45–50 min.');
+        S.push(...righeStudente(o));
+        sezione(S, 'FASE 0 — ALLINEAMENTO');
+        S.push(...fonti(o, 'Leggi sul Drive collegato, in quest\'ordine:'));
+        sezione(S, 'FASE 1 — PIANO DELLO STEP (senza chiedere approvazione)');
+        S.push(' P1. Analizza l\'argomento da syllabus, libro, slide e appelli.', ' P2. Stabilisci i MICROSTEP (' + step + '.1, ' + step + '.2, …) che coprono tutto lo step senza sovrapposizioni e senza duplicare ciò che esiste già.', ' P3. Per OGNI microstep decidi quante schede servono in base ai suoi ambiti: numero NON uniforme, minimo 2, 3–4 se ha molti ambiti.');
+        if (conCalcoli(arch, mat))
+            S.push(' P4. Dove compare una formula, un rapporto o un calcolo: schede dedicate «Problemi su …» OLTRE a quelle teoriche.');
+        S.push(' P5. Verifica la copertura di ogni microstep e riempi i buchi.', ' P6. Circa il 70% delle schede sono PRIORITARIE, il 30% di RAFFINAMENTO: metti quelle di raffinamento in un blocco a parte il cui titolo inizia con «Raffinamento».', ' P7. Raggruppa le schede in ' + blocchi + ' BLOCCHI da 45–50 min; numera le schede S1, S2, … nell\'ordine di studio (l\'app controlla e sistema la numerazione).');
+        sezione(S, 'FORMATO DEL PIANO');
+        S.push('JSON (preferito):', '{ "formato": "piano-v1", "blocchi": [ { "codice": "' + step + '", "titolo": "<argomento del blocco>", "copre": [ { "schede": ["S1", "S2"], "micro": ["' + step + '.1"] }, { "schede": ["S3"], "micro": ["' + step + '.2", "' + step + '.3"] } ] },', '  { "codice": "' + step + '", "titolo": "Raffinamento – <argomento>", "copre": [ { "schede": ["S9"], "micro": ["' + step + '.1"] } ] } ] }', 'Oppure a righe (una riga @B per blocco, una COPRE per gruppo di schede):', '@B ' + step + ' | <argomento del blocco>', 'COPRE S1 S2 | ' + step + '.1', 'COPRE S3 | ' + step + '.2 ' + step + '.3', ' - Ogni scheda copre un solo microstep principale (il primo elencato) e compare una sola volta.', ' - Durata, ripassi, date e file finale li calcola l\'app dal piano: non scriverli.');
+        return S.join('\n');
+    }
+    function costruisciSchede(o, schede) {
+        const { ms, step, pref } = base(o), l = schede.slice().sort((a, b) => a.n - b.n);
+        const da = l.length ? l[0].n : 1, a = l.length ? l[l.length - 1].n : da;
+        const parte = pref + '-s' + da + (a !== da ? '-' + a : ''), sigla = (x) => x.sigla || 'S' + String(x.n).padStart(2, '0');
+        const S = [];
+        S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)', 'Il TUO UNICO PRODOTTO è UN SOLO blocco ```json con le SCHEDE DI QUIZ elencate qui sotto, e nient\'altro: niente piano, niente riepiloghi, niente file.', 'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app.');
+        S.push('', 'RUOLO', RUOLO, registro(o.tono || 'tecnico_accademico'));
+        sezione(S, 'TARGET (già compilato dall\'app)');
+        S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.', ' - Schede da scrivere ora (' + l.length + ' × 18 domande):', ...l.map(x => '   • ' + sigla(x) + ' · microstep ' + x.micro.join(', ') + ' · ' + x.categoria + (x.blocco ? ' · blocco «' + x.blocco + '»' : '')));
+        S.push(...righeStudente(o));
+        sezione(S, 'COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
+        S.push(...COMPATIBILITA);
+        sezione(S, 'FONTI');
+        S.push(...fonti(o, 'Usa solo il materiale dello step, in quest\'ordine:'));
+        sezione(S, 'FASE 2 — GENERAZIONE DELLE SCHEDE');
+        S.push(...regoleScheda(o, ' Q-G. Ogni calcolo deve tornare: verifica risultato e ordine di grandezza prima di consegnare.'));
+        sezione(S, 'CONSEGNA');
+        S.push(' - Prima riga: `STEP ' + ms + ' ' + step + ' · ' + l.map(sigla).join(' e ') + '`.', ' - Poi UN SOLO blocco ```json valido (doppi apici, zero virgole finali, nessun commento):', '   { "formato": "quiz-v3", "parte": "' + parte + '", "quiz": [ … ] }', '   Ogni domanda ha `"scheda"` (' + l.map(x => '"' + sigla(x) + '"').join(' o ') + ') e `"categoria"` come nell\'elenco sopra.', '   Campi di ogni domanda: ' + CHIAVI_V3.join(', ') + ' (gemella solo se fa parte di una coppia).', '   livello = NUMERO 1–4 dalla sequenza; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, per opzioni[1], [2], [3].', ' - MAI accorciare spiegazioni o ridurre domande. Se il limite di output ti ferma, fermati dopo una domanda completa: l\'app ti chiederà il resto.');
+        if (o.gem)
+            S.push('', 'Se le istruzioni del Gem chiedono id, esatta o conteggi (regole vecchie), valgono QUESTE: formato quiz-v3, giusta in opzioni[0].');
+        sezione(S, 'ESEMPIO DI FORMATO (non copiarne il contenuto: imita struttura e livello di dettaglio)');
+        S.push(ESEMPIO);
+        sezione(S, 'AUTOVERIFICA PRIMA DI CONSEGNARE');
+        S.push(...AUTOVERIFICA, 'Numeri, posizioni e controlli li fa l\'app: non riepilogare. Parti ora con ' + sigla(l[0] || { n: 1, micro: [], categoria: 'prioritaria' }) + '.');
+        return S.join('\n');
+    }
+    return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci, costruisciPiano, costruisciSchede };
 })();
 
 const StrumentiQuiz = (() => {
-    const RE_VIETATI = /\bTB\b|TB\.pdf|testbusters|alpha ?test|editest/i;
+    const K_CENTRO_ESCLUSI = 'imc-centro-esclusi', ESCLUSI_BASE = ['Testbusters', 'Alpha Test', 'Editest'];
+    function esclusi() {
+        try {
+            const x = JSON.parse(localStorage.getItem(K_CENTRO_ESCLUSI) || 'null');
+            return Array.isArray(x) ? x.filter(v => typeof v === 'string' && v.trim()).map(v => v.trim()) : ESCLUSI_BASE.slice();
+        }
+        catch (e) {
+            console.warn('[centro] lista esclusi illeggibile', e);
+            return ESCLUSI_BASE.slice();
+        }
+    }
+    function salvaEsclusi(xs) {
+        try {
+            if (xs)
+                localStorage.setItem(K_CENTRO_ESCLUSI, JSON.stringify([...new Set(xs.map(v => v.trim()).filter(Boolean))].slice(0, 50)));
+            else
+                localStorage.removeItem(K_CENTRO_ESCLUSI);
+        }
+        catch (e) {
+            console.warn('[centro] lista esclusi non salvata', e);
+        }
+    }
+    const reNome = (v) => new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, ' ?'), 'i');
+    const vietato = (n) => /\bTB\b|TB\.pdf/i.test(n) || esclusi().some(v => reNome(v).test(n));
     const RE_GUIDE = /syllabus|programma|appell|esame|prova|simulazion/i;
     const RE_SLIDE = /slide|lezion|dispens|presentaz/i;
     const RE_INDICE = /indice|sommario|toc\b/i;
@@ -1513,40 +2283,49 @@ const StrumentiQuiz = (() => {
                     out.push(d.id);
         return out;
     }
-    function prompt() {
-        const materie = Stato.tutti('materia').sort((a, b) => a.nome.localeCompare(b.nome));
-        const selMat = h('select', { 'aria-label': 'Materia' }, ...materie.map(m => h('option', { value: m.codice }, m.nome)), h('option', { value: '' }, 'Altra materia…'));
-        const altra = h('input', { type: 'text', placeholder: 'Nome della materia', 'aria-label': 'Nome di un\'altra materia', hidden: materie.length ? true : undefined });
-        if (!materie.length)
-            selMat.value = '';
-        const step = h('input', { type: 'text', placeholder: 'es. 3.3', 'aria-label': 'Step (es. 3.3)' });
-        const titolo = h('input', { type: 'text', placeholder: 'Titolo dello step (facoltativo)', 'aria-label': 'Titolo dello step' });
-        const data = h('input', { type: 'date', 'aria-label': 'Data prevista' });
-        const intens = h('select', { 'aria-label': 'Intensità' }, h('option', { value: 'leggera' }, 'Leggera (10–14 schede)'), h('option', { value: 'standard', selected: true }, 'Standard (18–25 schede)'), h('option', { value: 'intensa' }, 'Intensa (24–30 schede)'));
-        const perMsg = h('select', { 'aria-label': 'Schede per messaggio' }, h('option', { value: '2' }, '2 schede per messaggio'), h('option', { value: '1' }, '1 scheda per messaggio (account gratuito)'));
-        const gem = casella('Uso un Gem con le «Regole per il Gem»');
-        const usaDos = casella('Usa il mio dossier (regole dai miei quiz)', true);
-        const dosBox = h('div.dossier', { hidden: true, role: 'region', 'aria-label': 'Dossier studente' });
-        const btnDos = h('button.chip', { type: 'button', 'aria-expanded': 'false', 'aria-label': 'Vedi dossier' }, '👁 Vedi dossier');
-        let escluse = escluseLette(), problemiPrivacy = [];
-        const note = area('Richieste particolari (facoltativo)', 2);
+    function classifica(fs) {
+        const altri = { slide: [], guide: [], quiz: [], vietati: [], indici: [] };
+        const libri = new Map();
+        for (const f of fs) {
+            const n = f.name, pdf = /\.pdf$/i.test(n) || f.mimeType === 'application/pdf';
+            if (vietato(n))
+                altri.vietati.push(f);
+            else if (/\.json$/i.test(n) || /quiz/i.test(n))
+                altri.quiz.push(f);
+            else if (RE_INDICE.test(n))
+                altri.indici.push(f);
+            else if (RE_GUIDE.test(n))
+                altri.guide.push(f);
+            else if (RE_SLIDE.test(n) || /presentation|powerpoint/i.test(f.mimeType))
+                altri.slide.push(f);
+            else if (pdf) {
+                const k = MasterPrompt.nomeLibro(n);
+                libri.set(k, (libri.get(k) || []).concat(f));
+            }
+            else
+                altri.slide.push(f);
+        }
+        return { libri, altri };
+    }
+    function raccoltaFonti(nomeMateria, iniziali) {
         const stato = h('p.piccolo.tenue', { role: 'status', 'aria-live': 'polite' });
         const elenco = h('div');
-        const out = area('Master prompt da copiare in Gemini', 10, true);
-        const info = h('p.piccolo.tenue');
         let gruppi = [];
-        const altri = { slide: [], guide: [], quiz: [], vietati: [], indici: [] };
+        let altri = classifica([]).altri;
         const scelti = new Set();
-        const materia = () => {
-            const m = materie.find(x => x.codice === selMat.value) || null;
-            const nome = m ? m.nome : altra.value.trim();
-            return { m, nome, codice: m ? m.codice : nome.slice(0, 1).toUpperCase() };
-        };
-        selMat.addEventListener('change', () => { altra.hidden = !!selMat.value; });
+        const incollate = area('Fonti senza Drive: un nome di file per riga (libro, syllabus, slide…)', 3);
+        if (iniziali)
+            incollate.value = [...iniziali.libri.flatMap(l => l.pdf), ...iniziali.guide, ...iniziali.slide, ...iniziali.indici, ...iniziali.quiz].join('\n');
+        const daFile = h('input', { type: 'file', multiple: true, 'aria-label': 'Scegli i file delle fonti dal dispositivo (si usa solo il nome)' });
+        daFile.addEventListener('change', () => {
+            const nomi = Array.from(daFile.files || []).map(f => f.name), gia = new Set(incollate.value.split('\n').map(x => x.trim()).filter(Boolean));
+            incollate.value = [...gia, ...nomi.filter(n => !gia.has(n))].join('\n');
+            daFile.value = '';
+        });
         async function cercaDrive() {
             if (serveGoogle())
                 return;
-            const { nome } = materia();
+            const nome = nomeMateria();
             if (!nome) {
                 avviso('Scegli o scrivi la materia.');
                 return;
@@ -1567,37 +2346,13 @@ const StrumentiQuiz = (() => {
                 stato.textContent = '⚠️ Ricerca non riuscita: ' + (e instanceof Error ? e.message : String(e));
                 return;
             }
-            const fs = [...visti.values()];
-            altri.slide = [];
-            altri.guide = [];
-            altri.quiz = [];
-            altri.vietati = [];
-            altri.indici = [];
-            const libri = new Map();
-            for (const f of fs) {
-                const n = f.name, pdf = /\.pdf$/i.test(n) || f.mimeType === 'application/pdf';
-                if (RE_VIETATI.test(n))
-                    altri.vietati.push(f);
-                else if (/\.json$/i.test(n) || /quiz/i.test(n))
-                    altri.quiz.push(f);
-                else if (RE_INDICE.test(n))
-                    altri.indici.push(f);
-                else if (RE_GUIDE.test(n))
-                    altri.guide.push(f);
-                else if (RE_SLIDE.test(n) || /presentation|powerpoint/i.test(f.mimeType))
-                    altri.slide.push(f);
-                else if (pdf) {
-                    const k = MasterPrompt.nomeLibro(n);
-                    libri.set(k, (libri.get(k) || []).concat(f));
-                }
-                else
-                    altri.slide.push(f);
-            }
-            gruppi = [...libri.entries()].map(([nomeL, files]) => ({ files: files.sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0)),
+            const fs = [...visti.values()], c = classifica(fs);
+            altri = c.altri;
+            gruppi = [...c.libri.entries()].map(([nomeL, files]) => ({ files: files.sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0)),
                 usa: true, libro: { nome: nomeL, pdf: files.map(f => f.name), segmenti: files.some(f => MasterPrompt.segmentoDa(f.name) !== null) } }));
             scelti.clear();
             [...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici].forEach(f => scelti.add(f.id));
-            stato.textContent = fs.length ? 'Trovati ' + fs.length + ' file: togli la spunta a quelli da non usare e misura i libri.' : 'Nessun file trovato con il nome della materia: il prompt chiederà a Gemini di cercarli.';
+            stato.textContent = fs.length ? 'Trovati ' + fs.length + ' file: togli la spunta a quelli da non usare e misura i libri.' : 'Nessun file trovato con il nome della materia: il prompt chiederà all\'AI di cercarli.';
             disegnaElenco();
         }
         function disegnaElenco() {
@@ -1642,7 +2397,7 @@ const StrumentiQuiz = (() => {
             sez('🎞️ Slide e dispense', altri.slide);
             sez('🧭 Syllabus e appelli', altri.guide);
             sez('📑 Indici', altri.indici);
-            sez('🧩 Quiz già fatti', altri.quiz, '(Gemini non li duplicherà)');
+            sez('🧩 Quiz già fatti', altri.quiz, '(l\'AI non li duplicherà)');
             if (altri.vietati.length)
                 elenco.appendChild(h('p.piccolo', null, '🚫 Esclusi come fonte (eserciziari commerciali): ' + altri.vietati.map(f => f.name).slice(0, 8).join(', ')));
         }
@@ -1653,6 +2408,59 @@ const StrumentiQuiz = (() => {
             const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
             return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
         }
+        function daIncollate() {
+            const fs = incollate.value.split('\n').map(x => x.trim()).filter(Boolean).map((name, i) => ({ id: 'man-' + i, name, mimeType: '' }));
+            return classifica(fs);
+        }
+        function valori() {
+            const m = daIncollate(), nomi = (xs, tutti = false) => xs.filter(f => tutti || scelti.has(f.id)).map(f => f.name);
+            const libriMan = [...m.libri.entries()].map(([nome, files]) => ({ nome, pdf: files.map(f => f.name) }));
+            const libriDrv = gruppi.filter(g => g.usa).map(g => g.libro), visti = new Set(libriDrv.map(l => l.nome));
+            return { libri: [...libriDrv, ...libriMan.filter(l => !visti.has(l.nome))],
+                slide: [...nomi(altri.slide), ...nomi(m.altri.slide, true)], guide: [...nomi(altri.guide), ...nomi(m.altri.guide, true)],
+                indici: [...nomi(altri.indici), ...nomi(m.altri.indici, true)], quiz: [...nomi(altri.quiz), ...nomi(m.altri.quiz, true)],
+                vietati: [...altri.vietati, ...m.altri.vietati].map(f => f.name) };
+        }
+        const nomiNoti = () => [...gruppi.flatMap(g => g.files), ...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici, ...altri.vietati].map(f => f.name)
+            .concat(incollate.value.split('\n').map(x => x.trim()).filter(Boolean));
+        const el = h('div.fonti', null, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('details', { open: (!Drive.pronto && !!iniziali) || undefined }, h('summary', null, '📎 Fonti senza Drive (nomi dei file da allegare all\'AI)'), h('p.piccolo.tenue', null, 'Scrivi un nome per riga o scegli i file: l\'app legge solo il nome, i file li alleghi tu alla chat dell\'AI.'), incollate, daFile));
+        return { el, valori, nomiNoti };
+    }
+    function regoleDossier(nome, codice, stepV, nomiFile, escl = escluseLette()) {
+        if (!nome)
+            return { d: null, regole: [], problemi: [] };
+        const dati = datiDossier(nome, codice), oggiY = ymd(new Date());
+        const d0 = Dossier.calcola(dati, { materia: nome, step: stepV, oggi: oggiY });
+        const d = d0.tentativi || !d0.step ? d0 : Dossier.calcola(dati, { materia: nome, oggi: oggiY });
+        const regole = Dossier.regole(d, escl);
+        return { d, regole, problemi: Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile }) };
+    }
+    function prompt() {
+        const materie = Stato.tutti('materia').sort((a, b) => a.nome.localeCompare(b.nome));
+        const selMat = h('select', { 'aria-label': 'Materia' }, ...materie.map(m => h('option', { value: m.codice }, m.nome)), h('option', { value: '' }, 'Altra materia…'));
+        const altra = h('input', { type: 'text', placeholder: 'Nome della materia', 'aria-label': 'Nome di un\'altra materia', hidden: materie.length ? true : undefined });
+        if (!materie.length)
+            selMat.value = '';
+        const step = h('input', { type: 'text', placeholder: 'es. 3.3', 'aria-label': 'Step (es. 3.3)' });
+        const titolo = h('input', { type: 'text', placeholder: 'Titolo dello step (facoltativo)', 'aria-label': 'Titolo dello step' });
+        const data = h('input', { type: 'date', 'aria-label': 'Data prevista' });
+        const intens = h('select', { 'aria-label': 'Intensità' }, h('option', { value: 'leggera' }, 'Leggera (10–14 schede)'), h('option', { value: 'standard', selected: true }, 'Standard (18–25 schede)'), h('option', { value: 'intensa' }, 'Intensa (24–30 schede)'));
+        const perMsg = h('select', { 'aria-label': 'Schede per messaggio' }, h('option', { value: '2' }, '2 schede per messaggio'), h('option', { value: '1' }, '1 scheda per messaggio (account gratuito)'));
+        const gem = casella('Uso un Gem con le «Regole per il Gem»');
+        const usaDos = casella('Usa il mio dossier (regole dai miei quiz)', true);
+        const dosBox = h('div.dossier', { hidden: true, role: 'region', 'aria-label': 'Dossier studente' });
+        const btnDos = h('button.chip', { type: 'button', 'aria-expanded': 'false', 'aria-label': 'Vedi dossier' }, '👁 Vedi dossier');
+        let escluse = escluseLette(), problemiPrivacy = [];
+        const note = area('Richieste particolari (facoltativo)', 2);
+        const out = area('Master prompt da copiare in Gemini', 10, true);
+        const info = h('p.piccolo.tenue');
+        const materia = () => {
+            const m = materie.find(x => x.codice === selMat.value) || null;
+            const nome = m ? m.nome : altra.value.trim();
+            return { m, nome, codice: m ? m.codice : nome.slice(0, 1).toUpperCase() };
+        };
+        selMat.addEventListener('change', () => { altra.hidden = !!selMat.value; });
+        const fonti = raccoltaFonti(() => materia().nome);
         function dossier() {
             const { nome, codice } = materia();
             if (!nome)
@@ -1661,11 +2469,8 @@ const StrumentiQuiz = (() => {
             const d = Dossier.calcola(dati, { materia: nome, step: step.value.trim(), oggi: oggiY });
             return d.tentativi || !d.step ? d : Dossier.calcola(dati, { materia: nome, oggi: oggiY });
         }
-        function nomiFileNoti() {
-            return [...gruppi.flatMap(g => g.files), ...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici, ...altri.vietati].map(f => f.name);
-        }
         function controllaDossier(regole) {
-            return Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile: nomiFileNoti() });
+            return Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile: fonti.nomiNoti() });
         }
         function disegnaDossier() {
             dosBox.textContent = '';
@@ -1717,13 +2522,12 @@ const StrumentiQuiz = (() => {
             }
             const arch = (m && m.archetipo) || Dominio.archetipoMateria(nome) || 'scienze_sperimentali';
             const def = ARCHETIPI_DISCIPLINARI[arch];
-            const nomi = (xs) => xs.filter(f => scelti.has(f.id)).map(f => f.name);
+            const fv = fonti.valori();
             const opz = {
                 materia: nome, codice, step: step.value.trim(), titolo: titolo.value.trim() || undefined, data: data.value || undefined,
                 archetipo: arch, etichettaArchetipo: def ? def.etichetta : arch, tono: Dominio.profilo().tonoSpiegazioneAI,
                 intensita: intens.value, perMessaggio: perMsg.value === '1' ? 1 : 2, gem: gem.c.checked,
-                libri: gruppi.filter(g => g.usa).map(g => g.libro), slide: nomi(altri.slide), guide: nomi(altri.guide), indici: nomi(altri.indici),
-                quizEsistenti: nomi(altri.quiz), vietati: altri.vietati.map(f => f.name), idEsistenti: idGiaUsati(),
+                libri: fv.libri, slide: fv.slide, guide: fv.guide, indici: fv.indici, quizEsistenti: fv.quiz, vietati: fv.vietati, idEsistenti: idGiaUsati(),
                 note: note.value.trim() || undefined,
             };
             const d = usaDos.c.checked ? dossier() : null;
@@ -1744,10 +2548,10 @@ const StrumentiQuiz = (() => {
         const btnScarica = h('button.chip', { type: 'button', onclick: () => { if (out.value && !problemiPrivacy.length)
                 scarica('prompt-quiz-' + MasterPrompt.slug(materia().nome) + '-' + step.value.trim() + '.txt', out.value, 'text/plain'); } }, '💾 Scarica .txt');
         function bloccaCopia() { btnCopia.disabled = btnScarica.disabled = problemiPrivacy.length > 0; }
-        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'), selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), usaDos.el, h('div.chips', null, btnDos), dosBox, note, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info, h('div.chips', null, btnCopia, btnScarica, h('button.chip', { type: 'button', onclick: () => diagnostica() }, '🩺 Diagnostica quiz')));
+        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'), selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), usaDos.el, h('div.chips', null, btnDos), dosBox, note, fonti.el, h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info, h('div.chips', null, btnCopia, btnScarica, h('button.chip', { type: 'button', onclick: () => diagnostica() }, '🩺 Diagnostica quiz')));
         foglio({ titolo: '🧠 Prompt quiz per Gemini', corpo });
     }
-    return { diagnostica, prompt };
+    return { diagnostica, prompt, raccoltaFonti, regoleDossier, idGiaUsati, copia, esclusi, salvaEsclusi, vietato };
 })();
 
 const PROFILO_STANDARD = { perScheda: 18, opzioni: 4, quoteLivello: [25, 35, 25, 15], rangeScheda: [[4, 5], [6, 7], [4, 5], [2, 3]], spiegazioneMin: 600, confutazioneMin: 30,

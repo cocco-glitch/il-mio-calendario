@@ -9409,7 +9409,7 @@ const ImportaDrive = (() => {
         const gia = h('div'), lista = h('div.lista-drv');
         const pronti = caricaStrumentiQuiz().catch((e) => { throw new Error('Strumenti quiz non disponibili: ' + e.message); });
         const corpo = h('div', null, stato, lista, gia);
-        const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo });
+        const f = foglio({ titolo: '📥 Importa quiz', corpo });
         corpo.insertBefore(manuale(pronti, gia, f), stato);
         listaInnesti(gia);
         if (!Drive.pronto) {
@@ -9430,7 +9430,7 @@ const ImportaDrive = (() => {
             stato.textContent = m === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : /^Strumenti quiz/.test(m) ? '⚠️ ' + m : 'Errore Drive: ' + m;
         });
     }
-    return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, daTesto, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
+    return { traduci, domanda, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, daTesto, leggiFile, preparaGruppo, importaFile, proponi, pannelloScelta, apri, gestisci, eNomeQuiz, cmpNum };
 })();
 
 const Locale = (() => {
@@ -13677,6 +13677,7 @@ const QuizApp = (() => {
         return sel.length;
     }
     async function apri(pk, m, micro, s, gen, info) {
+        const prova = !!(info && info.prova);
         const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
         v.corpo.classList.add('qz');
         v.corpo.appendChild(h('div.vuoto.centro', null, 'Preparo le domande…'));
@@ -13932,7 +13933,7 @@ const QuizApp = (() => {
                 else
                     x.ok = giusta(val, d.a || []);
             }
-            const annulla = registraStat(x);
+            const annulla = prova ? null : registraStat(x);
             storia.push({ ms: x.ms || 0, ok: !!x.ok });
             if (faticaZitta > 0)
                 faticaZitta--;
@@ -13942,7 +13943,8 @@ const QuizApp = (() => {
             }
             if (toastAnnulla)
                 toastAnnulla.remove();
-            avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+            if (annulla)
+                avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
             toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
             if (!x.ok) {
                 const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null;
@@ -14033,13 +14035,13 @@ const QuizApp = (() => {
             if (sb.length)
                 s2 += '<h3>Da rivedere (' + sb.length + ')</h3>' + sb.map(x => '<details class="qz-altre"><summary>' + fmt(x.d.q) + '</summary><p><b>Risposta corretta:</b> ' + fmt(x.d.t === 'mcq' ? x.d.o[0] : x.d.show) + '</p>' + passi(x.d.e) + (x.d.r ? '<p class="tenue piccolo">Ripassa: ' + esc(x.d.r) + '</p>' : '') + '</details>').join('');
             s2 += '<div class="chips qz-export"><span class="tenue piccolo">Esporta (appunti + .imcpack):</span><button type="button" class="chip" data-exp="errori">Errori</button><button type="button" class="chip" data-exp="illusione">Illusioni</button><button type="button" class="chip" data-exp="bloom3">Bloom ≥ 3</button></div>';
-            s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
+            s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen && !prova ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
                 + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
             app.innerHTML = s2;
             v.corpo.scrollTop = 0;
             const r = { imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
                 sbagliate: sb.map(x => [x.d.q, x.d.t === 'mcq' ? x.d.o[0] : String(x.d.show || ''), (Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e)]) };
-            if (!gen)
+            if (!gen && !prova)
                 Cattura.salva(s.id, r);
         }
         app.addEventListener('click', ev => {
@@ -16132,8 +16134,9 @@ function vistaStudio() {
     const gruppi = [['Ripassa', ['carte'], ['Flashcard']], ['Piano', ['piano'], ['Piano']], ['Corsi', ['schede', 'syllabus', 'tabelle', 'esami'], ['Schede', 'Syllabus', 'Tabelle', 'Esami']], ['Progressi', ['statistiche', 'errori'], ['Statistiche', 'Errori']]];
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const gr = gruppi.find(([, vv]) => vv.includes(UI.studioVista)) || gruppi[2];
-    const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
+    const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, '🏗️ Centro di creazione'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
         { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
+        { testo: '🏗️ Centro di creazione', azione: () => conStrumentiQuiz(() => CentroUI.apri()) },
         { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }], 'Strumenti dei quiz')), gr[1].length > 1 ? h('div.chips.sotto-viste', { role: 'tablist', 'aria-label': 'Viste di ' + gr[0] }, gr[1].map((v, k) => h('button.chip' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(UI.studioVista === v), onclick: () => vai(v) }, gr[2][k]))) : null);
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
@@ -17401,7 +17404,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.62.0';
+const VERSIONE = '0.63.0';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)

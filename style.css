@@ -899,3 +899,22 @@ details.personalizza { margin-top: 8px; }
 details.personalizza > summary { cursor: pointer; padding: 10px 4px; font-weight: 600; min-height: 44px; }
 .modo-esame { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: var(--raggio); background: color-mix(in srgb, var(--accento) 14%, var(--sup)); font-weight: 600; }
 .sotto-viste { margin-top: 6px; }
+
+/* v0.63 Centro di creazione: passi in colonna, testo a sinistra */
+.centro, .centro-zona, .centro-passo-corpo { display: flex; flex-direction: column; gap: 10px; text-align: left; align-items: stretch; }
+.centro-passo-corpo > .chips, .centro-passo-corpo > .btn, .centro-passo-corpo > .chip { align-self: flex-start; }
+.centro .riga-tra { align-items: center; gap: 8px; }
+.centro-passo { margin: 0; font-size: var(--fs-s); }
+.centro-sotto { margin: 6px 0 0; font-size: var(--fs-m); }
+.centro-schede { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.centro-schede li { flex-wrap: wrap; }
+.centro-schede input { width: 9ch; }
+.centro-avvisi { margin: 0; padding-left: 18px; }
+.centro-nota { border-left: 3px solid var(--accento); padding: 4px 0 4px 10px; }
+.centro-nota p { margin: 2px 0; }
+.centro-schede li.centro-attiva { border-left: 3px solid var(--accento); padding-left: 8px; }
+.centro-albero, .centro-albero ul { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.centro-albero ul ul { padding-left: 22px; }
+.centro-albero label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 32px; }
+.centro-impostazioni { border-top: 1px solid var(--linea); padding-top: 8px; }
+.centro-impostazioni textarea { width: 100%; box-sizing: border-box; }
