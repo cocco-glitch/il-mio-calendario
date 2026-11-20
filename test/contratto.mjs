@@ -25,7 +25,7 @@ function eq(a, b, m) { const x = JSON.stringify(a), y = JSON.stringify(b); if (x
 function vero(c, m) { if (!c) throw new Error(m || 'condizione falsa'); }
 
 // ---------- sandbox ----------
-const SU = fs.readdirSync(path.join(SRC, 'su-richiesta')).filter(f => f.endsWith('.ts') && f !== '07-strumentiquiz.ts').sort().map(f => 'su-richiesta/' + f);
+const SU = fs.readdirSync(path.join(SRC, 'su-richiesta')).filter(f => f.endsWith('.ts') && f !== '07-strumentiquiz.ts' && f !== '07-centroui.ts').sort().map(f => 'su-richiesta/' + f);
 const FILE = ['01-json.ts', '07-sezionispiegazione.ts', '07-importadrive-parti.ts', '07-importadrive.ts', ...SU];
 const js = FILE.map(f => ts.transpileModule(leggi(f), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText).join('\n');
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -278,6 +278,34 @@ t('master prompt: le regole del dossier entrano nel TARGET al posto dei punti de
   vero(p.indexOf('Dossier dello studente') < p.indexOf('COMPATIBILITÀ CON L'), 'dentro il TARGET');
   vero(/Punti deboli misurati/.test(MP.costruisci({ ...base, puntiDeboli: ['B-2.2.1-1 (30%)'] })), 'ripiego');
   vero(!/Dossier dello studente/.test(MP.costruisci({ ...base, dossier: [] })), 'dossier vuoto = nessuna riga');
+});
+
+// ---------- prompt del Centro (v0.63): piano e schede, mai la chiusura ----------
+const VIETATE = /ricalcol|\bcont(a|are|ano|i)\b|ricavalo|chiusura/i;
+const BASE63 = { materia: 'Biologia', codice: 'B', step: '3.3', titolo: 'Membrane', archetipo: 'scienze_sperimentali', vietati: ['Eserciziario Rosso', 'Quiz Blu'], dossier: ['Domande L1 brevi.'] };
+t('costruisciPiano: Fase 0 + Fase 1, chiede piano-v1 (JSON o righe @B/COPRE), niente righe calendario né schede', () => {
+  const p = serve(sb.MasterPrompt.costruisciPiano, 'costruisciPiano')(BASE63);
+  vero(/FASE 0/.test(p) && /FASE 1/.test(p) && !/FASE 2/.test(p), 'fasi');
+  vero(/"formato": ?"piano-v1"/.test(p) && /@B 3\.3/.test(p) && /COPRE S1/.test(p), 'formato piano');
+  vero(!/\|UD3\|/.test(p) && !/"quiz-v3"/.test(p), 'niente calendario né quiz');
+  vero(/Raffinamento/.test(p), 'come si indicano le schede di raffinamento');
+  vero(p.includes('«Eserciziario Rosso»') && p.includes('• Domande L1 brevi.'), 'esclusi e dossier da opz');
+  const m = VIETATE.exec(p); vero(!m, 'parola vietata: ' + (m && m[0]));
+});
+t('costruisciSchede: solo le schede date, nome parte e sigle dall\'app, Fase 2, niente piano né chiusura', () => {
+  const sch = [{ n: 1, sigla: 'S01', micro: ['3.3.1'], categoria: 'prioritaria', blocco: 'Membrane' }, { n: 2, sigla: 'S02', micro: ['3.3.2', '3.3.3'], categoria: 'raffinamento', blocco: 'Raffinamento' }];
+  const p = serve(sb.MasterPrompt.costruisciSchede, 'costruisciSchede')(BASE63, sch);
+  vero(p.includes('"parte": "biologia-3.3-s1-2"'), 'nome parte');
+  eq(IP.nomeParte('biologia-3.3-s1-2'), { step: 'biologia-3.3', da: 1, a: 2 });
+  vero(/S01[^\n]*3\.3\.1[^\n]*prioritaria/.test(p) && /S02[^\n]*3\.3\.2, 3\.3\.3[^\n]*raffinamento/.test(p), 'elenco schede');
+  vero(/FASE 2/.test(p) && /SEQUENZA/.test(p) && !/FASE 1/.test(p) && !/piano-v1/.test(p), 'fasi');
+  vero(p.includes('«Quiz Blu»') && p.includes('• Domande L1 brevi.'), 'esclusi e dossier');
+  const m = VIETATE.exec(p); vero(!m, 'parola vietata: ' + (m && m[0]));
+  const una = sb.MasterPrompt.costruisciSchede(BASE63, [sch[0]]);
+  vero(una.includes('"parte": "biologia-3.3-s1"') && !/S02/.test(una), 'una scheda sola');
+});
+t('costruisci (prompt classico) invariato fino alla v0.64: chiede ancora la chiusura', () => {
+  vero(/CHIUSURA/.test(sb.MasterPrompt.costruisci(BASE63)));
 });
 
 // =====================================================================

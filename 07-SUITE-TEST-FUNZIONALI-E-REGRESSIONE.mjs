@@ -874,6 +874,23 @@ await t('v0.59.2: quiz in app — confutazioni da spiegazioneDistrattori, sezion
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();
 t('Pianificatore e interfaccia concatenati prima del quiz (uso solo a runtime)', () => vero(['07-pianificatore.ts', '07-pianiai.ts'].every(x => fl.indexOf(x) >= 0 && fl.indexOf(x) < fl.indexOf('07-quizapp.ts'))));
 
+t('v0.63: modalità prova del quiz in app senza statq né sessione (senza flag come prima)', () => {
+  const q = leggi('07-quizapp.ts'), c = leggi('su-richiesta/07-centroui.ts');
+  vero(/const annulla = prova \? null : registraStat\(x\)/.test(q), 'prova salta registraStat (statq, carte, piani)');
+  vero(/if \(!gen && !prova\) Cattura\.salva\(/.test(q), 'prova salta Cattura.salva (sessione e progresso)');
+  vero(/const prova = !!\(info && info\.prova\)/.test(q), 'flag facoltativo: senza info.prova tutto come prima');
+  vero(/prova: true/.test(c), 'il Centro apre il quiz in prova');
+});
+
+t('v0.63: Importa del Centro sulla pipeline unica, lista esclusi precompilata, titolo senza «da Drive»', () => {
+  const c = leggi('su-richiesta/07-centroui.ts'), sq = leggi('su-richiesta/07-strumentiquiz.ts'), d = leggi('07-importadrive.ts');
+  vero(/Centro\.chiusura\(/.test(c) && /Centro\.filtra\(/.test(c) && /ImportaParti\.raggruppa\(/.test(c), 'chiusura dall\'app, filtro per microstep, stessi gruppi dell\'import');
+  vero(/ImportaDrive\.salva\(t, sc, CARTELLA, \{ accumula: true/.test(c), 'reimport = stesso innesto (inn-<k>), niente doppioni');
+  vero(/'imc-centro-esclusi'/.test(sq) && /\['Testbusters', 'Alpha Test', 'Editest'\]/.test(sq), 'lista esclusi con prefisso imc- e precompilata');
+  vero(!/RE_VIETATI/.test(sq) && /if \(vietato\(n\)\)/.test(sq), 'la raccolta fonti usa la lista modificabile');
+  vero(/titolo: '📥 Importa quiz', corpo/.test(d) && !/titolo: '📥 Importa quiz da Drive'/.test(d), 'titolo del foglio import senza «da Drive»');
+});
+
 fs.rmSync(TMP, { recursive: true, force: true });
 const tot = ok + ko;
 console.log('\n' + (ko ? '✗' : '✓') + ' Superati ' + ok + '/' + tot + ' (' + Math.round(ok / tot * 100) + '%)' + (ko ? ' — falliti: ' + fallite.join('; ') : ''));

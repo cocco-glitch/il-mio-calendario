@@ -577,7 +577,7 @@ const ImportaDrive = (() => {
     const gia = h('div'), lista = h('div.lista-drv');
     const pronti = caricaStrumentiQuiz().catch((e: Error) => { throw new Error('Strumenti quiz non disponibili: ' + e.message); });   // v0.61: lettore e controllo qualità stanno in strumenti-quiz.js
     const corpo = h('div', null, stato, lista, gia);
-    const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo });
+    const f = foglio({ titolo: '📥 Importa quiz', corpo });
     corpo.insertBefore(manuale(pronti, gia, f), stato);
     listaInnesti(gia);
     if (!Drive.pronto) { svuota(stato); stato.append('Senza Drive collegato: incolla la risposta di Gemini o scegli i file .json. ', h('button.btn.neutro', { type: 'button', onclick: () => { f.chiudi(); serveGoogle(); } }, 'Collega Drive')); return; }
@@ -591,5 +591,5 @@ const ImportaDrive = (() => {
     });
   }
 
-  return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, daTesto, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
+  return { traduci, domanda, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, daTesto, leggiFile, preparaGruppo, importaFile, proponi, pannelloScelta, apri, gestisci, eNomeQuiz, cmpNum };
 })();

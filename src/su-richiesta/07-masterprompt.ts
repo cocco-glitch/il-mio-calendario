@@ -9,6 +9,8 @@
 // =====================================================================
 interface LetturaPdfMP { campione: number; leggibili: number; pct: number; media: number; giudizio: 'testo pieno' | 'parziale' | 'scansione'; }
 interface LibroMP { nome: string; pdf: string[]; lettura?: LetturaPdfMP | null; offset?: number | null; segmenti?: boolean; mappa?: MappaPag | null; }
+/** Una scheda da chiedere all'AI nel passo «Quiz» (v0.63). */
+interface SchedaPromptMP { n: number; sigla?: string; micro: string[]; categoria: 'prioritaria' | 'raffinamento'; blocco?: string; }
 interface OpzMP {
   materia: string; codice: string; step: string; titolo?: string; unita?: string; data?: string;
   archetipo?: string; etichettaArchetipo?: string; tono?: string; intensita?: 'leggera' | 'standard' | 'intensa';
@@ -129,40 +131,37 @@ const MasterPrompt = (() => {
     return parti.join(' ');
   }
 
-  // ---------- costruzione ----------
-  function costruisci(o: OpzMP): string {
+  // ---------- costruzione: sezioni in comune ----------
+  const SBARRA = '==========================================================';
+  const sezione = (S: string[], t: string) => S.push('', SBARRA, t, SBARRA);
+  const elenco = (xs: string[], max = 12) => xs.slice(0, max).map(x => '«' + x + '»').join(', ') + (xs.length > max ? ' e altri ' + (xs.length - max) : '');
+  /** Dati di base comuni ai tre prompt. */
+  function base(o: OpzMP) {
     const mat = String(o.materia || 'Materia').trim(), ms = slug(mat) || 'materia', cod = String(o.codice || mat.charAt(0)).toUpperCase();
-    const step = String(o.step || '1.1').trim(), pref = ms + '-' + step, ud = o.unita || 'UD' + step.split('.')[0];
-    const arch = o.archetipo || 'scienze_sperimentali', [smin, smax] = RANGE_SCHEDE[o.intensita || 'standard'];
-    const pm = o.perMessaggio === 1 ? 1 : 2, nx = prossimo(o.idEsistenti || [], pref);
-    const libri = o.libri || [], slide = o.slide || [], quiz = o.quizEsistenti || [], vietati = o.vietati || [];
-    const blocchi = smax <= 14 ? '2–3' : '3–4', durata = smax <= 14 ? '~95–140' : '~185–190';
-    const elenco = (xs: string[], max = 12) => xs.slice(0, max).map(x => '«' + x + '»').join(', ') + (xs.length > max ? ' e altri ' + (xs.length - max) : '');
+    const step = String(o.step || '1.1').trim(), arch = o.archetipo || 'scienze_sperimentali';
+    return { mat, ms, cod, step, pref: ms + '-' + step, ud: o.unita || 'UD' + step.split('.')[0], arch };
+  }
+  const RUOLO = 'Sei l\'architetto didattico e neuroscientifico dell\'app di studio «il-mio-calendario». Lavori in AUTONOMIA: nessuno allungherà o correggerà il tuo output a mano (un controllo automatico scarta ciò che non rispetta il formato). Quantità e qualità qui sotto sono obbligatorie. Tutto in italiano, niente chiacchiere.';
+  const rigaMateria = (o: OpzMP) => { const b = base(o); return ' - Materia: ' + b.mat + ' (codice ' + b.cod + ', id in minuscolo «' + b.ms + '») · archetipo: ' + (o.etichettaArchetipo || b.arch) + '.'; };
+  /** Dossier (o, in mancanza, punti deboli) e richieste dello studente, dentro il TARGET. */
+  function righeStudente(o: OpzMP, classico = false): string[] {
     const S: string[] = [];
-    const sez = (t: string) => S.push('', '==========================================================', t, '==========================================================');
-    S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)',
-      'Il TUO UNICO PRODOTTO sono blocchi ```json scritti qui in chat: le SCHEDE DI QUIZ e, alla fine dello step, il blocco di CHIUSURA (sotto-schede BRAC, ripassi, righe calendario). L\'app ricostruisce tutto da sola quando il file viene importato.',
-      'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app. Se stai per scriverne, fermati e torna alle schede.',
-      'Prima risposta: esegui subito la Fase 1 (tabella + righe calendario) e poi la prima consegna di schede, senza introduzioni.');
-    S.push('', 'RUOLO', 'Sei l\'architetto didattico e neuroscientifico dell\'app di studio «il-mio-calendario». Lavori in AUTONOMIA: nessuno allungherà o correggerà il tuo output a mano (un controllo automatico scarta ciò che non rispetta il formato). Quantità e qualità qui sotto sono obbligatorie. Tutto in italiano, niente chiacchiere.',
-      registro(o.tono || 'tecnico_accademico'));
-    sez('TARGET (già compilato dall\'app)');
-    S.push(' - Materia: ' + mat + ' (codice ' + cod + ', id in minuscolo «' + ms + '») · archetipo: ' + (o.etichettaArchetipo || arch) + '.',
-      ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.',
-      ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).',
-      ' - Prima scheda: S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (le schede precedenti esistono già: non riscriverle)' : '') + '.');
-    if (o.dossier && o.dossier.length) S.push(' - Dossier dello studente (calcolato dall\'app sui suoi quiz, già deciso: applica queste regole senza ricalcolare nulla):', ...o.dossier.map(r => '   • ' + r));
+    if (o.dossier && o.dossier.length) S.push(' - Dossier dello studente (calcolato dall\'app sui suoi quiz, già deciso: ' + (classico ? 'applica queste regole senza ricalcolare nulla' : 'applica queste regole così come sono') + '):', ...o.dossier.map(r => '   • ' + r));
     else if (o.puntiDeboli && o.puntiDeboli.length) S.push(' - Punti deboli misurati dall\'app (risposte corrette < 60%): ' + o.puntiDeboli.join('; ') + '. Dedica a questi argomenti almeno una scheda in più, con più L3 (trabocchetti) e confutazioni molto esplicite.');
     if (o.note) S.push(' - Richieste dello studente: ' + o.note);
-    sez('COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
-    S.push(' - «📥 Importa quiz da Drive» legge i .json nelle cartelle che finiscono in «quiz»: domanda → testo, opzioni → 4 risposte (la corretta la scrivi SEMPRE in `opzioni[0]`, l\'app la sposta in una posizione bilanciata), ' +
+    return S;
+  }
+  const COMPATIBILITA = [
+    ' - «📥 Importa quiz da Drive» legge i .json nelle cartelle che finiscono in «quiz»: domanda → testo, opzioni → 4 risposte (la corretta la scrivi SEMPRE in `opzioni[0]`, l\'app la sposta in una posizione bilanciata), ' +
       'spiegazione → correzione passo-passo divisa nelle sezioni COSA CHIEDE / CONCETTO E MECCANISMO / IN SINTESI, fonte → riferimento, livello (NUMERO 1–4) → livello di Bloom.',
-      ' - L\'app MESCOLA le opzioni: per questo le confutazioni vanno in `spiegazioneDistrattori` (l\'app le mostra accanto all\'opzione scelta) e le lettere dentro `spiegazione` le riscrive l\'app dopo aver mescolato.',
-      ' - «Allenamento Neuro»: certezza 1/2/3 dopo ogni risposta; sicuro+sbagliato = illusione di competenza → la domanda torna oggi in «Quiz da rifare» con la confutazione del distrattore scelto e il tuo `erroreTipico`.',
-      ' - Interleaving per step e livello; coppie gemelle (`gemella`) e `distractorTypes` alimentano trabocchetti e statistiche.',
-      ' - ID, step, sotto-step, posizione dell\'esatta, conteggi e controlli li fa l\'app: tu scrivi SOLO il contenuto. Reimportare aggiorna, non duplica.');
-    sez('FASE 0 — ALLINEAMENTO (a ogni nuova chat)');
-    S.push('Leggi sul Drive collegato, in quest\'ordine:');
+    ' - L\'app MESCOLA le opzioni: per questo le confutazioni vanno in `spiegazioneDistrattori` (l\'app le mostra accanto all\'opzione scelta) e le lettere dentro `spiegazione` le riscrive l\'app dopo aver mescolato.',
+    ' - «Allenamento Neuro»: certezza 1/2/3 dopo ogni risposta; sicuro+sbagliato = illusione di competenza → la domanda torna oggi in «Quiz da rifare» con la confutazione del distrattore scelto e il tuo `erroreTipico`.',
+    ' - Interleaving per step e livello; coppie gemelle (`gemella`) e `distractorTypes` alimentano trabocchetti e statistiche.',
+    ' - ID, step, sotto-step, posizione dell\'esatta, conteggi e controlli li fa l\'app: tu scrivi SOLO il contenuto. Reimportare aggiorna, non duplica.'];
+  /** Le fonti da leggere (Fase 0), gli esclusi (da opz.vietati, lista modificabile) e la mappa delle pagine. */
+  function fonti(o: OpzMP, intro: string): string[] {
+    const { mat } = base(o), quiz = o.quizEsistenti || [], slide = o.slide || [], vietati = o.vietati || [], libri = o.libri || [];
+    const S = [intro];
     let k = 1;
     if (quiz.length) S.push(' ' + (k++) + '. Quiz già esistenti (non duplicare argomenti già coperti): ' + elenco(quiz) + '.');
     else S.push(' ' + (k++) + '. La cartella «' + mat + ' quiz», se esiste, per sapere cosa è già coperto.');
@@ -173,17 +172,12 @@ const MasterPrompt = (() => {
     if (vietati.length) S.push('VIETATO usare come fonte: ' + elenco(vietati) + ' (eserciziari commerciali).');
     S.push('Se un file non è apribile o un PDF è troncato: NON inventare. Scrivi «BLOCCO: <file/capitolo non leggibile>» e fermati.');
     if (libri.length) { S.push('', 'MAPPA LIBRI E PAGINE — misurata dall\'app:'); libri.forEach(l => S.push(rigaLibro(l))); }
-    sez('FASE 1 — ANALISI AUTONOMA DELLO STEP (senza chiedere approvazione)');
-    S.push(' P1. Analizza l\'argomento da syllabus, libro, slide e appelli.',
-      ' P2. Stabilisci i MICROSTEP (' + step + '.1, ' + step + '.2, …) che coprono tutto lo step senza sovrapposizioni e senza duplicare ciò che esiste già.',
-      ' P3. Per OGNI microstep decidi quante schede servono in base ai suoi ambiti: numero NON uniforme, minimo 2, 3–4 se ha molti ambiti.');
-    if (conCalcoli(arch, mat)) S.push(' P4. Dove compare una formula, un rapporto o un calcolo: schede dedicate «Problemi su …» OLTRE a quelle teoriche.');
-    S.push(' P5. Verifica la copertura di ogni microstep e riempi i buchi.',
-      ' P6. Dividi le schede in PRIORITARIE (~70%) e RAFFINAMENTO (~30%).',
-      ' Soglia obbligatoria: ' + smin + '–' + smax + ' schede in tutto. Raggruppa i microstep in ' + blocchi + ' SOTTOSCHEDE = blocchi BRAC da 45–50 min.',
-      ' Output della Fase 1 (primo messaggio, poi procedi): a) righe calendario `' + cod + '|' + ud + '|ARGOMENTO|N|' + step + '|' + (o.data || 'da definire') + '`; b) tabella microstep → n. schede → prioritarie/raffinamento → pagine del libro → sotto-scheda; c) totale schede e domande.');
-    sez('FASE 2 — GENERAZIONE A SCHEDE');
-    S.push(' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.',
+    return S;
+  }
+  /** Regole di generazione di una scheda (Fase 2). `calcoli` = riga Q-G. */
+  function regoleScheda(o: OpzMP, calcoli: string): string[] {
+    const { mat, arch } = base(o);
+    return [' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.',
       ' - NON scrivere id, stepId, sottoStep, esatta, livelloCognitivo, sourceRef: li aggiunge l\'app.',
       '', 'LIVELLI — segui questa SEQUENZA per le 18 domande di ogni scheda (1ª, 2ª, … 18ª): ' + SEQUENZA_LIVELLI.join(', ') + '.',
       ' - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.',
@@ -196,11 +190,53 @@ const MasterPrompt = (() => {
       ' Q-D. Nessun duplicato o quasi-duplicato, né nello step né rispetto a ciò che esiste già. Stile = appello vero.',
       ' ' + regolaArchetipo(arch, mat),
       ' Q-F. Italiano corretto; pedici/apici come `_{2}` e `^{2}`; risultati numerici semplici con unità SI.',
-      ' Q-G. Ogni calcolo deve tornare: ricalcola e verifica l\'ordine di grandezza prima di consegnare.',
+      calcoli,
       '', 'CAMPO `spiegazione` (lunga e completa, almeno un paragrafo pieno; nei calcoli tutti i passaggi), con queste etichette ESATTE in maiuscolo:',
       ' COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «testo» … PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]',
       ' Scrivi le lettere come se la corretta fosse A (cioè `opzioni[0]`): l\'app le riscrive dopo aver mescolato. La citazione [[…]] è uguale a `fonte`.',
-      ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.');
+      ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.'];
+  }
+  const ESEMPIO = '{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …",' +
+    '"domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],' +
+    '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]",' +
+    '"spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}';
+  const AUTOVERIFICA = [' [ ] Livelli nell\'ordine della sequenza; la corretta in opzioni[0], breve, non contenuta in un distrattore.',
+    ' [ ] Ogni spiegazione ha le 5 etichette, è completa, ha RISPOSTA ESATTA: A) e la citazione [[…]] uguale a `fonte`.',
+    ' [ ] JSON valido: doppi apici, nessuna virgola finale; nessuna pagina «da verificare».'];
+
+  // ---------- prompt classico (tutto in una chat, con il file finale scritto dall'AI): resta così fino alla v0.64 ----------
+  function costruisci(o: OpzMP): string {
+    const { mat, ms, cod, step, pref, ud, arch } = base(o), [smin, smax] = RANGE_SCHEDE[o.intensita || 'standard'];
+    const pm = o.perMessaggio === 1 ? 1 : 2, nx = prossimo(o.idEsistenti || [], pref);
+    const blocchi = smax <= 14 ? '2–3' : '3–4', durata = smax <= 14 ? '~95–140' : '~185–190';
+    const S: string[] = [];
+    const sez = (t: string) => sezione(S, t);
+    S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)',
+      'Il TUO UNICO PRODOTTO sono blocchi ```json scritti qui in chat: le SCHEDE DI QUIZ e, alla fine dello step, il blocco di CHIUSURA (sotto-schede BRAC, ripassi, righe calendario). L\'app ricostruisce tutto da sola quando il file viene importato.',
+      'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app. Se stai per scriverne, fermati e torna alle schede.',
+      'Prima risposta: esegui subito la Fase 1 (tabella + righe calendario) e poi la prima consegna di schede, senza introduzioni.');
+    S.push('', 'RUOLO', RUOLO, registro(o.tono || 'tecnico_accademico'));
+    sez('TARGET (già compilato dall\'app)');
+    S.push(rigaMateria(o),
+      ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.',
+      ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).',
+      ' - Prima scheda: S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (le schede precedenti esistono già: non riscriverle)' : '') + '.');
+    S.push(...righeStudente(o, true));
+    sez('COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
+    S.push(...COMPATIBILITA);
+    sez('FASE 0 — ALLINEAMENTO (a ogni nuova chat)');
+    S.push(...fonti(o, 'Leggi sul Drive collegato, in quest\'ordine:'));
+    sez('FASE 1 — ANALISI AUTONOMA DELLO STEP (senza chiedere approvazione)');
+    S.push(' P1. Analizza l\'argomento da syllabus, libro, slide e appelli.',
+      ' P2. Stabilisci i MICROSTEP (' + step + '.1, ' + step + '.2, …) che coprono tutto lo step senza sovrapposizioni e senza duplicare ciò che esiste già.',
+      ' P3. Per OGNI microstep decidi quante schede servono in base ai suoi ambiti: numero NON uniforme, minimo 2, 3–4 se ha molti ambiti.');
+    if (conCalcoli(arch, mat)) S.push(' P4. Dove compare una formula, un rapporto o un calcolo: schede dedicate «Problemi su …» OLTRE a quelle teoriche.');
+    S.push(' P5. Verifica la copertura di ogni microstep e riempi i buchi.',
+      ' P6. Dividi le schede in PRIORITARIE (~70%) e RAFFINAMENTO (~30%).',
+      ' Soglia obbligatoria: ' + smin + '–' + smax + ' schede in tutto. Raggruppa i microstep in ' + blocchi + ' SOTTOSCHEDE = blocchi BRAC da 45–50 min.',
+      ' Output della Fase 1 (primo messaggio, poi procedi): a) righe calendario `' + cod + '|' + ud + '|ARGOMENTO|N|' + step + '|' + (o.data || 'da definire') + '`; b) tabella microstep → n. schede → prioritarie/raffinamento → pagine del libro → sotto-scheda; c) totale schede e domande.');
+    sez('FASE 2 — GENERAZIONE A SCHEDE');
+    S.push(...regoleScheda(o, ' Q-G. Ogni calcolo deve tornare: ricalcola e verifica l\'ordine di grandezza prima di consegnare.'));
     sez('FASE 3 — CONSEGNA (niente troncamenti)');
     S.push(' - Un messaggio = ' + (pm === 2 ? '2 schede (36 domande); se il limite di output tronca il JSON, scendi a 1 scheda' : '1 scheda (18 domande)') + '. MAI accorciare spiegazioni o ridurre domande.',
       ' - Formato di ogni messaggio:',
@@ -219,17 +255,85 @@ const MasterPrompt = (() => {
     if (o.tabella) { S.push(''); S.push(o.tabella); }
     if (o.gem) S.push('', 'Se le istruzioni del Gem chiedono id, esatta o conteggi (regole vecchie), valgono QUESTE: formato quiz-v3, giusta in opzioni[0].');
     sez('ESEMPIO DI FORMATO (non copiarne il contenuto: imita struttura e livello di dettaglio)');
-    S.push('{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …",' +
-      '"domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],' +
-      '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]",' +
-      '"spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}');
+    S.push(ESEMPIO);
     sez('AUTOVERIFICA PRIMA DI OGNI CONSEGNA');
-    S.push(' [ ] Livelli nell\'ordine della sequenza; la corretta in opzioni[0], breve, non contenuta in un distrattore.',
-      ' [ ] Ogni spiegazione ha le 5 etichette, è completa, ha RISPOSTA ESATTA: A) e la citazione [[…]] uguale a `fonte`.',
-      ' [ ] JSON valido: doppi apici, nessuna virgola finale; nessuna pagina «da verificare».',
-      'Non contare e non riepilogare: i conteggi e i controlli li fa l\'app. Parti ora dalla FASE 0.');
+    S.push(...AUTOVERIFICA, 'Non contare e non riepilogare: i conteggi e i controlli li fa l\'app. Parti ora dalla FASE 0.');
     return S.join('\n');
   }
 
-  return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci };
+  // ---------- v0.63 Centro di creazione: due prompt, l'AI scrive solo contenuto ----------
+  /** Passo 2 «Piano»: Fase 0 + Fase 1. L'AI decide microstep e schede; numerazione, durata, ripassi e file finale li fa l'app. */
+  function costruisciPiano(o: OpzMP): string {
+    const { mat, step, arch } = base(o), [smin, smax] = RANGE_SCHEDE[o.intensita || 'standard'];
+    const blocchi = smax <= 14 ? '2–3' : '3–4';
+    const S: string[] = [];
+    S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)',
+      'Il TUO UNICO PRODOTTO è il PIANO dello step: UN SOLO blocco ```json in formato piano-v1 (oppure le righe @B / COPRE descritte sotto). Niente domande in questo messaggio: le schede le chiederà l\'app dopo, una alla volta.',
+      'NON PRODURRE MAI: teoria, riassunti, tabelle di ore, date, righe di calendario, file. Rispondi subito con il piano, senza introduzioni.');
+    S.push('', 'RUOLO', RUOLO);
+    sezione(S, 'TARGET (già compilato dall\'app)');
+    S.push(rigaMateria(o),
+      ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.',
+      ' - Schede: ' + smin + '–' + smax + ' in tutto (1 scheda = 18 domande, scritte dopo), raggruppate in ' + blocchi + ' blocchi di studio da 45–50 min.');
+    S.push(...righeStudente(o));
+    sezione(S, 'FASE 0 — ALLINEAMENTO');
+    S.push(...fonti(o, 'Leggi sul Drive collegato, in quest\'ordine:'));
+    sezione(S, 'FASE 1 — PIANO DELLO STEP (senza chiedere approvazione)');
+    S.push(' P1. Analizza l\'argomento da syllabus, libro, slide e appelli.',
+      ' P2. Stabilisci i MICROSTEP (' + step + '.1, ' + step + '.2, …) che coprono tutto lo step senza sovrapposizioni e senza duplicare ciò che esiste già.',
+      ' P3. Per OGNI microstep decidi quante schede servono in base ai suoi ambiti: numero NON uniforme, minimo 2, 3–4 se ha molti ambiti.');
+    if (conCalcoli(arch, mat)) S.push(' P4. Dove compare una formula, un rapporto o un calcolo: schede dedicate «Problemi su …» OLTRE a quelle teoriche.');
+    S.push(' P5. Verifica la copertura di ogni microstep e riempi i buchi.',
+      ' P6. Circa il 70% delle schede sono PRIORITARIE, il 30% di RAFFINAMENTO: metti quelle di raffinamento in un blocco a parte il cui titolo inizia con «Raffinamento».',
+      ' P7. Raggruppa le schede in ' + blocchi + ' BLOCCHI da 45–50 min; numera le schede S1, S2, … nell\'ordine di studio (l\'app controlla e sistema la numerazione).');
+    sezione(S, 'FORMATO DEL PIANO');
+    S.push('JSON (preferito):',
+      '{ "formato": "piano-v1", "blocchi": [ { "codice": "' + step + '", "titolo": "<argomento del blocco>", "copre": [ { "schede": ["S1", "S2"], "micro": ["' + step + '.1"] }, { "schede": ["S3"], "micro": ["' + step + '.2", "' + step + '.3"] } ] },',
+      '  { "codice": "' + step + '", "titolo": "Raffinamento – <argomento>", "copre": [ { "schede": ["S9"], "micro": ["' + step + '.1"] } ] } ] }',
+      'Oppure a righe (una riga @B per blocco, una COPRE per gruppo di schede):',
+      '@B ' + step + ' | <argomento del blocco>',
+      'COPRE S1 S2 | ' + step + '.1',
+      'COPRE S3 | ' + step + '.2 ' + step + '.3',
+      ' - Ogni scheda copre un solo microstep principale (il primo elencato) e compare una sola volta.',
+      ' - Durata, ripassi, date e file finale li calcola l\'app dal piano: non scriverli.');
+    return S.join('\n');
+  }
+
+  /** Passo 3 «Quiz»: le schede indicate (una o due), con sigle e nome della parte già decisi dall'app. */
+  function costruisciSchede(o: OpzMP, schede: SchedaPromptMP[]): string {
+    const { ms, step, pref } = base(o), l = schede.slice().sort((a, b) => a.n - b.n);
+    const da = l.length ? l[0].n : 1, a = l.length ? l[l.length - 1].n : da;
+    const parte = pref + '-s' + da + (a !== da ? '-' + a : ''), sigla = (x: SchedaPromptMP) => x.sigla || 'S' + String(x.n).padStart(2, '0');
+    const S: string[] = [];
+    S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)',
+      'Il TUO UNICO PRODOTTO è UN SOLO blocco ```json con le SCHEDE DI QUIZ elencate qui sotto, e nient\'altro: niente piano, niente riepiloghi, niente file.',
+      'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app.');
+    S.push('', 'RUOLO', RUOLO, registro(o.tono || 'tecnico_accademico'));
+    sezione(S, 'TARGET (già compilato dall\'app)');
+    S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.', ' - Schede da scrivere ora (' + l.length + ' × 18 domande):',
+      ...l.map(x => '   • ' + sigla(x) + ' · microstep ' + x.micro.join(', ') + ' · ' + x.categoria + (x.blocco ? ' · blocco «' + x.blocco + '»' : '')));
+    S.push(...righeStudente(o));
+    sezione(S, 'COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
+    S.push(...COMPATIBILITA);
+    sezione(S, 'FONTI');
+    S.push(...fonti(o, 'Usa solo il materiale dello step, in quest\'ordine:'));
+    sezione(S, 'FASE 2 — GENERAZIONE DELLE SCHEDE');
+    S.push(...regoleScheda(o, ' Q-G. Ogni calcolo deve tornare: verifica risultato e ordine di grandezza prima di consegnare.'));
+    sezione(S, 'CONSEGNA');
+    S.push(' - Prima riga: `STEP ' + ms + ' ' + step + ' · ' + l.map(sigla).join(' e ') + '`.',
+      ' - Poi UN SOLO blocco ```json valido (doppi apici, zero virgole finali, nessun commento):',
+      '   { "formato": "quiz-v3", "parte": "' + parte + '", "quiz": [ … ] }',
+      '   Ogni domanda ha `"scheda"` (' + l.map(x => '"' + sigla(x) + '"').join(' o ') + ') e `"categoria"` come nell\'elenco sopra.',
+      '   Campi di ogni domanda: ' + CHIAVI_V3.join(', ') + ' (gemella solo se fa parte di una coppia).',
+      '   livello = NUMERO 1–4 dalla sequenza; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, per opzioni[1], [2], [3].',
+      ' - MAI accorciare spiegazioni o ridurre domande. Se il limite di output ti ferma, fermati dopo una domanda completa: l\'app ti chiederà il resto.');
+    if (o.gem) S.push('', 'Se le istruzioni del Gem chiedono id, esatta o conteggi (regole vecchie), valgono QUESTE: formato quiz-v3, giusta in opzioni[0].');
+    sezione(S, 'ESEMPIO DI FORMATO (non copiarne il contenuto: imita struttura e livello di dettaglio)');
+    S.push(ESEMPIO);
+    sezione(S, 'AUTOVERIFICA PRIMA DI CONSEGNARE');
+    S.push(...AUTOVERIFICA, 'Numeri, posizioni e controlli li fa l\'app: non riepilogare. Parti ora con ' + sigla(l[0] || { n: 1, micro: [], categoria: 'prioritaria' }) + '.');
+    return S.join('\n');
+  }
+
+  return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci, costruisciPiano, costruisciSchede };
 })();

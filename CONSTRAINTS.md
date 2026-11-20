@@ -1,6 +1,6 @@
 # Constraints — il-mio-calendario
 
-Ultima revisione: 2026-11-20 (v0.62.0: righe Logica 92, Contratto 29, Dossier 18). Revisione BP6: 2026-11-19 (v0.57.0): Logica 72, E4 chiusa, CSP e budget dei tempi verificati da test. Prima revisione: audit pre-BP6 su v0.56.1 (a97f1d3).
+Ultima revisione: 2026-11-20 (v0.63.0: Logica 94, Contratto 32, Centro 23, `v063_centro.py` in `tutti.sh`). Precedente: v0.62.0 (Logica 92, Contratto 29, Dossier 18). Revisione BP6: 2026-11-19 (v0.57.0): Logica 72, E4 chiusa, CSP e budget dei tempi verificati da test. Prima revisione: audit pre-BP6 su v0.56.1 (a97f1d3).
 Dettaglio delle voci A1–A27 citate sotto: rapporto di audit pre-BP6 (sezione S5 · T10).
 
 Scelte di partenza:
@@ -30,9 +30,10 @@ Scelte di partenza:
 | Dimensione | Regola | Comando | Quando | Perché questo numero |
 |---|---|---|---|---|
 | Tipi | 0 errori | `npx tsc --noEmit` | ogni modifica | oggi 0 |
-| Logica | 92/92 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.62.0: 92/92 (era 91 a v0.61.0) |
-| Contratto AI | 29/29 (può solo salire) | `node test/contratto.mjs` (ultima riga «Contratto N/N») | ogni modifica a `src/su-richiesta/` o all'import | v0.61.0: lettore, adapter, validatore, mappa pagine, pacchetti; v0.62.0: +dossier nel master prompt |
+| Logica | 94/94 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.63.0: 94/94 (era 92 a v0.62.0) |
+| Contratto AI | 32/32 (può solo salire) | `node test/contratto.mjs` (ultima riga «Contratto N/N») | ogni modifica a `src/su-richiesta/` o all'import | v0.61.0: lettore, adapter, validatore, mappa pagine, pacchetti; v0.62.0: +dossier nel master prompt; v0.63.0: +prompt Piano e Schede |
 | Dossier studente | 18/18 (può solo salire) | `node test/dossier.mjs` (ultima riga «Dossier N/N») | ogni modifica a `07-dossier.ts` o alla raccolta in `07-strumentiquiz.ts` | v0.62.0: segnali, regole, controllo privacy |
+| Centro di creazione | 23/23 (può solo salire) | `node test/centro.mjs` (ultima riga «Centro N/N») | ogni modifica a `07-centro.ts`, alla chiusura o all'import a parti | v0.63.0: piano → schede/id, chiusura dall’app nella pipeline dell’import; flusso UI da ospite in `test/v063_centro.py` |
 | End-to-end | 0 falliti, saltati ≤ quelli in «Eccezioni» | `bash test/tutti.sh 2>&1 \| tail -n 35` (include `csp`, `v057_bp6`, `prestazioni`) | prima di pubblicare | v0.57: 44 ok, 1 saltato |
 | Dipendenze (esterno) | 0 vulnerabilità high+ | `npm audit --audit-level=high` | prima di pubblicare | oggi 0; unico controllo non scritto da noi |
 | Build | `dist/sw.js` senza `__VERSIONE__`; `VERSIONE` ≠ quella pubblicata | test nuovo (A3, A8) | prima di pubblicare | il bug del SW è passato inosservato da Fase 1 |

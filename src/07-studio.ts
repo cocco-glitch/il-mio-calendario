@@ -495,9 +495,11 @@ function vistaStudio(): HTMLElement {
   const gr = gruppi.find(([, vv]) => vv.includes(UI.studioVista)) || gruppi[2];
   const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])),
     h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'),   // v0.58 (Q5)
+    h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, '🏗️ Centro di creazione'),   // v0.63
     h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'),   // v0.58.1
     tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
       { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
+      { testo: '🏗️ Centro di creazione', azione: () => conStrumentiQuiz(() => CentroUI.apri()) },
       { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }] as VoceTendina[], 'Strumenti dei quiz')),   // v0.59.2
     gr[1].length > 1 ? h('div.chips.sotto-viste', { role: 'tablist', 'aria-label': 'Viste di ' + gr[0] }, gr[1].map((v, k) => h('button.chip' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(UI.studioVista === v), onclick: () => vai(v) }, gr[2][k]))) : null);
   if (UI.studioVista === 'carte') return h('div.pagina', null, seg, vistaCarte());

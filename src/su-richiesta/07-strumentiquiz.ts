@@ -7,9 +7,24 @@
 // =====================================================================
 interface FileDrvSQ { id: string; name: string; mimeType: string; }
 interface GruppoLibroSQ { libro: LibroMP; files: FileDrvSQ[]; usa: boolean; }
+/** Fonti scelte per uno step (solo nomi di file e misure dei libri): salvate nel record «creazione». */
+interface FontiSQ { libri: LibroMP[]; slide: string[]; guide: string[]; indici: string[]; quiz: string[]; vietati: string[]; }
 
 const StrumentiQuiz = (() => {
-  const RE_VIETATI = /\bTB\b|TB\.pdf|testbusters|alpha ?test|editest/i;
+  // v0.63: fonti escluse modificabili nelle impostazioni del Centro (prefisso imc-: cancellata al cambio account).
+  const K_CENTRO_ESCLUSI = 'imc-centro-esclusi', ESCLUSI_BASE = ['Testbusters', 'Alpha Test', 'Editest'];
+  function esclusi(): string[] {
+    try { const x = JSON.parse(localStorage.getItem(K_CENTRO_ESCLUSI) || 'null'); return Array.isArray(x) ? x.filter(v => typeof v === 'string' && v.trim()).map(v => v.trim()) : ESCLUSI_BASE.slice(); }
+    catch (e) { console.warn('[centro] lista esclusi illeggibile', e); return ESCLUSI_BASE.slice(); }
+  }
+  /** Salva la lista (null = torna ai predefiniti). */
+  function salvaEsclusi(xs: string[] | null): void {
+    try { if (xs) localStorage.setItem(K_CENTRO_ESCLUSI, JSON.stringify([...new Set(xs.map(v => v.trim()).filter(Boolean))].slice(0, 50))); else localStorage.removeItem(K_CENTRO_ESCLUSI); }
+    catch (e) { console.warn('[centro] lista esclusi non salvata', e); }
+  }
+  const reNome = (v: string) => new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, ' ?'), 'i');
+  /** Un file è vietato come fonte: sigla TB o un nome della lista esclusi («Alpha Test» trova anche «alphatest»). */
+  const vietato = (n: string) => /\bTB\b|TB\.pdf/i.test(n) || esclusi().some(v => reNome(v).test(n));
   const RE_GUIDE = /syllabus|programma|appell|esame|prova|simulazion/i;
   const RE_SLIDE = /slide|lezion|dispens|presentaz/i;
   const RE_INDICE = /indice|sommario|toc\b/i;
@@ -211,42 +226,44 @@ const StrumentiQuiz = (() => {
     return out;
   }
 
-  function prompt(): void {
-    const materie = Stato.tutti<MateriaRec>('materia').sort((a, b) => a.nome.localeCompare(b.nome));
-    const selMat = h('select', { 'aria-label': 'Materia' }, ...materie.map(m => h('option', { value: m.codice }, m.nome)),
-      h('option', { value: '' }, 'Altra materia…')) as HTMLSelectElement;
-    const altra = h('input', { type: 'text', placeholder: 'Nome della materia', 'aria-label': 'Nome di un\'altra materia', hidden: materie.length ? true : undefined }) as HTMLInputElement;
-    if (!materie.length) selMat.value = '';
-    const step = h('input', { type: 'text', placeholder: 'es. 3.3', 'aria-label': 'Step (es. 3.3)' }) as HTMLInputElement;
-    const titolo = h('input', { type: 'text', placeholder: 'Titolo dello step (facoltativo)', 'aria-label': 'Titolo dello step' }) as HTMLInputElement;
-    const data = h('input', { type: 'date', 'aria-label': 'Data prevista' }) as HTMLInputElement;
-    const intens = h('select', { 'aria-label': 'Intensità' }, h('option', { value: 'leggera' }, 'Leggera (10–14 schede)'),
-      h('option', { value: 'standard', selected: true }, 'Standard (18–25 schede)'), h('option', { value: 'intensa' }, 'Intensa (24–30 schede)')) as HTMLSelectElement;
-    const perMsg = h('select', { 'aria-label': 'Schede per messaggio' }, h('option', { value: '2' }, '2 schede per messaggio'), h('option', { value: '1' }, '1 scheda per messaggio (account gratuito)')) as HTMLSelectElement;
-    const gem = casella('Uso un Gem con le «Regole per il Gem»');
-    const usaDos = casella('Usa il mio dossier (regole dai miei quiz)', true);
-    const dosBox = h('div.dossier', { hidden: true, role: 'region', 'aria-label': 'Dossier studente' });
-    const btnDos = h('button.chip', { type: 'button', 'aria-expanded': 'false', 'aria-label': 'Vedi dossier' }, '👁 Vedi dossier') as HTMLButtonElement;
-    let escluse = escluseLette(), problemiPrivacy: string[] = [];
-    const note = area('Richieste particolari (facoltativo)', 2);
+  // ================== RACCOLTA FONTI (v0.63: condivisa da «🧠 Prompt quiz» e dal Centro di creazione) ==================
+  /** Nomi di un file → categoria (libro, slide, guide, indici, quiz, vietati). Solo nomi: niente contenuto. */
+  function classifica(fs: FileDrvSQ[]): { libri: Map<string, FileDrvSQ[]>; altri: Record<'slide' | 'guide' | 'quiz' | 'vietati' | 'indici', FileDrvSQ[]> } {
+    const altri = { slide: [] as FileDrvSQ[], guide: [] as FileDrvSQ[], quiz: [] as FileDrvSQ[], vietati: [] as FileDrvSQ[], indici: [] as FileDrvSQ[] };
+    const libri = new Map<string, FileDrvSQ[]>();
+    for (const f of fs) {
+      const n = f.name, pdf = /\.pdf$/i.test(n) || f.mimeType === 'application/pdf';
+      if (vietato(n)) altri.vietati.push(f);
+      else if (/\.json$/i.test(n) || /quiz/i.test(n)) altri.quiz.push(f);
+      else if (RE_INDICE.test(n)) altri.indici.push(f);
+      else if (RE_GUIDE.test(n)) altri.guide.push(f);
+      else if (RE_SLIDE.test(n) || /presentation|powerpoint/i.test(f.mimeType)) altri.slide.push(f);
+      else if (pdf) { const k = MasterPrompt.nomeLibro(n); libri.set(k, (libri.get(k) || []).concat(f)); }
+      else altri.slide.push(f);
+    }
+    return { libri, altri };
+  }
+  /**
+   * Blocco «Fonti»: con Drive collegato cerca il materiale della materia; senza Drive (ospite) si scrivono i nomi
+   * dei file o si scelgono dal dispositivo (l'app ne legge solo il nome: i file li allega lo studente all'AI).
+   */
+  function raccoltaFonti(nomeMateria: () => string, iniziali?: FontiSQ): { el: HTMLElement; valori: () => FontiSQ; nomiNoti: () => string[] } {
     const stato = h('p.piccolo.tenue', { role: 'status', 'aria-live': 'polite' });
     const elenco = h('div');
-    const out = area('Master prompt da copiare in Gemini', 10, true);
-    const info = h('p.piccolo.tenue');
     let gruppi: GruppoLibroSQ[] = [];
-    const altri = { slide: [] as FileDrvSQ[], guide: [] as FileDrvSQ[], quiz: [] as FileDrvSQ[], vietati: [] as FileDrvSQ[], indici: [] as FileDrvSQ[] };
+    let altri = classifica([]).altri;
     const scelti = new Set<string>();
-
-    const materia = (): { m: MateriaRec | null; nome: string; codice: string } => {
-      const m = materie.find(x => x.codice === selMat.value) || null;
-      const nome = m ? m.nome : altra.value.trim();
-      return { m, nome, codice: m ? m.codice : nome.slice(0, 1).toUpperCase() };
-    };
-    selMat.addEventListener('change', () => { altra.hidden = !!selMat.value; });
+    const incollate = area('Fonti senza Drive: un nome di file per riga (libro, syllabus, slide…)', 3);
+    if (iniziali) incollate.value = [...iniziali.libri.flatMap(l => l.pdf), ...iniziali.guide, ...iniziali.slide, ...iniziali.indici, ...iniziali.quiz].join('\n');
+    const daFile = h('input', { type: 'file', multiple: true, 'aria-label': 'Scegli i file delle fonti dal dispositivo (si usa solo il nome)' }) as HTMLInputElement;
+    daFile.addEventListener('change', () => {
+      const nomi = Array.from(daFile.files || []).map(f => f.name), gia = new Set(incollate.value.split('\n').map(x => x.trim()).filter(Boolean));
+      incollate.value = [...gia, ...nomi.filter(n => !gia.has(n))].join('\n'); daFile.value = '';
+    });
 
     async function cercaDrive(): Promise<void> {
       if (serveGoogle()) return;
-      const { nome } = materia();
+      const nome = nomeMateria();
       if (!nome) { avviso('Scegli o scrivi la materia.'); return; }
       stato.textContent = 'Cerco su Drive…'; elenco.textContent = '';
       const visti = new Map<string, FileDrvSQ>();
@@ -256,23 +273,12 @@ const StrumentiQuiz = (() => {
         for (const c of (await Drive.cercaCartelle(nome)).slice(0, 6)) aggiungi((await Drive.elencaCompleti(c.id)).slice(0, 200));
         for (const t of ['syllabus', 'programma', 'appell']) aggiungi((await Drive.cerca(t)).filter(f => new RegExp(MasterPrompt.slug(nome).slice(0, 5), 'i').test(MasterPrompt.slug(f.name)) || /syllabus/i.test(f.name)));
       } catch (e) { stato.textContent = '⚠️ Ricerca non riuscita: ' + (e instanceof Error ? e.message : String(e)); return; }
-      const fs = [...visti.values()];
-      altri.slide = []; altri.guide = []; altri.quiz = []; altri.vietati = []; altri.indici = [];
-      const libri = new Map<string, FileDrvSQ[]>();
-      for (const f of fs) {
-        const n = f.name, pdf = /\.pdf$/i.test(n) || f.mimeType === 'application/pdf';
-        if (RE_VIETATI.test(n)) altri.vietati.push(f);
-        else if (/\.json$/i.test(n) || /quiz/i.test(n)) altri.quiz.push(f);
-        else if (RE_INDICE.test(n)) altri.indici.push(f);
-        else if (RE_GUIDE.test(n)) altri.guide.push(f);
-        else if (RE_SLIDE.test(n) || /presentation|powerpoint/i.test(f.mimeType)) altri.slide.push(f);
-        else if (pdf) { const k = MasterPrompt.nomeLibro(n); libri.set(k, (libri.get(k) || []).concat(f)); }
-        else altri.slide.push(f);
-      }
-      gruppi = [...libri.entries()].map(([nomeL, files]) => ({ files: files.sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0)),
+      const fs = [...visti.values()], c = classifica(fs);
+      altri = c.altri;
+      gruppi = [...c.libri.entries()].map(([nomeL, files]) => ({ files: files.sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0)),
         usa: true, libro: { nome: nomeL, pdf: files.map(f => f.name), segmenti: files.some(f => MasterPrompt.segmentoDa(f.name) !== null) } }));
       scelti.clear(); [...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici].forEach(f => scelti.add(f.id));
-      stato.textContent = fs.length ? 'Trovati ' + fs.length + ' file: togli la spunta a quelli da non usare e misura i libri.' : 'Nessun file trovato con il nome della materia: il prompt chiederà a Gemini di cercarli.';
+      stato.textContent = fs.length ? 'Trovati ' + fs.length + ' file: togli la spunta a quelli da non usare e misura i libri.' : 'Nessun file trovato con il nome della materia: il prompt chiederà all\'AI di cercarli.';
       disegnaElenco();
     }
     function disegnaElenco(): void {
@@ -303,7 +309,7 @@ const StrumentiQuiz = (() => {
         });
       };
       sez('🎞️ Slide e dispense', altri.slide); sez('🧭 Syllabus e appelli', altri.guide); sez('📑 Indici', altri.indici);
-      sez('🧩 Quiz già fatti', altri.quiz, '(Gemini non li duplicherà)');
+      sez('🧩 Quiz già fatti', altri.quiz, '(l\'AI non li duplicherà)');
       if (altri.vietati.length) elenco.appendChild(h('p.piccolo', null, '🚫 Esclusi come fonte (eserciziari commerciali): ' + altri.vietati.map(f => f.name).slice(0, 8).join(', ')));
     }
     function descrivi(g: GruppoLibroSQ): string {
@@ -312,6 +318,66 @@ const StrumentiQuiz = (() => {
       const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
       return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
     }
+    /** Nomi scritti a mano o scelti da file → stesse categorie della ricerca su Drive. */
+    function daIncollate(): ReturnType<typeof classifica> {
+      const fs = incollate.value.split('\n').map(x => x.trim()).filter(Boolean).map((name, i) => ({ id: 'man-' + i, name, mimeType: '' }));
+      return classifica(fs);
+    }
+    function valori(): FontiSQ {
+      const m = daIncollate(), nomi = (xs: FileDrvSQ[], tutti = false) => xs.filter(f => tutti || scelti.has(f.id)).map(f => f.name);
+      const libriMan: LibroMP[] = [...m.libri.entries()].map(([nome, files]) => ({ nome, pdf: files.map(f => f.name) }));
+      const libriDrv = gruppi.filter(g => g.usa).map(g => g.libro), visti = new Set(libriDrv.map(l => l.nome));
+      return { libri: [...libriDrv, ...libriMan.filter(l => !visti.has(l.nome))],
+        slide: [...nomi(altri.slide), ...nomi(m.altri.slide, true)], guide: [...nomi(altri.guide), ...nomi(m.altri.guide, true)],
+        indici: [...nomi(altri.indici), ...nomi(m.altri.indici, true)], quiz: [...nomi(altri.quiz), ...nomi(m.altri.quiz, true)],
+        vietati: [...altri.vietati, ...m.altri.vietati].map(f => f.name) };
+    }
+    const nomiNoti = () => [...gruppi.flatMap(g => g.files), ...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici, ...altri.vietati].map(f => f.name)
+      .concat(incollate.value.split('\n').map(x => x.trim()).filter(Boolean));
+    const el = h('div.fonti', null,
+      h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco,
+      h('details', { open: (!Drive.pronto && !!iniziali) || undefined }, h('summary', null, '📎 Fonti senza Drive (nomi dei file da allegare all\'AI)'),
+        h('p.piccolo.tenue', null, 'Scrivi un nome per riga o scegli i file: l\'app legge solo il nome, i file li alleghi tu alla chat dell\'AI.'), incollate, daFile));
+    return { el, valori, nomiNoti };
+  }
+  /** Regole del dossier di una materia/step (se lo step non ha risposte: tutta la materia) e controllo privacy. */
+  function regoleDossier(nome: string, codice: string, stepV: string, nomiFile: string[], escl = escluseLette()): { d: DossierS | null; regole: string[]; problemi: string[] } {
+    if (!nome) return { d: null, regole: [], problemi: [] };
+    const dati = datiDossier(nome, codice), oggiY = ymd(new Date());
+    const d0 = Dossier.calcola(dati, { materia: nome, step: stepV, oggi: oggiY });
+    const d = d0.tentativi || !d0.step ? d0 : Dossier.calcola(dati, { materia: nome, oggi: oggiY });
+    const regole = Dossier.regole(d, escl);
+    return { d, regole, problemi: Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile }) };
+  }
+
+  function prompt(): void {
+    const materie = Stato.tutti<MateriaRec>('materia').sort((a, b) => a.nome.localeCompare(b.nome));
+    const selMat = h('select', { 'aria-label': 'Materia' }, ...materie.map(m => h('option', { value: m.codice }, m.nome)),
+      h('option', { value: '' }, 'Altra materia…')) as HTMLSelectElement;
+    const altra = h('input', { type: 'text', placeholder: 'Nome della materia', 'aria-label': 'Nome di un\'altra materia', hidden: materie.length ? true : undefined }) as HTMLInputElement;
+    if (!materie.length) selMat.value = '';
+    const step = h('input', { type: 'text', placeholder: 'es. 3.3', 'aria-label': 'Step (es. 3.3)' }) as HTMLInputElement;
+    const titolo = h('input', { type: 'text', placeholder: 'Titolo dello step (facoltativo)', 'aria-label': 'Titolo dello step' }) as HTMLInputElement;
+    const data = h('input', { type: 'date', 'aria-label': 'Data prevista' }) as HTMLInputElement;
+    const intens = h('select', { 'aria-label': 'Intensità' }, h('option', { value: 'leggera' }, 'Leggera (10–14 schede)'),
+      h('option', { value: 'standard', selected: true }, 'Standard (18–25 schede)'), h('option', { value: 'intensa' }, 'Intensa (24–30 schede)')) as HTMLSelectElement;
+    const perMsg = h('select', { 'aria-label': 'Schede per messaggio' }, h('option', { value: '2' }, '2 schede per messaggio'), h('option', { value: '1' }, '1 scheda per messaggio (account gratuito)')) as HTMLSelectElement;
+    const gem = casella('Uso un Gem con le «Regole per il Gem»');
+    const usaDos = casella('Usa il mio dossier (regole dai miei quiz)', true);
+    const dosBox = h('div.dossier', { hidden: true, role: 'region', 'aria-label': 'Dossier studente' });
+    const btnDos = h('button.chip', { type: 'button', 'aria-expanded': 'false', 'aria-label': 'Vedi dossier' }, '👁 Vedi dossier') as HTMLButtonElement;
+    let escluse = escluseLette(), problemiPrivacy: string[] = [];
+    const note = area('Richieste particolari (facoltativo)', 2);
+    const out = area('Master prompt da copiare in Gemini', 10, true);
+    const info = h('p.piccolo.tenue');
+    const materia = (): { m: MateriaRec | null; nome: string; codice: string } => {
+      const m = materie.find(x => x.codice === selMat.value) || null;
+      const nome = m ? m.nome : altra.value.trim();
+      return { m, nome, codice: m ? m.codice : nome.slice(0, 1).toUpperCase() };
+    };
+    selMat.addEventListener('change', () => { altra.hidden = !!selMat.value; });
+    const fonti = raccoltaFonti(() => materia().nome);
+
     /** Dossier della materia e dello step (se lo step non ha ancora risposte: tutta la materia). */
     function dossier(): DossierS | null {
       const { nome, codice } = materia();
@@ -320,11 +386,8 @@ const StrumentiQuiz = (() => {
       const d = Dossier.calcola(dati, { materia: nome, step: step.value.trim(), oggi: oggiY });
       return d.tentativi || !d.step ? d : Dossier.calcola(dati, { materia: nome, oggi: oggiY });
     }
-    function nomiFileNoti(): string[] {
-      return [...gruppi.flatMap(g => g.files), ...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici, ...altri.vietati].map(f => f.name);
-    }
     function controllaDossier(regole: string[]): string[] {
-      return Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile: nomiFileNoti() });
+      return Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile: fonti.nomiNoti() });
     }
     function disegnaDossier(): void {
       dosBox.textContent = '';
@@ -357,13 +420,12 @@ const StrumentiQuiz = (() => {
       if (!/^\d+(\.\d+)*$/.test(step.value.trim())) { avviso('Scrivi lo step come numero, es. 3.3.'); step.focus(); return; }
       const arch = (m && m.archetipo) || Dominio.archetipoMateria(nome) || 'scienze_sperimentali';
       const def = (ARCHETIPI_DISCIPLINARI as Record<string, { etichetta: string } | undefined>)[arch];
-      const nomi = (xs: FileDrvSQ[]) => xs.filter(f => scelti.has(f.id)).map(f => f.name);
+      const fv = fonti.valori();
       const opz: OpzMP = {
         materia: nome, codice, step: step.value.trim(), titolo: titolo.value.trim() || undefined, data: data.value || undefined,
         archetipo: arch, etichettaArchetipo: def ? def.etichetta : arch, tono: Dominio.profilo().tonoSpiegazioneAI,
         intensita: intens.value as OpzMP['intensita'], perMessaggio: perMsg.value === '1' ? 1 : 2, gem: gem.c.checked,
-        libri: gruppi.filter(g => g.usa).map(g => g.libro), slide: nomi(altri.slide), guide: nomi(altri.guide), indici: nomi(altri.indici),
-        quizEsistenti: nomi(altri.quiz), vietati: altri.vietati.map(f => f.name), idEsistenti: idGiaUsati(),
+        libri: fv.libri, slide: fv.slide, guide: fv.guide, indici: fv.indici, quizEsistenti: fv.quiz, vietati: fv.vietati, idEsistenti: idGiaUsati(),
         note: note.value.trim() || undefined,
       };
       const d = usaDos.c.checked ? dossier() : null;
@@ -383,7 +445,7 @@ const StrumentiQuiz = (() => {
     const corpo = h('div', null,
       h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'),
       selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), usaDos.el, h('div.chips', null, btnDos), dosBox, note,
-      h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco,
+      fonti.el,
       h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info,
       h('div.chips', null,
         btnCopia, btnScarica,
@@ -391,5 +453,5 @@ const StrumentiQuiz = (() => {
     foglio({ titolo: '🧠 Prompt quiz per Gemini', corpo });
   }
 
-  return { diagnostica, prompt };
+  return { diagnostica, prompt, raccoltaFonti, regoleDossier, idGiaUsati, copia, esclusi, salvaEsclusi, vietato };
 })();
