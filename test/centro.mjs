@@ -26,12 +26,12 @@ function vero(c, m) { if (!c) throw new Error(m || 'condizione falsa'); }
 // ---------- sandbox ----------
 const UI = new Set(['07-strumentiquiz.ts', '07-centroui.ts']);
 const SU = fs.readdirSync(path.join(SRC, 'su-richiesta')).filter(f => f.endsWith('.ts') && !UI.has(f)).sort().map(f => 'su-richiesta/' + f);
-const FILE = ['01-json.ts', '07-sezionispiegazione.ts', '07-importadrive-parti.ts', '07-importadrive.ts', ...SU];
+const FILE = ['01-json.ts', '07-pianificatore.ts', '07-sezionispiegazione.ts', '07-importadrive-parti.ts', '07-importadrive.ts', ...SU];
 const js = FILE.map(f => ts.transpileModule(leggi(f), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText).join('\n');
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const sb = { console, ymd, oggi: () => new Date(), materiaDi: k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; } };
 vm.createContext(sb);
-const ESPORTA = ['ImportaParti', 'ImportaDrive', 'Contratto', 'Centro'];
+const ESPORTA = ['ImportaParti', 'ImportaDrive', 'Contratto', 'Centro', 'DiagnosiQuiz'];
 vm.runInContext(js + '\n;' + ESPORTA.map(n => 'this.' + n + ' = typeof ' + n + " !== 'undefined' ? " + n + ' : undefined;').join(' '), sb);
 const { Contratto: C, ImportaParti: IP, ImportaDrive: ID } = sb;
 const CE = sb.Centro || new Proxy({}, { get: (_, k) => () => { throw new Error('Centro.' + String(k) + ' non esiste ancora'); } });
@@ -214,6 +214,161 @@ t('filtra: tutto scelto → stesso risultato; il pacchetto di partenza non cambi
   eq(JSON.stringify(u), prima, 'nessuna modifica in place');
 });
 
+console.log('\n== Pagine per microstep ==');
+const INDICE = [{ capitolo: '3.3.1 Membrane', pagina: 40 }, { capitolo: '3.3.2 Trasporto passivo', pagina: 46 }, { capitolo: '3.3.3 Trasporto attivo', pagina: 52 }];
+t('pagineMicrostep: senza mappa → solo l\'intervallo stampato, fino alla pagina prima del microstep dopo', () => {
+  eq(CE.pagineMicrostep(INDICE, null, '3.3.1'), { stampDa: 40, stampA: 45, pdfDa: null, pdfA: null, affidabilita: 'nessuna' });
+});
+/** Due tratti: stampate 1–41 = PDF 10–50, poi 2 tavole fuori testo (PDF 51–52), stampate 42… = PDF 53… */
+const TRATTI = { fonte: 'auto-stampati', affidabilita: 'stimata', tratti: [{ pdfDa: 10, pdfA: 50, stampDa: 1 }, { pdfDa: 53, pdfA: 300, stampDa: 42 }] };
+t('pagineMicrostep: mappa a tratti → PDF di inizio e fine anche a cavallo di due tratti, con l\'affidabilità della mappa', () => {
+  eq(CE.pagineMicrostep(INDICE, TRATTI, '3.3.1'), { stampDa: 40, stampA: 45, pdfDa: 49, pdfA: 56, affidabilita: 'stimata' });
+  eq(CE.pagineMicrostep(INDICE, TRATTI, '3.3.2'), { stampDa: 46, stampA: 51, pdfDa: 57, pdfA: 62, affidabilita: 'stimata' });
+});
+t('pagineMicrostep: fonte D (nessuna) → nessuna pagina; microstep fuori dall\'indice → null; ultima voce aperta', () => {
+  eq(CE.pagineMicrostep(INDICE, { fonte: 'nessuna', tratti: [], affidabilita: 'nessuna' }, '3.3.1'), null, 'fonte D');
+  eq(CE.pagineMicrostep(INDICE, TRATTI, '3.4.1'), null, 'non nell\'indice');
+  eq(CE.pagineMicrostep(INDICE, TRATTI, '3.3.3'), { stampDa: 52, stampA: null, pdfDa: 63, pdfA: null, affidabilita: 'stimata' }, 'fino a fine libro');
+});
+
+console.log('\n== Libri e misura a tratti ==');
+/** Numeri ai bordi di ogni pagina: 4 pagine di premessa senza numero, poi stampata = PDF − 4 fino a PDF 20, 2 tavole, poi stampata = PDF − 6. */
+const NUMERI = Array.from({ length: 40 }, (_, i) => { const pdf = i + 1; return pdf <= 4 || pdf === 21 || pdf === 22 ? [] : pdf <= 20 ? [pdf - 4] : [pdf - 6, 2024]; });
+t('mappaAuto: etichette del PDF → esatta (vincono sui numeri stampati)', () => {
+  const et = ['i', 'ii', 'iii', '1', '2', '3'];
+  eq(CE.mappaAuto(et, NUMERI), { fonte: 'auto-etichette', tratti: [{ pdfDa: 1, pdfA: 3, stampDa: 'i' }, { pdfDa: 4, pdfA: 6, stampDa: 1 }], affidabilita: 'esatta' });
+});
+t('mappaAuto: senza etichette → numeri stampati di tutte le pagine, a tratti, stimata; niente scostamento unico', () => {
+  eq(CE.mappaAuto(null, NUMERI), { fonte: 'auto-stampati', tratti: [{ pdfDa: 5, pdfA: 20, stampDa: 1 }, { pdfDa: 23, pdfA: 40, stampDa: 17 }], affidabilita: 'stimata' });
+});
+t('mappaAuto: né etichette né numeri → null (pagine non rilevate)', () => {
+  eq(CE.mappaAuto(null, Array.from({ length: 30 }, () => [])), null);
+  eq(CE.mappaAuto([null, null], [[], []]), null);
+});
+t('descriviMappa: l\'affidabilità a schermo per ogni caso, «non rilevate» propone la fonte B', () => {
+  vero(/esatt/i.test(CE.descriviMappa(CE.mappaAuto(['1', '2', '3'], []))) && /etichette/.test(CE.descriviMappa(CE.mappaAuto(['1', '2', '3'], []))), 'etichette');
+  const st = CE.descriviMappa(CE.mappaAuto(null, NUMERI));
+  vero(/stimat/i.test(st) && /2 tratti/.test(st), 'stimata a tratti: ' + st);
+  const nr = CE.descriviMappa(null);
+  vero(/non rilevate/.test(nr) && /a mano/.test(nr), 'non rilevate → B: ' + nr);
+  vero(/esatt/i.test(CE.descriviMappa({ fonte: 'mano', tratti: [{ pdfDa: 5, pdfA: 99999, stampDa: 1 }], affidabilita: 'esatta' })), 'a mano');
+  vero(/capitolo/.test(CE.descriviMappa({ fonte: 'nessuna', tratti: [], affidabilita: 'nessuna' })), 'fonte D');
+});
+const LIBRO = { nome: 'Campbell – Biologia 2ª ed', pdf: ['Campbell – Biologia 2ª ed 1-300.pdf', 'Campbell – Biologia 2ª ed 301-600.pdf'], segmenti: true };
+t('idLibro: lib-<materia>-<slug> stabile', () => {
+  eq(CE.idLibro('Biologia', LIBRO.nome), 'lib-biologia-campbell-biologia-2a-ed');
+  eq(CE.idLibro('Biologia', 'campbell biologia 2ª ED'), 'lib-biologia-campbell-biologia-2a-ed');
+});
+t('libroDa: libro nuovo misurato → record con fonte auto, mappa e segmenti; mai PDF né testo', () => {
+  const m = CE.mappaAuto(null, NUMERI), r = CE.libroDa('Biologia', { ...LIBRO, mappa: m, lettura: { pct: 96 } }, null);
+  eq([r.id, r.type, r.nome, r.materia, r.fonte], ['lib-biologia-campbell-biologia-2a-ed', 'libro', LIBRO.nome, 'Biologia', 'auto']);
+  eq(r.pdf, [{ nome: LIBRO.pdf[0], segmentoDa: 1 }, { nome: LIBRO.pdf[1], segmentoDa: 301 }]);
+  eq(r.mappa, m); eq(r.lettura, { pct: 96 });
+  const non = CE.libroDa('Biologia', { nome: 'Dispensa', pdf: ['Dispensa.pdf'] }, null);
+  eq([non.fonte, non.mappa, non.pdf], ['auto', null, [{ nome: 'Dispensa.pdf' }]], 'non misurato: niente mappa');
+});
+t('libroDa: la fonte scelta (B a mano) vince sulla misura nuova; mappa, indice e prova precedenti restano', () => {
+  const mano = { fonte: 'mano', tratti: [{ pdfDa: 7, pdfA: 99999, stampDa: 1 }], affidabilita: 'esatta' };
+  const prec = { ...CE.libroDa('Biologia', LIBRO, null), fonte: 'mano', ancore: [{ stampata: 1, pdf: 7 }], mappa: mano, indice: [{ capitolo: '3.3.1 X', pagina: 40 }], prova: { quando: '2026-11-20', ok: 3, tot: 3 }, updatedAt: 5 };
+  const r = CE.libroDa('Biologia', { ...LIBRO, mappa: CE.mappaAuto(null, NUMERI) }, prec);
+  eq([r.fonte, r.mappa, r.ancore, r.indice, r.prova, r.updatedAt], ['mano', mano, prec.ancore, prec.indice, prec.prova, 5]);
+  const auto = CE.libroDa('Biologia', LIBRO, { ...prec, fonte: 'auto' });
+  eq(auto.mappa, mano, 'senza misura nuova resta la mappa salvata');
+});
+
+t('unisciSegmenti: PDF a segmenti → tratti in pagine PDF assolute; basta un segmento stimato per dire «stimata»', () => {
+  const s1 = { fonte: 'auto-etichette', tratti: [{ pdfDa: 1, pdfA: 300, stampDa: 1 }], affidabilita: 'esatta' };
+  const s2 = { fonte: 'auto-stampati', tratti: [{ pdfDa: 3, pdfA: 300, stampDa: 303 }], affidabilita: 'stimata' };
+  eq(CE.unisciSegmenti([{ mappa: s1, base: 0 }, { mappa: s2, base: 300 }]),
+    { fonte: 'auto-stampati', tratti: [{ pdfDa: 1, pdfA: 300, stampDa: 1 }, { pdfDa: 303, pdfA: 600, stampDa: 303 }], affidabilita: 'stimata' });
+  eq(CE.unisciSegmenti([{ mappa: s1, base: 0 }, { mappa: null, base: 300 }]).affidabilita, 'esatta', 'segmento non rilevato: resta senza tratti');
+  eq(CE.unisciSegmenti([{ mappa: null, base: 0 }]), null);
+  eq(s2.tratti[0].pdfDa, 3, 'le mappe dei segmenti non vengono modificate');
+});
+
+// ---------- T11: fonte delle pagine B/C/D e prova a 3 pagine ----------
+t('indiceDa: testo dell\'indice → voci capitolo/pagina (solo righe con pagina), pronte per pagineMicrostep', () => {
+  const v = CE.indiceDa('Indice\n3 Membrane\n3.3.1 Diffusione ........ 40\n3.3.2 Osmosi 46\n3.3.3 Trasporto attivo .... 52\nAppendice senza pagina');
+  eq(v, [{ capitolo: '3.3.1 Diffusione', pagina: 40 }, { capitolo: '3.3.2 Osmosi', pagina: 46 }, { capitolo: '3.3.3 Trasporto attivo', pagina: 52 }]);
+  eq(CE.pagineMicrostep(v, null, '3.3.2').stampA, 51);
+  eq(CE.indiceDa(''), []);
+});
+const STIM = { fonte: 'auto-stampati', tratti: [{ pdfDa: 5, pdfA: 20, stampDa: 1 }, { pdfDa: 23, pdfA: 40, stampDa: 17 }], affidabilita: 'stimata' };
+const LIB1 = { nome: 'Chimica Stampati', pdf: ['Chimica Stampati.pdf'] };
+t('conAncore (B): l\'ancora corregge la mappa misurata da quella pagina in poi, tavole e tratti prima restano; B vince ed è esatta', () => {
+  const rec = CE.libroDa('Chimica', { ...LIB1, mappa: STIM }, null);
+  const r = CE.conAncore(rec, { stampata: 20, pdf: 25 });
+  eq([r.fonte, r.ancore], ['mano', [{ stampata: 20, pdf: 25 }]]);
+  eq(r.mappa, { fonte: 'mano', tratti: [{ pdfDa: 5, pdfA: 20, stampDa: 1 }, { pdfDa: 23, pdfA: 24, stampDa: 17 }, { pdfDa: 25, pdfA: 40, stampDa: 20 }], affidabilita: 'esatta' });
+  eq(CE.conAncore(r, { stampata: 21, pdf: 25 }).ancore, [{ stampata: 21, pdf: 25 }], 'stessa pagina PDF: l\'ancora nuova sostituisce');
+  eq([rec.fonte, rec.mappa], ['auto', STIM], 'il record di partenza non cambia');
+  eq(CE.conAncore(CE.libroDa('Chimica', LIB1, null), { stampata: 1, pdf: 7 }).mappa.tratti, [{ pdfDa: 7, pdfA: 99999, stampDa: 1 }], 'senza misura: daMano');
+});
+t('conFonte: A torna alla misura, C usa la mappa se c\'è, D senza numeri; le ancore restano salvate', () => {
+  const b = CE.conAncore(CE.libroDa('Chimica', { ...LIB1, mappa: STIM }, null), { stampata: 20, pdf: 25 });
+  const a = CE.conFonte(b, 'auto');
+  eq([a.fonte, a.mappa, a.ancore.length], ['auto', STIM, 1]);
+  eq(CE.conFonte(a, 'indice').mappa, STIM);
+  eq(CE.conFonte(CE.libroDa('Chimica', LIB1, null), 'indice').mappa, null);
+  const d = CE.conFonte(b, 'nessuna');
+  eq(d.mappa, { fonte: 'nessuna', tratti: [], affidabilita: 'nessuna' });
+  vero(/capitolo/.test(CE.descriviMappa(d.mappa)));
+  eq(CE.libroDa('Chimica', { ...LIB1, mappa: STIM }, d).mappa.fonte, 'nessuna', 'una misura nuova non cambia la fonte D scelta');
+});
+t('conProva: 3 pagine, una sbagliata → ancora B, mappa esatta, esito salvato e a schermo', () => {
+  const rec = CE.libroDa('Chimica', { ...LIB1, mappa: STIM }, null);
+  const r = CE.conProva(rec, [{ pdf: 8, stampata: 4, letta: '4' }, { pdf: 25, stampata: 19, letta: '20' }, { pdf: 30, stampata: 24, letta: ' 24 ' }], '2026-11-20');
+  eq([r.prova, r.fonte, r.ancore, r.mappa.affidabilita], [{ quando: '2026-11-20', ok: 2, tot: 3 }, 'mano', [{ stampata: 20, pdf: 25 }], 'esatta']);
+  vero(/provata il 20\/11\/2026: 2\/3/.test(CE.descriviLibro(r)), CE.descriviLibro(r));
+  const tutte = CE.conProva(rec, [{ pdf: 8, stampata: 4, letta: '4' }], '2026-11-21');
+  eq([tutte.fonte, tutte.mappa, tutte.prova.ok], ['auto', STIM, 1], 'tutte giuste: la mappa resta quella misurata');
+  vero(/indice/.test(CE.descriviLibro(CE.conFonte(CE.libroDa('Chimica', LIB1, null), 'indice'))));
+});
+
+t('libroDa: la mappa scelta (B/D) che torna dal blocco Fonti non diventa la misura; una misura vera sì', () => {
+  const b = CE.conAncore(CE.libroDa('Chimica', { ...LIB1, mappa: STIM }, null), { stampata: 20, pdf: 25 });
+  const giro = CE.libroDa('Chimica', { ...LIB1, mappa: b.mappa }, b);
+  eq([giro.fonte, giro.mappa], ['mano', b.mappa]);
+  eq(CE.conFonte(giro, 'auto').mappa, STIM, 'tornando ad A si ritrova la misura');
+  const nuova = { fonte: 'auto-etichette', tratti: [{ pdfDa: 1, pdfA: 40, stampDa: 1 }], affidabilita: 'esatta' };
+  eq(CE.conFonte(CE.libroDa('Chimica', { ...LIB1, mappa: nuova }, giro), 'auto').mappa, nuova);
+});
+t('paginePer: per ogni microstep le pagine dal primo libro con indice (mappa del libro); senza indice niente', () => {
+  const senza = { id: 'lib-a', type: 'libro', nome: 'A', fonte: 'auto', mappa: TRATTI };
+  const con = { id: 'lib-b', type: 'libro', nome: 'B', fonte: 'auto', mappa: TRATTI, indice: INDICE };
+  eq(CE.paginePer([senza, con], ['3.3.2', '9.9']), { '3.3.2': { stampDa: 46, stampA: 51, pdfDa: 57, pdfA: 62, affidabilita: 'stimata' } });
+  eq(CE.paginePer([senza], ['3.3.1']), {});
+});
+t('paroleChiave: parole lunghe e sigle di domanda e risposta corretta, senza parole vuote né doppioni', () => {
+  const q = { domanda: 'Qual è la funzione dei mitocondri nella cellula eucariote?', opzioni: ['Sintesi delle proteine', 'Produzione di ATP tramite respirazione cellulare', 'Divisione', 'Fotosintesi'], esatta: 1 };
+  eq(CE.paroleChiave(q), ['mitocondri', 'cellula', 'eucariote', 'produzione', 'atp', 'respirazione', 'cellulare']);
+  eq(CE.paroleChiave({ domanda: 'Che cosa?' }), []);
+});
+t('verificaCitazioni: ✅ resta, ↔ corretta in fonte, sourceRef e [[…]] e registrata, ⚠/✗ problemi per la correzione, ❓ dichiarata', () => {
+  const M = { fonte: 'auto-etichette', tratti: [{ pdfDa: 5, pdfA: 200, stampDa: 1 }], affidabilita: 'esatta' };   // stampata p = PDF p+4
+  const MIT = 'I mitocondri della cellula eucariote: produzione di ATP con la respirazione cellulare.';
+  const TESTI = { 23: 'Il reticolo endoplasmatico liscio.', 24: MIT, 25: 'Apparato di Golgi.', 34: 'I mitocondri hanno due membrane.', 53: 'Il nucleo.', 54: 'La mitosi.', 55: 'La meiosi.' };
+  const base = { domanda: 'Qual è la funzione dei mitocondri nella cellula eucariote?', opzioni: ['Sintesi delle proteine', 'Produzione di ATP tramite respirazione cellulare', 'Divisione', 'Fotosintesi'], esatta: 1 };
+  const q = (id, p) => ({ ...base, id, fonte: 'Manuale, p. ' + p, sourceRef: 'Manuale, p. ' + p, spiegazione: 'Testo. [[Manuale, p. ' + p + ']] e p. ' + p + ' fuori.' });
+  const qs = [q('q1', 19), q('q2', 50), q('q3', 20), q('q4', 80), q('q5', 30), { id: 'q6', domanda: 'Senza fonte' }];
+  eq(CE.pagineDaLeggere(qs, M), [22, 23, 24, 25, 33, 34, 35, 53, 54, 55, 83, 84, 85]);
+  const r = CE.verificaCitazioni(qs, M, p => TESTI[p] || '');
+  eq([r.qs[0].fonte, r.qs[0].sourceRef, r.qs[0].spiegazione], ['Manuale, p. 20', 'Manuale, p. 20', 'Testo. [[Manuale, p. 20]] e p. 19 fuori.']);
+  eq(r.registro, ['q1: p. 19 → p. 20 (i concetti sono sulla pagina accanto)']);
+  eq(r.problemi, [{ sev: 'err', id: 'q2', msg: 'citazione p. 50: la pagina non contiene i concetti della domanda' },
+    { sev: 'err', id: 'q5', msg: 'citazione p. 30: sulla pagina solo parte dei concetti della domanda' }]);
+  eq([r.ok, r.dubbi], [1, ['q4']]);
+  eq(r.qs.slice(1), qs.slice(1), 'le altre domande restano come sono');
+  eq(CE.verificaCitazioni(qs, { fonte: 'nessuna', tratti: [], affidabilita: 'nessuna' }, () => MIT).ok, 0, 'mappa nessuna: niente verifica');
+});
+t('verificaCitazioni → prompt di correzione: chiede fonte, sourceRef e spiegazione mostrando domanda, risposta e citazione', () => {
+  const q = { id: 'B-3.3-001', domanda: 'Che cosa producono i mitocondri?', opzioni: ['ATP', 'DNA', 'RNA', 'Lipidi'], esatta: 0, fonte: 'Manuale, p. 50', spiegazione: 'Spiega. [[Manuale, p. 50]]' };
+  const c = sb.DiagnosiQuiz.promptCorrezione([q], [{ sev: 'err', id: q.id, msg: 'citazione p. 50: la pagina non contiene i concetti della domanda' }]);
+  vero(c.nDomande === 1 && !c.manuali.length, 'una domanda da correggere con patch');
+  vero(c.testo.includes('RESTITUISCI: fonte, sourceRef, spiegazione'), 'campi da rifare: ' + c.testo);
+  vero(/Fonte attuale: Manuale, p\. 50/.test(c.testo) && /Opzioni: A\) ATP/.test(c.testo), 'contesto per ritrovare la pagina');
+  vero(/pagina reale/.test(c.testo), 'consiglio: cercare la pagina vera');
+});
 // =====================================================================
 console.log('\nCentro ' + ok + '/' + (ok + ko));
 process.exit(ko ? 1 : 0);

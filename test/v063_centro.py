@@ -1,7 +1,8 @@
 # Test v0.63 «Centro di creazione»: ospite con un piano di Biologia 3.3 (2 schede) già fatto.
 # Risposta incollata → Controllo trova 1 errore → Correggi con patch → ricontrollo verde → salta la prova →
 # Importa solo il microstep 3.3.1 → innesto con 1 scheda; reimport → stesso innesto, nessun doppione; lista esclusi precompilata.
-import os, json, http.server, threading, functools
+# v0.63.1: al Controllo le citazioni si verificano su un PDF scelto dal dispositivo (p. 2 → pagina accanto).
+import os, json, http.server, threading, functools, tempfile
 from playwright.sync_api import sync_playwright
 RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist')
 http.server.ThreadingHTTPServer.request_queue_size = 128
@@ -30,6 +31,34 @@ def dom(s, k, rotta=False):
             'distractorTypes': ['confusione di fase', 'attribuzione errata', 'omissione'],
             'spiegazione': 'RISPOSTA ESATTA: A) Giusta. PERCHÉ GLI ALTRI NO: B) no. C) no. D) no.', 'fonte': '[[Manuale, p. %d]]' % k}
 RISPOSTA = 'Ecco le schede:\n```json\n' + json.dumps({'formato': 'quiz-v3', 'step': '3.3', 'quiz': [dom(1, k, k == 5) for k in range(1, 19)] + [dom(2, k) for k in range(1, 19)]}, ensure_ascii=False) + '\n```'
+CRE['fonti'] = {'libri': [{'nome': 'Manuale', 'pdf': ['Manuale.pdf']}], 'slide': [], 'guide': [], 'indici': [], 'quiz': [], 'vietati': []}
+MAPPA = {'fonte': 'auto-etichette', 'tratti': [{'pdfDa': 5, 'pdfA': 99999, 'stampDa': 1}], 'affidabilita': 'esatta'}
+
+def pdf_libro(path):
+    """PDF minimo di 24 pagine (i–iv, poi 1…20): ogni pagina parla di glicolisi tranne la 2 stampata (PDF 6)."""
+    objs = []
+    def add(s): objs.append(s); return len(objs)
+    font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+    kids = []
+    for i in range(1, 25):
+        righe = ['Premessa'] if i <= 4 else (['Capitolo sulla membrana plasmatica e i suoi trasportatori.'] if i == 6
+                 else ['Capitolo: la glicolisi e il bilancio energetico.', 'Domanda di ripasso.'])
+        stream = '\n'.join('BT /F1 11 Tf 60 %d Td (%s) Tj ET' % (760 - 18 * k, r) for k, r in enumerate(righe))
+        cid = add('<< /Length %d >>\nstream\n%s\nendstream' % (len(stream.encode('latin-1')), stream))
+        kids.append(add(str(cid)))
+    pages = add('<< /Type /Pages /Kids [%s] /Count %d >>' % (' '.join('%d 0 R' % k for k in kids), len(kids)))
+    for k in kids:
+        objs[k - 1] = '<< /Type /Page /Parent %d 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 %d 0 R >> >> /Contents %s 0 R >>' % (pages, font, objs[k - 1])
+    root = add('<< /Type /Catalog /Pages %d 0 R /PageLabels << /Nums [0 << /S /r >> 4 << /S /D >>] >> >>' % pages)
+    out = b'%PDF-1.4\n'; offs = []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(out)); out += ('%d 0 obj\n%s\nendobj\n' % (i, o)).encode('latin-1')
+    x = len(out)
+    out += ('xref\n0 %d\n0000000000 65535 f \n' % (len(objs) + 1)).encode() + b''.join(('%010d 00000 n \n' % o).encode() for o in offs)
+    out += ('trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (len(objs) + 1, root, x)).encode()
+    with open(path, 'wb') as f: f.write(out)
+PDF = os.path.join(tempfile.mkdtemp(), 'Manuale.pdf'); pdf_libro(PDF)
+
 INNESTI = """JSON.stringify(Stato.tutti('innesto').filter(r => !r.deleted).map(x => ({ k: x.k, micro: x.sub.microstep.map(m => m.n + ':' + m.schede.length),
   dom: x.banche.reduce((a, sk) => a + ((Stato.prendi('bq-' + sk) || {}).domande || []).length, 0) })))"""
 
@@ -41,7 +70,11 @@ with sync_playwright() as p:
     # ospite: niente pacchetto né esame; fixture del Centro al passo 3
     pg.evaluate("""(cre => { localStorage.removeItem('imc-centro-esclusi');
       for (const t of ['pacchetto', 'esame', 'creazione', 'parteq', 'innesto']) for (const r of Stato.tutti(t)) Stato.elimina(r.id);
-      Stato.salva(cre, true); conStrumentiQuiz(() => CentroUI.apri()); })(%s)""" % json.dumps(CRE, ensure_ascii=False))
+      for (const r of Stato.tutti('libro')) Stato.elimina(r.id);
+      Stato.salva(cre, true); conStrumentiQuiz(() => {
+        Stato.salva({ id: Centro.idLibro('Biologia', 'Manuale'), type: 'libro', updatedAt: 0, nome: 'Manuale', materia: 'Biologia',
+          pdf: [{ nome: 'Manuale.pdf' }], fonte: 'auto', mappa: %s }, true);
+        CentroUI.apri(); }); })(%s)""" % (json.dumps(MAPPA), json.dumps(CRE, ensure_ascii=False)))
     pg.wait_for_selector('.centro-zona', timeout=10000)
     passo = lambda: pg.locator('.centro-passo').inner_text()
     zona = lambda: pg.locator('.centro-zona')
@@ -55,6 +88,15 @@ with sync_playwright() as p:
     zona().get_by_role('button', name='Avanti: Controllo').click(); pg.wait_for_timeout(300)
     e = pg.evaluate("Stato.prendi('cre-biologia-3.3').esiti")
     ok(e.get('controllato') and e.get('daCorreggere') == 1, 'Controllo zero token: 1 domanda da correggere (%s)' % json.dumps(e))
+
+    pg.get_by_label('Scegli dal dispositivo il PDF di Manuale').set_input_files(PDF)
+    pg.get_by_role('button', name='Verifica le citazioni sul PDF di Manuale').click()
+    pg.wait_for_function("(Stato.prendi('cre-biologia-3.3') || {}).citazioni", timeout=15000); pg.wait_for_timeout(300)
+    c = pg.evaluate("Stato.prendi('cre-biologia-3.3').citazioni")
+    ok(len(c['registro']) == 2 and not c['problemi'] and c['ok'] == 34, 'citazioni: 34 giuste, le 2 su p. 2 spostate alla pagina accanto (%s)' % json.dumps(c, ensure_ascii=False)[:300])
+    f2 = pg.evaluate("Stato.prendi('prq-biologia-3.3-s1').quiz.filter(q => /Domanda 1\\.2 /.test(q.domanda)).map(q => q.fonte + ' | ' + q.spiegazione.slice(-30))")
+    ok(len(f2) == 1 and '[[Manuale, p. 2]]' not in f2[0] and ('p. 1]]' in f2[0] or 'p. 3]]' in f2[0]), 'la fonte di p. 2 è corretta nel quiz salvato (%s)' % f2)
+    ok('Verificate il 20/11/2026' in zona().inner_text(), 'riepilogo della verifica nel Controllo')
 
     zona().locator('button', has_text='Correggi').first.click(); pg.wait_for_timeout(300)
     ok('Passo 5 di 7' in passo(), 'Correggi apre il passo 5 con il prompt di correzione')

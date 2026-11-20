@@ -103,6 +103,7 @@ const DiagnosiQuiz = (() => {
     [/fonte mancante/, () => ['Compila «fonte» con manuale e pagina reale (e copia in sourceRef).', 'Ogni risposta deve essere verificabile.']],
     [/da verificare/, () => ['Sostituisci con una pagina reale controllata sul PDF.', 'Una fonte non verificata è un rischio di errore.']],
     [/sourceRef diverso/, () => ['Imposta sourceRef uguale a fonte.', 'Le due chiavi devono coincidere.']],
+    [/^citazione p\. /, () => ['Cerca sul libro la pagina reale che contiene questi concetti e correggi la pagina in fonte, sourceRef e [[…]] della spiegazione.', 'Il controllo sul testo del PDF non ha trovato i concetti della domanda sulla pagina citata né su quelle accanto.']],
     [/stanno nella stessa scheda/, () => ['Sposta un membro della coppia gemella in un\'altra scheda.', 'La coppia serve a ripetere il concetto a distanza.']],
     [/ha (\d+) domande invece di/, m => ['Porta la scheda a ' + PER_SCHEDA + ' domande (ora ' + m[1] + ').', 'Ignoralo se hai caricato solo una parte del file.']],
     [/livello L(\d): (\d+) domande \(atteso (.+)\)/, m => ['Riequilibra: L' + m[1] + ' ha ' + m[2] + ' domande, atteso ' + m[3] + '.', 'Il mix 25/35/25/15 garantisce progressione.']],
@@ -175,6 +176,7 @@ const DiagnosiQuiz = (() => {
     [/fonte mancante/, () => ({ f: ['fonte', 'sourceRef'], c: ['domanda', 'citazione'] })],
     [/da verificare/, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'fonte', 'spiegazione'] })],
     [/sourceRef diverso/, () => ({ f: ['sourceRef'], c: ['fonte'] })],
+    [/^citazione p\. /, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
   ];
   const specDi = (msg: string) => { for (const [re, fn] of SPEC) { const m = msg.match(re); if (m) return fn(m); } return { f: [] as string[], c: ['domanda'] }; };
   function riga(q: DomQ, k: string): string {

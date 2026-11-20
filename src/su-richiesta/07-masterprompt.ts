@@ -300,8 +300,16 @@ const MasterPrompt = (() => {
   }
 
   /** Passo 3 «Quiz»: le schede indicate (una o due), con sigle e nome della parte già decisi dall'app. */
-  function costruisciSchede(o: OpzMP, schede: SchedaPromptMP[]): string {
+  function costruisciSchede(o: OpzMP, schede: SchedaPromptMP[], pagine?: Record<string, PagineMicro | null>): string {
     const { ms, step, pref } = base(o), l = schede.slice().sort((a, b) => a.n - b.n);
+    /** Pagine del microstep principale, calcolate dall'app (Centro.pagineMicrostep): l'AI non le ricava. */
+    const pag = (x: SchedaPromptMP) => {
+      const p = pagine && pagine[x.micro[0]];
+      if (!p) return '';
+      const pdf = p.pdfDa !== null ? ' (PDF ' + p.pdfDa + (p.pdfA !== null ? '–' + p.pdfA : ' in poi') + ')' : '';
+      return ' · ' + (p.stampA !== null ? 'pagine ' + p.stampDa + '–' + p.stampA : 'pagine dalla ' + p.stampDa) + ' del libro' + pdf;
+    };
+    const conPagine = l.some(x => pag(x));
     const da = l.length ? l[0].n : 1, a = l.length ? l[l.length - 1].n : da;
     const parte = pref + '-s' + da + (a !== da ? '-' + a : ''), sigla = (x: SchedaPromptMP) => x.sigla || 'S' + String(x.n).padStart(2, '0');
     const S: string[] = [];
@@ -311,7 +319,8 @@ const MasterPrompt = (() => {
     S.push('', 'RUOLO', RUOLO, registro(o.tono || 'tecnico_accademico'));
     sezione(S, 'TARGET (già compilato dall\'app)');
     S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.', ' - Schede da scrivere ora (' + l.length + ' × 18 domande):',
-      ...l.map(x => '   • ' + sigla(x) + ' · microstep ' + x.micro.join(', ') + ' · ' + x.categoria + (x.blocco ? ' · blocco «' + x.blocco + '»' : '')));
+      ...l.map(x => '   • ' + sigla(x) + ' · microstep ' + x.micro.join(', ') + ' · ' + x.categoria + (x.blocco ? ' · blocco «' + x.blocco + '»' : '') + pag(x)));
+    if (conPagine) S.push(' - Cita solo le pagine indicate per la scheda (numero stampato del libro); il PDF serve a trovarle.');
     S.push(...righeStudente(o));
     sezione(S, 'COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
     S.push(...COMPATIBILITA);

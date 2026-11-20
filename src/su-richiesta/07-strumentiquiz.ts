@@ -5,7 +5,7 @@
 //  • «🩺 Diagnostica quiz»: controlla il JSON restituito, ripara il riparabile, prepara il prompt di correzione
 //    chirurgica e applica le patch, senza spendere token. Logica in 07-diagnosiquiz.ts.
 // =====================================================================
-interface FileDrvSQ { id: string; name: string; mimeType: string; }
+interface FileDrvSQ { id: string; name: string; mimeType: string; file?: File; }   // file: PDF scelto dal dispositivo (solo per misurarlo)
 interface GruppoLibroSQ { libro: LibroMP; files: FileDrvSQ[]; usa: boolean; }
 /** Fonti scelte per uno step (solo nomi di file e misure dei libri): salvate nel record «creazione». */
 interface FontiSQ { libri: LibroMP[]; slide: string[]; guide: string[]; indici: string[]; quiz: string[]; vietati: string[]; }
@@ -165,26 +165,42 @@ const StrumentiQuiz = (() => {
   }
 
   // ================== MASTER PROMPT ==================
-  /** Pagine campione di un PDF di Drive → indice di lettura e mappa pagine PDF ↔ stampata (etichette del PDF, se no scostamento stimato). */
-  async function misura(f: FileDrvSQ): Promise<{ lettura: LetturaPdfMP; offset: number | null; mappa: MappaPag | null; pagine: number }> {
+  /**
+   * Un PDF (di Drive o dal dispositivo) → indice di lettura su pagine campione e mappa pagine PDF ↔ stampata a tratti:
+   * etichette del PDF (fonte A), se no numeri stampati letti su TUTTE le pagine (mai un solo scostamento stimato).
+   */
+  async function misuraPdf(dati: Blob, avanza?: (msg: string) => void): Promise<{ lettura: LetturaPdfMP; mappa: MappaPag | null; pagine: number }> {
     const L = await caricaPdfJs();
-    const blob = await Drive.scaricaBlob(f.id);
-    const doc = await L.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
-    const tot: number = doc.numPages, base = (MasterPrompt.segmentoDa(f.name) || 1) - 1;
-    const testi: string[] = [], campioni: Array<{ pdf: number; testo: string }> = [];
-    for (const i of MasterPrompt.pagineCampione(tot)) {
-      const p = await doc.getPage(i);
-      const tc: { items: Array<{ str?: string; hasEOL?: boolean }> } = await p.getTextContent();
-      const t = tc.items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
-      testi.push(t); campioni.push({ pdf: base + i, testo: t });
+    const doc = await L.getDocument({ data: new Uint8Array(await dati.arrayBuffer()), isEvalSupported: false }).promise;
+    try {
+      const tot: number = doc.numPages, campione = new Set(MasterPrompt.pagineCampione(tot));
+      let et: Array<string | null> | null = null;
+      try { et = await doc.getPageLabels(); } catch (e) { console.warn('[misura] etichette pagine', e); }
+      const conEtichette = !!(et && MappaPagine.daEtichette(et));
+      const testi: string[] = [], numeri: number[][] = [];
+      for (let i = 1; i <= tot; i++) {
+        if (conEtichette && !campione.has(i)) continue;
+        if (avanza && !conEtichette && i % 20 === 0) avanza('Leggo i numeri di pagina: ' + i + '/' + tot + '…');
+        const tc: { items: Array<{ str?: string; hasEOL?: boolean }> } = await (await doc.getPage(i)).getTextContent();
+        const t = tc.items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
+        if (campione.has(i)) testi.push(t);
+        numeri[i - 1] = conEtichette ? [] : MasterPrompt.numeroStampato(t);
+      }
+      return { lettura: MasterPrompt.indiceLettura(testi), mappa: Centro.mappaAuto(et, numeri), pagine: tot };
+    } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
+  }
+  /** Tutti i PDF di un libro (anche a segmenti) → lettura peggiore e mappa unica in pagine PDF assolute. */
+  async function misura(g: GruppoLibroSQ, avanza: (msg: string) => void): Promise<{ lettura: LetturaPdfMP | null; mappa: MappaPag | null }> {
+    let lettura: LetturaPdfMP | null = null;
+    const segmenti: Array<{ mappa: MappaPag | null; base: number }> = [];
+    for (const [k, f] of g.files.entries()) {
+      const pre = g.files.length > 1 ? 'PDF ' + (k + 1) + '/' + g.files.length + ': ' : '';
+      avanza(pre + (f.file ? 'leggo il file…' : 'scarico da Drive…'));
+      const r = await misuraPdf(f.file || await Drive.scaricaBlob(f.id), m => avanza(pre + m));
+      if (!lettura || r.lettura.pct < lettura.pct) lettura = r.lettura;
+      segmenti.push({ mappa: r.mappa, base: g.libro.segmenti ? (MasterPrompt.segmentoDa(f.name) || 1) - 1 : 0 });
     }
-    let mappa: MappaPag | null = null;
-    try { const et: Array<string | null> | null = await doc.getPageLabels(); if (et) mappa = MappaPagine.daEtichette(et); }
-    catch (e) { console.warn('[prompt quiz] etichette pagine', e); }
-    if (mappa) mappa.tratti.forEach(t => { t.pdfDa += base; t.pdfA += base; });   // segmenti: pagine PDF assolute
-    if (typeof doc.destroy === 'function') await doc.destroy();
-    const offset = MasterPrompt.stimaOffset(campioni);   // ripiego interno quando il PDF non ha etichette
-    return { lettura: MasterPrompt.indiceLettura(testi), offset, mappa: mappa || (offset === null ? null : { fonte: 'auto-stampati', tratti: [{ pdfDa: offset + 1, pdfA: MappaPagine.APERTO, stampDa: 1 }], affidabilita: 'stimata' }), pagine: tot };
+    return { lettura, mappa: Centro.unisciSegmenti(segmenti) };
   }
   // ================== DOSSIER STUDENTE (v0.62) — raccolta dati; il calcolo è in 07-dossier.ts ==================
   const K_ESCLUSE = 'imc-dossier-escluse';   // prefisso imc-: cancellata al cambio account (Privacy.pulisciLocalStorage)
@@ -275,29 +291,51 @@ const StrumentiQuiz = (() => {
       } catch (e) { stato.textContent = '⚠️ Ricerca non riuscita: ' + (e instanceof Error ? e.message : String(e)); return; }
       const fs = [...visti.values()], c = classifica(fs);
       altri = c.altri;
-      gruppi = [...c.libri.entries()].map(([nomeL, files]) => ({ files: files.sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0)),
-        usa: true, libro: { nome: nomeL, pdf: files.map(f => f.name), segmenti: files.some(f => MasterPrompt.segmentoDa(f.name) !== null) } }));
+      gruppi = [...c.libri.entries()].map(([nomeL, files]) => gruppoLibro(nomeL, files));
       scelti.clear(); [...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici].forEach(f => scelti.add(f.id));
       stato.textContent = fs.length ? 'Trovati ' + fs.length + ' file: togli la spunta a quelli da non usare e misura i libri.' : 'Nessun file trovato con il nome della materia: il prompt chiederà all\'AI di cercarli.';
       disegnaElenco();
     }
+    /** Misura e mappa già salvate nel record `libro` di questa materia, se c'è. */
+    function daRecord(libro: LibroMP): LibroMP {
+      const rec = Stato.prendi<LibroRec>(Centro.idLibro(nomeMateria(), libro.nome));
+      if (rec && !rec.deleted) { if (rec.lettura) libro.lettura = rec.lettura; libro.mappa = rec.mappa; }
+      return libro;
+    }
+    /** PDF dello stesso libro → gruppo (segmenti in ordine). */
+    function gruppoLibro(nomeL: string, files: FileDrvSQ[]): GruppoLibroSQ {
+      const fs = files.slice().sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0));
+      return { usa: true, files: fs, libro: daRecord({ nome: nomeL, pdf: fs.map(f => f.name), segmenti: fs.some(f => MasterPrompt.segmentoDa(f.name) !== null) }) };
+    }
+    /** PDF scelti dal dispositivo (ospite o senza Drive): misurati qui sul telefono; il file non viene salvato né inviato. */
+    const daPdf = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true, 'aria-label': 'Scegli i PDF del libro da misurare' }) as HTMLInputElement;
+    daPdf.addEventListener('change', () => {
+      const fs: FileDrvSQ[] = Array.from(daPdf.files || []).map((file, i) => ({ id: 'loc-' + i + '-' + file.name, name: file.name, mimeType: 'application/pdf', file }));
+      daPdf.value = '';
+      for (const [nomeL, files] of classifica(fs).libri) gruppi = gruppi.filter(g => g.libro.nome !== nomeL).concat(gruppoLibro(nomeL, files));
+      disegnaElenco();
+    });
     function disegnaElenco(): void {
       elenco.textContent = '';
       if (gruppi.length) elenco.appendChild(h('p', null, h('b', null, '📚 Libri')));
       gruppi.forEach(g => {
         const c = h('input', { type: 'checkbox', checked: g.usa || undefined, 'aria-label': 'Usa ' + g.libro.nome }) as HTMLInputElement;
         c.addEventListener('change', () => { g.usa = c.checked; });
-        const esito = h('span.piccolo.tenue', null, g.libro.lettura ? descrivi(g) : g.files.length + ' PDF' + (g.libro.segmenti ? ' a segmenti' : ''));
-        const b = h('button.chip', { type: 'button', 'aria-label': 'Misura la leggibilità di ' + g.libro.nome }, '📏 Misura leggibilità') as HTMLButtonElement;
+        const esito = h('span.piccolo.tenue', { role: 'status', 'aria-live': 'polite' }, g.libro.lettura || g.libro.mappa ? descrivi(g) : g.files.length + ' PDF' + (g.libro.segmenti ? ' a segmenti' : ''));
+        const b = h('button.chip', { type: 'button', 'aria-label': 'Misura pagine e leggibilità di ' + g.libro.nome }, '📏 Misura pagine') as HTMLButtonElement;
         b.addEventListener('click', async () => {
-          b.disabled = true; esito.textContent = 'Scarico e leggo pagine campione…';
+          b.disabled = true;
           try {
-            const r = await misura(g.files[0]);
-            g.libro.lettura = r.lettura; g.libro.offset = r.offset; g.libro.mappa = r.mappa; esito.textContent = descrivi(g);
+            const r = await misura(g, m => { esito.textContent = m; });
+            g.libro.lettura = r.lettura; g.libro.mappa = r.mappa; delete g.libro.offset;
+            const rec = recordDi(g);
+            if (rec) g.libro.mappa = rec.mappa;   // una fonte B/C/D scelta prima resta
+            esito.textContent = descrivi(g);
           } catch (e) { esito.textContent = '⚠️ ' + (e instanceof Error ? e.message : String(e)); }
           b.disabled = false;
         });
-        elenco.appendChild(h('div.riga', null, h('label', null, c, ' ' + g.libro.nome), h('div', null, esito, ' ', b)));
+        const bp = h('button.chip', { type: 'button', 'aria-label': 'Pagine di ' + g.libro.nome + ': fonte, ancore, indice e prova', onclick: () => foglioPagine(g, esito) }, '⚙️ Pagine');
+        elenco.appendChild(h('div.riga', null, h('label', null, c, ' ' + g.libro.nome), h('div', null, esito, ' ', b, ' ', bp)));
       });
       const sez = (titolo: string, xs: FileDrvSQ[], nota?: string) => {
         if (!xs.length) return;
@@ -313,10 +351,117 @@ const StrumentiQuiz = (() => {
       if (altri.vietati.length) elenco.appendChild(h('p.piccolo', null, '🚫 Esclusi come fonte (eserciziari commerciali): ' + altri.vietati.map(f => f.name).slice(0, 8).join(', ')));
     }
     function descrivi(g: GruppoLibroSQ): string {
-      const r = g.libro.lettura;
-      if (!r) return '';
-      const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
-      return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
+      const r = g.libro.lettura, sim = !r ? '' : r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
+      const rec = nomeMateria() ? Stato.prendi<LibroRec>(Centro.idLibro(nomeMateria(), g.libro.nome)) : null;
+      return (r ? sim + ' lettura ' + r.pct + '% (' + r.giudizio + ') · ' : '') + (rec && !rec.deleted ? Centro.descriviLibro(rec) : Centro.descriviMappa(g.libro.mappa || null));
+    }
+    /** Record `libro` aggiornato con il gruppo (misura compresa) e salvato; null senza materia. */
+    function recordDi(g: GruppoLibroSQ): LibroRec | null {
+      const mat = nomeMateria();
+      if (!mat) return null;
+      const prec = Stato.prendi<LibroRec>(Centro.idLibro(mat, g.libro.nome)), nuovo = Centro.libroDa(mat, g.libro, prec);
+      if (!prec || JSON.stringify(prec) !== JSON.stringify(nuovo)) Stato.salva(nuovo, true);
+      return nuovo;
+    }
+    const blobLibro = new Map<string, Blob>();
+    /** Pagina PDF assoluta del libro → canvas (sceglie il segmento giusto; il file resta sul dispositivo). */
+    async function disegnaPagina(g: GruppoLibroSQ, pdf: number, tela: HTMLCanvasElement, nota: HTMLElement): Promise<void> {
+      const conBase = g.files.map(f => ({ f, base: g.libro.segmenti ? (MasterPrompt.segmentoDa(f.name) || 1) - 1 : 0 })).sort((a, b) => a.base - b.base);
+      const x = conBase.filter(c => c.base < pdf).pop();
+      if (!x) { nota.textContent = 'Apri tu il PDF alla pagina ' + pdf + ' e leggi il numero stampato.'; tela.hidden = true; return; }
+      nota.textContent = 'Carico la pagina ' + pdf + '…';
+      try {
+        let b = x.f.file || blobLibro.get(x.f.id);
+        if (!b) { b = await Drive.scaricaBlob(x.f.id); blobLibro.set(x.f.id, b); }
+        const L = await caricaPdfJs();
+        const doc = await L.getDocument({ data: new Uint8Array(await b.arrayBuffer()), isEvalSupported: false }).promise;
+        try {
+          const n = pdf - x.base;
+          if (n > doc.numPages) { nota.textContent = 'Il PDF ha solo ' + (doc.numPages + x.base) + ' pagine.'; tela.hidden = true; return; }
+          const pag = await doc.getPage(n), base = pag.getViewport({ scale: 1 });
+          const dpr = Math.min(window.devicePixelRatio || 1, 2), larg = Math.min(560, (tela.parentElement?.clientWidth || 320) - 8);
+          const vp = pag.getViewport({ scale: (larg / base.width) * dpr });
+          tela.width = vp.width; tela.height = vp.height; tela.style.width = vp.width / dpr + 'px'; tela.hidden = false;
+          await pag.render({ canvasContext: tela.getContext('2d'), viewport: vp }).promise;
+          nota.textContent = 'Pagina ' + pdf + ' del PDF: quale numero è stampato (in alto o in basso)?';
+        } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
+      } catch (e) { nota.textContent = '⚠️ Pagina non mostrata: ' + (e instanceof Error ? e.message : String(e)); tela.hidden = true; }
+    }
+    /** Foglio «Pagine» di un libro: fonte A–D, ancore B guidate, indice C, prova a 3 pagine. */
+    function foglioPagine(g: GruppoLibroSQ, esito: HTMLElement): void {
+      let rec = recordDi(g);
+      if (!rec) { avviso('Scegli o scrivi la materia.'); return; }
+      const riga = h('p', { role: 'status', 'aria-live': 'polite' });
+      const salva = (r: LibroRec) => { rec = r; Stato.salva(r, true); riga.textContent = Centro.descriviLibro(r); disegnaAncore(); };
+      riga.textContent = Centro.descriviLibro(rec);
+      const FONTI: Array<[LibroRec['fonte'], string]> = [['auto', 'A · 📏 automatica (misura del PDF)'], ['mano', 'B · ✍️ guidata: leggo io i numeri stampati'], ['indice', 'C · 📑 dall’indice del libro'], ['nessuna', 'D · ⚪ senza numeri di pagina (capitoli e paragrafi)']];
+      const sceltaFonte = h('fieldset', null, h('legend', null, 'Da dove prendo le pagine'), ...FONTI.map(([v, t]) => {
+        const r = h('input', { type: 'radio', name: 'fonte-pagine', value: v, checked: rec!.fonte === v || undefined }) as HTMLInputElement;
+        r.addEventListener('change', () => { if (r.checked) salva(Centro.conFonte(rec!, v)); });
+        return h('label.riga', null, r, ' ' + t);
+      }));
+      // --- B guidata ---
+      const tela = h('canvas.pdf-tela', { hidden: true }) as HTMLCanvasElement, notaB = h('p.piccolo.tenue', { 'aria-live': 'polite' });
+      const pagPdf = h('input', { type: 'number', min: '1', value: '10', 'aria-label': 'Pagina del PDF da guardare' }) as HTMLInputElement;
+      const stampata = h('input', { type: 'text', inputmode: 'numeric', 'aria-label': 'Numero stampato su questa pagina' }) as HTMLInputElement;
+      const elencoAncore = h('ul.piccolo');
+      function disegnaAncore(): void {
+        elencoAncore.textContent = '';
+        (rec!.ancore || []).forEach(a => elencoAncore.appendChild(h('li', null, 'PDF ' + a.pdf + ' → pagina ' + a.stampata)));
+      }
+      disegnaAncore();
+      const righeB = area('Oppure una riga per ancora: «pagina 5 = PDF 9»', 2);
+      const sezB = h('details', null, h('summary', null, '✍️ B · leggo io i numeri (ancore)'),
+        h('div.riga', null, pagPdf, h('button.chip', { type: 'button', 'aria-label': 'Mostra la pagina del PDF', onclick: () => { disegnaPagina(g, Number(pagPdf.value) || 1, tela, notaB); } }, '👁️ Mostra')),
+        notaB, tela,
+        h('div.riga', null, stampata, h('button.chip', { type: 'button', 'aria-label': 'Aggiungi ancora', onclick: () => {
+          const p = Number(pagPdf.value), s = stampata.value.trim();
+          if (!(p >= 1) || !s) { avviso('Scrivi la pagina del PDF e il numero stampato.'); return; }
+          salva(Centro.conAncore(rec!, { pdf: p, stampata: s })); stampata.value = '';
+        } }, '➕ Aggiungi ancora')),
+        righeB, h('button.chip', { type: 'button', 'aria-label': 'Salva le ancore scritte', onclick: () => {
+          let r = rec!, n = 0;
+          for (const t of righeB.value.split('\n')) {
+            const m = /^\s*(?:pagina|pag\.?|p\.?)?\s*([0-9]+|[ivxlcdm]+)\s*=\s*(?:pdf\s*)?([0-9]+)\s*$/i.exec(t);
+            if (m) { r = Centro.conAncore(r, { stampata: m[1], pdf: Number(m[2]) }); n++; }
+          }
+          if (!n) { avviso('Nessuna riga «pagina N = PDF M» riconosciuta.'); return; }
+          salva(r); righeB.value = '';
+        } }, '💾 Salva righe'), elencoAncore);
+      // --- C indice ---
+      const testoIndice = area('Incolla qui l’indice del libro (una voce per riga, con il numero di pagina)', 5);
+      const notaC = h('p.piccolo.tenue', { 'aria-live': 'polite' }, rec.indice ? rec.indice.length + ' voci dell’indice salvate.' : '');
+      const sezC = h('details', null, h('summary', null, '📑 C · indice del libro'), testoIndice,
+        h('button.chip', { type: 'button', 'aria-label': 'Leggi l’indice', onclick: () => {
+          const v = Centro.indiceDa(testoIndice.value);
+          if (!v.length) { notaC.textContent = 'Nessuna voce con numero di pagina riconosciuta.'; return; }
+          salva({ ...rec!, indice: v }); notaC.textContent = v.length + ' voci dell’indice salvate.';
+        } }, '📑 Leggi indice'), notaC);
+      // --- prova a 3 pagine ---
+      const sezProva = h('div');
+      const avviaProva = () => {
+        sezProva.textContent = '';
+        const camp = MappaPagine.campioneProva(rec!.mappa, 3, Date.now() % 997 + 1);
+        if (!camp.length) { sezProva.appendChild(h('p.piccolo.tenue', null, 'Prima serve una mappa (misura, ancore o indice).')); return; }
+        sezProva.appendChild(h('p.piccolo.tenue', null, 'Apri ogni pagina e correggi il numero se sul libro è diverso.'));
+        const campi = camp.map(c => {
+          const inp = h('input', { type: 'text', inputmode: 'numeric', value: String(c.stampata), 'aria-label': 'Numero stampato sulla pagina ' + c.pdf + ' del PDF' }) as HTMLInputElement;
+          const t = h('canvas.pdf-tela', { hidden: true }) as HTMLCanvasElement, n = h('p.piccolo.tenue', { 'aria-live': 'polite' });
+          sezProva.appendChild(h('div', null, h('div.riga', null, h('span', null, 'PDF ' + c.pdf + ': '), inp,
+            h('button.chip', { type: 'button', 'aria-label': 'Mostra la pagina ' + c.pdf + ' del PDF', onclick: () => { disegnaPagina(g, c.pdf, t, n); } }, '👁️')), n, t));
+          return { c, inp };
+        });
+        sezProva.appendChild(h('button.btn', { type: 'button', 'aria-label': 'Conferma la prova', onclick: () => {
+          salva(Centro.conProva(rec!, campi.map(x => ({ pdf: x.c.pdf, stampata: x.c.stampata, letta: x.inp.value })), ymd(new Date())));
+          sezProva.textContent = '';
+        } }, '✅ Conferma prova'));
+      };
+      const corpo = h('div', null, riga, sceltaFonte, sezB, sezC,
+        h('button.chip', { type: 'button', 'aria-label': 'Prova la mappa su 3 pagine', onclick: avviaProva }, '🧪 Prova a 3 pagine'), sezProva);
+      foglio({ titolo: '📄 Pagine di ' + g.libro.nome, corpo, allaChiusura: () => {
+        if (rec) { if (rec.lettura) g.libro.lettura = rec.lettura; g.libro.mappa = rec.mappa; }
+        esito.textContent = descrivi(g);
+      } });
     }
     /** Nomi scritti a mano o scelti da file → stesse categorie della ricerca su Drive. */
     function daIncollate(): ReturnType<typeof classifica> {
@@ -325,7 +470,7 @@ const StrumentiQuiz = (() => {
     }
     function valori(): FontiSQ {
       const m = daIncollate(), nomi = (xs: FileDrvSQ[], tutti = false) => xs.filter(f => tutti || scelti.has(f.id)).map(f => f.name);
-      const libriMan: LibroMP[] = [...m.libri.entries()].map(([nome, files]) => ({ nome, pdf: files.map(f => f.name) }));
+      const libriMan: LibroMP[] = [...m.libri.entries()].map(([nome, files]) => daRecord({ nome, pdf: files.map(f => f.name) }));
       const libriDrv = gruppi.filter(g => g.usa).map(g => g.libro), visti = new Set(libriDrv.map(l => l.nome));
       return { libri: [...libriDrv, ...libriMan.filter(l => !visti.has(l.nome))],
         slide: [...nomi(altri.slide), ...nomi(m.altri.slide, true)], guide: [...nomi(altri.guide), ...nomi(m.altri.guide, true)],
@@ -337,7 +482,8 @@ const StrumentiQuiz = (() => {
     const el = h('div.fonti', null,
       h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco,
       h('details', { open: (!Drive.pronto && !!iniziali) || undefined }, h('summary', null, '📎 Fonti senza Drive (nomi dei file da allegare all\'AI)'),
-        h('p.piccolo.tenue', null, 'Scrivi un nome per riga o scegli i file: l\'app legge solo il nome, i file li alleghi tu alla chat dell\'AI.'), incollate, daFile));
+        h('p.piccolo.tenue', null, 'Scrivi un nome per riga o scegli i file: l\'app legge solo il nome, i file li alleghi tu alla chat dell\'AI.'), incollate, daFile,
+        h('p.piccolo.tenue', null, '📏 Misura le pagine di un libro dal dispositivo: l\'app legge i numeri di pagina del PDF qui (il file non viene salvato né inviato).'), daPdf));
     return { el, valori, nomiNoti };
   }
   /** Regole del dossier di una materia/step (se lo step non ha risposte: tutta la materia) e controllo privacy. */

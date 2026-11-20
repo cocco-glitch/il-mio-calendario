@@ -43,7 +43,8 @@ function foglio(opz: {
 }): { chiudi: () => void } {
   let chiuso = false;
   const chiudi = () => { if (chiuso) return; chiuso = true; sfondo.remove(); document.removeEventListener('keydown', tasto); if (opz.allaChiusura) opz.allaChiusura(); };
-  const tasto = (e: KeyboardEvent) => { if (e.key === 'Escape') chiudi(); };
+  // Esc chiude solo il foglio in cima (un foglio aperto da un altro non chiude anche quello sotto)
+  const tasto = (e: KeyboardEvent) => { if (e.key === 'Escape' && sfondo === Array.from(document.querySelectorAll('.foglio-sfondo')).pop()) chiudi(); };
   const sfondo = h('div.foglio-sfondo', { onclick: (e: Event) => { if (e.target === sfondo) chiudi(); } },
     h('div.foglio', { role: 'dialog', 'aria-label': opz.titolo },
       h('div.foglio-testa', null,

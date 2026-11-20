@@ -304,6 +304,17 @@ t('costruisciSchede: solo le schede date, nome parte e sigle dall\'app, Fase 2, 
   const una = sb.MasterPrompt.costruisciSchede(BASE63, [sch[0]]);
   vero(una.includes('"parte": "biologia-3.3-s1"') && !/S02/.test(una), 'una scheda sola');
 });
+t('costruisciSchede: pagine esatte del microstep dall\'app (stampate e PDF), senza pagine nessuna riga in più', () => {
+  const sch = [{ n: 1, sigla: 'S01', micro: ['3.3.1'], categoria: 'prioritaria' }, { n: 2, sigla: 'S02', micro: ['3.3.3'], categoria: 'prioritaria' }];
+  const pag = { '3.3.1': { stampDa: 40, stampA: 45, pdfDa: 49, pdfA: 56, affidabilita: 'stimata' }, '3.3.3': { stampDa: 52, stampA: null, pdfDa: null, pdfA: null, affidabilita: 'nessuna' } };
+  const p = sb.MasterPrompt.costruisciSchede(BASE63, sch, pag);
+  vero(/S01[^\n]*pagine 40–45 del libro \(PDF 49–56\)/.test(p), 'S01 con intervallo e PDF');
+  vero(/S02[^\n]*pagine dalla 52 del libro/.test(p) && !/S02[^\n]*PDF/.test(p), 'S02 aperta, senza PDF');
+  vero(/cita solo le pagine indicate/i.test(p), 'regola sulle pagine');
+  const m = VIETATE.exec(p); vero(!m, 'parola vietata: ' + (m && m[0]));
+  const senza = sb.MasterPrompt.costruisciSchede(BASE63, sch);
+  vero(!/pagine \d|cita solo le pagine indicate/i.test(senza), 'senza pagine come prima');
+});
 t('costruisci (prompt classico) invariato fino alla v0.64: chiede ancora la chiusura', () => {
   vero(/CHIUSURA/.test(sb.MasterPrompt.costruisci(BASE63)));
 });

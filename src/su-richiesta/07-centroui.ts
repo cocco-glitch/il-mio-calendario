@@ -7,6 +7,8 @@
 interface CreazioneRec extends Rec, StatoCreazione {
   type: 'creazione'; materia: string; nomeMateria: string; step: string; titolo?: string; data?: string;
   intensita?: OpzMP['intensita']; piano?: PianoCentro; fonti?: FontiSQ;
+  /** T12: ultima verifica delle citazioni sul PDF (problemi con la fonte di allora: valgono finché la fonte non cambia). */
+  citazioni?: { quando: string; libro: string; ok: number; dubbi: string[]; registro: string[]; problemi: Array<ProblemaQ & { fonte: string }> };
 }
 
 /** Una scheda arrivata (o interrotta): la «parte» com'è nel file di Drive, una per scheda (prq-<materia>-<step>-s<n>). */
@@ -49,12 +51,47 @@ const CentroUI = (() => {
     for (const [n, l] of per) { const p = parteDi(r, n); if (p) Stato.salva({ ...p, quiz: l }, true); }
   }
   /** Controllo zero token: problemi (bloccanti + qualità + insieme, senza doppioni) e quante domande si correggono con patch. */
-  function controlla(qs: DomAI[], avvisi = false) {
+  function controlla(qs: DomAI[], avvisi = false, citazioni: ProblemaQ[] = []) {
     const v = Validatore.valida(qs), visti = new Set<string>(), problemi: ProblemaQ[] = [];
-    const tutti: ProblemaQ[] = [...[...v.bloccanti].flatMap(([id, ms]) => ms.map(msg => ({ sev: 'err' as SevQ, id, msg }))), ...v.qualita, ...v.insieme];
+    const tutti: ProblemaQ[] = [...[...v.bloccanti].flatMap(([id, ms]) => ms.map(msg => ({ sev: 'err' as SevQ, id, msg }))), ...v.qualita, ...v.insieme, ...citazioni];
     for (const p of tutti) { const k = p.id + '|' + p.msg; if (!visti.has(k)) { visti.add(k); problemi.push(p); } }
     const corr = DiagnosiQuiz.promptCorrezione(qs, problemi, { avvisi });
     return { v, problemi, corr };
+  }
+  /** Problemi di citazione ancora validi: la domanda c'è e la sua fonte è quella verificata (dopo una patch alla fonte si riverifica). */
+  const problemiCit = (r: CreazioneRec, qs: DomAI[]): ProblemaQ[] => (r.citazioni ? r.citazioni.problemi : [])
+    .filter(p => qs.some(q => String(q.id) === p.id && q.fonte === p.fonte)).map(p => ({ sev: p.sev, id: p.id, msg: p.msg }));
+  /** Libri del record con una mappa delle pagine utilizzabile (fonte ≠ nessuna): il primo serve alla verifica delle citazioni. */
+  const libriVerificabili = (r: CreazioneRec) => (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, l.nome)))
+    .filter((x): x is LibroRec => !!x && !x.deleted && x.fonte !== 'nessuna' && !!x.mappa && x.mappa.fonte !== 'nessuna' && x.mappa.tratti.length > 0);
+  const pdfScelti = new Map<string, Blob>();   // PDF scelti dal dispositivo in questa sessione (nome del file → contenuto)
+  /** Un PDF del libro: scelto dal dispositivo, se no da Drive per nome (cache «imc-pdf»: scaricato una volta sola). */
+  async function datiPdf(nome: string): Promise<Uint8Array> {
+    const loc = pdfScelti.get(nome);
+    if (loc) return new Uint8Array(await loc.arrayBuffer());
+    const f = (await Drive.cerca(nome.replace(/\.pdf$/i, ''), 'application/pdf')).find(x => x.name === nome);
+    if (!f) throw new Error('«' + nome + '» non trovato su Drive');
+    return PdfCache.prendi(f.id);
+  }
+  /** Testo delle pagine PDF assolute richieste, aprendo ogni segmento del libro una volta sola (pdf.js senza eval). */
+  async function testiPagine(l: LibroRec, pagine: number[], avanza: (m: string) => void): Promise<Map<number, string>> {
+    const testi = new Map<number, string>();
+    const seg = l.pdf.map(f => ({ nome: f.nome, base: f.segmentoDa ? f.segmentoDa - 1 : 0 })).sort((a, b) => a.base - b.base);
+    const L = await caricaPdfJs();
+    for (const [k, sg] of seg.entries()) {
+      const fine = k + 1 < seg.length ? seg[k + 1].base : Infinity, mie = pagine.filter(p => p > sg.base && p <= fine);
+      if (!mie.length) continue;
+      avanza('Apro «' + sg.nome + '»…');
+      const doc = await L.getDocument({ data: await datiPdf(sg.nome), isEvalSupported: false }).promise;
+      try {
+        for (const p of mie) {
+          if (p - sg.base > doc.numPages) continue;
+          const tc: { items: Array<{ str?: string }> } = await (await doc.getPage(p - sg.base)).getTextContent();
+          testi.set(p, tc.items.map(x => x.str || '').join(' '));
+        }
+      } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
+    }
+    return testi;
   }
   const elencoProblemi = (problemi: ProblemaQ[], etichetta: string, max = 40) => problemi.length
     ? h('ul.piccolo.centro-avvisi', { 'aria-label': etichetta }, ...problemi.slice(0, max).map(p => h('li', null, SEGNO[p.sev] + ' ' + p.id + ' — ' + p.msg)),
@@ -102,7 +139,9 @@ const CentroUI = (() => {
       arch.setAttribute('aria-label', 'Tipo di materia (archetipo)');
       if (sel) sel.addEventListener('change', () => { const c = codiceScelto(); if (c) arch.value = Dominio.archetipoMateria(c); });
       const nomeMat = () => { const c = codiceScelto(); if (c) return (materie.find(m => m.codice === c) || { nome: '' }).nome;
-        const t = cm.el.querySelector<HTMLInputElement>('input.campo-materia-nuova'); return t ? t.value.trim() : ''; };
+        // senza materie salvate cm.el È il campo di testo (querySelector cerca solo nei discendenti)
+        const t = cm.el.matches('input.campo-materia-nuova') ? cm.el as HTMLInputElement : cm.el.querySelector<HTMLInputElement>('input.campo-materia-nuova');
+        return t ? t.value.trim() : ''; };
       const fonti = StrumentiQuiz.raccoltaFonti(nomeMat, rec ? rec.fonti : undefined);
 
       const altri = aperte().filter(r => !rec || r.id !== rec.id);
@@ -121,8 +160,14 @@ const CentroUI = (() => {
         const id = 'cre-' + Centro.prefisso({ materia: nome, step: st });
         const gia = Stato.prendi<CreazioneRec>(id);
         const base: CreazioneRec = gia && !gia.deleted ? gia : { id, type: 'creazione', updatedAt: 0, materia: codice, nomeMateria: nome, step: st, schede: [], esiti: {} };
+        const fv = fonti.valori();
+        // Un record `libro` per ogni libro scelto (solo nomi e misure): la fonte scelta a mano resta (Centro.libroDa).
+        for (const l of fv.libri) {
+          const prec = Stato.prendi<LibroRec>(Centro.idLibro(nome, l.nome)), nuovo = Centro.libroDa(nome, l, prec);
+          if (!prec || JSON.stringify(prec) !== JSON.stringify(nuovo)) Stato.salva(nuovo, true);   // niente sync se non cambia
+        }
         salva({ ...base, materia: codice, nomeMateria: nome, step: st, titolo: titolo.value.trim() || undefined, data: data.value || undefined,
-          intensita: intens.value as OpzMP['intensita'], fonti: fonti.valori() });
+          intensita: intens.value as OpzMP['intensita'], fonti: fv });
         vai(Math.max(2, Centro.passoDi(rec!)));
       }
       return h('div.centro-passo-corpo', null,
@@ -266,7 +311,9 @@ const CentroUI = (() => {
           troncato: true, ultimoCompleto: ultimo, avvisi: [], errori: [] }, { perScheda: PER() });
       } else {
         const lst = bersaglio.map(n => delPiano(n)).filter((x): x is SchedaCentro => !!x);
-        testoPrompt = MasterPrompt.costruisciSchede(opzioniMP(r).opz, lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })));
+        const libri = (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, l.nome))).filter((x): x is LibroRec => !!x);
+        const pagine = Centro.paginePer(libri, lst.map(x => x.micro[0]).filter(Boolean));
+        testoPrompt = MasterPrompt.costruisciSchede(opzioniMP(r).opz, lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })), pagine);
       }
       const titolo = (continua ? 'Continua ' : 'Prompt per ') + bersaglio.map(sig).join(' e ');
       return h('div.centro-passo-corpo', null, testa, lista,
@@ -325,7 +372,7 @@ const CentroUI = (() => {
       const r = rec!, { qs: grezze, daScheda } = domande(r);
       const rip = Validatore.ripara(grezze);
       if (rip.log.length) { salvaDomande(r, rip.qs, daScheda); registroRip = [...registroRip, ...rip.log]; }
-      const qs = rip.qs as DomAI[], { v, problemi, corr } = controlla(qs);
+      const qs = rip.qs as DomAI[], { v, problemi, corr } = controlla(qs, false, problemiCit(r, qs));
       const daCorreggere = corr.nDomande;
       salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere } });
       const err = problemi.filter(p => p.sev === 'err'), warn = problemi.filter(p => p.sev !== 'err');
@@ -337,6 +384,7 @@ const CentroUI = (() => {
         corr.manuali.length ? h('p.piccolo', null, '✋ Da sistemare a mano (le patch non bastano): ' + corr.manuali.map(p => p.id + ' — ' + p.msg).join('; ')) : null,
         warn.length ? h('details', null, h('summary.piccolo', null, '⚠️ Avvisi di qualità: ' + warn.length), elencoProblemi(warn, 'Avvisi di qualità')) : null,
         !problemi.length ? h('p.piccolo', null, '✅ Nessun problema trovato.') : null,
+        bloccoCitazioni(r, qs),
         h('div.chips', null,
           daCorreggere ? h('button.btn', { type: 'button', onclick: () => vai(5) }, 'Correggi ' + daCorreggere + (daCorreggere === 1 ? ' domanda →' : ' domande →'))
             : h('button.btn', { type: 'button', onclick: () => vai(6) }, 'Avanti: Prova →'),
@@ -344,10 +392,46 @@ const CentroUI = (() => {
           h('button.chip', { type: 'button', onclick: () => vai(3) }, '📋 Torna alle schede')));
     }
 
+    /** T12: citazioni ↔ testo del PDF del primo libro con mappa; ↔ corrette da sole, ⚠/✗ nel prompt di correzione, ❓ dichiarate. */
+    function bloccoCitazioni(r: CreazioneRec, qs: DomAI[]): HTMLElement {
+      const libri = libriVerificabili(r), l = libri[0], c = r.citazioni;
+      if (!l) return h('div', null, h('h3.centro-sotto', null, '📖 Citazioni sul libro'),
+        h('p.piccolo.tenue', null, 'Nessun libro con la mappa delle pagine: le citazioni non si possono verificare sul PDF (Obiettivo → Fonti → ⚙️ Pagine).'));
+      const stato = h('span.piccolo', { role: 'status' }), btn = h('button.chip', { type: 'button', 'aria-label': 'Verifica le citazioni sul PDF di ' + l.nome }, '🔎 Verifica le citazioni sul PDF') as HTMLButtonElement;
+      const scegli = h('input', { type: 'file', accept: 'application/pdf', multiple: true, 'aria-label': 'Scegli dal dispositivo il PDF di ' + l.nome }) as HTMLInputElement;
+      scegli.addEventListener('change', () => { for (const f of Array.from(scegli.files || [])) pdfScelti.set(f.name, f); stato.textContent = (scegli.files || []).length + ' PDF scelti: ora verifica.'; });
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const pagine = Centro.pagineDaLeggere(qs, l.mappa);
+          if (!pagine.length) { stato.textContent = 'Nessuna citazione con numero di pagina da verificare.'; return; }
+          const testi = await testiPagine(l, pagine, m => { stato.textContent = m; });
+          const { qs: dopo, daScheda } = domande(r), res = Centro.verificaCitazioni(dopo, l.mappa, p => testi.get(p) || '');
+          if (res.registro.length) salvaDomande(r, res.qs, daScheda);
+          const fonteDi = (id: string) => String((res.qs.find(q => String(q.id) === id) || {}).fonte || '');
+          salva({ ...r, citazioni: { quando: ymd(new Date()), libro: l.nome, ok: res.ok, dubbi: res.dubbi, registro: res.registro, problemi: res.problemi.map(p => ({ ...p, fonte: fonteDi(p.id) })) } });
+          vai(4);
+        } catch (e) {
+          console.warn('[centro] verifica citazioni', e);
+          stato.textContent = '⛔ ' + (e instanceof Error ? e.message : String(e)) + ': scegli il PDF dal dispositivo e riprova.';
+          btn.disabled = false;
+        }
+      });
+      const fatto = c && c.libro === l.nome ? (() => {
+        const [a, m, g] = c.quando.split('-'), np = problemiCit(r, qs).length;
+        return [h('p.piccolo', null, 'Verificate il ' + g + '/' + m + '/' + a + ' su «' + l.nome + '»: ✅ ' + c.ok + ' giuste · ↔ ' + c.registro.length + ' corrette da sole · ⚠/✗ ' + np + ' nel prompt di correzione · ❓ ' + c.dubbi.length + ' non verificabili'),
+          c.dubbi.length ? h('p.piccolo.tenue', null, '❓ Pagina senza testo leggibile o citazione senza numero: ' + c.dubbi.join(', ') + '. Controllale tu sul libro.') : null,
+          c.registro.length ? h('details', null, h('summary.piccolo', null, '↔ Citazioni corrette sulla pagina accanto: ' + c.registro.length),
+            h('ul.piccolo.tenue.centro-avvisi', { 'aria-label': 'Citazioni corrette' }, ...c.registro.map(t => h('li', null, t)))) : null];
+      })() : [h('p.piccolo.tenue', null, 'Controlla che ogni «fonte» citi la pagina giusta di «' + l.nome + '»: l\'app legge la pagina (e quelle accanto) e cerca le parole chiave della domanda.' + (libri.length > 1 ? ' Si usa il primo libro con la mappa.' : ''))];
+      return h('div', null, h('h3.centro-sotto', null, '📖 Citazioni sul libro'), ...fatto,
+        h('div.chips', null, btn, h('label.piccolo', null, 'PDF dal dispositivo: ', scegli)), stato);
+    }
+
     // ---------- Passo 5: Correggi ----------
     let conAvvisi = false;
     function passoCorreggi(): HTMLElement {
-      const r = rec!, { qs, daScheda } = domande(r), { corr } = controlla(qs, conAvvisi);
+      const r = rec!, { qs, daScheda } = domande(r), { corr } = controlla(qs, conAvvisi, problemiCit(r, qs));
       const casella = h('input', { type: 'checkbox', checked: conAvvisi || undefined }) as HTMLInputElement;
       casella.addEventListener('change', () => { conAvvisi = casella.checked; vai(5); });
       function applica(t: string): void {
@@ -355,7 +439,7 @@ const CentroUI = (() => {
         if ('errore' in lp) { avviso('⛔ ' + lp.errore, 6000); return; }
         const ap = DiagnosiQuiz.applicaPatch(qs, lp.patch);
         salvaDomande(r, ap.qs, daScheda);
-        const dopo = controlla(ap.qs as DomAI[]), resta = dopo.corr.nDomande;
+        const dopo = controlla(ap.qs as DomAI[], false, problemiCit(r, ap.qs as DomAI[])), resta = dopo.corr.nDomande;
         salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere: resta } });
         const righe = ['🩹 Patch applicate a ' + ap.n + (ap.n === 1 ? ' domanda' : ' domande') + '.',
           ...(ap.mancanti.length ? ['⚠️ Id non trovati: ' + ap.mancanti.join(', ')] : []),
