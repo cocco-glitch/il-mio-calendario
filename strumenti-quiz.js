@@ -164,7 +164,189 @@ const Centro = (() => {
         out.meta = { ...(out.meta || {}), domandeTotali: out.quiz.length };
         return out;
     }
-    return { prefisso, nomeParte, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra };
+    const codiceVoce = (v) => (/^\s*(\d+(?:\.\d+)*)/.exec(s(v.capitolo)) || ['', ''])[1];
+    function pagineMicrostep(indice, mappa, ms) {
+        const voci = (indice || []).filter(v => v && codiceVoce(v)), i = voci.findIndex(v => codiceVoce(v) === s(ms));
+        if (i < 0 || (mappa && mappa.fonte === 'nessuna'))
+            return null;
+        const da = Number(voci[i].pagina), dopo = voci[i + 1] ? Number(voci[i + 1].pagina) : NaN;
+        const a = dopo > da ? dopo - 1 : null;
+        const m = mappa && mappa.tratti.length ? mappa : null;
+        return { stampDa: da, stampA: a, pdfDa: m ? MappaPagine.aPdf(m, da) : null, pdfA: m && a !== null ? MappaPagine.aPdf(m, a) : null,
+            affidabilita: m ? m.affidabilita : 'nessuna' };
+    }
+    function mappaAuto(etichette, numeriPerPagina) {
+        return (etichette && MappaPagine.daEtichette(etichette)) || MappaPagine.daStampati(numeriPerPagina || []);
+    }
+    function descriviMappa(m) {
+        if (!m || (!m.tratti.length && m.fonte !== 'nessuna'))
+            return '⚪ pagine non rilevate: indicale tu a mano (pagina del libro = pagina del PDF)';
+        if (m.fonte === 'nessuna')
+            return '⚪ senza numeri di pagina: si cita per capitolo e paragrafo';
+        const n = m.tratti.length, tratti = n > 1 ? ', ' + n + ' tratti' : '';
+        if (m.fonte === 'mano')
+            return '🟢 pagine esatte (indicate a mano' + tratti + ')';
+        if (m.fonte === 'auto-etichette')
+            return '🟢 pagine esatte (etichette del PDF' + tratti + ')';
+        return '🟡 pagine stimate dai numeri stampati' + (n > 1 ? ' (' + n + ' tratti)' : '') + ': controllale con la prova';
+    }
+    const slugLibro = (x) => String(x || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const idLibro = (materia, nome) => 'lib-' + slugLibro(materia) + '-' + slugLibro(nome);
+    function libroDa(materia, l, prec) {
+        const base = prec && !prec.deleted ? { ...prec } : { id: idLibro(materia, l.nome), type: 'libro', updatedAt: 0, nome: l.nome, materia, pdf: [], fonte: 'auto', mappa: null };
+        base.nome = l.nome;
+        base.materia = materia;
+        base.pdf = l.pdf.map(nome => { const sd = l.segmenti ? MasterPrompt.segmentoDa(nome) : null; return sd ? { nome, segmentoDa: sd } : { nome }; });
+        if (l.lettura)
+            base.lettura = l.lettura;
+        const misuraNuova = l.mappa && l.mappa.fonte !== 'mano' && l.mappa.fonte !== 'nessuna' ? l.mappa : null;
+        base.misurata = misuraNuova || misurataDi(base);
+        if ((base.fonte === 'auto' || base.fonte === 'indice') && misuraNuova)
+            base.mappa = misuraNuova;
+        if (base.mappa === undefined)
+            base.mappa = null;
+        return base;
+    }
+    function unisciSegmenti(segmenti) {
+        const con = segmenti.filter(x => x.mappa && x.mappa.tratti.length);
+        if (!con.length)
+            return null;
+        const tratti = con.flatMap(x => x.mappa.tratti.map(t => ({ pdfDa: t.pdfDa + x.base, pdfA: t.pdfA + x.base, stampDa: t.stampDa })));
+        const stimata = con.some(x => x.mappa.affidabilita !== 'esatta');
+        return { fonte: con.every(x => x.mappa.fonte === 'auto-etichette') ? 'auto-etichette' : 'auto-stampati', tratti, affidabilita: stimata ? 'stimata' : 'esatta' };
+    }
+    function indiceDa(testo) {
+        return Pianificatore.righeIndice(testo).filter(v => v.pagina != null).map(v => ({ capitolo: v.num + ' ' + v.titolo, pagina: v.pagina }));
+    }
+    const misurataDi = (r) => r.misurata !== undefined ? r.misurata : r.fonte === 'auto' ? r.mappa : null;
+    function applicaAncore(misurata, ancore) {
+        if (!misurata || !misurata.tratti.length)
+            return MappaPagine.daMano(ancore);
+        let tratti = misurata.tratti.map(t => ({ ...t })).sort((a, b) => a.pdfDa - b.pdfDa);
+        for (const a of [...ancore].sort((x, y) => x.pdf - y.pdf)) {
+            const dentro = tratti.find(t => t.pdfDa <= a.pdf && a.pdf <= t.pdfA);
+            const dopo = tratti.find(t => t.pdfDa > a.pdf);
+            const fine = dentro ? dentro.pdfA : dopo ? dopo.pdfDa - 1 : MappaPagine.APERTO;
+            if (dentro)
+                dentro.pdfA = a.pdf - 1;
+            tratti = tratti.filter(t => t.pdfA >= t.pdfDa);
+            tratti.push({ pdfDa: a.pdf, pdfA: fine, stampDa: a.stampata });
+            tratti.sort((x, y) => x.pdfDa - y.pdfDa);
+        }
+        return { fonte: 'mano', tratti, affidabilita: 'esatta' };
+    }
+    function mappaDi(r) {
+        if (r.fonte === 'nessuna')
+            return { fonte: 'nessuna', tratti: [], affidabilita: 'nessuna' };
+        if (r.fonte === 'mano' && r.ancore && r.ancore.length)
+            return applicaAncore(misurataDi(r), r.ancore);
+        return misurataDi(r);
+    }
+    const numeroO = (x) => typeof x === 'string' && /^\s*\d+\s*$/.test(x) ? Number(x) : typeof x === 'string' ? x.trim() : x;
+    function conAncore(r, a) {
+        const ancora = { stampata: numeroO(a.stampata), pdf: a.pdf };
+        const out = { ...r, misurata: misurataDi(r), ancore: [...(r.ancore || []).filter(x => x.pdf !== a.pdf), ancora].sort((x, y) => x.pdf - y.pdf), fonte: 'mano' };
+        out.mappa = mappaDi(out);
+        return out;
+    }
+    function conFonte(r, fonte) {
+        const out = { ...r, misurata: misurataDi(r), fonte };
+        out.mappa = mappaDi(out);
+        return out;
+    }
+    function conProva(r, risposte, quando) {
+        const norma = (x) => String(x == null ? '' : x).trim().toLowerCase();
+        let out = { ...r, misurata: misurataDi(r) };
+        let ok = 0;
+        for (const x of risposte) {
+            if (norma(x.letta) === norma(x.stampata)) {
+                ok++;
+                continue;
+            }
+            if (norma(x.letta))
+                out = conAncore(out, { pdf: x.pdf, stampata: x.letta });
+        }
+        out.prova = { quando, ok, tot: risposte.length };
+        return out;
+    }
+    function descriviLibro(r) {
+        let s = r.fonte === 'indice' ? '📑 capitoli dall’indice · ' + (r.mappa ? descriviMappa(r.mappa) : '🟡 pagine stimate dall’indice (PDF non mappato)') : descriviMappa(r.mappa);
+        if (r.prova) {
+            const [a, m, g] = r.prova.quando.split('-');
+            s += ' · provata il ' + g + '/' + m + '/' + a + ': ' + r.prova.ok + '/' + r.prova.tot;
+        }
+        return s;
+    }
+    function paginePer(libri, micro) {
+        const out = {};
+        for (const ms of micro)
+            for (const l of libri) {
+                if (!l || l.deleted || !l.indice || !l.indice.length)
+                    continue;
+                const p = pagineMicrostep(l.indice, l.mappa, ms);
+                if (p) {
+                    out[ms] = p;
+                    break;
+                }
+            }
+        return out;
+    }
+    const VUOTE = new Set(['quale', 'quali', 'della', 'delle', 'degli', 'dello', 'nella', 'nelle', 'negli', 'nello', 'dalla', 'dalle', 'dagli', 'dallo',
+        'sulla', 'sulle', 'sugli', 'sullo', 'questo', 'questa', 'questi', 'queste', 'quello', 'quella', 'quelli', 'quelle', 'viene', 'vengono', 'essere',
+        'tramite', 'attraverso', 'durante', 'mentre', 'anche', 'ancora', 'sempre', 'perché', 'quando', 'quanto', 'quanti', 'seguenti', 'seguente',
+        'corretta', 'corretto', 'affermazione', 'risposta', 'funzione', 'principale', 'rispetto', 'possono', 'perche']);
+    function paroleChiave(q) {
+        const o = Array.isArray(q.opzioni) ? q.opzioni : [], e = q.esatta;
+        const giusta = typeof e === 'number' && typeof o[e] === 'string' ? o[e] : '';
+        const out = [];
+        for (const w of (String(q.domanda || '') + ' ' + giusta).split(/[^\p{L}\p{N}]+/u)) {
+            const l = w.toLowerCase();
+            if (!(l.length >= 5 || /^\p{Lu}{2,}$/u.test(w)) || VUOTE.has(l) || out.includes(l))
+                continue;
+            out.push(l);
+            if (out.length === 8)
+                break;
+        }
+        return out;
+    }
+    const verificabile = (m) => !!m && m.fonte !== 'nessuna' && m.tratti.length > 0;
+    function pagineDaLeggere(qs, m) {
+        const pagine = new Set();
+        if (verificabile(m))
+            for (const q of qs)
+                if (typeof q.fonte === 'string')
+                    MappaPagine.verifica(m, q.fonte, p => { pagine.add(p); return ''; }, ['x']);
+        return [...pagine].filter(p => p > 0).sort((a, b) => a - b);
+    }
+    const cambiaPagina = (t, da, a) => t.replace(new RegExp('(\\bpp?\\.\\s*)' + String(da) + '\\b', 'i'), '$1' + String(a));
+    function verificaCitazioni(qs, m, testoPagina) {
+        const out = { qs: [...qs], registro: [], problemi: [], ok: 0, dubbi: [] };
+        if (!verificabile(m))
+            return out;
+        qs.forEach((q, i) => {
+            if (typeof q.fonte !== 'string' || !q.fonte.trim())
+                return;
+            const id = String(q.id), v = MappaPagine.verifica(m, q.fonte, testoPagina, paroleChiave(q));
+            const vecchia = (/\bpp?\.\s*(\d{1,5}|[ivxlcdm]+)\b/i.exec(q.fonte) || [])[1];
+            if (v.esito === '✅')
+                out.ok++;
+            else if (v.esito === '❓')
+                out.dubbi.push(id);
+            else if (v.esito === '↔' && vecchia && v.pagina !== null) {
+                const n = { ...q, fonte: cambiaPagina(q.fonte, vecchia, v.pagina) };
+                if (typeof q.sourceRef === 'string')
+                    n.sourceRef = cambiaPagina(q.sourceRef, vecchia, v.pagina);
+                if (typeof q.spiegazione === 'string')
+                    n.spiegazione = q.spiegazione.replace(/\[\[[^\]]*\]\]/g, c => cambiaPagina(c, vecchia, v.pagina));
+                out.qs[i] = n;
+                out.registro.push(id + ': p. ' + vecchia + ' → p. ' + v.pagina + ' (i concetti sono sulla pagina accanto)');
+            }
+            else
+                out.problemi.push({ sev: 'err', id, msg: 'citazione p. ' + (vecchia || v.pagina) + ': ' + (v.esito === '⚠' ? 'sulla pagina solo parte dei concetti della domanda' : 'la pagina non contiene i concetti della domanda') });
+        });
+        return out;
+    }
+    return { prefisso, nomeParte, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni };
 })();
 
 const CentroUI = (() => {
@@ -213,9 +395,9 @@ const CentroUI = (() => {
                 Stato.salva({ ...p, quiz: l }, true);
         }
     }
-    function controlla(qs, avvisi = false) {
+    function controlla(qs, avvisi = false, citazioni = []) {
         const v = Validatore.valida(qs), visti = new Set(), problemi = [];
-        const tutti = [...[...v.bloccanti].flatMap(([id, ms]) => ms.map(msg => ({ sev: 'err', id, msg }))), ...v.qualita, ...v.insieme];
+        const tutti = [...[...v.bloccanti].flatMap(([id, ms]) => ms.map(msg => ({ sev: 'err', id, msg }))), ...v.qualita, ...v.insieme, ...citazioni];
         for (const p of tutti) {
             const k = p.id + '|' + p.msg;
             if (!visti.has(k)) {
@@ -225,6 +407,45 @@ const CentroUI = (() => {
         }
         const corr = DiagnosiQuiz.promptCorrezione(qs, problemi, { avvisi });
         return { v, problemi, corr };
+    }
+    const problemiCit = (r, qs) => (r.citazioni ? r.citazioni.problemi : [])
+        .filter(p => qs.some(q => String(q.id) === p.id && q.fonte === p.fonte)).map(p => ({ sev: p.sev, id: p.id, msg: p.msg }));
+    const libriVerificabili = (r) => (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi(Centro.idLibro(r.nomeMateria, l.nome)))
+        .filter((x) => !!x && !x.deleted && x.fonte !== 'nessuna' && !!x.mappa && x.mappa.fonte !== 'nessuna' && x.mappa.tratti.length > 0);
+    const pdfScelti = new Map();
+    async function datiPdf(nome) {
+        const loc = pdfScelti.get(nome);
+        if (loc)
+            return new Uint8Array(await loc.arrayBuffer());
+        const f = (await Drive.cerca(nome.replace(/\.pdf$/i, ''), 'application/pdf')).find(x => x.name === nome);
+        if (!f)
+            throw new Error('«' + nome + '» non trovato su Drive');
+        return PdfCache.prendi(f.id);
+    }
+    async function testiPagine(l, pagine, avanza) {
+        const testi = new Map();
+        const seg = l.pdf.map(f => ({ nome: f.nome, base: f.segmentoDa ? f.segmentoDa - 1 : 0 })).sort((a, b) => a.base - b.base);
+        const L = await caricaPdfJs();
+        for (const [k, sg] of seg.entries()) {
+            const fine = k + 1 < seg.length ? seg[k + 1].base : Infinity, mie = pagine.filter(p => p > sg.base && p <= fine);
+            if (!mie.length)
+                continue;
+            avanza('Apro «' + sg.nome + '»…');
+            const doc = await L.getDocument({ data: await datiPdf(sg.nome), isEvalSupported: false }).promise;
+            try {
+                for (const p of mie) {
+                    if (p - sg.base > doc.numPages)
+                        continue;
+                    const tc = await (await doc.getPage(p - sg.base)).getTextContent();
+                    testi.set(p, tc.items.map(x => x.str || '').join(' '));
+                }
+            }
+            finally {
+                if (typeof doc.destroy === 'function')
+                    await doc.destroy();
+            }
+        }
+        return testi;
     }
     const elencoProblemi = (problemi, etichetta, max = 40) => problemi.length
         ? h('ul.piccolo.centro-avvisi', { 'aria-label': etichetta }, ...problemi.slice(0, max).map(p => h('li', null, SEGNO[p.sev] + ' ' + p.id + ' — ' + p.msg)), problemi.length > max ? h('li.tenue', null, '…e altri ' + (problemi.length - max)) : null)
@@ -278,7 +499,7 @@ const CentroUI = (() => {
                 const c = codiceScelto();
                 if (c)
                     return (materie.find(m => m.codice === c) || { nome: '' }).nome;
-                const t = cm.el.querySelector('input.campo-materia-nuova');
+                const t = cm.el.matches('input.campo-materia-nuova') ? cm.el : cm.el.querySelector('input.campo-materia-nuova');
                 return t ? t.value.trim() : '';
             };
             const fonti = StrumentiQuiz.raccoltaFonti(nomeMat, rec ? rec.fonti : undefined);
@@ -303,8 +524,14 @@ const CentroUI = (() => {
                 const id = 'cre-' + Centro.prefisso({ materia: nome, step: st });
                 const gia = Stato.prendi(id);
                 const base = gia && !gia.deleted ? gia : { id, type: 'creazione', updatedAt: 0, materia: codice, nomeMateria: nome, step: st, schede: [], esiti: {} };
+                const fv = fonti.valori();
+                for (const l of fv.libri) {
+                    const prec = Stato.prendi(Centro.idLibro(nome, l.nome)), nuovo = Centro.libroDa(nome, l, prec);
+                    if (!prec || JSON.stringify(prec) !== JSON.stringify(nuovo))
+                        Stato.salva(nuovo, true);
+                }
                 salva({ ...base, materia: codice, nomeMateria: nome, step: st, titolo: titolo.value.trim() || undefined, data: data.value || undefined,
-                    intensita: intens.value, fonti: fonti.valori() });
+                    intensita: intens.value, fonti: fv });
                 vai(Math.max(2, Centro.passoDi(rec)));
             }
             return h('div.centro-passo-corpo', null, h('p.piccolo.tenue', null, 'Scegli la materia e lo step: l\'app prepara il prompt del piano, poi quello di ogni scheda.'), riprendi, nuovo, h('label.piccolo', null, 'Materia'), cm.el, h('div.chips', null, step, data), titolo, intens, h('label.piccolo', null, 'Tipo di materia'), arch, h('h3.centro-sotto', null, 'Fonti'), fonti.el, h('button.btn', { type: 'button', onclick: avanti }, 'Avanti →'));
@@ -444,7 +671,9 @@ const CentroUI = (() => {
             }
             else {
                 const lst = bersaglio.map(n => delPiano(n)).filter((x) => !!x);
-                testoPrompt = MasterPrompt.costruisciSchede(opzioniMP(r).opz, lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })));
+                const libri = (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi(Centro.idLibro(r.nomeMateria, l.nome))).filter((x) => !!x);
+                const pagine = Centro.paginePer(libri, lst.map(x => x.micro[0]).filter(Boolean));
+                testoPrompt = MasterPrompt.costruisciSchede(opzioniMP(r).opz, lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })), pagine);
             }
             const titolo = (continua ? 'Continua ' : 'Prompt per ') + bersaglio.map(sig).join(' e ');
             return h('div.centro-passo-corpo', null, testa, lista, h('h3.centro-sotto', null, titolo), continua ? h('p.piccolo.tenue', null, 'Incolla questo prompt nella stessa chat: l\'AI scrive solo le domande che mancano.')
@@ -511,16 +740,54 @@ const CentroUI = (() => {
                 salvaDomande(r, rip.qs, daScheda);
                 registroRip = [...registroRip, ...rip.log];
             }
-            const qs = rip.qs, { v, problemi, corr } = controlla(qs);
+            const qs = rip.qs, { v, problemi, corr } = controlla(qs, false, problemiCit(r, qs));
             const daCorreggere = corr.nDomande;
             salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere } });
             const err = problemi.filter(p => p.sev === 'err'), warn = problemi.filter(p => p.sev !== 'err');
-            return h('div.centro-passo-corpo', null, h('p.piccolo', null, h('b', null, qs.length + ' domande'), ' · pronte da importare ' + v.pronte + ' · da correggere con patch ' + daCorreggere), registroRip.length ? h('details', null, h('summary.piccolo', null, '🔧 Riparazioni automatiche già fatte: ' + registroRip.length), h('ul.piccolo.tenue.centro-avvisi', { 'aria-label': 'Riparazioni automatiche' }, ...registroRip.map(t => h('li', null, t)))) : null, err.length ? h('h3.centro-sotto', null, '⛔ Da rifare') : null, elencoProblemi(err, 'Problemi da rifare'), corr.manuali.length ? h('p.piccolo', null, '✋ Da sistemare a mano (le patch non bastano): ' + corr.manuali.map(p => p.id + ' — ' + p.msg).join('; ')) : null, warn.length ? h('details', null, h('summary.piccolo', null, '⚠️ Avvisi di qualità: ' + warn.length), elencoProblemi(warn, 'Avvisi di qualità')) : null, !problemi.length ? h('p.piccolo', null, '✅ Nessun problema trovato.') : null, h('div.chips', null, daCorreggere ? h('button.btn', { type: 'button', onclick: () => vai(5) }, 'Correggi ' + daCorreggere + (daCorreggere === 1 ? ' domanda →' : ' domande →'))
+            return h('div.centro-passo-corpo', null, h('p.piccolo', null, h('b', null, qs.length + ' domande'), ' · pronte da importare ' + v.pronte + ' · da correggere con patch ' + daCorreggere), registroRip.length ? h('details', null, h('summary.piccolo', null, '🔧 Riparazioni automatiche già fatte: ' + registroRip.length), h('ul.piccolo.tenue.centro-avvisi', { 'aria-label': 'Riparazioni automatiche' }, ...registroRip.map(t => h('li', null, t)))) : null, err.length ? h('h3.centro-sotto', null, '⛔ Da rifare') : null, elencoProblemi(err, 'Problemi da rifare'), corr.manuali.length ? h('p.piccolo', null, '✋ Da sistemare a mano (le patch non bastano): ' + corr.manuali.map(p => p.id + ' — ' + p.msg).join('; ')) : null, warn.length ? h('details', null, h('summary.piccolo', null, '⚠️ Avvisi di qualità: ' + warn.length), elencoProblemi(warn, 'Avvisi di qualità')) : null, !problemi.length ? h('p.piccolo', null, '✅ Nessun problema trovato.') : null, bloccoCitazioni(r, qs), h('div.chips', null, daCorreggere ? h('button.btn', { type: 'button', onclick: () => vai(5) }, 'Correggi ' + daCorreggere + (daCorreggere === 1 ? ' domanda →' : ' domande →'))
                 : h('button.btn', { type: 'button', onclick: () => vai(6) }, 'Avanti: Prova →'), h('button.chip', { type: 'button', onclick: () => vai(4) }, '🔁 Ricontrolla'), h('button.chip', { type: 'button', onclick: () => vai(3) }, '📋 Torna alle schede')));
+        }
+        function bloccoCitazioni(r, qs) {
+            const libri = libriVerificabili(r), l = libri[0], c = r.citazioni;
+            if (!l)
+                return h('div', null, h('h3.centro-sotto', null, '📖 Citazioni sul libro'), h('p.piccolo.tenue', null, 'Nessun libro con la mappa delle pagine: le citazioni non si possono verificare sul PDF (Obiettivo → Fonti → ⚙️ Pagine).'));
+            const stato = h('span.piccolo', { role: 'status' }), btn = h('button.chip', { type: 'button', 'aria-label': 'Verifica le citazioni sul PDF di ' + l.nome }, '🔎 Verifica le citazioni sul PDF');
+            const scegli = h('input', { type: 'file', accept: 'application/pdf', multiple: true, 'aria-label': 'Scegli dal dispositivo il PDF di ' + l.nome });
+            scegli.addEventListener('change', () => { for (const f of Array.from(scegli.files || []))
+                pdfScelti.set(f.name, f); stato.textContent = (scegli.files || []).length + ' PDF scelti: ora verifica.'; });
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try {
+                    const pagine = Centro.pagineDaLeggere(qs, l.mappa);
+                    if (!pagine.length) {
+                        stato.textContent = 'Nessuna citazione con numero di pagina da verificare.';
+                        return;
+                    }
+                    const testi = await testiPagine(l, pagine, m => { stato.textContent = m; });
+                    const { qs: dopo, daScheda } = domande(r), res = Centro.verificaCitazioni(dopo, l.mappa, p => testi.get(p) || '');
+                    if (res.registro.length)
+                        salvaDomande(r, res.qs, daScheda);
+                    const fonteDi = (id) => String((res.qs.find(q => String(q.id) === id) || {}).fonte || '');
+                    salva({ ...r, citazioni: { quando: ymd(new Date()), libro: l.nome, ok: res.ok, dubbi: res.dubbi, registro: res.registro, problemi: res.problemi.map(p => ({ ...p, fonte: fonteDi(p.id) })) } });
+                    vai(4);
+                }
+                catch (e) {
+                    console.warn('[centro] verifica citazioni', e);
+                    stato.textContent = '⛔ ' + (e instanceof Error ? e.message : String(e)) + ': scegli il PDF dal dispositivo e riprova.';
+                    btn.disabled = false;
+                }
+            });
+            const fatto = c && c.libro === l.nome ? (() => {
+                const [a, m, g] = c.quando.split('-'), np = problemiCit(r, qs).length;
+                return [h('p.piccolo', null, 'Verificate il ' + g + '/' + m + '/' + a + ' su «' + l.nome + '»: ✅ ' + c.ok + ' giuste · ↔ ' + c.registro.length + ' corrette da sole · ⚠/✗ ' + np + ' nel prompt di correzione · ❓ ' + c.dubbi.length + ' non verificabili'),
+                    c.dubbi.length ? h('p.piccolo.tenue', null, '❓ Pagina senza testo leggibile o citazione senza numero: ' + c.dubbi.join(', ') + '. Controllale tu sul libro.') : null,
+                    c.registro.length ? h('details', null, h('summary.piccolo', null, '↔ Citazioni corrette sulla pagina accanto: ' + c.registro.length), h('ul.piccolo.tenue.centro-avvisi', { 'aria-label': 'Citazioni corrette' }, ...c.registro.map(t => h('li', null, t)))) : null];
+            })() : [h('p.piccolo.tenue', null, 'Controlla che ogni «fonte» citi la pagina giusta di «' + l.nome + '»: l\'app legge la pagina (e quelle accanto) e cerca le parole chiave della domanda.' + (libri.length > 1 ? ' Si usa il primo libro con la mappa.' : ''))];
+            return h('div', null, h('h3.centro-sotto', null, '📖 Citazioni sul libro'), ...fatto, h('div.chips', null, btn, h('label.piccolo', null, 'PDF dal dispositivo: ', scegli)), stato);
         }
         let conAvvisi = false;
         function passoCorreggi() {
-            const r = rec, { qs, daScheda } = domande(r), { corr } = controlla(qs, conAvvisi);
+            const r = rec, { qs, daScheda } = domande(r), { corr } = controlla(qs, conAvvisi, problemiCit(r, qs));
             const casella = h('input', { type: 'checkbox', checked: conAvvisi || undefined });
             casella.addEventListener('change', () => { conAvvisi = casella.checked; vai(5); });
             function applica(t) {
@@ -531,7 +798,7 @@ const CentroUI = (() => {
                 }
                 const ap = DiagnosiQuiz.applicaPatch(qs, lp.patch);
                 salvaDomande(r, ap.qs, daScheda);
-                const dopo = controlla(ap.qs), resta = dopo.corr.nDomande;
+                const dopo = controlla(ap.qs, false, problemiCit(r, ap.qs)), resta = dopo.corr.nDomande;
                 salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere: resta } });
                 const righe = ['🩹 Patch applicate a ' + ap.n + (ap.n === 1 ? ' domanda' : ' domande') + '.',
                     ...(ap.mancanti.length ? ['⚠️ Id non trovati: ' + ap.mancanti.join(', ')] : []),
@@ -1176,6 +1443,7 @@ const DiagnosiQuiz = (() => {
         [/fonte mancante/, () => ['Compila «fonte» con manuale e pagina reale (e copia in sourceRef).', 'Ogni risposta deve essere verificabile.']],
         [/da verificare/, () => ['Sostituisci con una pagina reale controllata sul PDF.', 'Una fonte non verificata è un rischio di errore.']],
         [/sourceRef diverso/, () => ['Imposta sourceRef uguale a fonte.', 'Le due chiavi devono coincidere.']],
+        [/^citazione p\. /, () => ['Cerca sul libro la pagina reale che contiene questi concetti e correggi la pagina in fonte, sourceRef e [[…]] della spiegazione.', 'Il controllo sul testo del PDF non ha trovato i concetti della domanda sulla pagina citata né su quelle accanto.']],
         [/stanno nella stessa scheda/, () => ['Sposta un membro della coppia gemella in un\'altra scheda.', 'La coppia serve a ripetere il concetto a distanza.']],
         [/ha (\d+) domande invece di/, m => ['Porta la scheda a ' + PER_SCHEDA + ' domande (ora ' + m[1] + ').', 'Ignoralo se hai caricato solo una parte del file.']],
         [/livello L(\d): (\d+) domande \(atteso (.+)\)/, m => ['Riequilibra: L' + m[1] + ' ha ' + m[2] + ' domande, atteso ' + m[3] + '.', 'Il mix 25/35/25/15 garantisce progressione.']],
@@ -1283,6 +1551,7 @@ const DiagnosiQuiz = (() => {
         [/fonte mancante/, () => ({ f: ['fonte', 'sourceRef'], c: ['domanda', 'citazione'] })],
         [/da verificare/, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'fonte', 'spiegazione'] })],
         [/sourceRef diverso/, () => ({ f: ['sourceRef'], c: ['fonte'] })],
+        [/^citazione p\. /, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
     ];
     const specDi = (msg) => { for (const [re, fn] of SPEC) {
         const m = msg.match(re);
@@ -1988,15 +2257,25 @@ const MasterPrompt = (() => {
         S.push('JSON (preferito):', '{ "formato": "piano-v1", "blocchi": [ { "codice": "' + step + '", "titolo": "<argomento del blocco>", "copre": [ { "schede": ["S1", "S2"], "micro": ["' + step + '.1"] }, { "schede": ["S3"], "micro": ["' + step + '.2", "' + step + '.3"] } ] },', '  { "codice": "' + step + '", "titolo": "Raffinamento – <argomento>", "copre": [ { "schede": ["S9"], "micro": ["' + step + '.1"] } ] } ] }', 'Oppure a righe (una riga @B per blocco, una COPRE per gruppo di schede):', '@B ' + step + ' | <argomento del blocco>', 'COPRE S1 S2 | ' + step + '.1', 'COPRE S3 | ' + step + '.2 ' + step + '.3', ' - Ogni scheda copre un solo microstep principale (il primo elencato) e compare una sola volta.', ' - Durata, ripassi, date e file finale li calcola l\'app dal piano: non scriverli.');
         return S.join('\n');
     }
-    function costruisciSchede(o, schede) {
+    function costruisciSchede(o, schede, pagine) {
         const { ms, step, pref } = base(o), l = schede.slice().sort((a, b) => a.n - b.n);
+        const pag = (x) => {
+            const p = pagine && pagine[x.micro[0]];
+            if (!p)
+                return '';
+            const pdf = p.pdfDa !== null ? ' (PDF ' + p.pdfDa + (p.pdfA !== null ? '–' + p.pdfA : ' in poi') + ')' : '';
+            return ' · ' + (p.stampA !== null ? 'pagine ' + p.stampDa + '–' + p.stampA : 'pagine dalla ' + p.stampDa) + ' del libro' + pdf;
+        };
+        const conPagine = l.some(x => pag(x));
         const da = l.length ? l[0].n : 1, a = l.length ? l[l.length - 1].n : da;
         const parte = pref + '-s' + da + (a !== da ? '-' + a : ''), sigla = (x) => x.sigla || 'S' + String(x.n).padStart(2, '0');
         const S = [];
         S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)', 'Il TUO UNICO PRODOTTO è UN SOLO blocco ```json con le SCHEDE DI QUIZ elencate qui sotto, e nient\'altro: niente piano, niente riepiloghi, niente file.', 'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app.');
         S.push('', 'RUOLO', RUOLO, registro(o.tono || 'tecnico_accademico'));
         sezione(S, 'TARGET (già compilato dall\'app)');
-        S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.', ' - Schede da scrivere ora (' + l.length + ' × 18 domande):', ...l.map(x => '   • ' + sigla(x) + ' · microstep ' + x.micro.join(', ') + ' · ' + x.categoria + (x.blocco ? ' · blocco «' + x.blocco + '»' : '')));
+        S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.', ' - Schede da scrivere ora (' + l.length + ' × 18 domande):', ...l.map(x => '   • ' + sigla(x) + ' · microstep ' + x.micro.join(', ') + ' · ' + x.categoria + (x.blocco ? ' · blocco «' + x.blocco + '»' : '') + pag(x)));
+        if (conPagine)
+            S.push(' - Cita solo le pagine indicate per la scheda (numero stampato del libro); il PDF serve a trovarle.');
         S.push(...righeStudente(o));
         sezione(S, 'COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
         S.push(...COMPATIBILITA);
@@ -2194,34 +2473,50 @@ const StrumentiQuiz = (() => {
         if (testoIniziale)
             controlla();
     }
-    async function misura(f) {
+    async function misuraPdf(dati, avanza) {
         const L = await caricaPdfJs();
-        const blob = await Drive.scaricaBlob(f.id);
-        const doc = await L.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
-        const tot = doc.numPages, base = (MasterPrompt.segmentoDa(f.name) || 1) - 1;
-        const testi = [], campioni = [];
-        for (const i of MasterPrompt.pagineCampione(tot)) {
-            const p = await doc.getPage(i);
-            const tc = await p.getTextContent();
-            const t = tc.items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
-            testi.push(t);
-            campioni.push({ pdf: base + i, testo: t });
-        }
-        let mappa = null;
+        const doc = await L.getDocument({ data: new Uint8Array(await dati.arrayBuffer()), isEvalSupported: false }).promise;
         try {
-            const et = await doc.getPageLabels();
-            if (et)
-                mappa = MappaPagine.daEtichette(et);
+            const tot = doc.numPages, campione = new Set(MasterPrompt.pagineCampione(tot));
+            let et = null;
+            try {
+                et = await doc.getPageLabels();
+            }
+            catch (e) {
+                console.warn('[misura] etichette pagine', e);
+            }
+            const conEtichette = !!(et && MappaPagine.daEtichette(et));
+            const testi = [], numeri = [];
+            for (let i = 1; i <= tot; i++) {
+                if (conEtichette && !campione.has(i))
+                    continue;
+                if (avanza && !conEtichette && i % 20 === 0)
+                    avanza('Leggo i numeri di pagina: ' + i + '/' + tot + '…');
+                const tc = await (await doc.getPage(i)).getTextContent();
+                const t = tc.items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
+                if (campione.has(i))
+                    testi.push(t);
+                numeri[i - 1] = conEtichette ? [] : MasterPrompt.numeroStampato(t);
+            }
+            return { lettura: MasterPrompt.indiceLettura(testi), mappa: Centro.mappaAuto(et, numeri), pagine: tot };
         }
-        catch (e) {
-            console.warn('[prompt quiz] etichette pagine', e);
+        finally {
+            if (typeof doc.destroy === 'function')
+                await doc.destroy();
         }
-        if (mappa)
-            mappa.tratti.forEach(t => { t.pdfDa += base; t.pdfA += base; });
-        if (typeof doc.destroy === 'function')
-            await doc.destroy();
-        const offset = MasterPrompt.stimaOffset(campioni);
-        return { lettura: MasterPrompt.indiceLettura(testi), offset, mappa: mappa || (offset === null ? null : { fonte: 'auto-stampati', tratti: [{ pdfDa: offset + 1, pdfA: MappaPagine.APERTO, stampDa: 1 }], affidabilita: 'stimata' }), pagine: tot };
+    }
+    async function misura(g, avanza) {
+        let lettura = null;
+        const segmenti = [];
+        for (const [k, f] of g.files.entries()) {
+            const pre = g.files.length > 1 ? 'PDF ' + (k + 1) + '/' + g.files.length + ': ' : '';
+            avanza(pre + (f.file ? 'leggo il file…' : 'scarico da Drive…'));
+            const r = await misuraPdf(f.file || await Drive.scaricaBlob(f.id), m => avanza(pre + m));
+            if (!lettura || r.lettura.pct < lettura.pct)
+                lettura = r.lettura;
+            segmenti.push({ mappa: r.mappa, base: g.libro.segmenti ? (MasterPrompt.segmentoDa(f.name) || 1) - 1 : 0 });
+        }
+        return { lettura, mappa: Centro.unisciSegmenti(segmenti) };
     }
     const K_ESCLUSE = 'imc-dossier-escluse';
     function escluseLette() {
@@ -2348,13 +2643,33 @@ const StrumentiQuiz = (() => {
             }
             const fs = [...visti.values()], c = classifica(fs);
             altri = c.altri;
-            gruppi = [...c.libri.entries()].map(([nomeL, files]) => ({ files: files.sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0)),
-                usa: true, libro: { nome: nomeL, pdf: files.map(f => f.name), segmenti: files.some(f => MasterPrompt.segmentoDa(f.name) !== null) } }));
+            gruppi = [...c.libri.entries()].map(([nomeL, files]) => gruppoLibro(nomeL, files));
             scelti.clear();
             [...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici].forEach(f => scelti.add(f.id));
             stato.textContent = fs.length ? 'Trovati ' + fs.length + ' file: togli la spunta a quelli da non usare e misura i libri.' : 'Nessun file trovato con il nome della materia: il prompt chiederà all\'AI di cercarli.';
             disegnaElenco();
         }
+        function daRecord(libro) {
+            const rec = Stato.prendi(Centro.idLibro(nomeMateria(), libro.nome));
+            if (rec && !rec.deleted) {
+                if (rec.lettura)
+                    libro.lettura = rec.lettura;
+                libro.mappa = rec.mappa;
+            }
+            return libro;
+        }
+        function gruppoLibro(nomeL, files) {
+            const fs = files.slice().sort((a, b) => (MasterPrompt.segmentoDa(a.name) || 0) - (MasterPrompt.segmentoDa(b.name) || 0));
+            return { usa: true, files: fs, libro: daRecord({ nome: nomeL, pdf: fs.map(f => f.name), segmenti: fs.some(f => MasterPrompt.segmentoDa(f.name) !== null) }) };
+        }
+        const daPdf = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true, 'aria-label': 'Scegli i PDF del libro da misurare' });
+        daPdf.addEventListener('change', () => {
+            const fs = Array.from(daPdf.files || []).map((file, i) => ({ id: 'loc-' + i + '-' + file.name, name: file.name, mimeType: 'application/pdf', file }));
+            daPdf.value = '';
+            for (const [nomeL, files] of classifica(fs).libri)
+                gruppi = gruppi.filter(g => g.libro.nome !== nomeL).concat(gruppoLibro(nomeL, files));
+            disegnaElenco();
+        });
         function disegnaElenco() {
             elenco.textContent = '';
             if (gruppi.length)
@@ -2362,16 +2677,18 @@ const StrumentiQuiz = (() => {
             gruppi.forEach(g => {
                 const c = h('input', { type: 'checkbox', checked: g.usa || undefined, 'aria-label': 'Usa ' + g.libro.nome });
                 c.addEventListener('change', () => { g.usa = c.checked; });
-                const esito = h('span.piccolo.tenue', null, g.libro.lettura ? descrivi(g) : g.files.length + ' PDF' + (g.libro.segmenti ? ' a segmenti' : ''));
-                const b = h('button.chip', { type: 'button', 'aria-label': 'Misura la leggibilità di ' + g.libro.nome }, '📏 Misura leggibilità');
+                const esito = h('span.piccolo.tenue', { role: 'status', 'aria-live': 'polite' }, g.libro.lettura || g.libro.mappa ? descrivi(g) : g.files.length + ' PDF' + (g.libro.segmenti ? ' a segmenti' : ''));
+                const b = h('button.chip', { type: 'button', 'aria-label': 'Misura pagine e leggibilità di ' + g.libro.nome }, '📏 Misura pagine');
                 b.addEventListener('click', async () => {
                     b.disabled = true;
-                    esito.textContent = 'Scarico e leggo pagine campione…';
                     try {
-                        const r = await misura(g.files[0]);
+                        const r = await misura(g, m => { esito.textContent = m; });
                         g.libro.lettura = r.lettura;
-                        g.libro.offset = r.offset;
                         g.libro.mappa = r.mappa;
+                        delete g.libro.offset;
+                        const rec = recordDi(g);
+                        if (rec)
+                            g.libro.mappa = rec.mappa;
                         esito.textContent = descrivi(g);
                     }
                     catch (e) {
@@ -2379,7 +2696,8 @@ const StrumentiQuiz = (() => {
                     }
                     b.disabled = false;
                 });
-                elenco.appendChild(h('div.riga', null, h('label', null, c, ' ' + g.libro.nome), h('div', null, esito, ' ', b)));
+                const bp = h('button.chip', { type: 'button', 'aria-label': 'Pagine di ' + g.libro.nome + ': fonte, ancore, indice e prova', onclick: () => foglioPagine(g, esito) }, '⚙️ Pagine');
+                elenco.appendChild(h('div.riga', null, h('label', null, c, ' ' + g.libro.nome), h('div', null, esito, ' ', b, ' ', bp)));
             });
             const sez = (titolo, xs, nota) => {
                 if (!xs.length)
@@ -2402,11 +2720,154 @@ const StrumentiQuiz = (() => {
                 elenco.appendChild(h('p.piccolo', null, '🚫 Esclusi come fonte (eserciziari commerciali): ' + altri.vietati.map(f => f.name).slice(0, 8).join(', ')));
         }
         function descrivi(g) {
-            const r = g.libro.lettura;
-            if (!r)
-                return '';
-            const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
-            return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
+            const r = g.libro.lettura, sim = !r ? '' : r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
+            const rec = nomeMateria() ? Stato.prendi(Centro.idLibro(nomeMateria(), g.libro.nome)) : null;
+            return (r ? sim + ' lettura ' + r.pct + '% (' + r.giudizio + ') · ' : '') + (rec && !rec.deleted ? Centro.descriviLibro(rec) : Centro.descriviMappa(g.libro.mappa || null));
+        }
+        function recordDi(g) {
+            const mat = nomeMateria();
+            if (!mat)
+                return null;
+            const prec = Stato.prendi(Centro.idLibro(mat, g.libro.nome)), nuovo = Centro.libroDa(mat, g.libro, prec);
+            if (!prec || JSON.stringify(prec) !== JSON.stringify(nuovo))
+                Stato.salva(nuovo, true);
+            return nuovo;
+        }
+        const blobLibro = new Map();
+        async function disegnaPagina(g, pdf, tela, nota) {
+            const conBase = g.files.map(f => ({ f, base: g.libro.segmenti ? (MasterPrompt.segmentoDa(f.name) || 1) - 1 : 0 })).sort((a, b) => a.base - b.base);
+            const x = conBase.filter(c => c.base < pdf).pop();
+            if (!x) {
+                nota.textContent = 'Apri tu il PDF alla pagina ' + pdf + ' e leggi il numero stampato.';
+                tela.hidden = true;
+                return;
+            }
+            nota.textContent = 'Carico la pagina ' + pdf + '…';
+            try {
+                let b = x.f.file || blobLibro.get(x.f.id);
+                if (!b) {
+                    b = await Drive.scaricaBlob(x.f.id);
+                    blobLibro.set(x.f.id, b);
+                }
+                const L = await caricaPdfJs();
+                const doc = await L.getDocument({ data: new Uint8Array(await b.arrayBuffer()), isEvalSupported: false }).promise;
+                try {
+                    const n = pdf - x.base;
+                    if (n > doc.numPages) {
+                        nota.textContent = 'Il PDF ha solo ' + (doc.numPages + x.base) + ' pagine.';
+                        tela.hidden = true;
+                        return;
+                    }
+                    const pag = await doc.getPage(n), base = pag.getViewport({ scale: 1 });
+                    const dpr = Math.min(window.devicePixelRatio || 1, 2), larg = Math.min(560, (tela.parentElement?.clientWidth || 320) - 8);
+                    const vp = pag.getViewport({ scale: (larg / base.width) * dpr });
+                    tela.width = vp.width;
+                    tela.height = vp.height;
+                    tela.style.width = vp.width / dpr + 'px';
+                    tela.hidden = false;
+                    await pag.render({ canvasContext: tela.getContext('2d'), viewport: vp }).promise;
+                    nota.textContent = 'Pagina ' + pdf + ' del PDF: quale numero è stampato (in alto o in basso)?';
+                }
+                finally {
+                    if (typeof doc.destroy === 'function')
+                        await doc.destroy();
+                }
+            }
+            catch (e) {
+                nota.textContent = '⚠️ Pagina non mostrata: ' + (e instanceof Error ? e.message : String(e));
+                tela.hidden = true;
+            }
+        }
+        function foglioPagine(g, esito) {
+            let rec = recordDi(g);
+            if (!rec) {
+                avviso('Scegli o scrivi la materia.');
+                return;
+            }
+            const riga = h('p', { role: 'status', 'aria-live': 'polite' });
+            const salva = (r) => { rec = r; Stato.salva(r, true); riga.textContent = Centro.descriviLibro(r); disegnaAncore(); };
+            riga.textContent = Centro.descriviLibro(rec);
+            const FONTI = [['auto', 'A · 📏 automatica (misura del PDF)'], ['mano', 'B · ✍️ guidata: leggo io i numeri stampati'], ['indice', 'C · 📑 dall’indice del libro'], ['nessuna', 'D · ⚪ senza numeri di pagina (capitoli e paragrafi)']];
+            const sceltaFonte = h('fieldset', null, h('legend', null, 'Da dove prendo le pagine'), ...FONTI.map(([v, t]) => {
+                const r = h('input', { type: 'radio', name: 'fonte-pagine', value: v, checked: rec.fonte === v || undefined });
+                r.addEventListener('change', () => { if (r.checked)
+                    salva(Centro.conFonte(rec, v)); });
+                return h('label.riga', null, r, ' ' + t);
+            }));
+            const tela = h('canvas.pdf-tela', { hidden: true }), notaB = h('p.piccolo.tenue', { 'aria-live': 'polite' });
+            const pagPdf = h('input', { type: 'number', min: '1', value: '10', 'aria-label': 'Pagina del PDF da guardare' });
+            const stampata = h('input', { type: 'text', inputmode: 'numeric', 'aria-label': 'Numero stampato su questa pagina' });
+            const elencoAncore = h('ul.piccolo');
+            function disegnaAncore() {
+                elencoAncore.textContent = '';
+                (rec.ancore || []).forEach(a => elencoAncore.appendChild(h('li', null, 'PDF ' + a.pdf + ' → pagina ' + a.stampata)));
+            }
+            disegnaAncore();
+            const righeB = area('Oppure una riga per ancora: «pagina 5 = PDF 9»', 2);
+            const sezB = h('details', null, h('summary', null, '✍️ B · leggo io i numeri (ancore)'), h('div.riga', null, pagPdf, h('button.chip', { type: 'button', 'aria-label': 'Mostra la pagina del PDF', onclick: () => { disegnaPagina(g, Number(pagPdf.value) || 1, tela, notaB); } }, '👁️ Mostra')), notaB, tela, h('div.riga', null, stampata, h('button.chip', { type: 'button', 'aria-label': 'Aggiungi ancora', onclick: () => {
+                    const p = Number(pagPdf.value), s = stampata.value.trim();
+                    if (!(p >= 1) || !s) {
+                        avviso('Scrivi la pagina del PDF e il numero stampato.');
+                        return;
+                    }
+                    salva(Centro.conAncore(rec, { pdf: p, stampata: s }));
+                    stampata.value = '';
+                } }, '➕ Aggiungi ancora')), righeB, h('button.chip', { type: 'button', 'aria-label': 'Salva le ancore scritte', onclick: () => {
+                    let r = rec, n = 0;
+                    for (const t of righeB.value.split('\n')) {
+                        const m = /^\s*(?:pagina|pag\.?|p\.?)?\s*([0-9]+|[ivxlcdm]+)\s*=\s*(?:pdf\s*)?([0-9]+)\s*$/i.exec(t);
+                        if (m) {
+                            r = Centro.conAncore(r, { stampata: m[1], pdf: Number(m[2]) });
+                            n++;
+                        }
+                    }
+                    if (!n) {
+                        avviso('Nessuna riga «pagina N = PDF M» riconosciuta.');
+                        return;
+                    }
+                    salva(r);
+                    righeB.value = '';
+                } }, '💾 Salva righe'), elencoAncore);
+            const testoIndice = area('Incolla qui l’indice del libro (una voce per riga, con il numero di pagina)', 5);
+            const notaC = h('p.piccolo.tenue', { 'aria-live': 'polite' }, rec.indice ? rec.indice.length + ' voci dell’indice salvate.' : '');
+            const sezC = h('details', null, h('summary', null, '📑 C · indice del libro'), testoIndice, h('button.chip', { type: 'button', 'aria-label': 'Leggi l’indice', onclick: () => {
+                    const v = Centro.indiceDa(testoIndice.value);
+                    if (!v.length) {
+                        notaC.textContent = 'Nessuna voce con numero di pagina riconosciuta.';
+                        return;
+                    }
+                    salva({ ...rec, indice: v });
+                    notaC.textContent = v.length + ' voci dell’indice salvate.';
+                } }, '📑 Leggi indice'), notaC);
+            const sezProva = h('div');
+            const avviaProva = () => {
+                sezProva.textContent = '';
+                const camp = MappaPagine.campioneProva(rec.mappa, 3, Date.now() % 997 + 1);
+                if (!camp.length) {
+                    sezProva.appendChild(h('p.piccolo.tenue', null, 'Prima serve una mappa (misura, ancore o indice).'));
+                    return;
+                }
+                sezProva.appendChild(h('p.piccolo.tenue', null, 'Apri ogni pagina e correggi il numero se sul libro è diverso.'));
+                const campi = camp.map(c => {
+                    const inp = h('input', { type: 'text', inputmode: 'numeric', value: String(c.stampata), 'aria-label': 'Numero stampato sulla pagina ' + c.pdf + ' del PDF' });
+                    const t = h('canvas.pdf-tela', { hidden: true }), n = h('p.piccolo.tenue', { 'aria-live': 'polite' });
+                    sezProva.appendChild(h('div', null, h('div.riga', null, h('span', null, 'PDF ' + c.pdf + ': '), inp, h('button.chip', { type: 'button', 'aria-label': 'Mostra la pagina ' + c.pdf + ' del PDF', onclick: () => { disegnaPagina(g, c.pdf, t, n); } }, '👁️')), n, t));
+                    return { c, inp };
+                });
+                sezProva.appendChild(h('button.btn', { type: 'button', 'aria-label': 'Conferma la prova', onclick: () => {
+                        salva(Centro.conProva(rec, campi.map(x => ({ pdf: x.c.pdf, stampata: x.c.stampata, letta: x.inp.value })), ymd(new Date())));
+                        sezProva.textContent = '';
+                    } }, '✅ Conferma prova'));
+            };
+            const corpo = h('div', null, riga, sceltaFonte, sezB, sezC, h('button.chip', { type: 'button', 'aria-label': 'Prova la mappa su 3 pagine', onclick: avviaProva }, '🧪 Prova a 3 pagine'), sezProva);
+            foglio({ titolo: '📄 Pagine di ' + g.libro.nome, corpo, allaChiusura: () => {
+                    if (rec) {
+                        if (rec.lettura)
+                            g.libro.lettura = rec.lettura;
+                        g.libro.mappa = rec.mappa;
+                    }
+                    esito.textContent = descrivi(g);
+                } });
         }
         function daIncollate() {
             const fs = incollate.value.split('\n').map(x => x.trim()).filter(Boolean).map((name, i) => ({ id: 'man-' + i, name, mimeType: '' }));
@@ -2414,7 +2875,7 @@ const StrumentiQuiz = (() => {
         }
         function valori() {
             const m = daIncollate(), nomi = (xs, tutti = false) => xs.filter(f => tutti || scelti.has(f.id)).map(f => f.name);
-            const libriMan = [...m.libri.entries()].map(([nome, files]) => ({ nome, pdf: files.map(f => f.name) }));
+            const libriMan = [...m.libri.entries()].map(([nome, files]) => daRecord({ nome, pdf: files.map(f => f.name) }));
             const libriDrv = gruppi.filter(g => g.usa).map(g => g.libro), visti = new Set(libriDrv.map(l => l.nome));
             return { libri: [...libriDrv, ...libriMan.filter(l => !visti.has(l.nome))],
                 slide: [...nomi(altri.slide), ...nomi(m.altri.slide, true)], guide: [...nomi(altri.guide), ...nomi(m.altri.guide, true)],
@@ -2423,7 +2884,7 @@ const StrumentiQuiz = (() => {
         }
         const nomiNoti = () => [...gruppi.flatMap(g => g.files), ...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici, ...altri.vietati].map(f => f.name)
             .concat(incollate.value.split('\n').map(x => x.trim()).filter(Boolean));
-        const el = h('div.fonti', null, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('details', { open: (!Drive.pronto && !!iniziali) || undefined }, h('summary', null, '📎 Fonti senza Drive (nomi dei file da allegare all\'AI)'), h('p.piccolo.tenue', null, 'Scrivi un nome per riga o scegli i file: l\'app legge solo il nome, i file li alleghi tu alla chat dell\'AI.'), incollate, daFile));
+        const el = h('div.fonti', null, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('details', { open: (!Drive.pronto && !!iniziali) || undefined }, h('summary', null, '📎 Fonti senza Drive (nomi dei file da allegare all\'AI)'), h('p.piccolo.tenue', null, 'Scrivi un nome per riga o scegli i file: l\'app legge solo il nome, i file li alleghi tu alla chat dell\'AI.'), incollate, daFile, h('p.piccolo.tenue', null, '📏 Misura le pagine di un libro dal dispositivo: l\'app legge i numeri di pagina del PDF qui (il file non viene salvato né inviato).'), daPdf));
         return { el, valori, nomiNoti };
     }
     function regoleDossier(nome, codice, stepV, nomiFile, escl = escluseLette()) {

@@ -766,7 +766,7 @@ function foglio(opz) {
     const chiudi = () => { if (chiuso)
         return; chiuso = true; sfondo.remove(); document.removeEventListener('keydown', tasto); if (opz.allaChiusura)
         opz.allaChiusura(); };
-    const tasto = (e) => { if (e.key === 'Escape')
+    const tasto = (e) => { if (e.key === 'Escape' && sfondo === Array.from(document.querySelectorAll('.foglio-sfondo')).pop())
         chiudi(); };
     const sfondo = h('div.foglio-sfondo', { onclick: (e) => { if (e.target === sfondo)
             chiudi(); } }, h('div.foglio', { role: 'dialog', 'aria-label': opz.titolo }, h('div.foglio-testa', null, h('button.btn-testo', { onclick: chiudi }, 'Annulla'), h('div.foglio-titolo', null, opz.titolo), opz.salva
@@ -17404,7 +17404,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.63.0';
+const VERSIONE = '0.63.1';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
