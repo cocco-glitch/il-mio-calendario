@@ -72,8 +72,9 @@ with sync_playwright() as p:
     tmp = os.path.join(tempfile.mkdtemp(), 'gemini 3.4.json')
     with open(tmp, 'w', encoding='utf8') as fh: json.dump({'formato': 'quiz-v3', 'step': 'biologia-3.4', 'scheda': 'S01', 'quiz': [dom(1, i) for i in range(1, 19)]}, fh, ensure_ascii=False)
     pg.get_by_label('File da importare').set_input_files(tmp)
-    pg.wait_for_selector('.foglio >> text=gemini 3.4.json', timeout=5000)
-    ok('18 domande' in pg.inner_text('.foglio') or 'gemini 3.4.json' in pg.inner_text('.foglio'), '«📁 Scegli file»: il .json scelto compare nell\'elenco')
+    pg.get_by_role('button', name='Importa Biologia 3.4').wait_for(timeout=5000)
+    t = pg.inner_text('.foglio')
+    ok('Biologia 3.4' in t and 'schema da verificare' not in t, '«📁 Scegli file»: il .json scelto compare come «Biologia 3.4», senza «schema da verificare»')
     # 6) scheda → «🧩 Quiz nell'app»
     sk = banca[0]['sk']
     pg.evaluate("document.querySelectorAll('.foglio-sfondo').forEach(e => e.remove()); (() => { const t = trovaScheda(%s); apriScheda(t.pk, t.m, t.micro, t.s); })()" % json.dumps(sk))

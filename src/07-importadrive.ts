@@ -520,7 +520,7 @@ const ImportaDrive = (() => {
       const esito = h('div.tenue.piccolo'), zona = h('div');
       let prep: { t: TraduzioneDrive; rapporto: RapportoQuiz } | null = null, errore = '';
       try { prep = preparaGruppo(g); } catch (e: unknown) { errore = String(e instanceof Error ? e.message : e); }
-      const etichetta = g.tipo === 'intero' ? g.files[0].name : nomeStep(g.step);
+      const man = g.files[0].id.startsWith('man-'), etichetta = g.tipo === 'intero' && !(man && g.step) ? g.files[0].name : nomeStep(g.step);   // v0.61: import manuale → nome dello step
       const btn = h('button.btn', { 'aria-label': 'Importa ' + etichetta }, Stato.prendi('inn-' + (prep ? prep.t.k : '')) ? 'Reimporta' : 'Importa') as HTMLButtonElement;
       if (!prep) { btn.disabled = true; esito.textContent = '✗ ' + errore; }
       btn.onclick = () => {
@@ -538,7 +538,7 @@ const ImportaDrive = (() => {
         }));
       };
       let titolo: string, sotto: string;
-      if (g.tipo === 'intero') { titolo = g.files[0].name; sotto = '📁 ' + g.files[0].cartella + (eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare'); }
+      if (g.tipo === 'intero') { titolo = etichetta; sotto = '📁 ' + g.files[0].cartella + (man || eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare'); }
       else { const r = rigaGruppo(g); titolo = r.titolo; sotto = '📁 ' + g.files[0].cartella + ' · ' + r.stato; }
       lista.appendChild(h('div.cat-riga', { 'data-step': g.step }, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, titolo), h('div.tenue.piccolo.drv-stato', null, sotto), prep ? riepilogo(prep.rapporto) : null, esito, zona), btn));
     }
