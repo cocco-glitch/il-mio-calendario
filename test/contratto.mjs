@@ -319,6 +319,105 @@ t('costruisci (prompt classico) invariato fino alla v0.64: chiede ancora la chiu
   vero(/CHIUSURA/.test(sb.MasterPrompt.costruisci(BASE63)));
 });
 
+// ---------- v0.64 T1: prompt di Medicina identici al byte a v0.63.1 ----------
+// Snapshot in test/fixture-ai/prompt-medicina-v0631-*.txt, generati UNA volta dal codice di v0.63.1 (672ec17).
+// Rigenerarli (node test/contratto.mjs --aggiorna-snapshot) solo con decisione esplicita dell'utente: è il punto del test.
+const MED = { materia: 'Biologia', codice: 'B', step: '3.3', titolo: 'Membrane e trasporto', unita: 'UD3', data: '2026-12-15', archetipo: 'scienze_sperimentali',
+  etichettaArchetipo: 'Scienze sperimentali', tono: 'tecnico_accademico', intensita: 'standard', vietati: ['Eserciziario Rosso'], dossier: ['Domande L1 brevi.'],
+  idEsistenti: ['biologia-3.3-S01-1'], note: 'Test di ammissione a Medicina.',
+  libri: [{ nome: 'Campbell', pdf: ['campbell.pdf'], offset: 14, mappa: { fonte: 'mano', tratti: [{ daStampata: 1, aStampata: 900, scostamento: 14 }], affidabilita: 'esatta' } }] };
+const SCH_MED = [{ n: 1, sigla: 'S01', micro: ['3.3.1'], categoria: 'prioritaria', blocco: 'Membrane' }, { n: 2, sigla: 'S02', micro: ['3.3.2', '3.3.3'], categoria: 'raffinamento', blocco: 'Raffinamento' }];
+const PAG_MED = { '3.3.1': { stampDa: 40, stampA: 45, pdfDa: 54, pdfA: 59, affidabilita: 'esatta' }, '3.3.2': { stampDa: 46, stampA: 50, pdfDa: 60, pdfA: 64, affidabilita: 'esatta' } };
+const SNAP = {
+  piano: () => sb.MasterPrompt.costruisciPiano(MED),
+  schede: () => sb.MasterPrompt.costruisciSchede(MED, SCH_MED, PAG_MED),
+  classico: () => sb.MasterPrompt.costruisci(MED),
+};
+const AGGIORNA = process.argv.includes('--aggiorna-snapshot');
+for (const [nome, fn] of Object.entries(SNAP)) {
+  t('Medicina identico al byte a v0.63.1: prompt ' + nome, () => {
+    const f = path.join(FIX, 'prompt-medicina-v0631-' + nome + '.txt'), ora = fn();
+    if (AGGIORNA) { fs.writeFileSync(f, ora); return; }
+    const prima = fix(path.basename(f));      // senza \r: con core.autocrlf il checkout su Windows li aggiunge
+    if (ora === prima) return;
+    let i = 0; while (i < ora.length && ora[i] === prima[i]) i++;
+    throw new Error('diverso al carattere ' + i + ': atteso «' + prima.slice(i, i + 40) + '», ottenuto «' + ora.slice(i, i + 40) + '»');
+  });
+}
+
+// =====================================================================
+console.log('\n== quiz-v4 (v0.64 T3): tipi di domanda ==');
+const MCQ4 = { scheda: 'S01', livello: 1, tipo: 'mcq', domanda: 'Quale organello produce ATP?', opzioni: ['Mitocondrio', 'Ribosoma', 'Lisosoma', 'Golgi'], spiegazione: 'RISPOSTA ESATTA: A) Mitocondrio.', fonte: '[[Campbell, p. 40]]' };
+const COMPL = { scheda: 'S01', livello: 1, tipo: 'completamento', domanda: 'La glicolisi avviene nel ___.', risposte: ['citosol', 'citoplasma'], spiegazione: 'Nel citosol.', fonte: '[[Campbell, p. 41]]' };
+const ORD = { scheda: 'S01', livello: 2, tipo: 'ordinamento', domanda: 'Ordina le fasi della mitosi.', elementi: ['Profase', 'Metafase', 'Anafase', 'Telofase'], spiegazione: 'P-M-A-T.', fonte: '[[Campbell, p. 42]]' };
+const APERTA = { scheda: 'S01', livello: 3, tipo: 'aperta', domanda: 'Spiega il trasporto attivo.', rubrica: ['usa ATP', 'contro gradiente', 'proteine pompa'], rispostaModello: 'Il trasporto attivo usa ATP per spostare soluti contro gradiente tramite pompe.', fonte: '[[Campbell, p. 43]]' };
+const CODICE = { scheda: 'S01', livello: 3, tipo: 'codice', linguaggio: 'python', domanda: 'Scrivi una funzione che somma una lista.', rubrica: ['ciclo o sum()', 'restituisce il totale'], rispostaModello: 'def somma(xs):\n    return sum(xs)', fonte: '[[Lutz, p. 10]]' };
+const V4 = (...quiz) => JSON.stringify({ formato: 'quiz-v4', step: 'biologia-3.3', scheda: 'S01', quiz });
+
+t('quiz-v4 letto come quiz-v4, senza avviso «più nuovo», con i campi per tipo intatti', () => {
+  const l = C.leggi(V4(MCQ4, COMPL, ORD, APERTA, CODICE));
+  eq(l.formato, 'quiz-v4'); eq(l.avvisi, []); eq(l.errori, []);
+  eq(l.dati.quiz.map(q => q.tipo), ['mcq', 'completamento', 'ordinamento', 'aperta', 'codice']);
+  eq(l.dati.quiz[2].elementi, ORD.elementi);
+});
+t('aQuiz v4: ID dall\'app per tutte; solo gli mcq ricevono «esatta», gli altri tipi restano senza', () => {
+  const qs = C.aQuiz(C.leggi(V4(MCQ4, COMPL, ORD, APERTA)), { step: 'biologia-3.3' });
+  eq(qs.map(q => q.id), ['biologia-3.3-S01-01', 'biologia-3.3-S01-02', 'biologia-3.3-S01-03', 'biologia-3.3-S01-04']);
+  eq(qs[0].opzioni[qs[0].esatta], 'Mitocondrio');
+  eq(qs.slice(1).map(q => 'esatta' in q), [false, false, false]);
+  eq(qs[2].elementi, ORD.elementi, 'ordine giusto intatto (il rimescolamento lo fa il runner)');
+});
+t('validatore v4: le domande giuste di ogni tipo non hanno bloccanti', () => {
+  for (const q of [COMPL, ORD, APERTA, CODICE]) eq(V.bloccanti(q), [], q.tipo);
+});
+t('validatore v4: regole bloccanti della spec, una per tipo', () => {
+  const b = (base, mod) => V.bloccanti({ ...base, ...mod }).join(' | ');
+  vero(/___/.test(b(COMPL, { domanda: 'La glicolisi avviene nel citosol.' })), 'completamento senza ___');
+  vero(/risposte/.test(b(COMPL, { risposte: [] })), 'completamento senza risposte');
+  vero(/3–7/.test(b(ORD, { elementi: ['a', 'b'] })), 'ordinamento con 2 elementi');
+  vero(/3–7/.test(b(ORD, { elementi: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] })), 'ordinamento con 8 elementi');
+  vero(/2–5/.test(b(APERTA, { rubrica: ['uno'] })), 'aperta con rubrica da 1');
+  vero(/rispostaModello/.test(b(APERTA, { rispostaModello: '' })), 'aperta senza risposta modello');
+  vero(/linguaggio/.test(b(CODICE, { linguaggio: '' })), 'codice senza linguaggio');
+  vero(/tipo/.test(b(MCQ4, { tipo: 'vero_falso' })), 'tipo sconosciuto');
+  eq(V.bloccanti({ ...MCQ4, esatta: 0 }).length, 0, 'mcq v4 (dopo aQuiz) come v3');
+  vero(/opzioni/.test(b(MCQ4, { esatta: 0, opzioni: ['a', 'b'] })), 'mcq v4: regole v3 invariate');
+});
+t('ripara v4: tiene i campi dei tipi; «…», «[ ]», «____», «[...]» → «___»; prefissi «1.», «1)», «a)» tolti', () => {
+  const r = V.ripara([
+    { ...COMPL, id: 'c1', domanda: 'La glicolisi avviene nel … e produce [ ] ATP.' },
+    { ...COMPL, id: 'c2', domanda: 'Il ____ e il [...] .' },
+    { ...ORD, id: 'o1', elementi: ['1. Profase', '2) Metafase', 'c) Anafase', 'Telofase'] },
+    { ...CODICE, id: 'k1' },
+  ]);
+  eq(r.qs[0].domanda, 'La glicolisi avviene nel ___ e produce ___ ATP.');
+  eq(r.qs[1].domanda, 'Il ___ e il ___ .');
+  eq(r.qs[2].elementi, ['Profase', 'Metafase', 'Anafase', 'Telofase']);
+  eq([r.qs[3].tipo, r.qs[3].linguaggio, r.qs[3].rubrica, r.qs[3].rispostaModello], ['codice', 'python', CODICE.rubrica, CODICE.rispostaModello], 'campi v4 non rimossi');
+  eq(r.qs[0].risposte, COMPL.risposte);
+  vero(r.log.some(x => /___/.test(x)) && r.log.some(x => /prefiss/.test(x)), 'log: ' + r.log);
+});
+t('analizza v4: per i tipi non mcq niente controlli da scelta multipla né «chiave in più» sui campi v4; fonte e domanda restano controllate', () => {
+  const qs = C.aQuiz(C.leggi(V4(COMPL, ORD, APERTA, CODICE)), { step: 'biologia-3.3' });
+  const per = a => a.problemi.filter(p => !/^(scheda |insieme|gemella )/.test(p.id) && p.sev !== 'info').map(p => p.id + ': ' + p.msg);
+  eq(per(V.analizza(qs)), []);
+  const rotta = per(V.analizza([{ ...qs[0], fonte: '', domanda: 'corta' }])).join(' | ');
+  vero(/fonte mancante/.test(rotta) && /domanda/.test(rotta), rotta);
+});
+t('adapter v4 → DomB: completamento → fill, ordinamento → sequenza, aperta/codice → risposta_aperta_rubrica (+linguaCodice)', () => {
+  const qs = C.aQuiz(C.leggi(V4(MCQ4, COMPL, ORD, APERTA, CODICE)), { step: 'biologia-3.3' });
+  const tr = ID.traduci({ meta: { stepId: 'biologia-3.3', materia: 'biologia' }, quiz: qs }, '2026-11-20');
+  const d = tr.banche.flatMap(b => b.domande);
+  eq([tr.domande, tr.scartate], [5, 0]);
+  eq(d.map(x => x.t), ['mcq', 'fill', 'sequenza', 'risposta_aperta_rubrica', 'risposta_aperta_rubrica']);
+  eq([d[1].a, d[1].show], [COMPL.risposte, 'citosol']);
+  eq([d[2].sequenzaOk, d[2].show], [ORD.elementi, 'Profase → Metafase → Anafase → Telofase']);
+  eq([d[3].rubricaPunti, d[3].show, d[3].linguaCodice], [APERTA.rubrica, APERTA.rispostaModello, undefined]);
+  eq([d[4].rubricaPunti, d[4].show, d[4].linguaCodice], [CODICE.rubrica, CODICE.rispostaModello, 'python']);
+  eq(d.slice(1).map(x => [x.r, x.stepId, 'o' in x]), [COMPL, ORD, APERTA, CODICE].map(q => [q.fonte, d[0].stepId, false]), 'fonte e stepId come per l\'mcq');
+  eq(ID.traduci({ meta: { stepId: 'biologia-3.3', materia: 'biologia' }, quiz: [{ ...qs[2], elementi: ['a', 'b'] }] }, '2026-11-20').domande, 0, 'ordinamento rotto scartato');
+});
+
 // =====================================================================
 const fine = 'Contratto ' + ok + '/' + (ok + ko);
 console.log('\n' + fine + (ko ? ' — ' + ko + ' falliti' : ''));

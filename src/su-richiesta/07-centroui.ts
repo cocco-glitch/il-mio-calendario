@@ -11,13 +11,16 @@ interface CreazioneRec extends Rec, StatoCreazione {
   citazioni?: { quando: string; libro: string; ok: number; dubbi: string[]; registro: string[]; problemi: Array<ProblemaQ & { fonte: string }> };
 }
 
+/** v0.64: la piattaforma AI scelta nel passo 1 (un record per account: `acc` lo mette Stato.salva). */
+interface ProfiloAIRec extends Rec { type: 'profiloai'; profilo: ProfiloAI; }
+
 /** Una scheda arrivata (o interrotta): la «parte» com'è nel file di Drive, una per scheda (prq-<materia>-<step>-s<n>). */
 interface ParteQRec extends Rec { type: 'parteq'; cre: string; parte: string; scheda: number; quiz: DomAI[]; }
 
 const CentroUI = (() => {
   const PASSI = ['Obiettivo', 'Piano', 'Quiz', 'Controllo', 'Correggi', 'Prova', 'Importa'];
   const RE_STEP = /^\d+(\.\d+)*$/;
-  const FORMATI_QUIZ: FormatoAI[] = ['quiz-v3', 'quiz-v2', 'quiz-058', 'parte'];
+  const FORMATI_QUIZ: FormatoAI[] = ['quiz-v4', 'quiz-v3', 'quiz-v2', 'quiz-058', 'parte'];
   const vaiScheda = (x: Scheda) => vai(x);       // la vai() globale delle schede: dentro apri() «vai» è quella dei passi
   const PER = () => PROFILO_STANDARD.perScheda;   // funzione: 07-validatore viene concatenato dopo questo file
   const SEGNO: Record<SevQ, string> = { err: '⛔', warn: '⚠️', info: 'ℹ️' };
@@ -92,6 +95,65 @@ const CentroUI = (() => {
       } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
     }
     return testi;
+  }
+  /** Profilo AI salvato; nessuno → Gemini, cioè il prompt di v0.63 (una parte, file allegati). */
+  function profiloAI(): ProfiloAI {
+    const r = Stato.prendi<ProfiloAIRec>('profiloai');
+    return r && !r.deleted && r.profilo ? { ...ProfiliAI.preset(r.profilo.id), ...r.profilo } : ProfiliAI.preset('gemini');
+  }
+  function salvaProfiloAI(p: ProfiloAI): void {
+    const gia = Stato.prendi<ProfiloAIRec>('profiloai');
+    Stato.salva({ id: 'profiloai', type: 'profiloai', updatedAt: gia ? gia.updatedAt : 0, profilo: p } as ProfiloAIRec, true);
+  }
+  const numero = (n: number) => n.toLocaleString('it-IT');
+  /** Cosa farà l'app con il profilo, in una riga. */
+  const descriviProfilo = (p: ProfiloAI) => {
+    const N = ProfiliAI.parti(PROFILO_STANDARD.perScheda, p.perRisposta).length;
+    return (N > 1 ? 'Ogni scheda in ' + N + ' parti da al massimo ' + p.perRisposta + ' domande' : 'Una scheda per risposta')
+      + (p.file ? ' · allega i PDF nella chat.' : ' · non legge file: incollo io il testo del PDF' + (p.maxCaratteri ? ' (prompt entro ' + numero(p.maxCaratteri) + ' caratteri).' : '.'));
+  };
+  /** Selettore «Quale AI usi?» (passo 1): si salva subito; «Personalizzato» mostra i 3 campi. */
+  function campoAI(): HTMLElement {
+    let p = profiloAI();
+    const sel = selettore(ProfiliAI.PRESET.map(x => [x.id, x.nome] as [string, string]), p.id);
+    sel.setAttribute('aria-label', 'Quale AI usi?');
+    const per = h('input', { type: 'number', min: '1', max: '50', inputmode: 'numeric', 'aria-label': 'Domande al massimo per risposta', value: String(p.perRisposta) }) as HTMLInputElement;
+    const max = h('input', { type: 'number', min: '0', step: '1000', inputmode: 'numeric', 'aria-label': 'Caratteri massimi del prompt (0 = nessun tetto)', value: String(p.maxCaratteri) }) as HTMLInputElement;
+    const file = h('input', { type: 'checkbox', 'aria-label': 'L\'AI legge i file allegati', checked: p.file || undefined }) as HTMLInputElement;
+    const campi = h('div.chips', null, h('label.piccolo', null, 'Domande per risposta ', per), h('label.piccolo', null, 'Caratteri max ', max), h('label.piccolo', null, file, ' legge i file'));
+    const descr = h('p.piccolo.tenue', { 'aria-live': 'polite' });
+    const mostra = () => { campi.style.display = p.id === 'personalizzato' ? '' : 'none'; descr.textContent = descriviProfilo(p); };   // .chips è flex: hidden non basta
+    sel.addEventListener('change', () => {
+      p = ProfiliAI.preset(sel.value);
+      per.value = String(p.perRisposta); max.value = String(p.maxCaratteri); file.checked = p.file;
+      salvaProfiloAI(p); mostra();
+    });
+    const campo = () => {
+      const n = Math.max(1, Math.min(50, Math.floor(Number(per.value)) || 1)), c = Math.max(0, Math.floor(Number(max.value)) || 0);
+      p = { ...p, perRisposta: n, maxCaratteri: c, file: file.checked };
+      salvaProfiloAI(p); mostra();
+    };
+    for (const x of [per, max, file]) x.addEventListener('change', campo);
+    mostra();
+    return h('div', null, h('label.piccolo', null, 'Quale AI usi?'), sel, campi, descr);
+  }
+  /** Libro con l'indice che conosce le pagine del microstep e un PDF da cui estrarre il testo. */
+  function libroPer(r: CreazioneRec, ms: string): { libro: LibroRec; p: PagineMicro } | null {
+    for (const l of r.fonti ? r.fonti.libri : []) {
+      const libro = Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, l.nome));
+      if (!libro || libro.deleted || !libro.indice || !libro.indice.length || !libro.pdf.length) continue;
+      const p = Centro.pagineMicrostep(libro.indice, libro.mappa, ms);
+      if (p && p.pdfDa !== null) return { libro, p };
+    }
+    return null;
+  }
+  /** Testo del PDF per un microstep (pagine PDF da..a, al massimo 40), con le pagine senza testo segnate; null se non c'è. */
+  async function materialeDi(r: CreazioneRec, ms: string): Promise<PaginaTesto[] | null> {
+    const x = libroPer(r, ms);
+    if (!x || x.p.pdfDa === null) return null;
+    const da = x.p.pdfDa, a = Math.min(x.p.pdfA !== null ? x.p.pdfA : da + 19, da + 39);
+    const testi = await testiPagine(x.libro, Array.from({ length: a - da + 1 }, (_, i) => da + i), () => { /* stato mostrato dal passo */ });
+    return ProfiliAI.pagine(testi, da, a);
   }
   const elencoProblemi = (problemi: ProblemaQ[], etichetta: string, max = 40) => problemi.length
     ? h('ul.piccolo.centro-avvisi', { 'aria-label': etichetta }, ...problemi.slice(0, max).map(p => h('li', null, SEGNO[p.sev] + ' ' + p.id + ' — ' + p.msg)),
@@ -176,6 +238,7 @@ const CentroUI = (() => {
         h('label.piccolo', null, 'Materia'), cm.el,
         h('div.chips', null, step, data), titolo, intens,
         h('label.piccolo', null, 'Tipo di materia'), arch,
+        campoAI(),
         h('h3.centro-sotto', null, 'Fonti'), fonti.el,
         h('button.btn', { type: 'button', onclick: avanti }, 'Avanti →'));
     }
@@ -275,6 +338,23 @@ const CentroUI = (() => {
 
     // ---------- Passo 3: Quiz ----------
     let scelta = 0, coppia = true;            // scheda scelta a mano (0 = la prossima) e «2 schede per messaggio»
+    let parteScelta = 0, conTesto = true;     // v0.64: parte k scelta a mano (0 = la prima che manca) e casella «Includo … del tuo PDF»
+    const mixPer = new Map<string, MixTipi>();                          // mix del giro, per step (modificabile coi campi del passo 3)
+    const testiPer = new Map<string, PaginaTesto[] | null | 'attesa'>(); // testo del PDF per microstep, estratto una volta per apertura
+    /** Campi del mix: ogni tipo diverso da mcq si sceglie, le mcq sono il resto fino a 18 (il totale resta giusto). */
+    function campiMix(r: CreazioneRec, m: MixTipi): HTMLElement {
+      const tot = PER(), ALTRI: Array<[Exclude<TipoV4, 'mcq'>, string]> = [['completamento', 'Completamento'], ['ordinamento', 'Ordinamento'], ['aperta', 'Aperta'], ['codice', 'Codice']];
+      const ins = ALTRI.map(([t, nome]) => h('input', { type: 'number', min: '0', max: String(tot), inputmode: 'numeric', 'aria-label': 'Domande di tipo ' + nome.toLowerCase() + ' per scheda', value: String(m[t]) }) as HTMLInputElement);
+      const cambia = () => {
+        const nuovo = { ...m }; let resto = tot;
+        ALTRI.forEach(([k], j) => { nuovo[k] = Math.max(0, Math.min(resto, Math.floor(Number(ins[j].value)) || 0)); resto -= nuovo[k]; });
+        nuovo.mcq = resto; mixPer.set(r.id, nuovo); vai(3);
+      };
+      ins.forEach(i => i.addEventListener('change', cambia));
+      const etichette = ALTRI.map(([, nome], j) => h('label.piccolo.chip', null, nome + ' ', ins[j]));
+      return h('div', { role: 'group', 'aria-label': 'Tipi di domanda per scheda' }, h('p.piccolo', null, h('b', null, 'Tipi di domanda'), ' · risposta multipla ' + m.mcq + ' · totale ' + tot),
+        h('div.chips', null, ...etichette));
+    }
     function passoQuiz(): HTMLElement {
       const r = rec!, sc = r.schede || [], piano = r.piano as PianoCentro | undefined;
       if (!piano || !sc.length) { vai(2); return h('div'); }
@@ -282,18 +362,19 @@ const CentroUI = (() => {
       const flusso = (n: number) => sc.find(x => x.n === n);
       const n0 = scelta && flusso(scelta) ? scelta : Centro.prossimaScheda(r);
       const tutte = !n0;
-      const cur = n0 ? flusso(n0)! : null, continua = !!cur && cur.stato === 'interrotta';
-      const succ = cur && !continua && coppia ? flusso(n0 + 1) : undefined;
+      const prof = profiloAI(), parti = ProfiliAI.parti(PER(), prof.perRisposta), aParti = parti.length > 1;
+      const cur = n0 ? flusso(n0)! : null, continua = !!cur && cur.stato === 'interrotta' && !aParti;
+      const succ = cur && !continua && coppia && !aParti ? flusso(n0 + 1) : undefined;
       const bersaglio = cur ? [n0, ...(succ && succ.stato === 'da-fare' ? [succ.n] : [])] : [];
 
       const lista = h('ol.centro-schede', { 'aria-label': 'Schede dello step' }, ...sc.map(x => {
         const p = delPiano(x.n), parte = x.stato !== 'da-fare' ? parteDi(r, x.n) : null, n = parte ? parte.quiz.length : 0;
-        const etich = x.stato === 'interrotta' ? '✂️ Continua da qui' : x.stato === 'arrivata' ? '↻ Riscrivi' : '✍️ Scrivi';
-        const aria = x.stato === 'interrotta' ? 'Continua la scheda ' + sig(x.n) + ' da dove si è interrotta' : (x.stato === 'arrivata' ? 'Riscrivi' : 'Scrivi') + ' la scheda ' + sig(x.n);
+        const etich = x.stato === 'interrotta' ? (aParti ? '▶ Prossima parte' : '✂️ Continua da qui') : x.stato === 'arrivata' ? '↻ Riscrivi' : '✍️ Scrivi';
+        const aria = x.stato === 'interrotta' ? (aParti ? 'Prossima parte della scheda ' + sig(x.n) : 'Continua la scheda ' + sig(x.n) + ' da dove si è interrotta') : (x.stato === 'arrivata' ? 'Riscrivi' : 'Scrivi') + ' la scheda ' + sig(x.n);
         const attiva = bersaglio.includes(x.n);
         return h('li.riga-tra' + (attiva ? '.centro-attiva' : ''), { 'aria-current': attiva ? 'true' : undefined },
           h('span', null, simbolo(x) + ' ', h('b', null, sig(x.n)), h('span.piccolo.tenue', null, ' ' + (p ? p.micro[0] + ' · ' + p.categoria : '') + ' · ' + statoTesto(x) + (n ? ' (' + n + '/' + PER() + ')' : ''))),
-          h('button.chip', { type: 'button', 'aria-label': aria, onclick: () => { scelta = x.n; vai(3); } }, etich));
+          h('button.chip', { type: 'button', 'aria-label': aria, onclick: () => { scelta = x.n; parteScelta = 0; vai(3); } }, etich));
       }));
       const arrivate = sc.filter(x => x.stato === 'arrivata').length;
       const testa = h('p.piccolo', null, h('b', null, arrivate + ' di ' + sc.length + ' schede arrivate'), ' · ✅ arrivata · ✂️ interrotta · ⏳ da fare');
@@ -303,7 +384,7 @@ const CentroUI = (() => {
 
       const casella = h('input', { type: 'checkbox', checked: coppia || undefined }) as HTMLInputElement;
       casella.addEventListener('change', () => { coppia = casella.checked; vai(3); });
-      let testoPrompt: string;
+      let testoPrompt: string, rigaTesto: HTMLElement | null = null, bloccoParti: HTMLElement | null = null, mixEl: HTMLElement | null = null, parte: ParteAI | undefined;
       if (continua) {
         const gia = (parteDi(r, n0) || { quiz: [] as DomAI[] }).quiz, ult = gia[gia.length - 1];
         const ultimo = ult ? String(ult.domanda || ult.id || '').slice(0, 160) : undefined;
@@ -313,13 +394,51 @@ const CentroUI = (() => {
         const lst = bersaglio.map(n => delPiano(n)).filter((x): x is SchedaCentro => !!x);
         const libri = (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, l.nome))).filter((x): x is LibroRec => !!x);
         const pagine = Centro.paginePer(libri, lst.map(x => x.micro[0]).filter(Boolean));
-        testoPrompt = MasterPrompt.costruisciSchede(opzioniMP(r).opz, lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })), pagine);
+        const proprietario = Drive.eProprietario();
+        const mix = mixPer.get(r.id) || ProfiliAI.mix(Dominio.archetipoMateria(r.materia), proprietario, PER());
+        if (!proprietario) mixEl = campiMix(r, mix);   // Medicina: solo mcq, il prompt resta quello di v0.63
+        if (aParti) {
+          const fatte = Centro.partiIncollate(parti, (parteDi(r, n0) || { quiz: [] as DomAI[] }).quiz);
+          const k = parteScelta && parteScelta <= parti.length ? parteScelta : (fatte.indexOf(false) + 1 || 1);
+          parte = parti[k - 1];
+          bloccoParti = h('div', { role: 'group', 'aria-label': 'Parti della scheda ' + sig(n0) },
+            h('p.piccolo', null, h('b', null, 'Parti di ' + sig(n0)), ' · ' + fatte.filter(Boolean).length + ' di ' + parti.length + ' incollate'),
+            h('div.chips', null, ...parti.map((p, i) => h('button.chip', { type: 'button', 'aria-pressed': p.k === k ? 'true' : 'false',
+              'aria-label': 'Parte ' + p.k + ' di ' + p.N + ', domande ' + p.da + '–' + p.a + ', ' + (fatte[i] ? 'incollata' : 'da fare'),
+              onclick: () => { parteScelta = p.k; vai(3); } }, (fatte[i] ? '✓ ' : '⏳ ') + p.k + '/' + p.N + ' (' + p.da + '–' + p.a + ')'))));
+        }
+        let materiale: PaginaTesto[] | null | undefined;
+        if (!prof.file) {
+          const ms = lst.length ? lst[0].micro[0] : '', t = testiPer.get(r.id + '|' + ms);
+          if (t === undefined && ms) {
+            testiPer.set(r.id + '|' + ms, 'attesa');
+            materialeDi(r, ms).catch(() => null).then(x => { testiPer.set(r.id + '|' + ms, x); if (passo === 3 && rec && rec.id === r.id) vai(3); });
+          }
+          if (t === undefined && ms || t === 'attesa') return h('div.centro-passo-corpo', null, testa, lista, bloccoParti,
+            h('p.piccolo', { role: 'status' }, '⏳ Estraggo il testo del PDF per ' + sig(n0) + '…'));
+          materiale = conTesto && t ? t : null;
+        }
+        const res = MasterPrompt.promptSchede({ ...opzioniMP(r).opz, mix, parteAI: parte, materiale, maxCaratteri: prof.file ? undefined : prof.maxCaratteri },
+          lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })), pagine);
+        testoPrompt = res.testo;
+        if (materiale !== undefined) {
+          const mt = res.materiale, ci = !!mt && mt.pagine.length > 0, t = testiPer.get(r.id + '|' + (lst.length ? lst[0].micro[0] : ''));
+          const disponibile = !!t && t !== 'attesa' && t.some(x => !x.vuota);
+          const cas = h('input', { type: 'checkbox', checked: conTesto && disponibile || undefined, disabled: !disponibile || undefined }) as HTMLInputElement;
+          cas.addEventListener('change', () => { conTesto = cas.checked; vai(3); });
+          rigaTesto = h('label.riga-tra.piccolo', null,
+            ci ? 'Includo ' + mt!.pagine.length + (mt!.pagine.length === 1 ? ' pagina, ' : ' pagine, ') + numero(mt!.caratteri) + ' caratteri del tuo PDF' + (mt!.escluse ? ' (tagliato: ' + mt!.escluse + ' pagine fuori)' : '')
+              : disponibile ? 'Testo del PDF tolto dal prompt' : 'Testo del PDF non disponibile: il prompt dice «materiale non incluso»', cas);
+        }
       }
-      const titolo = (continua ? 'Continua ' : 'Prompt per ') + bersaglio.map(sig).join(' e ');
+      const titolo = (continua ? 'Continua ' : 'Prompt per ') + bersaglio.map(sig).join(' e ') + (parte ? ' · parte ' + parte.k + ' di ' + parte.N : '');
       return h('div.centro-passo-corpo', null, testa, lista,
+        bloccoParti, mixEl,
         h('h3.centro-sotto', null, titolo),
         continua ? h('p.piccolo.tenue', null, 'Incolla questo prompt nella stessa chat: l\'AI scrive solo le domande che mancano.')
+          : aParti ? h('p.piccolo.tenue', null, descriviProfilo(prof))
           : h('label.riga-tra.piccolo', null, '2 schede per messaggio (36 domande)', casella),
+        rigaTesto,
         ...copiabile(testoPrompt, 'Prompt da copiare nell\'AI per ' + bersaglio.map(sig).join(' e '), continua ? '📋 Copia «continua da qui»' : '📋 Copia il prompt'),
         h('h3.centro-sotto', null, 'Risposta dell\'AI'),
         rispostaAI('Risposta dell\'AI con le schede ' + bersaglio.map(sig).join(' e '), 'Incolla qui la risposta (anche la chat intera)…', '📥 Leggi la risposta',
@@ -341,6 +460,7 @@ const CentroUI = (() => {
         dati = { ...d, scheda: sig(bersaglio[0]), quiz: [...gia, ...solo.map(q => ({ ...q, scheda: q.scheda || sig(bersaglio[0]) }))] };
       }
       const qs = Contratto.aQuiz({ ...l, dati }, { step: pref(r), scheda: bersaglio[0] });
+      const diParte = Number(d.da) >= 1;   // risposta «parte k/N»: si aggiunge a quelle già arrivate (stesso ID = sostituita)
       const perScheda = new Map<number, DomAI[]>(), fuori: number[] = [];
       for (const q of qs) {
         const n = ImportaParti.numScheda(q.scheda) || bersaglio[0], p = piano.schede.find(x => x.n === n);
@@ -351,19 +471,20 @@ const CentroUI = (() => {
       }
       if (!perScheda.size) { avviso('⛔ Nessuna domanda delle schede del piano in questa risposta.', 6000); return; }
       const righe: string[] = [], schede = (r.schede || []).map(x => ({ ...x }));
-      for (const [n, lst] of [...perScheda].sort((a, b) => a[0] - b[0])) {
+      for (let [n, lst] of [...perScheda].sort((a, b) => a[0] - b[0])) {
         const id = idParte(r, n), gia = Stato.prendi<ParteQRec>(id);
+        if (diParte && gia && !gia.deleted) lst = Centro.unisciDomande(gia.quiz, lst);
         Stato.salva({ id, type: 'parteq', updatedAt: gia ? gia.updatedAt : 0, cre: r.id, parte: Centro.nomeParte({ materia: r.nomeMateria, step: r.step }, n), scheda: n, quiz: lst } as ParteQRec, true);
         const x = schede.find(s => s.n === n)!, ok = lst.length >= PER();
         x.stato = ok ? 'arrivata' : 'interrotta'; x.parteId = id;
-        righe.push((ok ? '✅ ' : '✂️ ') + sig(n) + ': ' + lst.length + ' domande' + (ok ? '' : ' su ' + PER() + ' — premi «Continua da qui»'));
+        righe.push((ok ? '✅ ' : '✂️ ') + sig(n) + ': ' + lst.length + ' domande' + (ok ? '' : ' su ' + PER() + (diParte ? ' — ora la prossima parte' : ' — premi «Continua da qui»')));
       }
       if (fuori.length) righe.push('⚠️ Ignorate le domande di ' + fuori.map(sig).join(', ') + ': non sono nel piano.');
       for (const n of bersaglio) if (!perScheda.has(n)) righe.push('⏳ ' + sig(n) + ': nessuna domanda arrivata.');
       if (l.riparazioni.length) righe.push('🔧 ' + l.riparazioni.join(' · '));
       for (const a of l.avvisi.slice(0, 5)) righe.push('⚠️ ' + a);
       salva({ ...r, schede, esiti: {} });
-      scelta = 0; nota = notaDi(righe); registroRip = [];
+      scelta = 0; parteScelta = 0; nota = notaDi(righe); registroRip = [];
       vai(3);
     }
 
@@ -399,7 +520,9 @@ const CentroUI = (() => {
         h('p.piccolo.tenue', null, 'Nessun libro con la mappa delle pagine: le citazioni non si possono verificare sul PDF (Obiettivo → Fonti → ⚙️ Pagine).'));
       const stato = h('span.piccolo', { role: 'status' }), btn = h('button.chip', { type: 'button', 'aria-label': 'Verifica le citazioni sul PDF di ' + l.nome }, '🔎 Verifica le citazioni sul PDF') as HTMLButtonElement;
       const scegli = h('input', { type: 'file', accept: 'application/pdf', multiple: true, 'aria-label': 'Scegli dal dispositivo il PDF di ' + l.nome }) as HTMLInputElement;
-      scegli.addEventListener('change', () => { for (const f of Array.from(scegli.files || [])) pdfScelti.set(f.name, f); stato.textContent = (scegli.files || []).length + ' PDF scelti: ora verifica.'; });
+      scegli.addEventListener('change', () => { for (const f of Array.from(scegli.files || [])) pdfScelti.set(f.name, f);
+        for (const [k, v] of testiPer) if (v === null) testiPer.delete(k);   // PDF scelto ora: il prompt del Quiz riprova a estrarre il testo
+        stato.textContent = (scegli.files || []).length + ' PDF scelti: ora verifica.'; });
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {

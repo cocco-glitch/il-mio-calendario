@@ -204,7 +204,7 @@ const Dominio = (() => {
     if (typeof x.cit === 'string' && x.cit.trim()) d.r = x.cit.trim();
     else if (Array.isArray(x.cit)) d.cit = x.cit.filter((c: any) => c && c.t).map((c: any) => ({ t: str(c.t), f: str(c.f), l: c.l ? str(c.l) : undefined }));
     if (str(x.r)) d.r = str(x.r);
-    if (/^[a-z]{2}(-[A-Z]{2})?$/.test(str(x.linguaCodice))) d.linguaCodice = str(x.linguaCodice);
+    if (/^[A-Za-z][\w+#.-]{0,19}$/.test(str(x.linguaCodice))) d.linguaCodice = str(x.linguaCodice);   // v0.64: lingua («it», «en-GB») o linguaggio («python», «c++»)
     return d;
   }
   /** Controlla il formato; restituisce '' se va bene, altrimenti il motivo. */

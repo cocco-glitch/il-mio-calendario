@@ -17,7 +17,9 @@
 /** Una domanda nello schema dei pacchetti Drive (campi in italiano). */
 interface QuizDrive { id?: string; livelloCognitivo?: number | string; livello?: number | string; tipoItem?: string; domanda?: string; opzioni?: string[]; esatta?: number; spiegazione?: string; fonte?: string; erroreTipico?: string;
   sottoStep?: string; categoria?: string; stepId?: string; scheda?: string | number; coppiaGemellaId?: string;
-  spiegazioneDistrattori?: string[] | Record<string, string>; distractorTypes?: string[] | Record<string, string>; sourceRef?: string | SourceRefN; }
+  spiegazioneDistrattori?: string[] | Record<string, string>; distractorTypes?: string[] | Record<string, string>; sourceRef?: string | SourceRefN;
+  // v0.64 quiz-v4 (solo tipi: nessun peso in app.js)
+  tipo?: string; risposte?: string[]; elementi?: string[]; rubrica?: string[]; rispostaModello?: string; linguaggio?: string; }
 interface SottoSchedaDrive { codice?: string; sottoStep?: string; titolo?: string; durataMin?: number; durataBracMin?: number; schedePrioritarie?: string[]; schedeRaffinamento?: string[]; rangeId?: string[]; fonte?: string; }
 interface PacchettoDrive {
   meta?: { materia?: string; codiceMateria?: string; unitaDidattica?: string; unita?: string; sottoStep?: string; stepId?: string; titolo?: string; domandeTotali?: number; ripartizioneSchede?: { totale?: number } };
@@ -87,6 +89,7 @@ const ImportaDrive = (() => {
   }
   /** domanda → q, opzioni → o (la corretta per prima), esatta → o[0], spiegazione → e, fonte → r; campi neuro (07-neuro). */
   function domanda(x: QuizDrive, sk: string, k: string): DomB | null {
+    if (s(x.tipo) && s(x.tipo) !== 'mcq') return altroTipo(x, sk, k);
     const opz = Array.isArray(x.opzioni) ? x.opzioni.map(s) : [];
     const es = Number(x.esatta);
     if (!s(x.domanda) || opz.length !== 4 || opz.some(o => !o) || !Number.isInteger(es) || es < 0 || es > 3) return null;
@@ -104,6 +107,32 @@ const ImportaDrive = (() => {
     if (sr) d.sourceRef = sr;
     if (s(x.sottoStep)) d.subtopic = s(x.sottoStep);
     if (s(x.erroreTipico)) d.erroreTipico = s(x.erroreTipico);   // v0.59.2: mostrato nella correzione quando sbagli
+    return d;
+  }
+  /** v0.64 quiz-v4: completamento → fill, ordinamento → sequenza (ordine giusto; mescola il runner), aperta/codice → rubrica. */
+  function altroTipo(x: QuizDrive, sk: string, k: string): DomB | null {
+    const l = (v: unknown) => Array.isArray(v) ? v.map(s).filter(Boolean) : [], tipo = s(x.tipo);
+    if (!s(x.domanda)) return null;
+    const bl = livello(x.livelloCognitivo) || livello(x.livello);
+    const d: DomB = { id: 'q-drv-' + (s(x.id) || hash(sk + '|' + s(x.domanda))), sk, t: 'fill', lv: LV[bl] || 'Applicativo', q: s(x.domanda), e: s(x.spiegazione), stepId: k };
+    if (tipo === 'completamento') {
+      const a = l(x.risposte); if (!a.length || !s(x.domanda).includes('___')) return null;
+      d.a = a; d.show = a[0];
+    } else if (tipo === 'ordinamento') {
+      const el = l(x.elementi); if (el.length < 3 || el.length > 7) return null;
+      d.t = 'sequenza'; d.sequenzaOk = el; d.show = el.join(' → ');
+    } else if (tipo === 'aperta' || tipo === 'codice') {
+      const rb = l(x.rubrica); if (rb.length < 2 || rb.length > 5 || !s(x.rispostaModello) || (tipo === 'codice' && !s(x.linguaggio))) return null;
+      d.t = 'risposta_aperta_rubrica'; d.rubricaPunti = rb; d.show = s(x.rispostaModello);
+      if (tipo === 'codice') d.linguaCodice = s(x.linguaggio);
+    } else return null;
+    if (s(x.fonte)) d.r = s(x.fonte);
+    if (bl) d.bloomLevel = bl as BloomN;
+    if (s(x.spiegazione)) d.spiegazione = s(x.spiegazione);
+    const sr = rifFonte(x.sourceRef, k) || (s(x.fonte) ? rifFonte(x.fonte, k) : undefined);
+    if (sr) d.sourceRef = sr;
+    if (s(x.sottoStep)) d.subtopic = s(x.sottoStep);
+    if (s(x.erroreTipico)) d.erroreTipico = s(x.erroreTipico);
     return d;
   }
   function falla(msg: string): never { throw new Error(msg); }

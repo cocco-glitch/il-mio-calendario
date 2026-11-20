@@ -23,7 +23,8 @@ interface BancaFile { step: number; schede: Record<string, { titolo: string; mat
 interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Partial<DomB>; nascosta?: boolean; nuova?: boolean; originale?: Partial<DomB>; }
 interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; c?: Record<string, ContoQ>;
   /** v0.54 (BP3): SRS per singola domanda secondo la matrice certezza × correttezza, e ultimi tentativi. */
-  neuro?: SrsN; confidenceLog?: TentativoN[]; }
+  neuro?: SrsN; confidenceLog?: TentativoN[];
+  /** v0.64: l'ultima risposta aperta ha un voto cambiato dall'utente rispetto a quello proposto dalla rubrica. */ auto?: boolean; }
 
 const Banca = (() => {
   const file = new Map<string, Promise<BancaFile | null>>();
@@ -143,7 +144,9 @@ const QuizApp = (() => {
 
   interface Voce { d: DomB; ord: number[]; picked: number | string | null; ok: boolean | null; hid: number[]; avv?: string; sel?: number[]; voto?: { coperti: string[]; mancanti: string[] }; ai?: { l: string; testo?: string; errore?: string; attesa?: boolean; modello?: string };
     /** v0.54: inizio della domanda, tempo di risposta, certezza dichiarata e caso della matrice. */
-    t0?: number; ms?: number; cert?: Certezza | null; caso?: CasoN; srs?: SrsN & { contrastivo: boolean; rimando: boolean }; }
+    t0?: number; ms?: number; cert?: Certezza | null; caso?: CasoN; srs?: SrsN & { contrastivo: boolean; rimando: boolean };
+    /** v0.64: risposta aperta in attesa di «Era giusta / Era sbagliata»; voto proposto dalla rubrica; voto cambiato dall'utente. */
+    daConf?: boolean; prop?: boolean; auto?: boolean; }
 
   /** Registra la risposta (v0.48: nel contatore di questo dispositivo) e restituisce la funzione per annullarla. */
   function registraStat(v: Voce): () => void {
@@ -152,7 +155,8 @@ const QuizApp = (() => {
     const x = StatQC.mio(r, dev); x.n++; if (giusta) x.ok++; StatQC.ricalcola(r);
     r.ultima = ymd(new Date()); r.esito = giusta;
     // v0.54 (BP3 §1.2): calibrazione metacognitiva (solo se lo studente ha dichiarato la certezza)
-    const neuroPrima = r.neuro ? { ...r.neuro } : undefined, logPrima = r.confidenceLog ? r.confidenceLog.slice() : undefined;
+    const neuroPrima = r.neuro ? { ...r.neuro } : undefined, logPrima = r.confidenceLog ? r.confidenceLog.slice() : undefined, autoPrima = r.auto;
+    if (v.auto) r.auto = true; else delete r.auto;
     if (v.cert) {
       const t: TentativoN = { ts: new Date().toISOString(), corretto: giusta, livelloCertezza: v.cert, tempoRispostaMs: Math.max(0, Math.round(v.ms || 0)) };
       r.confidenceLog = Neuro.aggiungiTentativo(r.confidenceLog, t);
@@ -173,6 +177,7 @@ const QuizApp = (() => {
       const q = Stato.prendi<StatQ>(id); if (!q) return;
       const y = StatQC.mio(q, dev); y.xn++; if (giusta) y.xok++; StatQC.ricalcola(q);
       if (v.cert) { if (neuroPrima) q.neuro = neuroPrima; else delete q.neuro; if (logPrima) q.confidenceLog = logPrima; else delete q.confidenceLog; }
+      if (autoPrima) q.auto = true; else delete q.auto;
       if (scelta && q.scelte && q.scelte[scelta]) { q.scelte = Object.assign({}, q.scelte); q.scelte[scelta]--; if (!q.scelte[scelta]) delete q.scelte[scelta]; }
       Stato.salva(q, true);
       // v0.57.1 (Q3): annulla anche la carta «trappola» appena creata e l'anticipo nei piani ai_neuro
@@ -237,6 +242,7 @@ const QuizApp = (() => {
     const archM = Dominio.archetipoMateria(m);
     // v0.52 (BP2): sequenza (ordine da ricostruire), abbinamento (coppie) e risposta aperta valutata con una rubrica locale
     const NOMI_TIPO: Record<string, string> = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
+    const codice = (d: DomB) => d.t === 'risposta_aperta_rubrica' && !!d.linguaCodice;
     const nuovoTipo = (d: DomB) => d.t === 'sequenza' || d.t === 'abbinamento' || d.t === 'risposta_aperta_rubrica';
     function ordineIniziale(d: DomB): number[] {
       if (d.t === 'mcq') return mescola(d.o!.map((_, k) => k));
@@ -263,15 +269,24 @@ const QuizApp = (() => {
             : '<select data-abb="' + k + '"><option value="">Scegli…</option>' + x.ord.map(i => '<option value="' + esc(cp[i][1]) + '">' + esc(cp[i][1]) + '</option>').join('') + '</select>') + '</label>').join('')
           + (a ? '' : '<button type="submit" class="btn">Verifica</button>') + '</form>';
       }
-      return '<form class="qz-fill qz-rub" autocomplete="off"><textarea id="qz-ans" rows="5" placeholder="Scrivi la tua risposta con parole tue"' + (a ? ' disabled class="' + (x.ok ? 'ok' : 'ko') + '"' : '') + '>' + (a ? esc(x.picked) : '') + '</textarea>'
-        + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI.</p>') + '</form>';
+      // v0.64: codice in monospazio senza correttore; dopo «Verifica» la rubrica propone il voto e decide l'utente
+      const cod = codice(d), chiusa = a || !!x.daConf, ta = cod ? ' class="qz-codice' + (a ? ' ' + (x.ok ? 'ok' : 'ko') : '') + '" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Scrivi il codice (' + esc(d.linguaCodice) + ')"'
+        : ' placeholder="Scrivi la tua risposta con parole tue"' + (a ? ' class="' + (x.ok ? 'ok' : 'ko') + '"' : '');
+      let o = '<form class="qz-fill qz-rub" autocomplete="off"><textarea id="qz-ans" rows="' + (cod ? 8 : 5) + '"' + ta + (chiusa ? ' disabled' : '') + '>' + (chiusa ? esc(x.picked) : '') + '</textarea>'
+        + (chiusa ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI: poi confermi tu il voto.</p>') + '</form>';
+      if (x.daConf && x.voto) { const k = x.voto.coperti.length, n = k + x.voto.mancanti.length;
+        o += '<div class="qz-box qz-voto" role="group" aria-label="Conferma il voto"><p><b>Coperti ' + k + '/' + n + ' punti chiave</b> · proposta: ' + (x.prop ? 'giusta' : 'sbagliata') + '</p>'
+          + (x.voto.mancanti.length ? '<p class="tenue piccolo">Non trovati: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '')
+          + '<p class="tenue piccolo">Confronta con la risposta modello e decidi tu:</p><p class="' + (cod ? 'qz-codice' : '') + '">' + (cod ? esc(d.show) : fmt(d.show)) + '</p>'
+          + '<div class="chips"><button type="button" class="chip' + (x.prop ? ' on' : '') + '" data-voto="1">✓ Era giusta</button><button type="button" class="chip' + (x.prop ? '' : ' on') + '" data-voto="0">✗ Era sbagliata</button></div></div>'; }
+      return o;
     }
     const nuovo = (idx: number[], rip: boolean) => {
       P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
       storia = []; faticaOn = false; faticaZitta = 0;
       cur = 0; ripasso = rip; apertaX = false; finito = false; disegnaQ(); v.corpo.scrollTop = 0;
     };
-    const fatta = (x: Voce) => x.picked !== null;
+    const fatta = (x: Voce) => x.picked !== null && !x.daConf;
     const punti = () => P.filter(x => x.ok).length;
     const corretta = (x: Voce) => x.ord.indexOf(0);
     const passi = (e: string | string[]) => '<ol class="qz-passi">' + (Array.isArray(e) ? e : [e]).map(t => { const m2 = String(t).match(/^([^:]{2,80}):\s([\s\S]*)$/); return '<li>' + (m2 ? '<b>' + fmt(m2[1]) + ':</b> ' + fmt(m2[2]) : fmt(t)) + '</li>'; }).join('') + '</ol>';
@@ -299,7 +314,7 @@ const QuizApp = (() => {
         + (x.ok ? 'Corretto.' : mc ? 'Non corretto: la risposta giusta è ' + L[corretta(x)] + '.' : 'Non corretto: la risposta attesa è «' + fmt(d.show) + '».') + '</p>' + passiDi(d, mc && ew.some(Boolean));
       if (!x.ok && mc && typeof x.picked === 'number' && ew[x.ord[x.picked] - 1]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>Hai scelto «' + fmt(d.o![x.ord[x.picked]]) + '»: ' + fmt(ew[x.ord[x.picked] - 1]) + '</p></div>';
       if (!x.ok && d.erroreTipico) s2 += '<div class="qz-perche"><b>Errore tipico</b><p>' + fmt(d.erroreTipico) + '</p></div>';
-      if (x.voto) s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
+      if (x.voto) s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + (x.auto ? '<p class="tenue piccolo">Voto deciso da te: la rubrica proponeva «' + (x.prop ? 'giusta' : 'sbagliata') + '».</p>' : '') + '</div>';
       if (!x.ok && mc) { /* già sopra */ } else if (!x.ok && !mc && ew[0]) s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
       const tua = !x.ok && typeof x.picked === 'number' ? x.ord[x.picked] : -1;   // v0.59.2: anche dopo un errore, le confutazioni delle ALTRE opzioni
       if (mc && ew.some(Boolean)) s2 += '<details class="qz-altre"><summary>Perché le altre opzioni sono sbagliate</summary>' + ew.map((t, k) => ({ t, k, pos: x.ord.indexOf(k + 1) })).filter(z => z.t && z.k + 1 !== tua).sort((a, b) => a.pos - b.pos)
@@ -365,7 +380,7 @@ const QuizApp = (() => {
       if (!a && d.t === 'fill') { const i = app.querySelector('#qz-ans') as HTMLInputElement; if (i && matchMedia('(hover:hover)').matches) i.focus({ preventScroll: true }); }
     }
     function rispondi(val: number | string): void {
-      const x = P[cur]; if (fatta(x)) return;
+      const x = P[cur]; if (fatta(x) || x.daConf) return;
       if (mq === 'neuro' && !x.cert) { avviso('Prima dimmi quanto sei sicuro (1, 2 o 3).'); const c = app.querySelector('.qz-cert'); if (c) c.scrollIntoView({ block: 'nearest' }); return; }
       if (mq !== 'neuro') x.cert = null;
       x.ms = x.t0 ? Date.now() - x.t0 : 0;
@@ -375,9 +390,21 @@ const QuizApp = (() => {
         const d = x.d; x.picked = val.trim();
         if (d.t === 'sequenza') { const sc = leggiLista(val); x.ok = sc.length === (d.sequenzaOk || []).length && sc.every((t, k) => t === d.sequenzaOk![k]); }
         else if (d.t === 'abbinamento') { const sc = leggiLista(val); x.ok = (d.coppieOk || []).every((c, k) => sc[k] === c[1]); }
-        else if (d.t === 'risposta_aperta_rubrica') { const r = Locale.rubrica(val, d.rubricaPunti || []); x.voto = { coperti: r.coperti, mancanti: r.mancanti }; x.ok = r.punteggio >= 0.6; }
+        else if (d.t === 'risposta_aperta_rubrica') {   // v0.64: proposta della rubrica; il voto lo conferma l'utente (confermaVoto)
+          const r = Locale.rubrica(val, d.rubricaPunti || []); x.voto = { coperti: r.coperti, mancanti: r.mancanti }; x.prop = r.punteggio >= 0.6; x.daConf = true; x.ok = null;
+          disegnaQ(); return;
+        }
         else x.ok = giusta(val, d.a || []);
       }
+      chiudi(x);
+    }
+    /** v0.64: voto confermato → FSRS e statq; auto:true solo se diverso da quello proposto. */
+    function confermaVoto(x: Voce, ok: boolean): void {
+      if (!x.daConf) return;
+      x.daConf = false; x.ok = ok; x.auto = ok !== x.prop;
+      chiudi(x);
+    }
+    function chiudi(x: Voce): void {
       const annulla = prova ? null : registraStat(x);
       // v0.54 (BP3 §1.3): fatica attentiva — banner non bloccante, al massimo una volta ogni 5 risposte
       storia.push({ ms: x.ms || 0, ok: !!x.ok });
@@ -385,7 +412,7 @@ const QuizApp = (() => {
       else if (Neuro.fatica(storia.map(z => z.ms), storia.map(z => z.ok)).allarme) { faticaOn = true; faticaZitta = 5; }
       // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
       if (toastAnnulla) toastAnnulla.remove();
-      if (annulla) avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+      if (annulla) avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.daConf = false; x.prop = undefined; x.auto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
       toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
       if (!x.ok) { const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null; x.avv = Regole.avvisoRisposta(x.d, dk);
         // v0.52 (BP2 §3): diagnostica locale secondo l'archetipo della materia (zero token)
@@ -472,6 +499,7 @@ const QuizApp = (() => {
         if (x.sel.length >= seq.length) rispondi(JSON.stringify(x.sel.map(i => seq[i]))); else disegnaQ();
         return;
       }
+      if (b.dataset.voto) { confermaVoto(P[cur], b.dataset.voto === '1'); return; }
       if (b.dataset.ai) { chiediAI(b.dataset.ai, !!b.dataset.forza); return; }
       if (b.dataset.cert) { const x = P[cur]; if (!fatta(x)) { x.cert = +b.dataset.cert as Certezza; disegnaQ(); } return; }
       if (b.dataset.exp) { esporta(dati.domande, b.dataset.exp as any, info ? info.titolo : s.titolo, archM); return; }

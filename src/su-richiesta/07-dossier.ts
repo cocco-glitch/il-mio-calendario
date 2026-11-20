@@ -9,6 +9,7 @@ interface TentD { ts: string; corretto: boolean; certezza: number; ms: number; }
 interface StatD {
   qid: string; sk: string; n: number; ok: number; scelte?: Record<string, number>; testo?: string;
   caso?: string; tag?: string[]; ease?: number; reps?: number; livello?: number; log?: TentD[];
+  /** v0.64: risposta aperta o codice (scritta, voto confermato dall'utente) → fuori da illusioni e distrattori. */ aperta?: boolean;
 }
 interface DatiDossier { stat: StatD[]; giorniEsame?: number | null; minutiGiorno?: number | null; }
 type TipoVoceD = 'esame' | 'debole' | 'illusione' | 'confusione' | 'oblio' | 'tempo' | 'concentrazione' | 'orario' | 'studio';
@@ -56,7 +57,7 @@ const Dossier = (() => {
         motivo: pct(ok, n) + ' % di risposte giuste su ' + n + ' tentativi.', peso: 80 + Math.round(60 - 100 * ok / n),
         regola: 'Sotto-step ' + arg + ': aggiungi almeno una scheda in più, con più domande L3 (trabocchetti) e confutazioni esplicite.' });
       // illusioni di competenza: sicuro e sbagliato
-      const ill = xs.filter(s => s.caso === 'illusione_competenza' || (s.tag || []).includes('illusione_competenza') ||
+      const ill = xs.filter(s => !s.aperta).filter(s => s.caso === 'illusione_competenza' || (s.tag || []).includes('illusione_competenza') ||
         (s.log || []).some(t => !t.corretto && t.certezza === 3)).length;
       if (ill >= 2) voci.push({ id: 'illusione:' + arg, tipo: 'illusione', arg, titolo: 'Sicurezza mal riposta nel sotto-step ' + arg,
         motivo: ill + ' domande sbagliate dicendo «sicuro».', peso: 70 + ill,
@@ -73,7 +74,7 @@ const Dossier = (() => {
 
     // idee sbagliate: distrattori scelti almeno 2 volte (testo didattico, non personale)
     const conf: { s: StatD; scelta: string; volte: number }[] = [];
-    for (const s of stat) if (s.scelte && !/^g-/.test(s.qid)) for (const [scelta, volte] of Object.entries(s.scelte)) if (volte >= 2 && scelta.trim()) conf.push({ s, scelta, volte });
+    for (const s of stat) if (s.scelte && !s.aperta && !/^g-/.test(s.qid)) for (const [scelta, volte] of Object.entries(s.scelte)) if (volte >= 2 && scelta.trim()) conf.push({ s, scelta, volte });
     conf.sort((a, b) => b.volte - a.volte || (a.s.qid < b.s.qid ? -1 : a.s.qid > b.s.qid ? 1 : 0) || (a.scelta < b.scelta ? -1 : 1));
     for (const c of conf.slice(0, MAX_CONFUSIONI)) {
       const arg = argomentoDaSk(c.s.sk), dove = c.s.testo ? 'a «' + taglia(c.s.testo) + '»' : 'nel sotto-step ' + arg;

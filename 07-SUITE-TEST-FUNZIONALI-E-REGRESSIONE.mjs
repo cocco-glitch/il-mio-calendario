@@ -206,7 +206,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.63.1', () => vero(/const VERSIONE = '0.63.1'/.test(leggi('09-main.ts'))));
+t('versione app 0.64.0', () => vero(/const VERSIONE = '0.64.0'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
@@ -889,6 +889,16 @@ t('v0.63: Importa del Centro sulla pipeline unica, lista esclusi precompilata, t
   vero(/'imc-centro-esclusi'/.test(sq) && /\['Testbusters', 'Alpha Test', 'Editest'\]/.test(sq), 'lista esclusi con prefisso imc- e precompilata');
   vero(!/RE_VIETATI/.test(sq) && /if \(vietato\(n\)\)/.test(sq), 'la raccolta fonti usa la lista modificabile');
   vero(/titolo: '📥 Importa quiz', corpo/.test(d) && !/titolo: '📥 Importa quiz da Drive'/.test(d), 'titolo del foglio import senza «da Drive»');
+});
+
+t('v0.64: runner — codice in monospazio, rubrica confermata dall\'utente, linguaggio di programmazione accettato', () => {
+  const q = leggi('07-quizapp.ts'), dm = leggi('07-dominio.ts');
+  vero(/qz-codice[^\n]{0,200}spellcheck="false"[^\n]{0,80}autocapitalize="off"/.test(q), 'textarea del codice: monospazio, niente correttore né maiuscole');
+  vero(/data-voto="1"/.test(q) && /data-voto="0"/.test(q) && /Era giusta/.test(q) && /Era sbagliata/.test(q), 'pulsanti di conferma del voto');
+  vero(/if \(v\.auto\) r\.auto = true/.test(q), 'auto:true in statq solo se il voto è stato cambiato');
+  const m = /linguaCodice\)\)\) d\.linguaCodice/.exec(dm); vero(!!m, 'normalizzaDomanda copia linguaCodice');
+  const re = new RegExp(/\/(\^[^/]+\$)\/\.test\(str\(x\.linguaCodice\)\)/.exec(dm)[1]);
+  vero(['python', 'c++', 'c#', 'en', 'it-IT'].every(x => re.test(x)) && !re.test('<script>'), 'regex: linguaggi e lingue sì, markup no');
 });
 
 fs.rmSync(TMP, { recursive: true, force: true });

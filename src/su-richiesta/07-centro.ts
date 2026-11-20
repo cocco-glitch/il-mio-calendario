@@ -382,5 +382,20 @@ const Centro = (() => {
     return out;
   }
 
-  return { prefisso, nomeParte, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni };
+  // ---------- v0.64 T6: parti k/N di una scheda ----------
+  /** Posizione di una domanda nella scheda, dal suffisso dell'ID assegnato dall'app (…-S01-07 → 7); 0 se non c'è. */
+  const posizione = (q: DomAI) => { const m = /-(\d+)$/.exec(String(q.id || '')); return m ? Number(m[1]) : 0; };
+  /** Unisce le domande di una parte a quelle già arrivate: stesso ID = sostituita (reimport senza doppioni), poi in ordine di posizione. */
+  function unisciDomande(gia: DomAI[], nuove: DomAI[]): DomAI[] {
+    const per = new Map<string, DomAI>();
+    for (const q of [...gia, ...nuove]) per.set(String(q.id), q);
+    return [...per.values()].sort((a, b) => posizione(a) - posizione(b));
+  }
+  /** Per ogni parte: true se tutte le posizioni da..a sono arrivate. */
+  function partiIncollate(parti: ParteAI[], quiz: DomAI[]): boolean[] {
+    const ci = new Set(quiz.map(posizione));
+    return parti.map(p => { for (let k = p.da; k <= p.a; k++) if (!ci.has(k)) return false; return true; });
+  }
+
+  return { prefisso, nomeParte, unisciDomande, partiIncollate, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni };
 })();

@@ -225,7 +225,7 @@ const StrumentiQuiz = (() => {
       const qid = s.id.replace(/^sq-/, ''), d = testi.get(qid), nr = s.neuro;
       stat.push({ qid, sk: s.sk, n: s.n || 0, ok: s.ok || 0, scelte: s.scelte, testo: d ? d.q : undefined,
         caso: nr && nr.ultimoCaso, tag: nr && nr.tag, ease: nr && nr.ease, reps: nr && nr.reps,
-        livello: d ? (d.bloomLevel || LV_NUM[d.lv]) : undefined,
+        livello: d ? (d.bloomLevel || LV_NUM[d.lv]) : undefined, aperta: d && d.t === 'risposta_aperta_rubrica' ? true : undefined,
         log: (s.confidenceLog || []).map(t => ({ ts: t.ts, corretto: t.corretto, certezza: t.livelloCertezza, ms: t.tempoRispostaMs })) });
     }
     const oggiY = ymd(new Date()), t0 = Date.parse(oggiY + 'T00:00:00');

@@ -31,7 +31,7 @@ const js = FILE.map(f => ts.transpileModule(leggi(f), { compilerOptions: { targe
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const sb = { console, ymd, oggi: () => new Date(), materiaDi: k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; } };
 vm.createContext(sb);
-const ESPORTA = ['ImportaParti', 'ImportaDrive', 'Contratto', 'Centro', 'DiagnosiQuiz'];
+const ESPORTA = ['ImportaParti', 'ImportaDrive', 'Contratto', 'Centro', 'DiagnosiQuiz', 'MasterPrompt', 'ProfiliAI'];
 vm.runInContext(js + '\n;' + ESPORTA.map(n => 'this.' + n + ' = typeof ' + n + " !== 'undefined' ? " + n + ' : undefined;').join(' '), sb);
 const { Contratto: C, ImportaParti: IP, ImportaDrive: ID } = sb;
 const CE = sb.Centro || new Proxy({}, { get: (_, k) => () => { throw new Error('Centro.' + String(k) + ' non esiste ancora'); } });
@@ -369,6 +369,82 @@ t('verificaCitazioni → prompt di correzione: chiede fonte, sourceRef e spiegaz
   vero(/Fonte attuale: Manuale, p\. 50/.test(c.testo) && /Opzioni: A\) ATP/.test(c.testo), 'contesto per ritrovare la pagina');
   vero(/pagina reale/.test(c.testo), 'consiglio: cercare la pagina vera');
 });
+// =====================================================================
+console.log('\n== Prompt v4, parti k/N e materiale (v0.64 T5) ==');
+const MP = sb.MasterPrompt, PA = sb.ProfiliAI;
+const SCH1 = [{ n: 1, micro: ['3.3.1'], categoria: 'prioritaria' }];
+const PAG1 = { '3.3.1': { stampDa: 41, stampA: 44, pdfDa: 54, pdfA: 57, affidabilita: 'esatta' } };
+const MCQ_SOLE = { mcq: 18, completamento: 0, ordinamento: 0, aperta: 0, codice: 0 };
+t('mix solo mcq (proprietario) → prompt identico al byte a quello senza mix (v3)', () => {
+  eq(MP.costruisciSchede({ ...OPZ, mix: PA.mix('informatica_coding', true, 18) }, SCH1, PAG1), MP.costruisciSchede(OPZ, SCH1, PAG1));
+  eq(MP.costruisciSchede({ ...OPZ, mix: MCQ_SOLE }, SCH1), MP.costruisciSchede(OPZ, SCH1));
+});
+t('umanistico → quiz-v4 con la sequenza dei tipi decisa dall\'app: 5 aperte su 18 (~30%) in fondo, con rubrica', () => {
+  const p = MP.costruisciSchede({ ...OPZ, archetipo: 'umanistico_storico', mix: PA.mix('umanistico_storico', false, 18) }, SCH1);
+  vero(p.includes('"formato": "quiz-v4"') && !p.includes('"formato": "quiz-v3"'), 'formato v4');
+  vero(p.includes('1–9 risposta multipla, 10–11 completamento, 12–13 ordinamento, 14–18 aperta'), 'sequenza dei tipi');
+  vero(/rubrica/.test(p) && /rispostaModello/.test(p) && /`___`/.test(p) && /da 3 a 7/.test(p), 'campi per tipo');
+  vero(!/linguaggio/.test(p), 'niente regole del codice se il mix non ha codice');
+});
+t('nessuna frase chiede all\'AI di contare o calcolare quante domande', () => {
+  const p = MP.costruisciSchede({ ...OPZ, mix: PA.mix('informatica_coding', false, 18), parteAI: { k: 2, N: 3, da: 7, a: 12 }, materiale: null }, SCH1);
+  vero(!/\bcont(a|are|ale)\b|quante domande|calcola (il numero|quante)/i.test(p), 'frase che fa contare l\'AI');
+});
+t('locale, 18 domande → 3 parti; la parte 2 chiede solo 7–12 con tipi, livelli e "da": 7', () => {
+  const parti = PA.parti(18, PA.preset('locale').perRisposta);
+  eq(parti.length, 3);
+  const mix = PA.mix('scienze_sperimentali', false, 18);   // 70/15/15 di 18 a resti maggiori → 12 mcq, 3 completamento, 3 ordinamento
+  const p = MP.costruisciSchede({ ...OPZ, mix, parteAI: parti[1] }, SCH1);
+  vero(p.includes('PARTE 2 di 3') && p.includes('dalla 7 alla 12'), 'parte e intervallo');
+  vero(p.includes('biologia-3.3-S01-07') && p.includes('biologia-3.3-S01-12'), 'ID assegnati dall\'app');
+  vero(p.includes('"da": 7'), 'intestazione con da');
+  vero(p.includes('livelli 3, 1, 2, 3, 2, 4'), 'livelli della parte');
+  vero(p.includes('posizioni 7–12: 7–12 risposta multipla'), 'tipi della parte');
+  const p3 = MP.costruisciSchede({ ...OPZ, mix, parteAI: parti[2] }, SCH1);
+  vero(p3.includes('posizioni 13–18: 13–15 completamento, 16–18 ordinamento'), 'tipi della parte 3: ' + (/posizioni 13–18: [^\n.]*/.exec(p3) || [''])[0]);
+});
+t('parte con "da": 7 → l\'app numera gli ID dalla 7 (nessuna collisione con la parte 1)', () => {
+  const qs = Array.from({ length: 6 }, (_, i) => ({ tipo: 'completamento', livello: 1, domanda: 'Il ___ ' + i, risposte: ['x'], fonte: '[[M, p. 41]]' }));
+  const fatte = C.aQuiz(C.leggi(JSON.stringify({ formato: 'quiz-v4', parte: 'biologia-3.3-s1', da: 7, quiz: qs })), { step: 'biologia-3.3' });
+  eq(fatte.map(q => q.id), ['07', '08', '09', '10', '11', '12'].map(k => 'biologia-3.3-S01-' + k));
+});
+const PAGINE_PDF = Array.from({ length: 20 }, (_, i) => ({ n: 54 + i, testo: ('Pagina ' + (54 + i) + ' ').padEnd(5000, 'x') }));
+t('copilot (file no, 40 000) → materiale tagliato a fine pagina, prompt intero ≤ 40 000 caratteri e taglio dichiarato', () => {
+  const cp = PA.preset('copilot');
+  const r = MP.promptSchede({ ...OPZ, mix: PA.mix('scienze_sperimentali', false, 18), parteAI: PA.parti(18, cp.perRisposta)[0], materiale: PAGINE_PDF, maxCaratteri: cp.maxCaratteri }, SCH1, PAG1);
+  vero(r.testo.length <= 40000, 'lunghezza ' + r.testo.length);
+  vero(r.materiale && r.materiale.pagine.length > 0 && r.materiale.escluse > 0, 'pagine tenute e tolte');
+  vero(r.testo.includes('MATERIALE') && /TAGLIATO/.test(r.testo), 'taglio dichiarato');
+  vero(r.testo.includes('PDF p. 54 = p. 41'), 'pagina stampata dalla mappa');
+  vero(!r.testo.includes('Leggi sul Drive') && !r.testo.includes('Usa solo il materiale dello step, in quest'), 'niente istruzioni per leggere file');
+});
+t('materiale null o solo pagine scansionate → «materiale non incluso»', () => {
+  for (const m of [null, [{ n: 54, testo: '', vuota: true }]]) {
+    const r = MP.promptSchede({ ...OPZ, materiale: m, maxCaratteri: 12000 }, SCH1, PAG1);
+    vero(/[Mm]ateriale non incluso/.test(r.testo), 'frase');
+  }
+});
+t('continua() di una scheda quiz-v4 → resta quiz-v4', () => {
+  const p = C.continua({ formato: 'quiz-v4', dati: { step: 'biologia-3.3', scheda: 'S01', quiz: [{ tipo: 'aperta' }] }, blocchi: [], riparazioni: [], avvisi: [], errori: [] });
+  vero(p.includes('"formato":"quiz-v4"'), p);
+});
+// == Parti incollate e unione per ID (v0.64 T6) ==
+console.log('== Parti incollate e unione per ID (v0.64 T6) ==');
+{
+  const q = k => ({ id: 'bio-3.3-S01-' + String(k).padStart(2, '0'), domanda: 'D' + k });
+  t('unisciDomande: la parte 2 si aggiunge alla 1 in ordine di posizione; il reimport sostituisce, niente doppioni', () => {
+    const p1 = [1, 2, 3, 4, 5, 6].map(q), p2 = [7, 8, 9, 10, 11, 12].map(q);
+    const u = CE.unisciDomande(p2, p1);
+    eq(u.map(x => x.id.slice(-2)), ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']);
+    const re = CE.unisciDomande(u, [{ ...q(8), domanda: 'nuova' }]);
+    eq(re.length, 12); eq(re[7].domanda, 'nuova');
+  });
+  t('partiIncollate: ✓ solo se ci sono tutte le posizioni da..a della parte', () => {
+    const parti = [{ k: 1, N: 3, da: 1, a: 6 }, { k: 2, N: 3, da: 7, a: 12 }, { k: 3, N: 3, da: 13, a: 18 }];
+    eq(CE.partiIncollate(parti, [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18].map(q)), [true, false, true]);
+    eq(CE.partiIncollate(parti, []), [false, false, false]);
+  });
+}
 // =====================================================================
 console.log('\nCentro ' + ok + '/' + (ok + ko));
 process.exit(ko ? 1 : 0);

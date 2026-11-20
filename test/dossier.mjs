@@ -159,6 +159,25 @@ t('numeri di step e pagine non sono falsi allarmi', () => {
 });
 
 // =====================================================================
+console.log('\n== Aperte e codice (v0.64) ==');
+const sicuroSbagliato = (g, h) => [{ ts: ora(g, h), corretto: false, certezza: 3, ms: 30000 }];
+t('aperta/codice sicure e sbagliate non fanno illusione di competenza', () => {
+  const xs = [stat('a1', 'B-2.2.1-1', 1, 0, { aperta: true, caso: 'illusione_competenza', log: sicuroSbagliato(10, 9) }),
+    stat('a2', 'B-2.2.1-2', 1, 0, { aperta: true, tag: ['illusione_competenza'], log: sicuroSbagliato(10, 10) })];
+  eq(D.calcola({ stat: xs }, { materia: 'Storia', step: '2.2', oggi: OGGI }).voci.filter(v => v.tipo === 'illusione').length, 0);
+  const mcq = xs.map(x => ({ ...x, aperta: undefined }));
+  eq(D.calcola({ stat: mcq }, { materia: 'Storia', step: '2.2', oggi: OGGI }).voci.filter(v => v.tipo === 'illusione').length, 1, 'le stesse mcq sì');
+});
+t('aperta/codice: le risposte scritte non diventano idee sbagliate (distrattori)', () => {
+  const d = D.calcola({ stat: [stat('a1', 'B-2.2.1-1', 3, 0, { aperta: true, scelte: { 'def f(): pass': 3 } })] }, { materia: 'Info', step: '', oggi: OGGI });
+  eq(d.voci.filter(v => v.tipo === 'confusione').length, 0);
+});
+t('aperta/codice: tentativi e tempi contano normalmente (debole e concentrazione)', () => {
+  const d = D.calcola({ stat: [stat('a1', 'B-2.2.1-1', 6, 1, { aperta: true })] }, { materia: 'Storia', step: '2.2', oggi: OGGI });
+  eq(d.voci.filter(v => v.tipo === 'debole').map(v => v.arg), ['2.2.1']); eq(d.tentativi, 6);
+});
+
+// =====================================================================
 const fine = 'Dossier ' + ok + '/' + (ok + ko);
 console.log('\n' + fine + (ko ? ' — ' + ko + ' falliti' : ''));
 process.exit(ko ? 1 : 0);

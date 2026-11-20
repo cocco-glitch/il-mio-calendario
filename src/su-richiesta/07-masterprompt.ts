@@ -19,6 +19,14 @@ interface OpzMP {
   idEsistenti?: string[]; puntiDeboli?: string[]; tabella?: string; note?: string;
   /** v0.62: regole già decise dal Dossier studente (07-dossier.ts); se presenti sostituiscono puntiDeboli. */
   dossier?: string[];
+  /** v0.64: mix dei tipi della scheda (ProfiliAI.mix): prompt quiz-v4 solo se contiene tipi diversi da mcq. */
+  mix?: MixTipi;
+  /** v0.64: la parte k/N da chiedere (ProfiliAI.parti); assente = la scheda intera. */
+  parteAI?: ParteAI;
+  /** v0.64: testo del PDF per un'AI che non legge file (ProfiliAI.pagine); null = nessun testo → «materiale non incluso»; assente = l'AI legge i file. */
+  materiale?: PaginaTesto[] | null;
+  /** v0.64: tetto del prompt intero in caratteri (ProfiloAI.maxCaratteri); 0 o assente = nessun tetto. */
+  maxCaratteri?: number;
 }
 
 const MasterPrompt = (() => {
@@ -175,9 +183,10 @@ const MasterPrompt = (() => {
     return S;
   }
   /** Regole di generazione di una scheda (Fase 2). `calcoli` = riga Q-G. */
-  function regoleScheda(o: OpzMP, calcoli: string): string[] {
+  function regoleScheda(o: OpzMP, calcoli: string, v4 = false): string[] {
     const { mat, arch } = base(o);
-    return [' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.',
+    return [v4 ? ' - 1 SCHEDA = 18 domande dei tipi nella SEQUENZA decisa dall\'app (sotto); le mcq con ESATTAMENTE 4 opzioni. Ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.'
+      : ' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.',
       ' - NON scrivere id, stepId, sottoStep, esatta, livelloCognitivo, sourceRef: li aggiunge l\'app.',
       '', 'LIVELLI — segui questa SEQUENZA per le 18 domande di ogni scheda (1ª, 2ª, … 18ª): ' + SEQUENZA_LIVELLI.join(', ') + '.',
       ' - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.',
@@ -191,7 +200,7 @@ const MasterPrompt = (() => {
       ' ' + regolaArchetipo(arch, mat),
       ' Q-F. Italiano corretto; pedici/apici come `_{2}` e `^{2}`; risultati numerici semplici con unità SI.',
       calcoli,
-      '', 'CAMPO `spiegazione` (lunga e completa, almeno un paragrafo pieno; nei calcoli tutti i passaggi), con queste etichette ESATTE in maiuscolo:',
+      '', 'CAMPO `spiegazione`' + (v4 ? ' delle mcq' : '') + ' (lunga e completa, almeno un paragrafo pieno; nei calcoli tutti i passaggi), con queste etichette ESATTE in maiuscolo:',
       ' COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «testo» … PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]',
       ' Scrivi le lettere come se la corretta fosse A (cioè `opzioni[0]`): l\'app le riscrive dopo aver mescolato. La citazione [[…]] è uguale a `fonte`.',
       ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.'];
@@ -299,9 +308,63 @@ const MasterPrompt = (() => {
     return S.join('\n');
   }
 
+  // ---------- v0.64 «Qualsiasi AI»: tipi di domanda (quiz-v4), parti k/N, materiale incollato ----------
+  const TIPO_NOME: Record<TipoV4, string> = { mcq: 'risposta multipla', completamento: 'completamento', ordinamento: 'ordinamento', aperta: 'aperta', codice: 'codice' };
+  /** Il prompt v4 solo se il mix contiene tipi diversi da mcq (spec §D); altrimenti v3 identico al byte. */
+  const conAltriTipi = (m?: MixTipi) => !!m && (Object.keys(m) as TipoV4[]).some(t => t !== 'mcq' && m[t] > 0);
+  /** «1–9 risposta multipla, 10–11 completamento» per le posizioni da..a (1-based) della sequenza dei tipi. */
+  function trattiTipi(seq: TipoV4[], da: number, a: number): string {
+    const out: string[] = [];
+    for (let i = da; i <= a;) {
+      let j = i;
+      while (j < a && seq[j] === seq[i - 1]) j++;
+      out.push((i === j ? String(i) : i + '–' + j) + ' ' + TIPO_NOME[seq[i - 1] || 'mcq']);
+      i = j + 1;
+    }
+    return out.join(', ');
+  }
+  /** Regole dei tipi: la sequenza delle posizioni la decide l'app (l'AI non conta), solo i tipi presenti nel mix. */
+  function regoleTipi(m: MixTipi, pa?: ParteAI): string[] {
+    const seq = ProfiliAI.sequenza(m), c = (t: TipoV4) => m[t] > 0, presenti = (Object.keys(TIPO_NOME) as TipoV4[]).filter(c);
+    const S = ['', 'TIPI DI DOMANDA — decisi dall\'app; segui questa SEQUENZA di posizioni (1ª, 2ª, … 18ª): ' + trattiTipi(seq, 1, seq.length) + '.'];
+    if (pa) S.push(' - In questa parte: posizioni ' + pa.da + '–' + pa.a + ': ' + trattiTipi(seq, pa.da, pa.a) + '.');
+    S.push(' - Ogni domanda ha `"tipo"`: ' + presenti.map(t => '"' + t + '"').join(' | ') + '.');
+    if (c('mcq')) S.push(' - mcq: 4 opzioni con la corretta in `opzioni[0]`, come nelle regole qui sopra.');
+    if (c('completamento')) S.push(' - completamento: in `domanda` il buco è scritto ESATTAMENTE `___` (tre trattini bassi); `risposte` = le risposte accettate (almeno una).');
+    if (c('ordinamento')) S.push(' - ordinamento: `elementi` = da 3 a 7 voci già nell\'ordine giusto, senza numeri o lettere davanti (le mescola l\'app).');
+    if (c('aperta') || c('codice')) S.push(' - ' + presenti.filter(t => t === 'aperta' || t === 'codice').join(' e ') + ': `rubrica` = da 2 a 5 punti che una risposta completa deve toccare; `rispostaModello` = la risposta ideale.');
+    if (c('codice')) S.push(' - codice: anche `linguaggio` = il linguaggio di programmazione (es. "python", "sql").');
+    S.push(' - Tipi diversi da mcq: niente `opzioni`, `spiegazioneDistrattori` e `distractorTypes`; `spiegazione` breve che chiude con la citazione [[…]] uguale a `fonte`.');
+    return S;
+  }
+  const ESEMPI_V4: Record<Exclude<TipoV4, 'mcq'>, string> = {
+    completamento: '{"scheda":"S01","categoria":"prioritaria","tipo":"completamento","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …","domanda":"… ___ …","risposte":["…"],"spiegazione":"… [[Manuale, p. X]]","fonte":"[[Manuale, p. X]]"}',
+    ordinamento: '{"scheda":"S01","categoria":"prioritaria","tipo":"ordinamento","livello":2,"tipoItem":"sequenza_…","erroreTipico":"Invertire … e …","domanda":"Metti in ordine …","elementi":["primo","secondo","terzo"],"spiegazione":"… [[Manuale, p. X]]","fonte":"[[Manuale, p. X]]"}',
+    aperta: '{"scheda":"S01","categoria":"prioritaria","tipo":"aperta","livello":4,"tipoItem":"sintesi_…","erroreTipico":"Dimenticare …","domanda":"Spiega perché …","rubrica":["punto 1","punto 2","punto 3"],"rispostaModello":"…","spiegazione":"… [[Manuale, p. X]]","fonte":"[[Manuale, p. X]]"}',
+    codice: '{"scheda":"S01","categoria":"prioritaria","tipo":"codice","livello":3,"tipoItem":"scrittura_codice_…","erroreTipico":"Off-by-one in …","domanda":"Scrivi una funzione che …","linguaggio":"python","rubrica":["punto 1","punto 2"],"rispostaModello":"…","spiegazione":"… [[Manuale, p. X]]","fonte":"[[Manuale, p. X]]"}',
+  };
+  /** Testo del PDF tagliato dall'app → righe del blocco MATERIALE (pagine PDF con la stampata accanto, se la mappa la conosce). */
+  function righeMateriale(t: TestoTagliato, p: PagineMicro | null): string[] {
+    const mappa: MappaPag | null = p && p.pdfDa !== null ? { fonte: 'mano', tratti: [{ pdfDa: p.pdfDa, pdfA: p.pdfA !== null ? p.pdfA : MappaPagine.APERTO, stampDa: p.stampDa }], affidabilita: 'esatta' } : null;
+    const stampata = (n: number) => { if (!mappa) return ''; const x = MappaPagine.aStampata(mappa, n); return x !== null && x !== undefined && x !== '' ? ' = p. ' + x : ''; };
+    if (!t.pagine.length) return ['Materiale non incluso: ' + (t.escluse ? 'il testo del PDF non entra nel limite della tua AI' : t.vuote ? 'le pagine del PDF sono immagini senza testo' : 'il PDF non è disponibile') +
+      '. Scrivi solo ciò che è certo per questo microstep e nella `fonte` metti capitolo e paragrafo, senza numero di pagina: l\'app segna queste citazioni da verificare.'];
+    const S = ['Non aprire file: usa SOLO il testo qui sotto, estratto dall\'app dal PDF del libro (' + t.pagine.length + ' pagine, ' + t.caratteri + ' caratteri). Cita la pagina stampata indicata in ogni intestazione.'];
+    if (t.escluse) S.push('Il testo è TAGLIATO a fine pagina dopo la PDF ' + t.pagine[t.pagine.length - 1].n + ' per stare nel limite della tua AI: scrivi domande solo su ciò che leggi qui.');
+    if (t.vuote) S.push('Le pagine che nel PDF sono solo immagini non sono incluse: non citarle.');
+    for (const pg of t.pagine) S.push('', '--- PDF p. ' + pg.n + stampata(pg.n) + ' ---', pg.testo);
+    return S;
+  }
+  const SEGNO_MATERIALE = '\u0000MATERIALE\u0000';
+
   /** Passo 3 «Quiz»: le schede indicate (una o due), con sigle e nome della parte già decisi dall'app. */
   function costruisciSchede(o: OpzMP, schede: SchedaPromptMP[], pagine?: Record<string, PagineMicro | null>): string {
+    return promptSchede(o, schede, pagine).testo;
+  }
+  /** Come costruisciSchede, più il materiale davvero incluso (per la riga «Includo N pagine, M caratteri» prima di «Copia»). */
+  function promptSchede(o: OpzMP, schede: SchedaPromptMP[], pagine?: Record<string, PagineMicro | null>): { testo: string; materiale: TestoTagliato | null } {
     const { ms, step, pref } = base(o), l = schede.slice().sort((a, b) => a.n - b.n);
+    const v4 = conAltriTipi(o.mix), pa = o.parteAI, fmt = v4 ? 'quiz-v4' : 'quiz-v3';
     /** Pagine del microstep principale, calcolate dall'app (Centro.pagineMicrostep): l'AI non le ricava. */
     const pag = (x: SchedaPromptMP) => {
       const p = pagine && pagine[x.micro[0]];
@@ -321,28 +384,59 @@ const MasterPrompt = (() => {
     S.push(rigaMateria(o), ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + '.', ' - Schede da scrivere ora (' + l.length + ' × 18 domande):',
       ...l.map(x => '   • ' + sigla(x) + ' · microstep ' + x.micro.join(', ') + ' · ' + x.categoria + (x.blocco ? ' · blocco «' + x.blocco + '»' : '') + pag(x)));
     if (conPagine) S.push(' - Cita solo le pagine indicate per la scheda (numero stampato del libro); il PDF serve a trovarle.');
+    if (pa) {
+      const id = (x: SchedaPromptMP, k: number) => pref + '-S' + String(x.n).padStart(2, '0') + '-' + String(k).padStart(2, '0');
+      S.push(' - PARTE ' + pa.k + ' di ' + pa.N + ': scrivi SOLO le domande dalla ' + pa.da + ' alla ' + pa.a + ' di ' + (l.length > 1 ? 'ogni scheda' : sigla(l[0] || { n: 1, micro: [], categoria: 'prioritaria' })) +
+        ' (livelli ' + SEQUENZA_LIVELLI.slice(pa.da - 1, pa.a).join(', ') + '). Gli ID (' + l.map(x => id(x, pa.da) + ' … ' + id(x, pa.a)).join('; ') + ') li assegna l\'app: non scriverli.');
+    }
     S.push(...righeStudente(o));
     sezione(S, 'COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
     S.push(...COMPATIBILITA);
-    sezione(S, 'FONTI');
-    S.push(...fonti(o, 'Usa solo il materiale dello step, in quest\'ordine:'));
+    if (o.materiale === undefined) {
+      sezione(S, 'FONTI');
+      S.push(...fonti(o, 'Usa solo il materiale dello step, in quest\'ordine:'));
+    } else {
+      sezione(S, 'MATERIALE — testo del libro estratto dall\'app');
+      S.push(SEGNO_MATERIALE);
+    }
     sezione(S, 'FASE 2 — GENERAZIONE DELLE SCHEDE');
-    S.push(...regoleScheda(o, ' Q-G. Ogni calcolo deve tornare: verifica risultato e ordine di grandezza prima di consegnare.'));
+    S.push(...regoleScheda(o, ' Q-G. Ogni calcolo deve tornare: verifica risultato e ordine di grandezza prima di consegnare.', v4));
+    if (v4 && o.mix) S.push(...regoleTipi(o.mix, pa));
     sezione(S, 'CONSEGNA');
     S.push(' - Prima riga: `STEP ' + ms + ' ' + step + ' · ' + l.map(sigla).join(' e ') + '`.',
       ' - Poi UN SOLO blocco ```json valido (doppi apici, zero virgole finali, nessun commento):',
-      '   { "formato": "quiz-v3", "parte": "' + parte + '", "quiz": [ … ] }',
+      '   { "formato": "' + fmt + '", "parte": "' + parte + '"' + (pa ? ', "da": ' + pa.da : '') + ', "quiz": [ … ] }',
       '   Ogni domanda ha `"scheda"` (' + l.map(x => '"' + sigla(x) + '"').join(' o ') + ') e `"categoria"` come nell\'elenco sopra.',
-      '   Campi di ogni domanda: ' + CHIAVI_V3.join(', ') + ' (gemella solo se fa parte di una coppia).',
-      '   livello = NUMERO 1–4 dalla sequenza; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, per opzioni[1], [2], [3].',
+      '   Campi di ogni ' + (v4 ? 'mcq: tipo, ' : 'domanda: ') + CHIAVI_V3.join(', ') + ' (gemella solo se fa parte di una coppia).');
+    if (v4) S.push('   Campi degli altri tipi: tipo, livello, gemella, tipoItem, erroreTipico, domanda, spiegazione, fonte e i campi del tipo (vedi TIPI DI DOMANDA).');
+    S.push('   livello = NUMERO 1–4 dalla sequenza; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, per opzioni[1], [2], [3].',
       ' - MAI accorciare spiegazioni o ridurre domande. Se il limite di output ti ferma, fermati dopo una domanda completa: l\'app ti chiederà il resto.');
-    if (o.gem) S.push('', 'Se le istruzioni del Gem chiedono id, esatta o conteggi (regole vecchie), valgono QUESTE: formato quiz-v3, giusta in opzioni[0].');
+    if (o.gem) S.push('', 'Se le istruzioni del Gem chiedono id, esatta o conteggi (regole vecchie), valgono QUESTE: formato ' + fmt + ', giusta in opzioni[0].');
     sezione(S, 'ESEMPIO DI FORMATO (non copiarne il contenuto: imita struttura e livello di dettaglio)');
-    S.push(ESEMPIO);
+    if (v4 && o.mix) {
+      const m = o.mix;
+      if (m.mcq > 0) S.push(ESEMPIO.replace('{"scheda":"S01","categoria":"prioritaria",', '{"scheda":"S01","categoria":"prioritaria","tipo":"mcq",'));
+      (Object.keys(ESEMPI_V4) as Exclude<TipoV4, 'mcq'>[]).filter(t => m[t] > 0).forEach(t => S.push(ESEMPI_V4[t]));
+    } else S.push(ESEMPIO);
     sezione(S, 'AUTOVERIFICA PRIMA DI CONSEGNARE');
-    S.push(...AUTOVERIFICA, 'Numeri, posizioni e controlli li fa l\'app: non riepilogare. Parti ora con ' + sigla(l[0] || { n: 1, micro: [], categoria: 'prioritaria' }) + '.');
-    return S.join('\n');
+    S.push(...AUTOVERIFICA);
+    if (v4) S.push(' [ ] Tipi nelle posizioni della sequenza; completamento con `___`; ordinamento con 3–7 elementi; aperta/codice con rubrica di 2–5 punti.');
+    S.push('Numeri, posizioni e controlli li fa l\'app: non riepilogare. Parti ora con ' + sigla(l[0] || { n: 1, micro: [], categoria: 'prioritaria' }) + '.');
+    let testo = S.join('\n'), materiale: TestoTagliato | null = null;
+    if (o.materiale !== undefined) {
+      // Tetto sul prompt INTERO: il materiale riceve i caratteri che restano; se le intestazioni sforano, si riprova con meno.
+      const max = o.maxCaratteri && o.maxCaratteri > 0 ? o.maxCaratteri : 0, p0 = pagine && l[0] ? pagine[l[0].micro[0]] || null : null;
+      let budget = max ? max - (testo.length - SEGNO_MATERIALE.length) : 0;
+      for (let giro = 0; giro < 50; giro++) {
+        materiale = ProfiliAI.tetto(o.materiale || [], max ? Math.max(1, budget) : 0);
+        const righe = righeMateriale(materiale, p0).join('\n');
+        testo = S.join('\n').replace(SEGNO_MATERIALE, () => righe);
+        if (!max || testo.length <= max || !materiale.pagine.length) break;
+        budget -= testo.length - max;
+      }
+    }
+    return { testo, materiale };
   }
 
-  return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci, costruisciPiano, costruisciSchede };
+  return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci, costruisciPiano, costruisciSchede, promptSchede };
 })();

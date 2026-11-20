@@ -33,6 +33,20 @@ const Validatore = (() => {
   function bloccanti(q: QuizDrive, P: ProfiloQuiz = PROFILO_STANDARD): string[] {
     const b: string[] = [], o = Array.isArray(q.opzioni) ? q.opzioni : [];
     if (!s(q.domanda)) b.push('testo mancante');
+    const tipo = s(q.tipo) || 'mcq', piene = (v: unknown) => Array.isArray(v) ? v.map(s).filter(Boolean) : [];
+    if (tipo !== 'mcq') {   // v0.64 quiz-v4: regole per tipo (spec §D)
+      if (tipo === 'completamento') {
+        if (!s(q.domanda).includes('___')) b.push('completamento senza «___» nel testo');
+        if (!piene(q.risposte).length) b.push('completamento senza risposte');
+      } else if (tipo === 'ordinamento') {
+        const n = piene(q.elementi).length; if (n < 3 || n > 7) b.push(n + ' elementi da ordinare invece di 3–7');
+      } else if (tipo === 'aperta' || tipo === 'codice') {
+        const n = piene(q.rubrica).length; if (n < 2 || n > 5) b.push(n + ' punti di rubrica invece di 2–5');
+        if (!s(q.rispostaModello)) b.push('manca la rispostaModello');
+        if (tipo === 'codice' && !s(q.linguaggio)) b.push('codice senza linguaggio');
+      } else b.push('tipo «' + tipo + '» sconosciuto');
+      return b;
+    }
     if (o.length !== P.opzioni) b.push(o.length + ' opzioni invece di ' + P.opzioni);
     const e = Number(q.esatta); if (!Number.isInteger(e) || e < 0 || e >= P.opzioni || e >= o.length) b.push('«esatta» fuori da 0..' + (P.opzioni - 1));
     return b;
@@ -102,8 +116,9 @@ const Validatore = (() => {
     qs.forEach((q0, i) => {
       if (!oggetto(q0)) { add('err', '(riga ' + (i + 1) + ')', 'elemento non valido'); return; }
       const q = q0, id = testo(q.id) || '(riga ' + (i + 1) + ')';
-      for (const k of CHIAVI_QUIZ) if (!(k in q)) add('err', id, 'chiave mancante: ' + k);
-      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k)) add('warn', id, 'chiave in più: ' + k);
+      const mcq = !testo(q.tipo) || q.tipo === 'mcq';
+      for (const k of mcq ? CHIAVI_QUIZ : CHIAVI_BASE_V4) if (!(k in q)) add('err', id, 'chiave mancante: ' + k);
+      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k)) add('warn', id, 'chiave in più: ' + k);
       if (testo(q.id)) { if (visti.has(id)) add('err', id, 'ID duplicato'); visti.add(id); }
       const L = q.livelloCognitivo;
       const lOk = typeof L === 'number' && [1, 2, 3, 4].includes(L);
@@ -111,6 +126,13 @@ const Validatore = (() => {
       else { lv[(L as number) - 1]++; if (q.livello !== 'L' + L) add('err', id, 'livello (' + String(q.livello) + ') non coincide con livelloCognitivo (' + L + ')'); }
       const o = q.opzioni;
       if (testo(q.domanda).trim().length < 10) add('err', id, 'domanda mancante o troppo breve');
+      if (!mcq) {   // v0.64: i campi propri del tipo li controlla bloccanti(); qui solo ciò che vale per ogni domanda
+        if (!testo(q.fonte).trim()) add('err', id, 'fonte mancante');
+        else if (/verificar/i.test(testo(q.fonte) + ' ' + testo(q.spiegazione))) add('err', id, 'pagina «da verificare»: vietata');
+        const nome = testo(q.scheda) || '(senza scheda)', s = schede.get(nome) || { nome, n: 0, lv: [0, 0, 0, 0], es: [0, 0, 0, 0], seq: [] };
+        s.n++; if (lOk) s.lv[(L as number) - 1]++; schede.set(nome, s);
+        return;
+      }
       else if (/tutte le precedenti|nessuna delle precedenti/i.test(testo(q.domanda) + ' ' + (Array.isArray(o) ? o.join(' ') : ''))) add('warn', id, 'usa «tutte/nessuna delle precedenti»');
       const esOk = Number.isInteger(q.esatta) && (q.esatta as number) >= 0 && (q.esatta as number) < P.opzioni;
       if (!Array.isArray(o) || o.length !== P.opzioni || o.some(x => typeof x !== 'string' || !x.trim())) add('err', id, 'servono esattamente ' + P.opzioni + ' opzioni testuali');
@@ -197,13 +219,24 @@ const Validatore = (() => {
     return { bloccanti: blocchi, qualita: analisi.problemi.filter(p => !globale(p)), insieme: analisi.problemi.filter(globale), pronte, analisi };
   }
 
+  /** v0.64 quiz-v4: chiavi dei tipi di domanda, ammesse ma non obbligatorie (il v3 resta com'è). */
+  const CHIAVI_V4: ReadonlyArray<string> = ['tipo', 'risposte', 'elementi', 'rubrica', 'rispostaModello', 'linguaggio'];
+  /** Chiavi obbligatorie per i tipi non mcq: le altre di CHIAVI_QUIZ sono proprie della scelta multipla o facoltative. */
+  const CHIAVI_BASE_V4: ReadonlyArray<string> = ['id', 'stepId', 'scheda', 'categoria', 'livelloCognitivo', 'livello', 'domanda', 'fonte', 'sourceRef'];
+  /** Segnaposto del buco che le AI scrivono al posto di «___»: «…», «...», «[ ]», «[...]», «____» e oltre. */
+  const BUCHI = /\[\s*(?:\.\.\.|…)?\s*\]|_{4,}|…|\.{3}/g;
+  /** Numerazione davanti agli elementi da ordinare: «1.», «2)», «a)». */
+  const PREFISSO = /^\s*(?:\d{1,2}|[a-z])[.)]\s+/i;
+
   /** Solo correzioni senza perdita (nessun contenuto inventato). Non modifica l'input. */
   function ripara(qs: unknown[]): { qs: unknown[]; log: string[] } {
     const log: string[] = [];
     const out = qs.map(q0 => {
       if (!oggetto(q0)) return q0;
       const q: DomQ = { ...q0 }, id = testo(q.id) || '?';
-      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k)) { log.push(id + ': rimossa la chiave in più «' + k + '»'); delete q[k]; }
+      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k)) { log.push(id + ': rimossa la chiave in più «' + k + '»'); delete q[k]; }
+      if (q.tipo === 'completamento' && typeof q.domanda === 'string') { const d = q.domanda.replace(BUCHI, '___'); if (d !== q.domanda) { log.push(id + ': segnaposto del buco reso «___»'); q.domanda = d; } }
+      if (q.tipo === 'ordinamento' && Array.isArray(q.elementi) && q.elementi.some(e => typeof e === 'string' && PREFISSO.test(e))) { log.push(id + ': tolti i prefissi di numerazione dagli elementi'); q.elementi = q.elementi.map(e => typeof e === 'string' ? e.replace(PREFISSO, '') : e); }
       for (const k of ['domanda', 'spiegazione', 'fonte', 'erroreTipico']) { const v = q[k]; if (typeof v === 'string' && v !== v.trim()) { log.push(id + ': tolti spazi superflui in «' + k + '»'); q[k] = v.trim(); } }
       if (Array.isArray(q.opzioni) && q.opzioni.some(o => typeof o === 'string' && o !== o.trim())) { log.push(id + ': tolti spazi superflui nelle opzioni'); q.opzioni = q.opzioni.map(o => typeof o === 'string' ? o.trim() : o); }
       if (typeof q.livelloCognitivo === 'string' && /^L?[1-4]$/i.test(q.livelloCognitivo.trim())) { log.push(id + ': livelloCognitivo da testo a numero'); q.livelloCognitivo = Number(q.livelloCognitivo.trim().replace(/^L/i, '')); }

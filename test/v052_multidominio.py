@@ -130,6 +130,8 @@ with sync_playwright() as p:
             ok(pg.locator('.qz-verdetto.ko').count() == 1 and 'Spedizione dei Mille' in pg.inner_text('.qz-abb'), 'quiz: abbinamento sbagliato → mostra la coppia giusta')
         elif 'risposta aperta' in t:
             pg.fill('textarea#qz-ans', 'Mancò il coordinamento tra i rivoltosi e ci fu l\'intervento militare austriaco.'); pg.click('.qz-rub button[type=submit]')
+            ok('Coperti 2/2' in pg.inner_text('.qz-voto'), 'quiz: la rubrica propone il voto e aspetta la conferma (v0.64)')
+            pg.click('.qz-voto .chip.on')   # v0.64: conferma il voto proposto
             ok(pg.locator('.qz-verdetto.ok').count() == 1 and 'Punti chiave: 2 su 2' in pg.inner_text('.qz-carta'), 'quiz: risposta aperta valutata con la rubrica, senza AI')
         ok(pg.locator('[data-az=modifica]').count() == (1 if 'risposta multipla' in t else 0), 'quiz: «Modifica» solo per i tipi che l\'editor gestisce (%s)' % t.split('\n')[-1])
         pg.click('[data-az=avanti]')

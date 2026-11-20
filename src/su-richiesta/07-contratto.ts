@@ -12,11 +12,11 @@
 // Se una domanda ha già id/esatta (file v2) si tengono: un file vecchio non viene mai rimescolato.
 // Usa JsonAI (01-json.ts, parser unico dell'app) e sezioniSpiegazione (07-sezionispiegazione.ts), entrambi in app.js.
 // =====================================================================
-type FormatoAI = 'quiz-v3' | 'quiz-v2' | 'quiz-058' | 'parte' | 'chiusura' | 'piano-v1' | 'piano-righe' | 'ignoto';
+type FormatoAI = 'quiz-v4' | 'quiz-v3' | 'quiz-v2' | 'quiz-058' | 'parte' | 'chiusura' | 'piano-v1' | 'piano-righe' | 'ignoto';
 type DomAI = Record<string, unknown>;
 interface BloccoAI { formato: FormatoAI; dati: unknown; troncato: boolean; }
 interface LetturaAI { formato: FormatoAI; dati: unknown; blocchi: BloccoAI[]; riparazioni: string[]; troncato: boolean; ultimoCompleto?: string; avvisi: string[]; errori: string[]; }
-interface CtxQuiz { step?: string; sottoStep?: string; scheda?: number | string; categoria?: string; seme?: number; }
+interface CtxQuiz { step?: string; sottoStep?: string; scheda?: number | string; categoria?: string; seme?: number; /** v0.64: posizione della prima domanda (parte k/N) */ da?: number; }
 interface CoperturaPiano { schede: number[]; micro: string[]; }
 interface BloccoPiano { codice: string; titolo: string; copre: CoperturaPiano[]; }
 interface PianoV1 { blocchi: BloccoPiano[]; avvisi: string[]; }
@@ -30,7 +30,7 @@ const Contratto = (() => {
   const ogg = (v: unknown): v is DomAI => !!v && typeof v === 'object' && !Array.isArray(v);
   const str = (v: unknown) => typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
   const pad2 = (n: number) => String(n).padStart(2, '0');
-  const QUIZ: FormatoAI[] = ['quiz-v3', 'quiz-v2', 'quiz-058', 'parte'];
+  const QUIZ: FormatoAI[] = ['quiz-v4', 'quiz-v3', 'quiz-v2', 'quiz-058', 'parte'];
 
   // ---------- riparazioni testuali ----------
   /** Toglie le virgole finali prima di } o ] (fuori dalle stringhe). */
@@ -81,7 +81,8 @@ const Contratto = (() => {
       const q = /^quiz-v(\d+)/i.exec(f), p = /^piano-v(\d+)/i.exec(f);
       if (q && Array.isArray(d.quiz)) {
         const n = Number(q[1]);
-        if (n > 3) avvisi.push('Formato «' + f + '» più nuovo dell\'app: lo leggo come quiz-v3 (aggiorna l\'app se manca qualcosa)');
+        if (n === 4) return { formato: 'quiz-v4', dati: d };   // v0.64: + «tipo» e campi per tipo
+        if (n > 4) avvisi.push('Formato «' + f + '» più nuovo dell\'app: lo leggo come quiz-v3 (aggiorna l\'app se manca qualcosa)');
         return { formato: n >= 3 ? 'quiz-v3' : 'quiz-v2', dati: d };
       }
       if (p) { if (Number(p[1]) > 1) avvisi.push('Formato «' + f + '» più nuovo dell\'app: lo leggo come piano-v1'); return { formato: 'piano-v1', dati: d }; }
@@ -142,6 +143,8 @@ const Contratto = (() => {
   // ---------- ID, posizioni, mescola (le fa l'app, mai l'AI) ----------
   const livelloN = (v: unknown) => { const n = Number(str(v).replace(/^L/i, '')); return Number.isInteger(n) && n >= 1 && n <= 4 ? n : 0; };
   const numScheda = (v: unknown) => ImportaParti.numScheda(v);
+  /** quiz-v4: senza «tipo» (v3 e precedenti) è un mcq. */
+  const eMcq = (q: DomAI) => !str(q.tipo) || str(q.tipo) === 'mcq';
   const haEsatta = (q: DomAI) => q.esatta !== undefined && q.esatta !== null && q.esatta !== '';
   /** Seme stabile da step e scheda (FNV-1a): reimportare lo stesso file = stesse posizioni. */
   function seme(step: string, scheda: number): number {
@@ -164,8 +167,9 @@ const Contratto = (() => {
   /** ID, scheda, stepId, sottoStep, categoria, livelli, gemelle («G1» → ID dello step), sourceRef. Gli id già presenti restano. */
   function assegna(qs: DomAI[], ctx: CtxQuiz = {}): DomAI[] {
     const step = str(ctx.step).toLowerCase(), n0 = numScheda(ctx.scheda) || 1, conta = new Map<number, number>();
+    const primo = Math.max(1, Math.floor(Number(ctx.da) || 1));
     return qs.map(q0 => {
-      const q: DomAI = { ...q0 }, n = numScheda(q.scheda) || n0, k = (conta.get(n) || 0) + 1, base = (step ? step + '-' : '') + 'S' + pad2(n);
+      const q: DomAI = { ...q0 }, n = numScheda(q.scheda) || n0, k = (conta.get(n) ?? primo - 1) + 1, base = (step ? step + '-' : '') + 'S' + pad2(n);
       conta.set(n, k);
       if (!str(q.id)) q.id = base + '-' + pad2(k);
       if (!/-S\d+$/i.test(str(q.scheda))) q.scheda = base;
@@ -214,11 +218,11 @@ const Contratto = (() => {
   function aQuiz(l: LetturaAI, ctx: CtxQuiz = {}): DomAI[] {
     if (!QUIZ.includes(l.formato)) return [];
     const d: DomAI = ogg(l.dati) ? l.dati : {}, qs = (Array.isArray(d.quiz) ? d.quiz as unknown[] : []).filter(ogg).map(q => ({ ...q }));
-    if (l.formato !== 'quiz-v3') return qs;
+    if (l.formato !== 'quiz-v3' && l.formato !== 'quiz-v4') return qs;
     const step = (str(ctx.step) || str(d.step)).toLowerCase(), sch = numScheda(d.scheda) || numScheda(ctx.scheda) || 1;
-    const fatte = assegna(qs, { ...ctx, step, scheda: sch, sottoStep: str(d.sottoStep) || str(ctx.sottoStep) });
+    const fatte = assegna(qs, { ...ctx, step, scheda: sch, sottoStep: str(d.sottoStep) || str(ctx.sottoStep), da: Number(d.da) || ctx.da });
     const perScheda = new Map<number, number[]>();
-    fatte.forEach((q, i) => { if (haEsatta(q)) return; const n = numScheda(q.scheda) || sch, v = perScheda.get(n) || []; v.push(i); perScheda.set(n, v); });
+    fatte.forEach((q, i) => { if (haEsatta(q) || !eMcq(q)) return; const n = numScheda(q.scheda) || sch, v = perScheda.get(n) || []; v.push(i); perScheda.set(n, v); });
     for (const [n, idx] of perScheda) {
       const tab = tabellaPosizioni(idx.length, ctx.seme ?? seme(step, n));
       idx.forEach((i, k) => { fatte[i] = mescola(fatte[i], tab[k], l.avvisi); });
@@ -259,11 +263,12 @@ const Contratto = (() => {
   function continua(l: LetturaAI, o: { perScheda?: number } = {}): string {
     const per = o.perScheda || 18, d: DomAI = ogg(l.dati) ? l.dati : {}, n = Array.isArray(d.quiz) ? (d.quiz as unknown[]).length : 0;
     const scheda = str(d.scheda) || 'S01', da = n + 1, mancano = Math.max(0, per - n);
-    const testa = JSON.stringify({ formato: 'quiz-v3', ...(str(d.step) ? { step: str(d.step) } : {}), scheda, ...(str(d.sottoStep) ? { sottoStep: str(d.sottoStep) } : {}) }).slice(0, -1);
+    const v4 = l.formato === 'quiz-v4' || (Array.isArray(d.quiz) && (d.quiz as unknown[]).some(q => ogg(q) && !!str(q.tipo) && str(q.tipo) !== 'mcq'));
+    const testa = JSON.stringify({ formato: v4 ? 'quiz-v4' : 'quiz-v3', ...(str(d.step) ? { step: str(d.step) } : {}), scheda, ...(str(d.sottoStep) ? { sottoStep: str(d.sottoStep) } : {}) }).slice(0, -1);
     return ['CONTINUA DA QUI — la risposta precedente si è interrotta a metà.',
       'Scheda ' + scheda + ': sono arrivate complete ' + n + ' domande. Scrivi le ' + mancano + ' domande che mancano (dalla ' + da + ' alla ' + per + ') e solo quelle.',
       l.ultimoCompleto ? 'L\'ultima domanda arrivata completa è: «' + l.ultimoCompleto + '». Riprendi subito dopo, senza riscrivere quelle già arrivate.' : 'Non riscrivere le domande già arrivate.',
-      'Segui la stessa sequenza di livelli e le stesse regole del prompt iniziale, dalla posizione ' + da + '.',
+      'Segui la stessa sequenza di livelli' + (v4 ? ' e di tipi' : '') + ' e le stesse regole del prompt iniziale, dalla posizione ' + da + '.',
       'Stesso formato, un solo blocco di codice JSON: ' + testa + ',"quiz":[ … ]}'].join('\n');
   }
 

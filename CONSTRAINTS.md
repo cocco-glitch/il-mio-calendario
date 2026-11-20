@@ -1,6 +1,6 @@
 # Constraints — il-mio-calendario
 
-Ultima revisione: 2026-11-20 (v0.63.1 «Pagine»: Logica 94, Contratto 33, Centro 43, `v063_centro.py` con la verifica delle citazioni su PDF). Precedente: v0.63.0 (Logica 94, Contratto 32, Centro 23). Revisione BP6: 2026-11-19 (v0.57.0): Logica 72, E4 chiusa, CSP e budget dei tempi verificati da test. Prima revisione: audit pre-BP6 su v0.56.1 (a97f1d3).
+Ultima revisione: 2026-11-20 (v0.64.0 «Qualsiasi AI e qualsiasi studio»: Logica 95, Contratto 43, Dossier 21, Centro 53, Profili AI 22, `v064_ai.py`). Precedente: v0.63.1 (Logica 94, Contratto 33, Centro 43). Prima: v0.63.0 (Logica 94, Contratto 32, Centro 23). Revisione BP6: 2026-11-19 (v0.57.0): Logica 72, E4 chiusa, CSP e budget dei tempi verificati da test. Prima revisione: audit pre-BP6 su v0.56.1 (a97f1d3).
 Dettaglio delle voci A1–A27 citate sotto: rapporto di audit pre-BP6 (sezione S5 · T10).
 
 Scelte di partenza:
@@ -30,10 +30,11 @@ Scelte di partenza:
 | Dimensione | Regola | Comando | Quando | Perché questo numero |
 |---|---|---|---|---|
 | Tipi | 0 errori | `npx tsc --noEmit` | ogni modifica | oggi 0 |
-| Logica | 94/94 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.63.0: 94/94 (era 92 a v0.62.0) |
-| Contratto AI | 33/33 (può solo salire) | `node test/contratto.mjs` (ultima riga «Contratto N/N») | ogni modifica a `src/su-richiesta/` o all'import | v0.61.0: lettore, adapter, validatore, mappa pagine, pacchetti; v0.62.0: +dossier nel master prompt; v0.63.0: +prompt Piano e Schede |
-| Dossier studente | 18/18 (può solo salire) | `node test/dossier.mjs` (ultima riga «Dossier N/N») | ogni modifica a `07-dossier.ts` o alla raccolta in `07-strumentiquiz.ts` | v0.62.0: segnali, regole, controllo privacy |
-| Centro di creazione | 43/43 (può solo salire) | `node test/centro.mjs` (ultima riga «Centro N/N») | ogni modifica a `07-centro.ts`, alla chiusura o all'import a parti | v0.63.0: piano → schede/id, chiusura dall’app nella pipeline dell’import; flusso UI da ospite in `test/v063_centro.py`; v0.63.1: pagine per microstep, mappa a tratti, fonti A–D, verifica citazioni (anche nel test UI) |
+| Logica | 95/95 (il numero può solo salire) | `node 07-SUITE-TEST-FUNZIONALI-E-REGRESSIONE.mjs` | ogni task + deploy (A5) | v0.63.0: 94/94 (era 92 a v0.62.0); v0.64.0: 95/95 (runner aperte/codice) |
+| Contratto AI | 43/43 (può solo salire) | `node test/contratto.mjs` (ultima riga «Contratto N/N») | ogni modifica a `src/su-richiesta/` o all'import | v0.61.0: lettore, adapter, validatore, mappa pagine, pacchetti; v0.62.0: +dossier nel master prompt; v0.63.0: +prompt Piano e Schede; v0.64.0: profili AI, parti k/N, tipi per archetipo |
+| Dossier studente | 21/21 (può solo salire) | `node test/dossier.mjs` (ultima riga «Dossier N/N») | ogni modifica a `07-dossier.ts` o alla raccolta in `07-strumentiquiz.ts` | v0.62.0: segnali, regole, controllo privacy; v0.64.0: aperte e codice fuori da illusioni e distrattori |
+| Centro di creazione | 53/53 (può solo salire) | `node test/centro.mjs` (ultima riga «Centro N/N») | ogni modifica a `07-centro.ts`, alla chiusura o all'import a parti | v0.63.0: piano → schede/id, chiusura dall’app nella pipeline dell’import; flusso UI da ospite in `test/v063_centro.py`; v0.63.1: pagine per microstep, mappa a tratti, fonti A–D, verifica citazioni (anche nel test UI) |
+| Profili AI | 22/22 (può solo salire) | `node test/profiliai.mjs` (ultima riga «Profili N/N») | ogni modifica a `07-profiliai.ts` o al prompt per piattaforma | v0.64.0: preset delle 6 piattaforme, parti k/N, mix dei tipi per archetipo, tetto del testo PDF |
 | End-to-end | 0 falliti, saltati ≤ quelli in «Eccezioni» | `bash test/tutti.sh 2>&1 \| tail -n 35` (include `csp`, `v057_bp6`, `prestazioni`) | prima di pubblicare | v0.57: 44 ok, 1 saltato |
 | Dipendenze (esterno) | 0 vulnerabilità high+ | `npm audit --audit-level=high` | prima di pubblicare | oggi 0; unico controllo non scritto da noi |
 | Build | `dist/sw.js` senza `__VERSIONE__`; `VERSIONE` ≠ quella pubblicata | test nuovo (A3, A8) | prima di pubblicare | il bug del SW è passato inosservato da Fase 1 |
