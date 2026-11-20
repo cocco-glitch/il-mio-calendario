@@ -1,7 +1,411 @@
 "use strict";
+const CHIAVI_QUIZ = ['id', 'stepId', 'sottoStep', 'scheda', 'categoria', 'livelloCognitivo', 'livello', 'tipoItem', 'coppiaGemellaId', 'erroreTipico',
+    'domanda', 'opzioni', 'esatta', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte', 'sourceRef'];
+const Contratto = (() => {
+    const LETTERE = 'ABCD';
+    const ogg = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+    const str = (v) => typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const QUIZ = ['quiz-v3', 'quiz-v2', 'quiz-058', 'parte'];
+    function riparaVirgole(s) {
+        let out = '', dentro = false, esc = false;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (dentro) {
+                out += c;
+                if (esc)
+                    esc = false;
+                else if (c === '\\')
+                    esc = true;
+                else if (c === '"')
+                    dentro = false;
+                continue;
+            }
+            if (c === '"') {
+                dentro = true;
+                out += c;
+                continue;
+            }
+            if (c === ',') {
+                let j = i + 1;
+                while (j < s.length && /\s/.test(s[j]))
+                    j++;
+                if (s[j] === '}' || s[j] === ']')
+                    continue;
+            }
+            out += c;
+        }
+        return out;
+    }
+    function bilanciato(s) {
+        const i = s.search(/[{[]/);
+        if (i < 0)
+            return null;
+        let d = 0, dentro = false, esc = false;
+        for (let j = i; j < s.length; j++) {
+            const c = s[j];
+            if (dentro) {
+                if (esc)
+                    esc = false;
+                else if (c === '\\')
+                    esc = true;
+                else if (c === '"')
+                    dentro = false;
+                continue;
+            }
+            if (c === '"')
+                dentro = true;
+            else if (c === '{' || c === '[')
+                d++;
+            else if (c === '}' || c === ']') {
+                d--;
+                if (!d)
+                    return s.slice(i, j + 1);
+            }
+        }
+        return null;
+    }
+    const parse = (s) => { try {
+        return { ok: true, d: JSON.parse(JsonAI.riparaLatex(s)) };
+    }
+    catch (_) {
+        return { ok: false };
+    } };
+    function blocchiDi(t) {
+        const re = /```[a-zA-Z]*[ \t]*\n?([\s\S]*?)```/g, out = [];
+        let m, fine = 0, fuori = '';
+        while ((m = re.exec(t))) {
+            fuori += t.slice(fine, m.index);
+            if (m[1].trim())
+                out.push(m[1].trim());
+            fine = re.lastIndex;
+        }
+        const resto = t.slice(fine), aperto = resto.search(/```/);
+        if (aperto >= 0) {
+            fuori += resto.slice(0, aperto);
+            const r = resto.slice(aperto).replace(/^```[a-zA-Z]*/, '').trim();
+            if (r)
+                out.push(r);
+        }
+        else
+            fuori += resto;
+        return out.length ? { blocchi: out, fuori: !!fuori.trim() } : { blocchi: [t.trim()], fuori: false };
+    }
+    function formatoDi(d, avvisi) {
+        if (Array.isArray(d)) {
+            const qs = d.filter(ogg);
+            if (qs.some(q => 'opzioni' in q || 'domanda' in q))
+                return { formato: qs.some(q => 'esatta' in q) ? 'quiz-v2' : 'quiz-v3', dati: { quiz: qs } };
+            return { formato: 'ignoto', dati: d };
+        }
+        if (!ogg(d))
+            return { formato: 'ignoto', dati: d };
+        const f = str(d.formato);
+        if (f) {
+            const q = /^quiz-v(\d+)/i.exec(f), p = /^piano-v(\d+)/i.exec(f);
+            if (q && Array.isArray(d.quiz)) {
+                const n = Number(q[1]);
+                if (n > 3)
+                    avvisi.push('Formato «' + f + '» più nuovo dell\'app: lo leggo come quiz-v3 (aggiorna l\'app se manca qualcosa)');
+                return { formato: n >= 3 ? 'quiz-v3' : 'quiz-v2', dati: d };
+            }
+            if (p) {
+                if (Number(p[1]) > 1)
+                    avvisi.push('Formato «' + f + '» più nuovo dell\'app: lo leggo come piano-v1');
+                return { formato: 'piano-v1', dati: d };
+            }
+            avvisi.push('Formato «' + f + '» sconosciuto: lo riconosco dal contenuto');
+        }
+        if (Array.isArray(d.quiz)) {
+            if (str(d.parte))
+                return { formato: 'parte', dati: d };
+            if (ogg(d.meta))
+                return { formato: 'quiz-058', dati: d };
+            return { formato: d.quiz.some(q => ogg(q) && 'esatta' in q) ? 'quiz-v2' : 'quiz-v3', dati: d };
+        }
+        if (ogg(d.meta) && ogg(d.programmaCalendario))
+            return { formato: 'chiusura', dati: d };
+        if (Array.isArray(d.blocchi))
+            return { formato: 'piano-v1', dati: d };
+        return { formato: 'ignoto', dati: d };
+    }
+    function leggiBlocco(b, rip, avvisi) {
+        let s = b.trim(), r = parse(s);
+        if (!r.ok) {
+            const e = bilanciato(s);
+            if (e && e !== s) {
+                s = e;
+                r = parse(s);
+                if (r.ok)
+                    rip.push('testo intorno al JSON ignorato');
+            }
+        }
+        if (!r.ok && /[“”]/.test(s)) {
+            s = s.replace(/[“”]/g, '"');
+            const e = bilanciato(s);
+            if (e)
+                s = e;
+            r = parse(s);
+            rip.push('virgolette tipografiche sostituite');
+        }
+        if (!r.ok) {
+            const v = riparaVirgole(s);
+            if (v !== s) {
+                s = v;
+                r = parse(s);
+                rip.push('virgole finali rimosse');
+            }
+        }
+        if (r.ok)
+            return { ...formatoDi(r.d, avvisi), troncato: false };
+        const qs = JsonAI.recuperaArrayParziale(s, s.indexOf('"quiz"') >= 0 ? '"quiz"' : '').filter(ogg);
+        if (!qs.length)
+            return null;
+        const testata = {};
+        for (const k of ['formato', 'step', 'scheda', 'sottoStep', 'parte']) {
+            const m = new RegExp('"' + k + '"\\s*:\\s*"([^"]*)"').exec(s.slice(0, s.indexOf('"quiz"') >= 0 ? s.indexOf('"quiz"') : 0));
+            if (m)
+                testata[k] = m[1];
+        }
+        const ultimo = qs[qs.length - 1];
+        rip.push('risposta interrotta: tenute ' + qs.length + ' domande complete');
+        const f = formatoDi({ ...testata, quiz: qs }, avvisi);
+        return { ...f, troncato: true, ultimo: str(ultimo.domanda) || str(ultimo.id) };
+    }
+    function leggi(testo) {
+        const l = { formato: 'ignoto', dati: null, blocchi: [], riparazioni: [], troncato: false, avvisi: [], errori: [] };
+        const t = JsonAI.pulisci(testo).trim();
+        if (!t) {
+            l.errori.push('Il testo è vuoto.');
+            return l;
+        }
+        if (!/[{[]/.test(t) && /^\s*@B\s/m.test(t)) {
+            l.formato = 'piano-righe';
+            l.dati = t;
+            return l;
+        }
+        const { blocchi, fuori } = blocchiDi(t);
+        if (blocchi.length > 1 || fuori)
+            l.riparazioni.push(fuori ? 'testo fuori dai blocchi di codice ignorato' : 'blocchi di codice uniti');
+        else if (/```/.test(t))
+            l.riparazioni.push('blocco markdown rimosso');
+        blocchi.forEach((b, k) => {
+            const r = leggiBlocco(b, l.riparazioni, l.avvisi);
+            if (!r) {
+                l.errori.push('Blocco ' + (k + 1) + ': JSON non leggibile.');
+                return;
+            }
+            l.blocchi.push({ formato: r.formato, dati: r.dati, troncato: r.troncato });
+            if (r.troncato) {
+                l.troncato = true;
+                l.ultimoCompleto = r.ultimo;
+            }
+        });
+        l.riparazioni = [...new Set(l.riparazioni)];
+        const quiz = l.blocchi.filter(b => QUIZ.includes(b.formato));
+        if (quiz.length) {
+            const primo = quiz[0], testa = ogg(primo.dati) ? primo.dati : {};
+            l.formato = primo.formato;
+            l.dati = quiz.length === 1 ? primo.dati : { ...testa, quiz: quiz.flatMap(b => ogg(b.dati) && Array.isArray(b.dati.quiz) ? b.dati.quiz : []) };
+        }
+        else if (l.blocchi.length) {
+            l.formato = l.blocchi[0].formato;
+            l.dati = l.blocchi[0].dati;
+        }
+        return l;
+    }
+    const livelloN = (v) => { const n = Number(str(v).replace(/^L/i, '')); return Number.isInteger(n) && n >= 1 && n <= 4 ? n : 0; };
+    const numScheda = (v) => ImportaParti.numScheda(v);
+    const haEsatta = (q) => q.esatta !== undefined && q.esatta !== null && q.esatta !== '';
+    function seme(step, scheda) {
+        let h = 2166136261;
+        for (const c of step + '#' + scheda) {
+            h ^= c.charCodeAt(0);
+            h = Math.imul(h, 16777619);
+        }
+        return h >>> 0;
+    }
+    function tabellaPosizioni(n, sem) {
+        let x = (sem >>> 0) || 1;
+        const rnd = () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+        const out = [];
+        while (out.length < n) {
+            const p = [0, 1, 2, 3];
+            for (let i = 3; i > 0; i--) {
+                const j = Math.floor(rnd() * (i + 1));
+                [p[i], p[j]] = [p[j], p[i]];
+            }
+            out.push(...p);
+        }
+        return out.slice(0, n);
+    }
+    function assegna(qs, ctx = {}) {
+        const step = str(ctx.step).toLowerCase(), n0 = numScheda(ctx.scheda) || 1, conta = new Map();
+        return qs.map(q0 => {
+            const q = { ...q0 }, n = numScheda(q.scheda) || n0, k = (conta.get(n) || 0) + 1, base = (step ? step + '-' : '') + 'S' + pad2(n);
+            conta.set(n, k);
+            if (!str(q.id))
+                q.id = base + '-' + pad2(k);
+            if (!/-S\d+$/i.test(str(q.scheda)))
+                q.scheda = base;
+            if (step && !str(q.stepId))
+                q.stepId = step;
+            const sotto = str(q.sottoStep) || str(ctx.sottoStep);
+            if (sotto)
+                q.sottoStep = sotto;
+            q.categoria = str(q.categoria) || str(ctx.categoria) || 'prioritaria';
+            const lv = livelloN(q.livelloCognitivo) || livelloN(q.livello);
+            if (lv) {
+                q.livelloCognitivo = lv;
+                q.livello = 'L' + lv;
+            }
+            const g = str(q.gemella);
+            if (g && !str(q.coppiaGemellaId))
+                q.coppiaGemellaId = (step ? step + '-' : '') + g.toLowerCase();
+            if (!q.sourceRef && str(q.fonte))
+                q.sourceRef = str(q.fonte);
+            return q;
+        });
+    }
+    const LETTERA_LIBERA = /(^|[^A-Za-z0-9])[A-D]\)/;
+    function riscriviLettere(sp, mappa, pos) {
+        const re = new RegExp(RE_SEZ_SPIEGAZIONE.source, 'g'), tagli = [];
+        let m;
+        while ((m = re.exec(sp)))
+            tagli.push({ i: m.index, fine: re.lastIndex, et: m[1] });
+        let out = sp.slice(0, tagli.length ? tagli[0].i : sp.length), libere = LETTERA_LIBERA.test(out);
+        tagli.forEach((c, k) => {
+            let corpo = sp.slice(c.fine, k + 1 < tagli.length ? tagli[k + 1].i : sp.length);
+            if (/^RISPOSTA/.test(c.et))
+                corpo = corpo.replace(/^(\s*)([A-D])\)/, (_, a) => a + LETTERE[pos] + ')');
+            else if (/^PERCH/.test(c.et))
+                corpo = corpo.replace(/(^|[^A-Za-z0-9])([A-D])\)/g, (_, a, l) => a + LETTERE[mappa[LETTERE.indexOf(l)]] + ')');
+            else if (LETTERA_LIBERA.test(corpo))
+                libere = true;
+            out += sp.slice(c.i, c.fine) + corpo;
+        });
+        return { testo: out, libere };
+    }
+    function mescola(q, pos, avvisi = []) {
+        const o = Array.isArray(q.opzioni) ? q.opzioni.slice() : [];
+        if (o.length < 2 || !(pos >= 0 && pos < o.length))
+            return { ...q, esatta: 0 };
+        const resto = o.slice(1), mappa = o.map((_, i) => i === 0 ? pos : i - 1 < pos ? i - 1 : i);
+        const r = { ...q, opzioni: [...resto.slice(0, pos), o[0], ...resto.slice(pos)], esatta: pos };
+        if (typeof q.spiegazione === 'string') {
+            const w = riscriviLettere(q.spiegazione, mappa, pos);
+            r.spiegazione = w.testo;
+            if (w.libere)
+                avvisi.push('«' + str(q.domanda).slice(0, 50) + '…»: c\'è una lettera d\'opzione fuori da «RISPOSTA ESATTA» e «PERCHÉ GLI ALTRI NO» — non riscritta, controllala');
+        }
+        return r;
+    }
+    function aQuiz(l, ctx = {}) {
+        if (!QUIZ.includes(l.formato))
+            return [];
+        const d = ogg(l.dati) ? l.dati : {}, qs = (Array.isArray(d.quiz) ? d.quiz : []).filter(ogg).map(q => ({ ...q }));
+        if (l.formato !== 'quiz-v3')
+            return qs;
+        const step = (str(ctx.step) || str(d.step)).toLowerCase(), sch = numScheda(d.scheda) || numScheda(ctx.scheda) || 1;
+        const fatte = assegna(qs, { ...ctx, step, scheda: sch, sottoStep: str(d.sottoStep) || str(ctx.sottoStep) });
+        const perScheda = new Map();
+        fatte.forEach((q, i) => { if (haEsatta(q))
+            return; const n = numScheda(q.scheda) || sch, v = perScheda.get(n) || []; v.push(i); perScheda.set(n, v); });
+        for (const [n, idx] of perScheda) {
+            const tab = tabellaPosizioni(idx.length, ctx.seme ?? seme(step, n));
+            idx.forEach((i, k) => { fatte[i] = mescola(fatte[i], tab[k], l.avvisi); });
+        }
+        return fatte;
+    }
+    function aPiano(l) {
+        const avvisi = [], blocchi = [];
+        const schedeDi = (xs) => xs.map(numScheda).filter(n => n > 0);
+        const lista = (v) => (Array.isArray(v) ? v : []);
+        if (l.formato === 'piano-righe') {
+            let cur = null, ignorate = 0;
+            for (const riga of String(l.dati).split('\n').map(r => r.trim()).filter(Boolean)) {
+                let m = /^@B\s+(\S+)\s*(?:\|\s*(.*))?$/.exec(riga);
+                if (m) {
+                    cur = { codice: m[1], titolo: str(m[2]) || m[1], copre: [] };
+                    blocchi.push(cur);
+                    continue;
+                }
+                m = /^COPRE\s+(.*?)\s*\|\s*(.*)$/i.exec(riga);
+                if (!m) {
+                    ignorate++;
+                    continue;
+                }
+                if (!cur) {
+                    avvisi.push('«' + riga + '» viene prima di ogni @B: ignorata');
+                    continue;
+                }
+                const tok = m[1].split(/[\s,]+/).filter(Boolean), schede = schedeDi(tok), micro = m[2].split(/[\s,]+/).filter(Boolean);
+                if (schede.length !== tok.length)
+                    avvisi.push('Blocco ' + cur.codice + ': schede illeggibili in «' + riga + '»');
+                if (schede.length)
+                    cur.copre.push({ schede, micro });
+            }
+            if (ignorate)
+                avvisi.push(ignorate + (ignorate === 1 ? ' riga ignorata' : ' righe ignorate') + ' (né @B né COPRE)');
+        }
+        else if (l.formato === 'piano-v1') {
+            for (const b of lista(ogg(l.dati) ? l.dati.blocchi : null).filter(ogg)) {
+                const codice = str(b.codice);
+                if (!codice) {
+                    avvisi.push('Blocco senza codice: ignorato');
+                    continue;
+                }
+                const copre = lista(b.copre).filter(ogg).map(c => ({ schede: schedeDi(lista(c.schede)), micro: lista(c.micro).map(str).filter(Boolean) })).filter(c => c.schede.length);
+                blocchi.push({ codice, titolo: str(b.titolo) || codice, copre });
+            }
+        }
+        else
+            avvisi.push('Non è un piano (formato ' + l.formato + ')');
+        return { blocchi, avvisi };
+    }
+    function continua(l, o = {}) {
+        const per = o.perScheda || 18, d = ogg(l.dati) ? l.dati : {}, n = Array.isArray(d.quiz) ? d.quiz.length : 0;
+        const scheda = str(d.scheda) || 'S01', da = n + 1, mancano = Math.max(0, per - n);
+        const testa = JSON.stringify({ formato: 'quiz-v3', ...(str(d.step) ? { step: str(d.step) } : {}), scheda, ...(str(d.sottoStep) ? { sottoStep: str(d.sottoStep) } : {}) }).slice(0, -1);
+        return ['CONTINUA DA QUI — la risposta precedente si è interrotta a metà.',
+            'Scheda ' + scheda + ': sono arrivate complete ' + n + ' domande. Scrivi le ' + mancano + ' domande che mancano (dalla ' + da + ' alla ' + per + ') e solo quelle.',
+            l.ultimoCompleto ? 'L\'ultima domanda arrivata completa è: «' + l.ultimoCompleto + '». Riprendi subito dopo, senza riscrivere quelle già arrivate.' : 'Non riscrivere le domande già arrivate.',
+            'Segui la stessa sequenza di livelli e le stesse regole del prompt iniziale, dalla posizione ' + da + '.',
+            'Stesso formato, un solo blocco di codice JSON: ' + testa + ',"quiz":[ … ]}'].join('\n');
+    }
+    function pacchetti(testo) {
+        const l = leggi(testo), out = [];
+        for (const b of l.blocchi) {
+            const d = ogg(b.dati) ? b.dati : {};
+            if (b.formato === 'chiusura') {
+                out.push(d);
+                continue;
+            }
+            if (b.formato === 'piano-v1') {
+                l.avvisi.push('C\'è un piano: si importa da «✨ Crea Piano Intelligente», non da qui');
+                continue;
+            }
+            if (!QUIZ.includes(b.formato))
+                continue;
+            const meta = ogg(d.meta) ? d.meta : {}, np = ImportaParti.nomeParte(str(d.parte));
+            const step = (str(d.step) || str(meta.stepId) || (np ? np.step : '')).toLowerCase();
+            const quiz = aQuiz({ ...l, formato: b.formato, dati: d }, { step });
+            const m2 = { ...meta };
+            if (step && !str(m2.stepId))
+                m2.stepId = step;
+            if (step && !str(m2.materia))
+                m2.materia = step.replace(/-[\d.]+$/, '');
+            if (str(d.sottoStep) && !str(m2.sottoStep))
+                m2.sottoStep = str(d.sottoStep);
+            out.push({ ...d, meta: m2, quiz });
+        }
+        return { lettura: l, pacchetti: out };
+    }
+    return { LETTERE, riparaVirgole, bilanciato, blocchiDi, formatoDi, leggi, continua, seme, tabellaPosizioni, assegna, mescola, aQuiz, aPiano, pacchetti };
+})();
+
 const DiagnosiQuiz = (() => {
-    const CHIAVI = ['id', 'stepId', 'sottoStep', 'scheda', 'categoria', 'livelloCognitivo', 'livello', 'tipoItem', 'coppiaGemellaId', 'erroreTipico',
-        'domanda', 'opzioni', 'esatta', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte', 'sourceRef'];
+    const CHIAVI = CHIAVI_QUIZ;
     const PER_SCHEDA = 18;
     const LV_TARGET = [25, 35, 25, 15];
     const RANGE_SCHEDA = [[4, 5], [6, 7], [4, 5], [2, 3]];
@@ -90,165 +494,13 @@ const DiagnosiQuiz = (() => {
         return r;
     }
     const sezioni = (sp) => sezioniSpiegazione(sp);
-    function letteraDichiarata(sp) {
-        const m = /RISPOSTA ESATTA\s*:\s*([A-D])\s*[)\].:]/.exec(String(sp || ''));
-        return m ? LETTERE.indexOf(m[1]) : null;
-    }
-    const citazioni = (s) => (String(s || '').match(/\[\[[^\]]+\]\]/g) || []);
-    const numeriPagina = (s) => new Set((String(s).match(/\d+/g) || []).map(Number));
-    function analizza(qs) {
-        const problemi = [], add = (sev, id, msg) => { problemi.push({ sev, id, msg }); };
-        const visti = new Set(), schede = new Map(), gemelle = new Map();
-        const lv = [0, 0, 0, 0], es = [0, 0, 0, 0];
-        let lunga = 0;
-        qs.forEach((q0, i) => {
-            if (!oggetto(q0)) {
-                add('err', '(riga ' + (i + 1) + ')', 'elemento non valido');
-                return;
-            }
-            const q = q0, id = testo(q.id) || '(riga ' + (i + 1) + ')';
-            for (const k of CHIAVI)
-                if (!(k in q))
-                    add('err', id, 'chiave mancante: ' + k);
-            for (const k of Object.keys(q))
-                if (!CHIAVI.includes(k))
-                    add('warn', id, 'chiave in più: ' + k);
-            if (testo(q.id)) {
-                if (visti.has(id))
-                    add('err', id, 'ID duplicato');
-                visti.add(id);
-            }
-            if (testo(q.id) && !/^[a-z]+-\d+(\.\d+)+-\d{3}$/.test(id))
-                add('warn', id, 'formato ID insolito (atteso materia-x.y-NNN)');
-            const L = q.livelloCognitivo;
-            const lOk = typeof L === 'number' && [1, 2, 3, 4].includes(L);
-            if (!lOk)
-                add('err', id, 'livelloCognitivo deve essere un numero da 1 a 4, senza virgolette');
-            else {
-                lv[L - 1]++;
-                if (q.livello !== 'L' + L)
-                    add('err', id, 'livello (' + String(q.livello) + ') non coincide con livelloCognitivo (' + L + ')');
-            }
-            const o = q.opzioni;
-            if (testo(q.domanda).trim().length < 10)
-                add('err', id, 'domanda mancante o troppo breve');
-            else if (/tutte le precedenti|nessuna delle precedenti/i.test(testo(q.domanda) + ' ' + (Array.isArray(o) ? o.join(' ') : '')))
-                add('warn', id, 'usa «tutte/nessuna delle precedenti»');
-            const esOk = Number.isInteger(q.esatta) && q.esatta >= 0 && q.esatta <= 3;
-            if (!Array.isArray(o) || o.length !== 4 || o.some(x => typeof x !== 'string' || !x.trim()))
-                add('err', id, 'servono esattamente 4 opzioni testuali');
-            else {
-                const op = o;
-                if (new Set(op.map(x => x.trim().toLowerCase())).size < 4)
-                    add('err', id, 'opzioni duplicate');
-                if (!esOk)
-                    add('err', id, 'esatta deve essere un intero da 0 a 3');
-                else {
-                    const e = q.esatta, c = op[e], altre = op.filter((_, j) => j !== e);
-                    es[e]++;
-                    if (c.length >= Math.max(...altre.map(x => x.length))) {
-                        lunga++;
-                        add('info', id, 'la risposta corretta è la più lunga');
-                    }
-                    if (altre.some(x => x.toLowerCase().includes(c.toLowerCase())))
-                        add('err', id, 'il testo della corretta è contenuto in un distrattore');
-                    if (c.length < 0.45 * Math.min(...altre.map(x => x.length)))
-                        add('warn', id, 'la corretta è molto più corta delle altre: si nota');
-                    const dich = letteraDichiarata(testo(q.spiegazione));
-                    if (dich !== null && dich !== e)
-                        add('err', id, 'la spiegazione dice «RISPOSTA ESATTA: ' + LETTERE[dich] + ')» ma esatta = ' + e + ' (' + LETTERE[e] + ')');
-                }
-            }
-            if (!esOk && !(Array.isArray(o) && o.length === 4) && 'esatta' in q && !Number.isInteger(q.esatta))
-                add('err', id, 'esatta deve essere un intero da 0 a 3');
-            const sd = q.spiegazioneDistrattori;
-            if (!Array.isArray(sd) || sd.length !== 3 || sd.some(x => typeof x !== 'string' || x.trim().length < 30))
-                add('err', id, 'spiegazioneDistrattori: servono 3 confutazioni (almeno 30 caratteri ciascuna)');
-            else if (new Set(sd.map(x => String(x).trim().toLowerCase())).size < 3)
-                add('warn', id, 'spiegazioneDistrattori: confutazioni duplicate');
-            if (!Array.isArray(q.distractorTypes) || q.distractorTypes.length !== 3)
-                add('err', id, 'distractorTypes: servono 3 stringhe');
-            if (!testo(q.erroreTipico).trim())
-                add('err', id, 'erroreTipico vuoto o null');
-            const sp = testo(q.spiegazione), fonte = testo(q.fonte).trim();
-            if (typeof q.spiegazione !== 'string')
-                add('err', id, 'spiegazione mancante');
-            else {
-                if (sp.length < 600)
-                    add('warn', id, 'spiegazione corta (' + sp.length + ' caratteri, minimo ~600)');
-                if (!citazioni(sp).length)
-                    add('warn', id, 'nella spiegazione manca la citazione [[Manuale, p. X]]');
-                else if (fonte) {
-                    const pf = numeriPagina(fonte), ps = numeriPagina(citazioni(sp).join(' '));
-                    if (pf.size && ![...pf].some(n => ps.has(n)))
-                        add('warn', id, 'la citazione nella spiegazione non coincide con fonte');
-                }
-            }
-            if (!fonte)
-                add('err', id, 'fonte mancante');
-            else {
-                if (/verificar/i.test(fonte + ' ' + sp))
-                    add('err', id, 'pagina «da verificare»: vietata');
-                if (q.sourceRef !== q.fonte)
-                    add('warn', id, 'sourceRef diverso da fonte');
-            }
-            const gid = testo(q.coppiaGemellaId);
-            if (gid) {
-                const a = gemelle.get(gid) || [];
-                a.push({ id, scheda: testo(q.scheda) });
-                gemelle.set(gid, a);
-            }
-            const nome = testo(q.scheda) || '(senza scheda)';
-            const s = schede.get(nome) || { nome, n: 0, lv: [0, 0, 0, 0], es: [0, 0, 0, 0], seq: [] };
-            s.n++;
-            if (lOk)
-                s.lv[L - 1]++;
-            if (esOk) {
-                s.es[q.esatta]++;
-                s.seq.push(q.esatta);
-            }
-            schede.set(nome, s);
-        });
-        schede.forEach(s => {
-            const chi = 'scheda ' + s.nome;
-            if (s.n !== PER_SCHEDA)
-                add('err', chi, 'ha ' + s.n + ' domande invece di ' + PER_SCHEDA + ' (può essere normale solo se hai caricato una parte del file)');
-            else {
-                RANGE_SCHEDA.forEach(([a, b], k) => { if (s.lv[k] < a || s.lv[k] > b)
-                    add('warn', chi, 'livello L' + (k + 1) + ': ' + s.lv[k] + ' domande (atteso ' + a + '–' + b + ')'); });
-                if (s.es.filter(x => x > 0).length < 3)
-                    add('warn', chi, 'la risposta esatta usa meno di 3 posizioni diverse');
-            }
-            for (let i = 2; i < s.seq.length; i++)
-                if (s.seq[i] === s.seq[i - 1] && s.seq[i] === s.seq[i - 2]) {
-                    add('warn', chi, 'risposta esatta nella stessa posizione (' + LETTERE[s.seq[i]] + ') per 3 domande di fila');
-                    break;
-                }
-        });
-        gemelle.forEach((a, k) => {
-            if (a.length === 1)
-                add('info', 'gemella ' + k, 'membro presente: ' + a[0].id + ' (scheda ' + a[0].scheda + '). L\'altro membro deve stare in una scheda diversa.');
-            else if (new Set(a.map(x => x.scheda)).size < a.length)
-                add('warn', 'gemella ' + k, 'i due membri stanno nella stessa scheda');
-        });
-        const n = qs.length;
-        if (n >= PER_SCHEDA && lunga / n > 0.25)
-            add('err', 'insieme', 'la corretta è la più lunga nel ' + Math.round(100 * lunga / n) + '% dei casi (massimo 25%)');
-        if (n >= 2 * PER_SCHEDA) {
-            es.forEach((c, j) => { const p = 100 * c / n; if (Math.abs(p - 25) > 10)
-                add('warn', 'insieme', 'esatta=' + j + ' nel ' + Math.round(p) + '% dei casi (atteso ~25%)'); });
-            LV_TARGET.forEach((t, k) => { const p = 100 * lv[k] / n; if (Math.abs(p - t) > 3)
-                add('warn', 'insieme', 'L' + (k + 1) + ' al ' + Math.round(p) + '% (atteso ' + t + '% ±3)'); });
-        }
-        const conErrori = new Set(problemi.filter(p => p.sev === 'err').map(p => p.id));
-        const pronte = qs.filter((q, i) => oggetto(q) && !conErrori.has(testo(q.id) || '(riga ' + (i + 1) + ')')).length;
-        return { problemi, n, lv, es, lunga, schede: [...schede.values()].map(({ nome, n: nn, lv: l, es: e }) => ({ nome, n: nn, lv: l, es: e })), gemelle: gemelle.size, pronte };
-    }
+    const letteraDichiarata = (sp) => Validatore.letteraDichiarata(sp);
+    const citazioni = (x) => Validatore.citazioni(x);
+    const analizza = (qs) => Validatore.analizza(qs);
     const CONSIGLI = [
         [/^chiave mancante: (.+)/, m => ['Aggiungi la chiave «' + m[1] + '» con un valore del tipo corretto.', 'L\'import scarta gli oggetti incompleti.']],
         [/^chiave in più: (.+)/, m => ['Rimuovi la chiave «' + m[1] + '»: non fa parte del formato.', 'Il formato è fisso; chiavi estranee confondono l\'import.']],
         [/ID duplicato/, () => ['Assegna un ID univoco materia-x.y-NNN senza riusare numeri già presenti.', 'Con un ID duplicato una domanda sovrascrive l\'altra.']],
-        [/formato ID insolito/, () => ['Riscrivi l\'ID come materia-x.y-NNN (es. biologia-3.3-007).', 'L\'ID lega la domanda allo step e all\'ordine.']],
         [/livelloCognitivo deve essere/, () => ['Scrivi livelloCognitivo come numero da 1 a 4, senza virgolette.', 'Serve all\'interleaving per livello di Bloom.']],
         [/non coincide con livelloCognitivo/, () => ['Allinea «livello» a «livelloCognitivo» (3 → "L3").', 'Altrimenti i conteggi per livello sono sbagliati.']],
         [/domanda mancante/, () => ['Scrivi un testo di domanda completo.', 'Senza testo la domanda non è utilizzabile.']],
@@ -287,50 +539,7 @@ const DiagnosiQuiz = (() => {
         }
         return ['Correggi secondo il formato di riferimento.', 'Regola del formato non rispettata.'];
     }
-    function autoFix(qs) {
-        const log = [];
-        const out = qs.map(q0 => {
-            if (!oggetto(q0))
-                return q0;
-            const q = { ...q0 }, id = testo(q.id) || '?';
-            for (const k of Object.keys(q))
-                if (!CHIAVI.includes(k)) {
-                    log.push(id + ': rimossa la chiave in più «' + k + '»');
-                    delete q[k];
-                }
-            for (const k of ['domanda', 'spiegazione', 'fonte', 'erroreTipico']) {
-                const v = q[k];
-                if (typeof v === 'string' && v !== v.trim()) {
-                    log.push(id + ': tolti spazi superflui in «' + k + '»');
-                    q[k] = v.trim();
-                }
-            }
-            if (Array.isArray(q.opzioni) && q.opzioni.some(o => typeof o === 'string' && o !== o.trim())) {
-                log.push(id + ': tolti spazi superflui nelle opzioni');
-                q.opzioni = q.opzioni.map(o => typeof o === 'string' ? o.trim() : o);
-            }
-            if (typeof q.livelloCognitivo === 'string' && /^[1-4]$/.test(q.livelloCognitivo.trim())) {
-                log.push(id + ': livelloCognitivo da testo a numero');
-                q.livelloCognitivo = Number(q.livelloCognitivo.trim());
-            }
-            if (typeof q.esatta === 'string' && /^[0-3]$/.test(q.esatta.trim())) {
-                log.push(id + ': esatta da testo a numero');
-                q.esatta = Number(q.esatta.trim());
-            }
-            const lc = q.livelloCognitivo;
-            if (typeof lc === 'number' && [1, 2, 3, 4].includes(lc) && q.livello !== 'L' + lc) {
-                log.push(id + ': livello allineato a livelloCognitivo (' + (q.livello === undefined ? 'mancante' : String(q.livello)) + ' → L' + lc + ')');
-                q.livello = 'L' + lc;
-            }
-            const f = testo(q.fonte).trim();
-            if (f && q.sourceRef !== f) {
-                log.push(id + ': sourceRef reso uguale a fonte');
-                q.sourceRef = f;
-            }
-            return q;
-        });
-        return { qs: out, log };
-    }
+    const autoFix = (qs) => Validatore.ripara(qs);
     function leggiPatch(t) {
         let s = String(t || '').trim();
         if (!s)
@@ -404,7 +613,7 @@ const DiagnosiQuiz = (() => {
                 o[k] = q[k]; return o; };
         return '{"parte":' + JSON.stringify(parte || 'DA-COMPILARE') + ',"quiz":[\n' + qs.map(q => '  ' + JSON.stringify(ord(q))).join(',\n') + '\n]}';
     }
-    const A_MANO = /ID duplicato|formato ID insolito|stanno nella stessa scheda|domande invece di|per 3 domande di fila/;
+    const A_MANO = /ID duplicato|stanno nella stessa scheda|domande invece di|per 3 domande di fila/;
     const SPEC = [
         [/^chiave mancante: (.+)/, m => ({ f: [m[1]], c: ['domanda'] })],
         [/livelloCognitivo deve essere/, () => ({ f: ['livelloCognitivo', 'livello'], c: ['domanda'] })],
@@ -552,6 +761,147 @@ const DiagnosiQuiz = (() => {
         promptCorrezione, avvisiUso, pianoConteggi, piano, tabella, REGOLE_GEM };
 })();
 
+const MappaPagine = (() => {
+    const APERTO = 99999;
+    const ROMANI = [[1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'], [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
+    function aRomano(n, maiuscolo = false) {
+        let out = '';
+        for (const [v, r] of ROMANI)
+            while (n >= v) {
+                out += r;
+                n -= v;
+            }
+        return maiuscolo ? out.toUpperCase() : out;
+    }
+    function daRomano(t) {
+        const s = t.toLowerCase();
+        if (!/^[ivxlcdm]+$/.test(s))
+            return null;
+        let n = 0, i = 0;
+        for (const [v, r] of ROMANI)
+            while (s.startsWith(r, i)) {
+                n += v;
+                i += r.length;
+            }
+        return i === s.length && n > 0 && aRomano(n) === s ? n : null;
+    }
+    function leggiNumero(x) {
+        if (typeof x === 'number')
+            return Number.isInteger(x) && x > 0 ? { romano: false, n: x, maiuscolo: false } : null;
+        const t = String(x == null ? '' : x).trim();
+        if (/^\d{1,5}$/.test(t))
+            return Number(t) > 0 ? { romano: false, n: Number(t), maiuscolo: false } : null;
+        const r = daRomano(t);
+        return r ? { romano: true, n: r, maiuscolo: t === t.toUpperCase() } : null;
+    }
+    const scrivi = (romano, n, maiuscolo) => romano ? aRomano(n, maiuscolo) : n;
+    function daEtichette(etichette) {
+        const tratti = [];
+        let prec = null;
+        etichette.forEach((e, i) => {
+            const x = e == null ? null : leggiNumero(e), ultimo = tratti[tratti.length - 1];
+            if (x && prec && ultimo && ultimo.pdfA === i && x.romano === prec.romano && x.n === prec.n + 1)
+                ultimo.pdfA = i + 1;
+            else if (x)
+                tratti.push({ pdfDa: i + 1, pdfA: i + 1, stampDa: scrivi(x.romano, x.n, x.maiuscolo) });
+            prec = x;
+        });
+        return tratti.length ? { fonte: 'auto-etichette', tratti, affidabilita: 'esatta' } : null;
+    }
+    function daStampati(numeriPerPagina) {
+        const cand = numeriPerPagina.map((ns, i) => new Set((ns || []).map(n => i + 1 - n).filter(d => d >= 0)));
+        const scost = cand.map((c, i) => {
+            let best = null, nb = 0;
+            c.forEach(d => {
+                let v = 0;
+                for (let j = Math.max(0, i - 3); j <= Math.min(cand.length - 1, i + 3); j++)
+                    if (cand[j].has(d))
+                        v++;
+                if (v > nb || (v === nb && best !== null && d < best)) {
+                    best = d;
+                    nb = v;
+                }
+            });
+            return nb >= 3 ? best : null;
+        });
+        const tratti = [];
+        scost.forEach((d, i) => {
+            if (d === null)
+                return;
+            const ultimo = tratti[tratti.length - 1];
+            if (ultimo && ultimo.d === d) {
+                ultimo.pdfA = i + 1;
+                ultimo.voti++;
+            }
+            else
+                tratti.push({ pdfDa: i + 1, pdfA: i + 1, stampDa: i + 1 - d, d, voti: 1 });
+        });
+        const buoni = tratti.filter(t => t.voti >= 3).map(({ pdfDa, pdfA, stampDa }) => ({ pdfDa, pdfA, stampDa }));
+        return buoni.length ? { fonte: 'auto-stampati', tratti: buoni, affidabilita: 'stimata' } : null;
+    }
+    function daMano(righe) {
+        const ok = righe.map(r => ({ x: leggiNumero(r.stampata), pdf: Math.round(Number(r.pdf)) })).filter(r => r.x && r.pdf > 0).sort((a, b) => a.pdf - b.pdf);
+        const tratti = ok.map((r, i) => ({ pdfDa: r.pdf, pdfA: i + 1 < ok.length ? ok[i + 1].pdf - 1 : APERTO, stampDa: scrivi(r.x.romano, r.x.n, r.x.maiuscolo) }));
+        return { fonte: 'mano', tratti, affidabilita: tratti.length ? 'esatta' : 'nessuna' };
+    }
+    function aPdf(m, stampata) {
+        const x = leggiNumero(stampata);
+        if (!m || !x)
+            return null;
+        for (const t of m.tratti) {
+            const s = leggiNumero(t.stampDa);
+            if (!s || s.romano !== x.romano)
+                continue;
+            const k = x.n - s.n;
+            if (k >= 0 && k <= t.pdfA - t.pdfDa)
+                return t.pdfDa + k;
+        }
+        return null;
+    }
+    function aStampata(m, pdf) {
+        const t = m ? m.tratti.find(x => pdf >= x.pdfDa && pdf <= x.pdfA) : undefined, s = t ? leggiNumero(t.stampDa) : null;
+        return t && s ? scrivi(s.romano, s.n + pdf - t.pdfDa, s.maiuscolo) : null;
+    }
+    const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    function verifica(m, citazione, testoPagina, parole) {
+        const c = /\bpp?\.\s*(\d{1,5}|[ivxlcdm]+)\b/i.exec(String(citazione || '')), x = c ? leggiNumero(c[1]) : null;
+        const pagina = x ? scrivi(x.romano, x.n, x.maiuscolo) : null, pdf = x ? aPdf(m, pagina) : null, pv = parole.map(norm).filter(Boolean);
+        if (pdf === null || !pv.length)
+            return { esito: '❓', pagina };
+        const quota = (p) => { const t = norm(testoPagina(p) || ''); return t ? pv.filter(w => t.includes(w)).length / pv.length : -1; };
+        const qui = quota(pdf);
+        if (qui >= 0.5)
+            return { esito: '✅', pagina };
+        const vicine = [pdf + 1, pdf - 1].map(p => ({ p, q: quota(p) })).filter(v => v.q >= 0.5).sort((a, b) => b.q - a.q);
+        if (vicine.length) {
+            const s = aStampata(m, vicine[0].p);
+            if (s !== null)
+                return { esito: '↔', pagina: s };
+        }
+        if (qui > 0)
+            return { esito: '⚠', pagina };
+        return { esito: qui < 0 && quota(pdf - 1) < 0 && quota(pdf + 1) < 0 ? '❓' : '✗', pagina };
+    }
+    function campioneProva(m, k = 3, seme = 1, totale) {
+        if (!m)
+            return [];
+        const pagine = [];
+        for (const t of m.tratti) {
+            const fine = Math.min(t.pdfA, totale || (t.pdfA === APERTO ? t.pdfDa + 49 : t.pdfA));
+            for (let p = t.pdfDa; p <= fine; p++)
+                pagine.push(p);
+        }
+        let x = (seme >>> 0) || 1;
+        const rnd = () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+        for (let i = pagine.length - 1; i > 0; i--) {
+            const j = Math.floor(rnd() * (i + 1));
+            [pagine[i], pagine[j]] = [pagine[j], pagine[i]];
+        }
+        return pagine.slice(0, k).sort((a, b) => a - b).map(pdf => ({ pdf, stampata: aStampata(m, pdf) }));
+    }
+    return { APERTO, aRomano, daRomano, daEtichette, daStampati, daMano, aPdf, aStampata, verifica, campioneProva };
+})();
+
 const MasterPrompt = (() => {
     function paginaLeggibile(t) {
         const s = String(t || '').replace(/\s+/g, ' ').trim();
@@ -626,6 +976,8 @@ const MasterPrompt = (() => {
         return { primo: max + 1, scheda: Math.ceil(max / 18) + 1 };
     }
     const RANGE_SCHEDE = { leggera: [10, 14], standard: [18, 25], intensa: [24, 30] };
+    const SEQUENZA_LIVELLI = [1, 1, 2, 1, 2, 2, 3, 1, 2, 3, 2, 4, 1, 3, 2, 4, 3, 4];
+    const CHIAVI_V3 = ['livello', 'gemella', 'tipoItem', 'erroreTipico', 'domanda', 'opzioni', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte'];
     function regolaArchetipo(arch, materia) {
         const m = slug(materia);
         if (arch === 'stem_calcolo')
@@ -655,10 +1007,14 @@ const MasterPrompt = (() => {
     function rigaLibro(l) {
         const segs = l.segmenti || l.pdf.some(p => segmentoDa(p) !== null);
         const parti = [' - ' + l.nome + ' (' + l.pdf.length + ' PDF' + (segs ? ' a segmenti: il numero nel nome è la pagina PDF assoluta di inizio' : '') + ').'];
-        if (typeof l.offset === 'number')
-            parti.push('Pagina PDF assoluta = pagina del libro + ' + l.offset + (segs ? '; dentro un segmento: pagina = assoluta − inizio segmento + 1' : '') + '.');
+        const tratti = l.mappa && l.mappa.tratti.length ? l.mappa.tratti : typeof l.offset === 'number' ? [{ pdfDa: l.offset + 1, pdfA: MappaPagine.APERTO, stampDa: 1 }] : [];
+        if (tratti.length)
+            parti.push('Pagine (misurate dall\'app): ' + tratti.map(t => {
+                const fine = t.pdfA >= MappaPagine.APERTO ? '' : '–' + MappaPagine.aStampata({ fonte: 'mano', tratti: [t], affidabilita: 'esatta' }, t.pdfA);
+                return 'stampate ' + t.stampDa + fine + ' = PDF ' + t.pdfDa + (fine ? '–' + t.pdfA : ' in poi');
+            }).join('; ') + (segs ? '; dentro un segmento: pagina = PDF assoluta − inizio segmento + 1' : '') + '. Cita SEMPRE la pagina stampata.');
         else
-            parti.push('Scostamento pagina PDF ↔ pagina stampata NON misurato: ricavalo tu confrontando 2–3 pagine e dichiaralo in una riga «NOTA:» prima della Fase 1.');
+            parti.push('Pagine stampate non misurate: nella citazione scrivi capitolo e paragrafo (es. [[Manuale, cap. 3, par. 3.2]]), senza numero di pagina.');
         const r = l.lettura;
         if (r) {
             parti.push('Indice di lettura ' + r.pct + '% (' + r.leggibili + '/' + r.campione + ' pagine campione con testo).');
@@ -682,13 +1038,14 @@ const MasterPrompt = (() => {
         S.push('REGOLA ZERO — UNICO OUTPUT CONSENTITO (prevale su tutto)', 'Il TUO UNICO PRODOTTO sono blocchi ```json scritti qui in chat: le SCHEDE DI QUIZ e, alla fine dello step, il blocco di CHIUSURA (sotto-schede BRAC, ripassi, righe calendario). L\'app ricostruisce tutto da sola quando il file viene importato.', 'NON PRODURRE MAI: teoria, riassunti, dispense, mappe, formulari, file (.docx/.pdf/.html…), mini-app. Se stai per scriverne, fermati e torna alle schede.', 'Prima risposta: esegui subito la Fase 1 (tabella + righe calendario) e poi la prima consegna di schede, senza introduzioni.');
         S.push('', 'RUOLO', 'Sei l\'architetto didattico e neuroscientifico dell\'app di studio «il-mio-calendario». Lavori in AUTONOMIA: nessuno allungherà o correggerà il tuo output a mano (un controllo automatico scarta ciò che non rispetta il formato). Quantità e qualità qui sotto sono obbligatorie. Tutto in italiano, niente chiacchiere.', registro(o.tono || 'tecnico_accademico'));
         sez('TARGET (già compilato dall\'app)');
-        S.push(' - Materia: ' + mat + ' (codice ' + cod + ', id in minuscolo «' + ms + '») · archetipo: ' + (o.etichettaArchetipo || arch) + '.', ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.', ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).', ' - Primo ID libero: ' + pref + '-' + String(nx.primo).padStart(3, '0') + ' · prima scheda: ' + pref + '-S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (gli ID precedenti esistono già: NON riusarli e non riscrivere quelle schede)' : '') + '.');
+        S.push(' - Materia: ' + mat + ' (codice ' + cod + ', id in minuscolo «' + ms + '») · archetipo: ' + (o.etichettaArchetipo || arch) + '.', ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.', ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).', ' - Prima scheda: S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (le schede precedenti esistono già: non riscriverle)' : '') + '.');
         if (o.puntiDeboli && o.puntiDeboli.length)
             S.push(' - Punti deboli misurati dall\'app (risposte corrette < 60%): ' + o.puntiDeboli.join('; ') + '. Dedica a questi argomenti almeno una scheda in più, con più L3 (trabocchetti) e confutazioni molto esplicite.');
         if (o.note)
             S.push(' - Richieste dello studente: ' + o.note);
         sez('COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
-        S.push(' - «📥 Importa quiz da Drive» legge i .json nelle cartelle che finiscono in «quiz»: domanda → testo, opzioni → 4 risposte (la corretta è `esatta`), spiegazione → correzione passo-passo divisa nelle sezioni COSA CHIEDE / CONCETTO E MECCANISMO / IN SINTESI, fonte → riferimento, livelloCognitivo (NUMERO 1–4) → livello di Bloom.', ' - L\'app MESCOLA le opzioni: per questo le confutazioni vanno in `spiegazioneDistrattori` (l\'app le mostra accanto all\'opzione scelta, con la lettera giusta). Le lettere A–D dentro `spiegazione` vengono nascoste quando le confutazioni ci sono.', ' - «Allenamento Neuro»: certezza 1/2/3 dopo ogni risposta; sicuro+sbagliato = illusione di competenza → la domanda torna oggi in «Quiz da rifare» con la confutazione del distrattore scelto e il tuo `erroreTipico`.', ' - Interleaving per `stepId` e livello; coppie gemelle (`coppiaGemellaId`) e `distractorTypes` alimentano trabocchetti e statistiche: metadati sbagliati = piano sbagliato.', ' - Gli ID sono deterministici: reimportare aggiorna, non duplica.');
+        S.push(' - «📥 Importa quiz da Drive» legge i .json nelle cartelle che finiscono in «quiz»: domanda → testo, opzioni → 4 risposte (la corretta la scrivi SEMPRE in `opzioni[0]`, l\'app la sposta in una posizione bilanciata), ' +
+            'spiegazione → correzione passo-passo divisa nelle sezioni COSA CHIEDE / CONCETTO E MECCANISMO / IN SINTESI, fonte → riferimento, livello (NUMERO 1–4) → livello di Bloom.', ' - L\'app MESCOLA le opzioni: per questo le confutazioni vanno in `spiegazioneDistrattori` (l\'app le mostra accanto all\'opzione scelta) e le lettere dentro `spiegazione` le riscrive l\'app dopo aver mescolato.', ' - «Allenamento Neuro»: certezza 1/2/3 dopo ogni risposta; sicuro+sbagliato = illusione di competenza → la domanda torna oggi in «Quiz da rifare» con la confutazione del distrattore scelto e il tuo `erroreTipico`.', ' - Interleaving per step e livello; coppie gemelle (`gemella`) e `distractorTypes` alimentano trabocchetti e statistiche.', ' - ID, step, sotto-step, posizione dell\'esatta, conteggi e controlli li fa l\'app: tu scrivi SOLO il contenuto. Reimportare aggiorna, non duplica.');
         sez('FASE 0 — ALLINEAMENTO (a ogni nuova chat)');
         S.push('Leggi sul Drive collegato, in quest\'ordine:');
         let k = 1;
@@ -707,7 +1064,7 @@ const MasterPrompt = (() => {
             S.push('VIETATO usare come fonte: ' + elenco(vietati) + ' (eserciziari commerciali).');
         S.push('Se un file non è apribile o un PDF è troncato: NON inventare. Scrivi «BLOCCO: <file/capitolo non leggibile>» e fermati.');
         if (libri.length) {
-            S.push('', 'MAPPA LIBRI E PAGINE (cita SEMPRE la pagina del libro CARTACEO) — misurata dall\'app:');
+            S.push('', 'MAPPA LIBRI E PAGINE — misurata dall\'app:');
             libri.forEach(l => S.push(rigaLibro(l)));
         }
         sez('FASE 1 — ANALISI AUTONOMA DELLO STEP (senza chiedere approvazione)');
@@ -716,25 +1073,25 @@ const MasterPrompt = (() => {
             S.push(' P4. Dove compare una formula, un rapporto o un calcolo: schede dedicate «Problemi su …» OLTRE a quelle teoriche.');
         S.push(' P5. Verifica la copertura di ogni microstep e riempi i buchi.', ' P6. Dividi le schede in PRIORITARIE (~70%) e RAFFINAMENTO (~30%).', ' Soglia obbligatoria: ' + smin + '–' + smax + ' schede in tutto. Raggruppa i microstep in ' + blocchi + ' SOTTOSCHEDE = blocchi BRAC da 45–50 min.', ' Output della Fase 1 (primo messaggio, poi procedi): a) righe calendario `' + cod + '|' + ud + '|ARGOMENTO|N|' + step + '|' + (o.data || 'da definire') + '`; b) tabella microstep → n. schede → prioritarie/raffinamento → pagine del libro → sotto-scheda; c) totale schede e domande.');
         sez('FASE 2 — GENERAZIONE A SCHEDE');
-        S.push(' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.', ' - ID domanda: `' + pref + '-NNN` (3 cifre, progressivi, immutabili). ID scheda: `' + pref + '-SNN` (18 domande consecutive).', ' - Metadati: `stepId` = "' + pref + '", `sottoStep` = "' + step + '.k".', '', 'DISTRIBUZIONE COGNITIVA (per step ±3 punti; per scheda ~4–5 L1, 6–7 L2, 4–5 L3, 2–3 L4)', ' - L1 25% richiamo attivo · L2 35% applicazione · L3 25% trabocchetto (illusione di competenza) · L4 15% sintesi trasversale / caso.', ' - Coppie gemelle (`coppiaGemellaId`): almeno 1 ogni 3 schede, su concetti speculari; i due membri in schede diverse.', ' - `erroreTipico` sempre valorizzato: l\'errore di ragionamento dietro il distrattore principale.', '', 'REGOLE DI QUALITÀ (il controllo automatico le verifica)', ' Q-A. `esatta` bilanciata 0/1/2/3 (~25% ciascuna) e MAI la stessa posizione per 3 domande di fila.', ' Q-B. La corretta NON deve essere la più lunga (al massimo 1 domanda su 4): scrivila breve e allunga i distrattori.', ' Q-C. Distrattori plausibili, ognuno nato da un errore preciso; il testo della corretta non deve stare dentro un distrattore. Mai «tutte/nessuna delle precedenti».', ' Q-D. Nessun duplicato o quasi-duplicato, né nello step né rispetto a ciò che esiste già. Stile = appello vero.', ' ' + regolaArchetipo(arch, mat), ' Q-F. Italiano corretto; pedici/apici come `_{2}` e `^{2}`; risultati numerici semplici con unità SI.', ' Q-G. Ogni calcolo deve tornare: ricalcola e verifica l\'ordine di grandezza prima di consegnare.', '', 'CAMPO `spiegazione` (≥ 600 caratteri; nei calcoli molti di più), con queste etichette ESATTE in maiuscolo:', ' COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: <lettera>) «testo» … PERCHÉ GLI ALTRI NO: … IN SINTESI: … [[Manuale, p. X]]', ' La lettera di RISPOSTA ESATTA deve coincidere con `esatta` (0=A, 1=B, 2=C, 3=D). La citazione [[…]] è uguale a `fonte`.', ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.');
+        S.push(' - 1 SCHEDA = 18 domande a risposta multipla con ESATTAMENTE 4 opzioni; ogni scheda copre un solo microstep e contiene tutti e 4 i livelli.', ' - NON scrivere id, stepId, sottoStep, esatta, livelloCognitivo, sourceRef: li aggiunge l\'app.', '', 'LIVELLI — segui questa SEQUENZA per le 18 domande di ogni scheda (1ª, 2ª, … 18ª): ' + SEQUENZA_LIVELLI.join(', ') + '.', ' - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.', ' - Coppie gemelle: due domande su concetti speculari, in schede diverse, con la stessa etichetta `"gemella": "G1"` (poi G2, G3…); circa 1 coppia ogni 3 schede.', ' - `erroreTipico` sempre valorizzato: l\'errore di ragionamento dietro il distrattore principale.', '', 'REGOLE DI QUALITÀ (il controllo automatico le verifica)', ' Q-A. La risposta corretta va SEMPRE in `opzioni[0]`: la posizione la sceglie l\'app.', ' Q-B. La corretta NON deve essere la più lunga: scrivila breve e allunga i distrattori.', ' Q-C. Distrattori plausibili, ognuno nato da un errore preciso; il testo della corretta non deve stare dentro un distrattore. Mai «tutte/nessuna delle precedenti».', ' Q-D. Nessun duplicato o quasi-duplicato, né nello step né rispetto a ciò che esiste già. Stile = appello vero.', ' ' + regolaArchetipo(arch, mat), ' Q-F. Italiano corretto; pedici/apici come `_{2}` e `^{2}`; risultati numerici semplici con unità SI.', ' Q-G. Ogni calcolo deve tornare: ricalcola e verifica l\'ordine di grandezza prima di consegnare.', '', 'CAMPO `spiegazione` (lunga e completa, almeno un paragrafo pieno; nei calcoli tutti i passaggi), con queste etichette ESATTE in maiuscolo:', ' COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «testo» … PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]', ' Scrivi le lettere come se la corretta fosse A (cioè `opzioni[0]`): l\'app le riscrive dopo aver mescolato. La citazione [[…]] è uguale a `fonte`.', ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.');
         sez('FASE 3 — CONSEGNA (niente troncamenti)');
-        S.push(' - Un messaggio = ' + (pm === 2 ? '2 schede (36 domande); se il limite di output tronca il JSON, scendi a 1 scheda' : '1 scheda (18 domande)') + '. MAI accorciare spiegazioni o ridurre domande.', ' - Formato di ogni messaggio:', '   1. `STEP ' + ms + ' ' + step + ' · SCHEDA <n>' + (pm === 2 ? ' e <n+1>' : '') + ' di <N> · microstep <x.y.z>`', '   2. UN SOLO blocco ```json valido (doppi apici, zero virgole finali, nessun commento): { "parte": "' + pref + '-s<n>' + (pm === 2 ? '-<n+1>' : '') + '", "quiz": [ … ] }', '      Chiavi ESATTE di ogni domanda (nessuna in più, nessuna in meno): ' + DiagnosiQuiz.CHIAVI.join(', ') + '.', '      livelloCognitivo = NUMERO 1–4; livello = "L1"…"L4"; categoria = "prioritaria"|"raffinamento"; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, nell\'ordine delle opzioni saltando la corretta; sourceRef = copia di fonte.', '   3. `STATO: schede consegnate X/N — prossimo: <microstep>. Scrivi "avanti".`', ' - Dopo «avanti» consegni le schede successive: niente riassunti né conferme.', ' - Ultimo messaggio dello step: blocco ```json di CHIUSURA:', '   { "meta": { "schemaVersion": 2, "materia": "' + mat + '", "codiceMateria": "' + cod + '", "unita": "' + ud + '", "stepId": "' + pref + '", "sottoStep": "' + step + '", "titolo": "…", "archetipo": "' + arch + '", "fonti": [ … ], "domandeTotali": N },', '     "programmaCalendario": { "formatoGeneraMjs": [ "' + cod + '|' + ud + '|…|N|' + step + '|…" ], "pianoStrutturato": { "materiaCodice": "' + cod + '", "step": "' + step + '", "origine": "ai_neuro", "durataTotaleMin": N, "blocchiBRAC": N,', '       "sottoSchede": [ { "codice": "' + step + '.<k>", "titolo": "…", "microstep": ["…"], "durataMin": 45|50, "wakefulRestMin": 12, "schedePrioritarie": ["' + pref + '-S01"], "schedeRaffinamento": ["…"], "rangeId": ["<primo id>","<ultimo id>"], "fonte": "[[Manuale, pp. …]]" } ],', '       "ancoraggiRipassoFSRS": [ { "intervallo": "+1g", "target": [ID scheda], "livello": "L3" }, { "intervallo": "+3g", "target": [ID scheda], "livello": "L3-L4" }, { "intervallo": "+7g", "target": [ID scheda], "livello": "Raffinamento" } ] } },', '     "conteggi": { "prioritarie": n, "raffinamento": n, "L1": n, "L2": n, "L3": n, "L4": n, "coppieGemelle": n } }', '   Ogni scheda compare in esattamente una sotto-scheda. Il file si chiama `' + ms + '_' + step.replace(/\./g, '_') + '_quiz_e_calendario.json` e va nella cartella «' + mat + ' quiz».');
+        S.push(' - Un messaggio = ' + (pm === 2 ? '2 schede (36 domande); se il limite di output tronca il JSON, scendi a 1 scheda' : '1 scheda (18 domande)') + '. MAI accorciare spiegazioni o ridurre domande.', ' - Formato di ogni messaggio:', '   1. `STEP ' + ms + ' ' + step + ' · SCHEDA <n>' + (pm === 2 ? ' e <n+1>' : '') + ' di <N> · microstep <x.y.z>`', '   2. UN SOLO blocco ```json valido (doppi apici, zero virgole finali, nessun commento): { "formato": "quiz-v3", "parte": "' + pref + '-s<n>' + (pm === 2 ? '-<n+1>' : '') + '", "quiz": [ … ] } con `"scheda": "S<n>"` e `"categoria": "prioritaria"|"raffinamento"` in ogni domanda', '      Campi di ogni domanda: ' + CHIAVI_V3.join(', ') + ' (gemella solo se fa parte di una coppia).', '      livello = NUMERO 1–4 dalla sequenza; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, per opzioni[1], [2], [3].', '   3. `STATO: schede consegnate X/N — prossimo: <microstep>. Scrivi "avanti".`', ' - Dopo «avanti» consegni le schede successive: niente riassunti né conferme.', ' - Ultimo messaggio dello step: blocco ```json di CHIUSURA:', '   { "meta": { "schemaVersion": 2, "materia": "' + mat + '", "codiceMateria": "' + cod + '", "unita": "' + ud + '", "stepId": "' + pref + '", "sottoStep": "' + step + '", "titolo": "…", "archetipo": "' + arch + '", "fonti": [ … ] },', '     "programmaCalendario": { "formatoGeneraMjs": [ "' + cod + '|' + ud + '|…|N|' + step + '|…" ], "pianoStrutturato": { "materiaCodice": "' + cod + '", "step": "' + step + '", "origine": "ai_neuro", "durataTotaleMin": N, "blocchiBRAC": N,', '       "sottoSchede": [ { "codice": "' + step + '.<k>", "titolo": "…", "microstep": ["…"], "durataMin": 45|50, "wakefulRestMin": 12, "schedePrioritarie": ["' + pref + '-S01"], "schedeRaffinamento": ["…"], "fonte": "[[Manuale, pp. …]]" } ],', '       "ancoraggiRipassoFSRS": [ { "intervallo": "+1g", "target": [ID scheda], "livello": "L3" }, { "intervallo": "+3g", "target": [ID scheda], "livello": "L3-L4" }, { "intervallo": "+7g", "target": [ID scheda], "livello": "Raffinamento" } ] } } }', '   Ogni scheda compare in esattamente una sotto-scheda. Il file si chiama `' + ms + '_' + step.replace(/\./g, '_') + '_quiz_e_calendario.json` e va nella cartella «' + mat + ' quiz».');
         if (o.tabella) {
             S.push('');
             S.push(o.tabella);
         }
         if (o.gem)
-            S.push('', 'Le regole di formato sono già nelle istruzioni del Gem: rispettale.');
+            S.push('', 'Se le istruzioni del Gem chiedono id, esatta o conteggi (regole vecchie), valgono QUESTE: formato quiz-v3, giusta in opzioni[0].');
         sez('ESEMPIO DI FORMATO (non copiarne il contenuto: imita struttura e livello di dettaglio)');
-        S.push('{"id":"' + pref + '-0NN","stepId":"' + pref + '","sottoStep":"' + step + '.1","scheda":"' + pref + '-S01","categoria":"prioritaria","livelloCognitivo":1,"livello":"L1","tipoItem":"richiamo_attivo_…","coppiaGemellaId":null,"erroreTipico":"Scambiare … con …",' +
-            '"domanda":"…?","opzioni":["distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","risposta corretta, non la più lunga"],"esatta":3,' +
-            '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: D) «…». PERCHÉ GLI ALTRI NO: A) … B) … C) … IN SINTESI: … [[Manuale, p. X]]",' +
-            '"spiegazioneDistrattori":["perché A è sbagliata …","perché B è sbagliata …","perché C è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]","sourceRef":"[[Manuale, p. X]]"}');
+        S.push('{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …",' +
+            '"domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],' +
+            '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]",' +
+            '"spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}');
         sez('AUTOVERIFICA PRIMA DI OGNI CONSEGNA');
-        S.push(' [ ] 18 domande per scheda; ID consecutivi e senza buchi.', ' [ ] Livelli della scheda ≈ 4–5 L1, 6–7 L2, 4–5 L3, 2–3 L4.', ' [ ] `esatta` in almeno 3 posizioni diverse per scheda, mai 3 uguali di fila.', ' [ ] La corretta è la più lunga in non più di 1 domanda su 4; nessun distrattore contiene la corretta.', ' [ ] Ogni spiegazione ha le 5 etichette, ≥ 600 caratteri, RISPOSTA ESATTA con la lettera giusta e [[Manuale, p. X]] uguale a `fonte`.', ' [ ] JSON valido: doppi apici, nessuna virgola finale, chiavi esatte, livelloCognitivo numero; nessuna pagina «da verificare».', 'Se un controllo fallisce, rifai la scheda. Parti ora dalla FASE 0.');
+        S.push(' [ ] Livelli nell\'ordine della sequenza; la corretta in opzioni[0], breve, non contenuta in un distrattore.', ' [ ] Ogni spiegazione ha le 5 etichette, è completa, ha RISPOSTA ESATTA: A) e la citazione [[…]] uguale a `fonte`.', ' [ ] JSON valido: doppi apici, nessuna virgola finale; nessuna pagina «da verificare».', 'Non contare e non riepilogare: i conteggi e i controlli li fa l\'app. Parti ora dalla FASE 0.');
         return S.join('\n');
     }
-    return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, regolaArchetipo, costruisci };
+    return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci };
 })();
 
 const StrumentiQuiz = (() => {
@@ -904,9 +1261,21 @@ const StrumentiQuiz = (() => {
             testi.push(t);
             campioni.push({ pdf: base + i, testo: t });
         }
+        let mappa = null;
+        try {
+            const et = await doc.getPageLabels();
+            if (et)
+                mappa = MappaPagine.daEtichette(et);
+        }
+        catch (e) {
+            console.warn('[prompt quiz] etichette pagine', e);
+        }
+        if (mappa)
+            mappa.tratti.forEach(t => { t.pdfDa += base; t.pdfA += base; });
         if (typeof doc.destroy === 'function')
             await doc.destroy();
-        return { lettura: MasterPrompt.indiceLettura(testi), offset: MasterPrompt.stimaOffset(campioni), pagine: tot };
+        const offset = MasterPrompt.stimaOffset(campioni);
+        return { lettura: MasterPrompt.indiceLettura(testi), offset, mappa: mappa || (offset === null ? null : { fonte: 'auto-stampati', tratti: [{ pdfDa: offset + 1, pdfA: MappaPagine.APERTO, stampDa: 1 }], affidabilita: 'stimata' }), pagine: tot };
     }
     function puntiDeboli(m) {
         const ms = MasterPrompt.slug(m.nome), cod = m.codice.toLowerCase();
@@ -1031,6 +1400,7 @@ const StrumentiQuiz = (() => {
                         const r = await misura(g.files[0]);
                         g.libro.lettura = r.lettura;
                         g.libro.offset = r.offset;
+                        g.libro.mappa = r.mappa;
                         esito.textContent = descrivi(g);
                     }
                     catch (e) {
@@ -1065,7 +1435,7 @@ const StrumentiQuiz = (() => {
             if (!r)
                 return '';
             const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
-            return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (typeof g.libro.offset === 'number' ? ' · pag. PDF = libro + ' + g.libro.offset : ' · scostamento pagine non rilevato');
+            return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
         }
         function genera() {
             const { m, nome, codice } = materia();
@@ -1091,13 +1461,328 @@ const StrumentiQuiz = (() => {
             };
             out.value = MasterPrompt.costruisci(opz);
             const nonMisurati = (opz.libri || []).filter(l => !l.lettura).length;
-            info.textContent = out.value.length.toLocaleString('it-IT') + ' caratteri' + (nonMisurati ? ' · ' + nonMisurati + ' libri non misurati: Gemini verificherà da solo pagine e scostamento.' : '') +
+            info.textContent = out.value.length.toLocaleString('it-IT') + ' caratteri' + (nonMisurati ? ' · ' + nonMisurati + ' libri non misurati: Gemini citerà capitolo e paragrafo.' : '') +
                 ' · Allega a Gemini il Drive (o i file elencati), incolla il prompt, poi controlla ogni risposta con «🩺 Diagnostica quiz».';
         }
-        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'), selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, deboli.el, note, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => { if (out.value)
+        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'), selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), deboli.el, note, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => { if (out.value)
                 copia(out.value, out); } }, '📋 Copia prompt'), h('button.chip', { type: 'button', onclick: () => { if (out.value)
                 scarica('prompt-quiz-' + MasterPrompt.slug(materia().nome) + '-' + step.value.trim() + '.txt', out.value, 'text/plain'); } }, '💾 Scarica .txt'), h('button.chip', { type: 'button', onclick: () => diagnostica() }, '🩺 Diagnostica quiz')));
         foglio({ titolo: '🧠 Prompt quiz per Gemini', corpo });
     }
     return { diagnostica, prompt };
+})();
+
+const PROFILO_STANDARD = { perScheda: 18, opzioni: 4, quoteLivello: [25, 35, 25, 15], rangeScheda: [[4, 5], [6, 7], [4, 5], [2, 3]], spiegazioneMin: 600, confutazioneMin: 30,
+    tolLivello: 3, tolPosizione: 10, lungaMax: 25, schedeStep: [18, 25], brac: [45, 50] };
+const Validatore = (() => {
+    const LETTERE = 'ABCD';
+    const oggetto = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+    const testo = (v) => typeof v === 'string' ? v : '';
+    const s = (x) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
+    function letteraDichiarata(sp) {
+        const m = /RISPOSTA ESATTA\s*:\s*([A-D])\s*[)\].:]/.exec(String(sp || ''));
+        return m ? LETTERE.indexOf(m[1]) : null;
+    }
+    const citazioni = (x) => (String(x || '').match(/\[\[[^\]]+\]\]/g) || []);
+    const numeriPagina = (x) => new Set((String(x).match(/\d+/g) || []).map(Number));
+    function bloccanti(q, P = PROFILO_STANDARD) {
+        const b = [], o = Array.isArray(q.opzioni) ? q.opzioni : [];
+        if (!s(q.domanda))
+            b.push('testo mancante');
+        if (o.length !== P.opzioni)
+            b.push(o.length + ' opzioni invece di ' + P.opzioni);
+        const e = Number(q.esatta);
+        if (!Number.isInteger(e) || e < 0 || e >= P.opzioni || e >= o.length)
+            b.push('«esatta» fuori da 0..' + (P.opzioni - 1));
+        return b;
+    }
+    const pct = (n, tot) => tot ? Math.round(n * 100 / tot) : 0;
+    const livelloDi = (q) => { const n = Number(s(q.livelloCognitivo).replace(/^L/i, '')) || Number(s(q.livello).replace(/^L/i, '')); return n >= 1 && n <= 4 ? n : 0; };
+    function rapporto(p, extra = {}, P = PROFILO_STANDARD) {
+        const quiz = (p.quiz || []).filter(q => q && typeof q === 'object'), tot = quiz.length;
+        const bloccanti = (extra.bloccanti || []).slice(), avvisi = [], righe = [];
+        if (extra.duplicati && extra.duplicati.length)
+            avvisi.push(extra.duplicati.length + ' domande ripetute tra parti: tengo la più recente (' + extra.duplicati.slice(0, 3).join('; ') + (extra.duplicati.length > 3 ? '…' : '') + ')');
+        if (!tot)
+            return { bloccanti, avvisi, righe: ['Nessuna domanda valida'] };
+        const perScheda = new Map();
+        for (const q of quiz) {
+            const n = ImportaParti.numScheda(q.scheda);
+            if (n)
+                perScheda.set(n, (perScheda.get(n) || 0) + 1);
+        }
+        if (perScheda.size) {
+            const storte = [...perScheda].filter(([, c]) => c !== P.perScheda).sort((a, b) => a[0] - b[0]);
+            righe.push(perScheda.size + ' schede · ' + tot + ' domande');
+            if (storte.length)
+                avvisi.push('Schede con domande ≠ ' + P.perScheda + ': ' + storte.slice(0, 6).map(([n, c]) => 'S' + String(n).padStart(2, '0') + '=' + c).join(', ') + (storte.length > 6 ? '…' : ''));
+            if (extra.completo !== false && (perScheda.size < P.schedeStep[0] || perScheda.size > P.schedeStep[1]))
+                avvisi.push(perScheda.size + ' schede nello step (attese ' + P.schedeStep.join('–') + ')');
+        }
+        else
+            righe.push(tot + ' domande');
+        const liv = [0, 0, 0, 0];
+        for (const q of quiz) {
+            const l = livelloDi(q);
+            if (l)
+                liv[l - 1]++;
+        }
+        const lp = liv.map(n => pct(n, tot));
+        righe.push('Livelli L1–L4: ' + lp.join('/') + '% (attesi ' + P.quoteLivello.join('/') + ')');
+        if (lp.some((x, i) => Math.abs(x - P.quoteLivello[i]) > P.tolLivello))
+            avvisi.push('Livelli fuori soglia (±' + P.tolLivello + '): ' + lp.join('/') + '% invece di ' + P.quoteLivello.join('/'));
+        const pos = Array(P.opzioni).fill(0);
+        let lunga = 0;
+        for (const q of quiz) {
+            const e = Number(q.esatta), o = (q.opzioni || []).map(x => s(x).length);
+            if (e >= 0 && e < P.opzioni)
+                pos[e]++;
+            if (o.length > 1 && o.every((l, i) => i === e || l < o[e]))
+                lunga++;
+        }
+        const pp = pos.map(n => pct(n, tot));
+        righe.push('Esatta in A/B/C/D: ' + pp.join('/') + '% · corretta più lunga: ' + pct(lunga, tot) + '%');
+        if (pp.some(x => Math.abs(x - 100 / P.opzioni) > P.tolPosizione))
+            avvisi.push('Posizione dell\'esatta sbilanciata: ' + pp.join('/') + '% (attesa ~' + Math.round(100 / P.opzioni) + '% ciascuna)');
+        if (pct(lunga, tot) > P.lungaMax)
+            avvisi.push('La corretta è la più lunga nel ' + pct(lunga, tot) + '% delle domande (attesa ≤ ' + P.lungaMax + '%): si indovina dalla lunghezza');
+        const gem = new Map();
+        for (const q of quiz) {
+            const g = s(q.coppiaGemellaId);
+            if (g)
+                gem.set(g, (gem.get(g) || 0) + 1);
+        }
+        const coppie = [...gem.values()].filter(n => n >= 2).length, sole = [...gem].filter(([, n]) => n < 2).map(([g]) => g);
+        const schede = perScheda.size || Math.ceil(tot / P.perScheda), attese = Math.floor(schede / 3);
+        righe.push('Coppie gemelle complete: ' + coppie);
+        if (coppie < attese)
+            avvisi.push('Coppie gemelle: ' + coppie + ' (attese ≥ ' + attese + ', una ogni 3 schede)');
+        if (sole.length)
+            avvisi.push(sole.length + ' gemelle senza l\'altra metà: ' + sole.slice(0, 3).join(', ') + (sole.length > 3 ? '…' : ''));
+        const senzaErrore = quiz.filter(q => !s(q.erroreTipico)).length;
+        if (senzaErrore)
+            avvisi.push(senzaErrore + ' domande senza «erroreTipico»');
+        const conSd = quiz.filter(q => q.spiegazioneDistrattori !== undefined);
+        const sdStorte = (conSd.length || perScheda.size ? quiz : []).filter(q => !(Array.isArray(q.spiegazioneDistrattori) && q.spiegazioneDistrattori.length === P.opzioni - 1)).length;
+        if (sdStorte)
+            avvisi.push(sdStorte + ' domande senza ' + (P.opzioni - 1) + ' «spiegazioneDistrattori»');
+        const daVerificare = quiz.filter(q => /da verificare|p\.\s*_{2,}/i.test(s(q.fonte))).length;
+        if (daVerificare)
+            avvisi.push(daVerificare + ' fonti «da verificare» o senza pagina');
+        const fuori = (m) => m < P.brac[0] || m > P.brac[1];
+        const ps = (p.programmaCalendario && p.programmaCalendario.pianoStrutturato) || {};
+        const brac = (Array.isArray(ps.sottoSchede) ? ps.sottoSchede : Array.isArray(p.sottoSchede) ? p.sottoSchede : []).map(x => Number(x && (x.durataBracMin || x.durataMin)) || 0).filter(Boolean);
+        if (brac.some(fuori))
+            avvisi.push('Blocchi di studio fuori ' + P.brac.join('–') + ' min (BRAC): ' + brac.filter(fuori).join(', '));
+        return { bloccanti, avvisi, righe };
+    }
+    function analizza(qs, P = PROFILO_STANDARD) {
+        const problemi = [], add = (sev, id, msg) => { problemi.push({ sev, id, msg }); };
+        const visti = new Set(), schede = new Map(), gemelle = new Map();
+        const lv = [0, 0, 0, 0], es = [0, 0, 0, 0];
+        let lunga = 0;
+        qs.forEach((q0, i) => {
+            if (!oggetto(q0)) {
+                add('err', '(riga ' + (i + 1) + ')', 'elemento non valido');
+                return;
+            }
+            const q = q0, id = testo(q.id) || '(riga ' + (i + 1) + ')';
+            for (const k of CHIAVI_QUIZ)
+                if (!(k in q))
+                    add('err', id, 'chiave mancante: ' + k);
+            for (const k of Object.keys(q))
+                if (!CHIAVI_QUIZ.includes(k))
+                    add('warn', id, 'chiave in più: ' + k);
+            if (testo(q.id)) {
+                if (visti.has(id))
+                    add('err', id, 'ID duplicato');
+                visti.add(id);
+            }
+            const L = q.livelloCognitivo;
+            const lOk = typeof L === 'number' && [1, 2, 3, 4].includes(L);
+            if (!lOk)
+                add('err', id, 'livelloCognitivo deve essere un numero da 1 a 4, senza virgolette');
+            else {
+                lv[L - 1]++;
+                if (q.livello !== 'L' + L)
+                    add('err', id, 'livello (' + String(q.livello) + ') non coincide con livelloCognitivo (' + L + ')');
+            }
+            const o = q.opzioni;
+            if (testo(q.domanda).trim().length < 10)
+                add('err', id, 'domanda mancante o troppo breve');
+            else if (/tutte le precedenti|nessuna delle precedenti/i.test(testo(q.domanda) + ' ' + (Array.isArray(o) ? o.join(' ') : '')))
+                add('warn', id, 'usa «tutte/nessuna delle precedenti»');
+            const esOk = Number.isInteger(q.esatta) && q.esatta >= 0 && q.esatta < P.opzioni;
+            if (!Array.isArray(o) || o.length !== P.opzioni || o.some(x => typeof x !== 'string' || !x.trim()))
+                add('err', id, 'servono esattamente ' + P.opzioni + ' opzioni testuali');
+            else {
+                const op = o;
+                if (new Set(op.map(x => x.trim().toLowerCase())).size < P.opzioni)
+                    add('err', id, 'opzioni duplicate');
+                if (!esOk)
+                    add('err', id, 'esatta deve essere un intero da 0 a ' + (P.opzioni - 1));
+                else {
+                    const e = q.esatta, c = op[e], altre = op.filter((_, j) => j !== e);
+                    es[e]++;
+                    if (c.length >= Math.max(...altre.map(x => x.length))) {
+                        lunga++;
+                        add('info', id, 'la risposta corretta è la più lunga');
+                    }
+                    if (altre.some(x => x.toLowerCase().includes(c.toLowerCase())))
+                        add('err', id, 'il testo della corretta è contenuto in un distrattore');
+                    if (c.length < 0.45 * Math.min(...altre.map(x => x.length)))
+                        add('warn', id, 'la corretta è molto più corta delle altre: si nota');
+                    const dich = letteraDichiarata(testo(q.spiegazione));
+                    if (dich !== null && dich !== e)
+                        add('err', id, 'la spiegazione dice «RISPOSTA ESATTA: ' + LETTERE[dich] + ')» ma esatta = ' + e + ' (' + LETTERE[e] + ')');
+                }
+            }
+            if (!esOk && !(Array.isArray(o) && o.length === P.opzioni) && 'esatta' in q && !Number.isInteger(q.esatta))
+                add('err', id, 'esatta deve essere un intero da 0 a ' + (P.opzioni - 1));
+            const sd = q.spiegazioneDistrattori;
+            if (!Array.isArray(sd) || sd.length !== P.opzioni - 1 || sd.some(x => typeof x !== 'string' || x.trim().length < P.confutazioneMin))
+                add('err', id, 'spiegazioneDistrattori: servono ' + (P.opzioni - 1) + ' confutazioni (almeno ' + P.confutazioneMin + ' caratteri ciascuna)');
+            else if (new Set(sd.map(x => String(x).trim().toLowerCase())).size < P.opzioni - 1)
+                add('warn', id, 'spiegazioneDistrattori: confutazioni duplicate');
+            if (!Array.isArray(q.distractorTypes) || q.distractorTypes.length !== P.opzioni - 1)
+                add('err', id, 'distractorTypes: servono ' + (P.opzioni - 1) + ' stringhe');
+            if (!testo(q.erroreTipico).trim())
+                add('err', id, 'erroreTipico vuoto o null');
+            const sp = testo(q.spiegazione), fonte = testo(q.fonte).trim();
+            if (typeof q.spiegazione !== 'string')
+                add('err', id, 'spiegazione mancante');
+            else {
+                if (sp.length < P.spiegazioneMin)
+                    add('warn', id, 'spiegazione corta (' + sp.length + ' caratteri, minimo ~' + P.spiegazioneMin + ')');
+                if (!citazioni(sp).length)
+                    add('warn', id, 'nella spiegazione manca la citazione [[Manuale, p. X]]');
+                else if (fonte) {
+                    const pf = numeriPagina(fonte), ps = numeriPagina(citazioni(sp).join(' '));
+                    if (pf.size && ![...pf].some(n => ps.has(n)))
+                        add('warn', id, 'la citazione nella spiegazione non coincide con fonte');
+                }
+            }
+            if (!fonte)
+                add('err', id, 'fonte mancante');
+            else {
+                if (/verificar/i.test(fonte + ' ' + sp))
+                    add('err', id, 'pagina «da verificare»: vietata');
+                if (q.sourceRef !== q.fonte)
+                    add('warn', id, 'sourceRef diverso da fonte');
+            }
+            const gid = testo(q.coppiaGemellaId);
+            if (gid) {
+                const a = gemelle.get(gid) || [];
+                a.push({ id, scheda: testo(q.scheda) });
+                gemelle.set(gid, a);
+            }
+            const nome = testo(q.scheda) || '(senza scheda)';
+            const s = schede.get(nome) || { nome, n: 0, lv: [0, 0, 0, 0], es: [0, 0, 0, 0], seq: [] };
+            s.n++;
+            if (lOk)
+                s.lv[L - 1]++;
+            if (esOk) {
+                s.es[q.esatta]++;
+                s.seq.push(q.esatta);
+            }
+            schede.set(nome, s);
+        });
+        schede.forEach(s => {
+            const chi = 'scheda ' + s.nome;
+            if (s.n !== P.perScheda)
+                add('err', chi, 'ha ' + s.n + ' domande invece di ' + P.perScheda + ' (può essere normale solo se hai caricato una parte del file)');
+            else {
+                P.rangeScheda.forEach(([a, b], k) => { if (s.lv[k] < a || s.lv[k] > b)
+                    add('warn', chi, 'livello L' + (k + 1) + ': ' + s.lv[k] + ' domande (atteso ' + a + '–' + b + ')'); });
+                if (s.es.filter(x => x > 0).length < 3)
+                    add('warn', chi, 'la risposta esatta usa meno di 3 posizioni diverse');
+            }
+            for (let i = 2; i < s.seq.length; i++)
+                if (s.seq[i] === s.seq[i - 1] && s.seq[i] === s.seq[i - 2]) {
+                    add('warn', chi, 'risposta esatta nella stessa posizione (' + LETTERE[s.seq[i]] + ') per 3 domande di fila');
+                    break;
+                }
+        });
+        gemelle.forEach((a, k) => {
+            if (a.length === 1)
+                add('info', 'gemella ' + k, 'membro presente: ' + a[0].id + ' (scheda ' + a[0].scheda + '). L\'altro membro deve stare in una scheda diversa.');
+            else if (new Set(a.map(x => x.scheda)).size < a.length)
+                add('warn', 'gemella ' + k, 'i due membri stanno nella stessa scheda');
+        });
+        const n = qs.length;
+        if (n >= P.perScheda && 100 * lunga / n > P.lungaMax)
+            add('err', 'insieme', 'la corretta è la più lunga nel ' + Math.round(100 * lunga / n) + '% dei casi (massimo ' + P.lungaMax + '%)');
+        if (n >= 2 * P.perScheda) {
+            es.forEach((c, j) => { const p = 100 * c / n; if (Math.abs(p - 100 / P.opzioni) > P.tolPosizione)
+                add('warn', 'insieme', 'esatta=' + j + ' nel ' + Math.round(p) + '% dei casi (atteso ~' + Math.round(100 / P.opzioni) + '%)'); });
+            P.quoteLivello.forEach((t, k) => { const p = 100 * lv[k] / n; if (Math.abs(p - t) > P.tolLivello)
+                add('warn', 'insieme', 'L' + (k + 1) + ' al ' + Math.round(p) + '% (atteso ' + t + '% ±' + P.tolLivello + ')'); });
+        }
+        const conErrori = new Set(problemi.filter(p => p.sev === 'err').map(p => p.id));
+        const pronte = qs.filter((q, i) => oggetto(q) && !conErrori.has(testo(q.id) || '(riga ' + (i + 1) + ')')).length;
+        return { problemi, n, lv, es, lunga, schede: [...schede.values()].map(({ nome, n: nn, lv: l, es: e }) => ({ nome, n: nn, lv: l, es: e })), gemelle: gemelle.size, pronte };
+    }
+    function valida(qs, P = PROFILO_STANDARD) {
+        const blocchi = new Map(), visti = new Set();
+        let pronte = 0;
+        qs.forEach((q, i) => {
+            const id = oggetto(q) && testo(q.id) ? testo(q.id) : '(riga ' + (i + 1) + ')';
+            const b = oggetto(q) ? bloccanti(q, P) : ['non è una domanda'];
+            if (visti.has(id))
+                b.push('ID doppio: vale la prima domanda con questo id');
+            visti.add(id);
+            if (b.length)
+                blocchi.set(id, [...(blocchi.get(id) || []), ...b]);
+            else
+                pronte++;
+        });
+        const analisi = analizza(qs, P), globale = (p) => /^(scheda |insieme|gemella )/.test(p.id);
+        return { bloccanti: blocchi, qualita: analisi.problemi.filter(p => !globale(p)), insieme: analisi.problemi.filter(globale), pronte, analisi };
+    }
+    function ripara(qs) {
+        const log = [];
+        const out = qs.map(q0 => {
+            if (!oggetto(q0))
+                return q0;
+            const q = { ...q0 }, id = testo(q.id) || '?';
+            for (const k of Object.keys(q))
+                if (!CHIAVI_QUIZ.includes(k)) {
+                    log.push(id + ': rimossa la chiave in più «' + k + '»');
+                    delete q[k];
+                }
+            for (const k of ['domanda', 'spiegazione', 'fonte', 'erroreTipico']) {
+                const v = q[k];
+                if (typeof v === 'string' && v !== v.trim()) {
+                    log.push(id + ': tolti spazi superflui in «' + k + '»');
+                    q[k] = v.trim();
+                }
+            }
+            if (Array.isArray(q.opzioni) && q.opzioni.some(o => typeof o === 'string' && o !== o.trim())) {
+                log.push(id + ': tolti spazi superflui nelle opzioni');
+                q.opzioni = q.opzioni.map(o => typeof o === 'string' ? o.trim() : o);
+            }
+            if (typeof q.livelloCognitivo === 'string' && /^L?[1-4]$/i.test(q.livelloCognitivo.trim())) {
+                log.push(id + ': livelloCognitivo da testo a numero');
+                q.livelloCognitivo = Number(q.livelloCognitivo.trim().replace(/^L/i, ''));
+            }
+            if (typeof q.esatta === 'string' && /^[0-3]$/.test(q.esatta.trim())) {
+                log.push(id + ': esatta da testo a numero');
+                q.esatta = Number(q.esatta.trim());
+            }
+            const lc = q.livelloCognitivo;
+            if (typeof lc === 'number' && [1, 2, 3, 4].includes(lc) && q.livello !== 'L' + lc) {
+                log.push(id + ': livello allineato a livelloCognitivo (' + (q.livello === undefined ? 'mancante' : String(q.livello)) + ' → L' + lc + ')');
+                q.livello = 'L' + lc;
+            }
+            const f = testo(q.fonte).trim();
+            if (f && q.sourceRef !== f) {
+                log.push(id + ': sourceRef reso uguale a fonte');
+                q.sourceRef = f;
+            }
+            return q;
+        });
+        return { qs: out, log };
+    }
+    const promptCorrezione = (qs, problemi, o = {}) => DiagnosiQuiz.promptCorrezione(qs, problemi, o).testo;
+    return { PROFILO_STANDARD, LETTERE, letteraDichiarata, citazioni, bloccanti, rapporto, analizza, valida, ripara, promptCorrezione };
 })();

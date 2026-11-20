@@ -8628,17 +8628,7 @@ const ImportaParti = (() => {
         }
         return out;
     }
-    function bloccantiDomanda(q) {
-        const b = [], o = Array.isArray(q.opzioni) ? q.opzioni : [];
-        if (!s(q.domanda))
-            b.push('testo mancante');
-        if (o.length !== 4)
-            b.push(o.length + ' opzioni invece di 4');
-        const e = Number(q.esatta);
-        if (!Number.isInteger(e) || e < 0 || e > 3 || e >= o.length)
-            b.push('«esatta» fuori da 0..3');
-        return b;
-    }
+    const bloccantiDomanda = (q) => Validatore.bloccanti(q);
     function unisci(g) {
         const perId = new Map(), duplicati = [], bloccanti = [];
         const fonti = g.tipo === 'intero' ? g.files : g.parti;
@@ -8677,86 +8667,7 @@ const ImportaParti = (() => {
             meta.materia = g.step.replace(/-[\d.]+$/, '');
         return { pacchetto: { ...base, meta, quiz: [...perId.values()] }, duplicati, bloccanti };
     }
-    const pct = (n, tot) => tot ? Math.round(n * 100 / tot) : 0;
-    const LIV_ATTESI = [25, 35, 25, 15];
-    const livelloDi = (q) => { const n = Number(s(q.livelloCognitivo).replace(/^L/i, '')) || Number(s(q.livello).replace(/^L/i, '')); return n >= 1 && n <= 4 ? n : 0; };
-    function valida(p, extra = {}) {
-        const quiz = (p.quiz || []).filter(q => q && typeof q === 'object'), tot = quiz.length;
-        const bloccanti = (extra.bloccanti || []).slice(), avvisi = [], righe = [];
-        if (extra.duplicati && extra.duplicati.length)
-            avvisi.push(extra.duplicati.length + ' domande ripetute tra parti: tengo la più recente (' + extra.duplicati.slice(0, 3).join('; ') + (extra.duplicati.length > 3 ? '…' : '') + ')');
-        if (!tot)
-            return { bloccanti, avvisi, righe: ['Nessuna domanda valida'] };
-        const perScheda = new Map();
-        for (const q of quiz) {
-            const n = numScheda(q.scheda);
-            if (n)
-                perScheda.set(n, (perScheda.get(n) || 0) + 1);
-        }
-        if (perScheda.size) {
-            const storte = [...perScheda].filter(([, c]) => c !== 18).sort((a, b) => a[0] - b[0]);
-            righe.push(perScheda.size + ' schede · ' + tot + ' domande');
-            if (storte.length)
-                avvisi.push('Schede con domande ≠ 18: ' + storte.slice(0, 6).map(([n, c]) => 'S' + String(n).padStart(2, '0') + '=' + c).join(', ') + (storte.length > 6 ? '…' : ''));
-            if (extra.completo !== false && (perScheda.size < 18 || perScheda.size > 25))
-                avvisi.push(perScheda.size + ' schede nello step (attese 18–25)');
-        }
-        else
-            righe.push(tot + ' domande');
-        const liv = [0, 0, 0, 0];
-        for (const q of quiz) {
-            const l = livelloDi(q);
-            if (l)
-                liv[l - 1]++;
-        }
-        const lp = liv.map(n => pct(n, tot));
-        righe.push('Livelli L1–L4: ' + lp.join('/') + '% (attesi 25/35/25/15)');
-        if (lp.some((x, i) => Math.abs(x - LIV_ATTESI[i]) > 3))
-            avvisi.push('Livelli fuori soglia (±3): ' + lp.join('/') + '% invece di 25/35/25/15');
-        const pos = [0, 0, 0, 0];
-        let lunga = 0;
-        for (const q of quiz) {
-            const e = Number(q.esatta), o = (q.opzioni || []).map(x => s(x).length);
-            if (e >= 0 && e <= 3)
-                pos[e]++;
-            if (o.length > 1 && o.every((l, i) => i === e || l < o[e]))
-                lunga++;
-        }
-        const pp = pos.map(n => pct(n, tot));
-        righe.push('Esatta in A/B/C/D: ' + pp.join('/') + '% · corretta più lunga: ' + pct(lunga, tot) + '%');
-        if (pp.some(x => Math.abs(x - 25) > 10))
-            avvisi.push('Posizione dell\'esatta sbilanciata: ' + pp.join('/') + '% (attesa ~25% ciascuna)');
-        if (pct(lunga, tot) > 25)
-            avvisi.push('La corretta è la più lunga nel ' + pct(lunga, tot) + '% delle domande (attesa ≤ 25%): si indovina dalla lunghezza');
-        const gem = new Map();
-        for (const q of quiz) {
-            const g = s(q.coppiaGemellaId);
-            if (g)
-                gem.set(g, (gem.get(g) || 0) + 1);
-        }
-        const coppie = [...gem.values()].filter(n => n >= 2).length, sole = [...gem].filter(([, n]) => n < 2).map(([g]) => g);
-        const schede = perScheda.size || Math.ceil(tot / 18), attese = Math.floor(schede / 3);
-        righe.push('Coppie gemelle complete: ' + coppie);
-        if (coppie < attese)
-            avvisi.push('Coppie gemelle: ' + coppie + ' (attese ≥ ' + attese + ', una ogni 3 schede)');
-        if (sole.length)
-            avvisi.push(sole.length + ' gemelle senza l\'altra metà: ' + sole.slice(0, 3).join(', ') + (sole.length > 3 ? '…' : ''));
-        const senzaErrore = quiz.filter(q => !s(q.erroreTipico)).length;
-        if (senzaErrore)
-            avvisi.push(senzaErrore + ' domande senza «erroreTipico»');
-        const conSd = quiz.filter(q => q.spiegazioneDistrattori !== undefined);
-        const sdStorte = (conSd.length || perScheda.size ? quiz : []).filter(q => !(Array.isArray(q.spiegazioneDistrattori) && q.spiegazioneDistrattori.length === 3)).length;
-        if (sdStorte)
-            avvisi.push(sdStorte + ' domande senza 3 «spiegazioneDistrattori»');
-        const daVerificare = quiz.filter(q => /da verificare|p\.\s*_{2,}/i.test(s(q.fonte))).length;
-        if (daVerificare)
-            avvisi.push(daVerificare + ' fonti «da verificare» o senza pagina');
-        const ps = (p.programmaCalendario && p.programmaCalendario.pianoStrutturato) || {};
-        const brac = (Array.isArray(ps.sottoSchede) ? ps.sottoSchede : Array.isArray(p.sottoSchede) ? p.sottoSchede : []).map(x => Number(x && (x.durataBracMin || x.durataMin)) || 0).filter(Boolean);
-        if (brac.some(m => m < 45 || m > 50))
-            avvisi.push('Blocchi di studio fuori 45–50 min (BRAC): ' + brac.filter(m => m < 45 || m > 50).join(', '));
-        return { bloccanti, avvisi, righe };
-    }
+    const valida = (p, extra = {}) => Validatore.rapporto(p, extra);
     return { classifica, stepDi, nomeParte, numScheda, raggruppa, unisci, valida, bloccantiDomanda };
 })();
 
@@ -9301,25 +9212,30 @@ const ImportaDrive = (() => {
                     out.push({ id: f.id, name: f.name, cartella: c.name, modificato: f.modifiedTime || '' });
         return out.sort((a, b) => (Number(eNomeQuiz(b.name)) - Number(eNomeQuiz(a.name))) || a.name.localeCompare(b.name, 'it', { numeric: true }));
     }
+    function daTesto(testo, b) {
+        const r = Contratto.pacchetti(testo), ps = r.pacchetti.map(p => p).filter(p => ImportaParti.classifica(p) !== 'ignoto');
+        if (!ps.length)
+            return { voci: [{ ...b, tipo: 'ignoto', step: '', json: null, errore: r.lettura.errori[0] || r.lettura.avvisi[0] || 'Non è un pacchetto quiz' }], lettura: r.lettura };
+        return { voci: ps.map((j, k) => ({ ...b, id: ps.length > 1 ? b.id + '#' + (k + 1) : b.id, tipo: ImportaParti.classifica(j), step: ImportaParti.stepDi(j), json: j })), lettura: r.lettura };
+    }
     async function leggiTutti(files) {
         const out = new Array(files.length);
         let i = 0;
         const lavora = async () => {
             while (i < files.length) {
-                const n = i++, f = files[n];
+                const n = i++, f = files[n], b = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '' };
                 try {
-                    const j = JsonAI.leggiFile(await Drive.scaricaTesto(f.id)), tipo = ImportaParti.classifica(j);
-                    out[n] = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '', tipo, step: tipo === 'ignoto' ? '' : ImportaParti.stepDi(j), json: tipo === 'ignoto' ? null : j, errore: tipo === 'ignoto' ? 'Non è un pacchetto quiz' : undefined };
+                    out[n] = daTesto(await Drive.scaricaTesto(f.id), b).voci;
                 }
                 catch (e) {
                     if (String(e instanceof Error ? e.message : e) === 'NOLOGIN')
                         throw e;
-                    out[n] = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '', tipo: 'ignoto', step: '', json: null, errore: 'JSON non valido' };
+                    out[n] = [{ ...b, tipo: 'ignoto', step: '', json: null, errore: 'JSON non valido' }];
                 }
             }
         };
         await Promise.all([lavora(), lavora(), lavora(), lavora()]);
-        return out;
+        return out.flat();
     }
     async function leggiFile(f) { return traduci(JsonAI.leggiFile(await Drive.scaricaTesto(f.id))); }
     function preparaGruppo(g, oggiK = ymd(oggi())) {
@@ -9406,71 +9322,115 @@ const ImportaDrive = (() => {
         const n = r.bloccanti.length, a = r.avvisi.length;
         return h('details.drv-qualita', null, h('summary.piccolo', null, n ? '⛔ ' + n + ' bloccanti (saltati) · ' + a + ' avvisi' : a ? '⚠️ ' + a + ' avvisi di qualità' : '✓ Controllo qualità superato'), h('ul.piccolo', { style: { margin: '4px 0', paddingLeft: '18px' } }, ...r.bloccanti.slice(0, 12).map(x => h('li', { style: { color: 'var(--rosso, #c0392b)' } }, x)), ...r.avvisi.map(x => h('li', null, x)), ...r.righe.map(x => h('li.tenue', null, x))));
     }
+    function mostraGruppi(letti, lista, gia, f) {
+        const gruppi = ImportaParti.raggruppa(letti.filter(x => x.tipo !== 'ignoto')), ignoti = letti.filter(x => x.tipo === 'ignoto');
+        for (const g of gruppi) {
+            const esito = h('div.tenue.piccolo'), zona = h('div');
+            let prep = null, errore = '';
+            try {
+                prep = preparaGruppo(g);
+            }
+            catch (e) {
+                errore = String(e instanceof Error ? e.message : e);
+            }
+            const etichetta = g.tipo === 'intero' ? g.files[0].name : nomeStep(g.step);
+            const btn = h('button.btn', { 'aria-label': 'Importa ' + etichetta }, Stato.prendi('inn-' + (prep ? prep.t.k : '')) ? 'Reimporta' : 'Importa');
+            if (!prep) {
+                btn.disabled = true;
+                esito.textContent = '✗ ' + errore;
+            }
+            btn.onclick = () => {
+                if (!prep)
+                    return;
+                const { t, rapporto } = prep, d = proponi(t), prima = Stato.prendi('inn-' + t.k);
+                svuota(zona);
+                esito.textContent = 'Riconosciuto: ' + t.nome + ' ' + t.sotto + (t.ud ? ' · ' + t.ud : '') + ' · ' + t.domande + ' domande' + (t.scartate ? ' (' + t.scartate + ' scartate)' : '') + (t.dataPacchetto ? ' · pacchetto del ' + breve(t.dataPacchetto) : '');
+                zona.appendChild(pannelloScelta(t.k, t.nome + ' ' + t.sotto + ' · ' + t.titolo, d, prima ? { corso: prima.corso, piano: prima.piano, data: prima.data } : null, 'Inserisci', sc => {
+                    const t0 = performance.now(), inn = salva(t, sc, etichetta, { accumula: g.tipo === 'parti', rapporto });
+                    console.info('ImportaDrive.salva', t.k, t.domande, 'domande', Math.round(performance.now() - t0), 'ms');
+                    svuota(zona);
+                    btn.textContent = 'Reimporta';
+                    esito.textContent = '✓ ' + t.domande + ' domande in Banca · ' + dove(inn) + (g.tipo === 'parti' && !g.chiusura ? ' · il piano arriverà con il file di chiusura' : '');
+                    listaInnesti(gia);
+                    avviso('📥 ' + t.k + ' → ' + dove(inn), 5000, () => { f.chiudi(); vai('oggi'); });
+                }));
+            };
+            let titolo, sotto;
+            if (g.tipo === 'intero') {
+                titolo = g.files[0].name;
+                sotto = '📁 ' + g.files[0].cartella + (eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare');
+            }
+            else {
+                const r = rigaGruppo(g);
+                titolo = r.titolo;
+                sotto = '📁 ' + g.files[0].cartella + ' · ' + r.stato;
+            }
+            lista.appendChild(h('div.cat-riga', { 'data-step': g.step }, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, titolo), h('div.tenue.piccolo.drv-stato', null, sotto), prep ? riepilogo(prep.rapporto) : null, esito, zona), btn));
+        }
+        for (const x of ignoti)
+            lista.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, x.name), h('div.tenue.piccolo', null, '📁 ' + x.cartella + ' · ✗ ' + (x.errore || 'non riconosciuto') + ' (saltato)'))));
+        return gruppi.length + (gruppi.length === 1 ? ' pacchetto trovato' : ' pacchetti trovati') + (ignoti.length ? ' (' + ignoti.length + ' non riconosciuti)' : '') + '. «Importa» riconosce dove va nei tuoi programmi: puoi cambiarlo prima di confermare.';
+    }
+    function manuale(pronti, gia, f) {
+        const stato = h('p.tenue.piccolo', { role: 'status' }), lista = h('div.lista-drv');
+        let n = 0;
+        const leggiTesti = (testi) => pronti.then(() => {
+            svuota(lista);
+            const voci = [], tronche = [];
+            for (const x of testi) {
+                const r = daTesto(x.testo, { id: 'man-' + (++n), name: x.name, cartella: x.cartella, modificato: '' });
+                voci.push(...r.voci);
+                if (r.lettura.troncato)
+                    tronche.push(r.lettura);
+            }
+            stato.textContent = mostraGruppi(voci, lista, gia, f);
+            for (const l of tronche) {
+                const copia = async () => { const p = Contratto.continua(l); try {
+                    await navigator.clipboard.writeText(p);
+                    avviso('Prompt copiato: incollalo in Gemini.');
+                }
+                catch (_) {
+                    area.value = p;
+                    avviso('Appunti non disponibili: il prompt è nel riquadro, copialo da lì.', 6000);
+                } };
+                lista.appendChild(h('div.cat-riga', null, h('div.tenue.piccolo', { style: { flex: '1', minWidth: '0' } }, '✂️ La risposta si è interrotta a metà' + (l.ultimoCompleto ? ' dopo «' + l.ultimoCompleto.slice(0, 60) + '…»' : '') + ': le domande complete si importano, per le altre chiedi a Gemini di continuare.'), h('button.btn.neutro', { type: 'button', 'aria-label': 'Copia prompt continua da qui', onclick: copia }, '📋 Copia «continua da qui»')));
+            }
+        }).catch((e) => { stato.textContent = '⚠️ ' + String(e instanceof Error ? e.message : e); });
+        const area = h('textarea', { rows: 5, 'aria-label': 'Testo da importare', placeholder: 'Incolla qui la risposta di Gemini (anche più blocchi di codice)…', style: { width: '100%', boxSizing: 'border-box' } });
+        const zonaTesto = h('div', { hidden: true }, area, h('button.btn', { type: 'button', onclick: () => leggiTesti([{ testo: area.value, name: 'Testo incollato', cartella: 'incollato' }]) }, 'Leggi'));
+        const scegli = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', multiple: true, 'aria-label': 'File da importare', style: { display: 'none' },
+            onchange: async () => { const fs = Array.from(scegli.files || []); scegli.value = ''; leggiTesti(await Promise.all(fs.map(async (x) => ({ testo: await x.text(), name: x.name, cartella: 'file' })))); } });
+        return h('div.drv-manuale', null, h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h('button.btn.neutro', { type: 'button', 'aria-label': 'Incolla testo', onclick: () => { zonaTesto.hidden = !zonaTesto.hidden; if (!zonaTesto.hidden)
+                area.focus(); } }, '📋 Incolla testo'), h('button.btn.neutro', { type: 'button', 'aria-label': 'Scegli file', onclick: () => scegli.click() }, '📁 Scegli file'), scegli), zonaTesto, stato, lista);
+    }
     function apri() {
-        if (serveGoogle())
-            return;
         migraVecchi();
         const stato = h('p.tenue', { role: 'status' }, 'Cerco le cartelle «… quiz» su Drive…');
         const gia = h('div'), lista = h('div.lista-drv');
-        const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo: h('div', null, stato, lista, gia) });
+        const pronti = caricaStrumentiQuiz().catch((e) => { throw new Error('Strumenti quiz non disponibili: ' + e.message); });
+        const corpo = h('div', null, stato, lista, gia);
+        const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo });
+        corpo.insertBefore(manuale(pronti, gia, f), stato);
         listaInnesti(gia);
-        elenca().then(async (files) => {
+        if (!Drive.pronto) {
+            svuota(stato);
+            stato.append('Senza Drive collegato: incolla la risposta di Gemini o scegli i file .json. ', h('button.btn.neutro', { type: 'button', onclick: () => { f.chiudi(); serveGoogle(); } }, 'Collega Drive'));
+            return;
+        }
+        Promise.all([elenca(), pronti]).then(async ([files]) => {
             if (!files.length) {
                 stato.textContent = 'Nessun .json nelle cartelle «… quiz» del tuo Drive.';
                 return;
             }
             stato.textContent = 'Leggo ' + files.length + ' file…';
-            const letti = await leggiTutti(files), gruppi = ImportaParti.raggruppa(letti.filter(x => x.tipo !== 'ignoto'));
-            const ignoti = letti.filter(x => x.tipo === 'ignoto');
-            stato.textContent = gruppi.length + (gruppi.length === 1 ? ' pacchetto trovato' : ' pacchetti trovati') + (ignoti.length ? ' (' + ignoti.length + ' file non riconosciuti)' : '') + '. «Importa» riconosce dove va nei tuoi programmi: puoi cambiarlo prima di confermare.';
-            for (const g of gruppi) {
-                const esito = h('div.tenue.piccolo'), zona = h('div');
-                let prep = null, errore = '';
-                try {
-                    prep = preparaGruppo(g);
-                }
-                catch (e) {
-                    errore = String(e instanceof Error ? e.message : e);
-                }
-                const etichetta = g.tipo === 'intero' ? g.files[0].name : nomeStep(g.step);
-                const btn = h('button.btn', { 'aria-label': 'Importa ' + etichetta }, Stato.prendi('inn-' + (prep ? prep.t.k : '')) ? 'Reimporta' : 'Importa');
-                if (!prep) {
-                    btn.disabled = true;
-                    esito.textContent = '✗ ' + errore;
-                }
-                btn.onclick = () => {
-                    if (!prep)
-                        return;
-                    const { t, rapporto } = prep, d = proponi(t), prima = Stato.prendi('inn-' + t.k);
-                    svuota(zona);
-                    esito.textContent = 'Riconosciuto: ' + t.nome + ' ' + t.sotto + (t.ud ? ' · ' + t.ud : '') + ' · ' + t.domande + ' domande' + (t.scartate ? ' (' + t.scartate + ' scartate)' : '') + (t.dataPacchetto ? ' · pacchetto del ' + breve(t.dataPacchetto) : '');
-                    zona.appendChild(pannelloScelta(t.k, t.nome + ' ' + t.sotto + ' · ' + t.titolo, d, prima ? { corso: prima.corso, piano: prima.piano, data: prima.data } : null, 'Inserisci', sc => {
-                        const t0 = performance.now(), inn = salva(t, sc, etichetta, { accumula: g.tipo === 'parti', rapporto });
-                        console.info('ImportaDrive.salva', t.k, t.domande, 'domande', Math.round(performance.now() - t0), 'ms');
-                        svuota(zona);
-                        btn.textContent = 'Reimporta';
-                        esito.textContent = '✓ ' + t.domande + ' domande in Banca · ' + dove(inn) + (g.tipo === 'parti' && !g.chiusura ? ' · il piano arriverà con il file di chiusura' : '');
-                        listaInnesti(gia);
-                        avviso('📥 ' + t.k + ' → ' + dove(inn), 5000, () => { f.chiudi(); vai('oggi'); });
-                    }));
-                };
-                let titolo, sotto;
-                if (g.tipo === 'intero') {
-                    titolo = g.files[0].name;
-                    sotto = '📁 ' + g.files[0].cartella + (eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare');
-                }
-                else {
-                    const r = rigaGruppo(g);
-                    titolo = r.titolo;
-                    sotto = '📁 ' + g.files[0].cartella + ' · ' + r.stato;
-                }
-                lista.appendChild(h('div.cat-riga', { 'data-step': g.step }, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, titolo), h('div.tenue.piccolo.drv-stato', null, sotto), prep ? riepilogo(prep.rapporto) : null, esito, zona), btn));
-            }
-            for (const x of ignoti)
-                lista.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, x.name), h('div.tenue.piccolo', null, '📁 ' + x.cartella + ' · ✗ ' + (x.errore || 'non riconosciuto') + ' (saltato)'))));
-        }).catch((e) => { console.warn('ImportaDrive.elenca', e); stato.textContent = String(e instanceof Error ? e.message : e) === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : 'Errore Drive: ' + String(e instanceof Error ? e.message : e); });
+            stato.textContent = mostraGruppi(await leggiTutti(files), lista, gia, f);
+        }).catch((e) => {
+            console.warn('ImportaDrive.elenca', e);
+            const m = String(e instanceof Error ? e.message : e);
+            stato.textContent = m === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : /^Strumenti quiz/.test(m) ? '⚠️ ' + m : 'Errore Drive: ' + m;
+        });
     }
-    return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
+    return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, daTesto, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
 })();
 
 const Locale = (() => {
@@ -14948,11 +14908,9 @@ function sezioniSpiegazione(sp) {
     return out;
 }
 let strumentiQuizInArrivo = null;
-function conStrumentiQuiz(fn) {
-    if (typeof StrumentiQuiz !== 'undefined') {
-        fn();
-        return;
-    }
+function caricaStrumentiQuiz() {
+    if (typeof StrumentiQuiz !== 'undefined')
+        return Promise.resolve();
     if (!strumentiQuizInArrivo)
         strumentiQuizInArrivo = new Promise((ok, ko) => {
             const s = document.createElement('script');
@@ -14961,7 +14919,10 @@ function conStrumentiQuiz(fn) {
             s.onerror = () => { strumentiQuizInArrivo = null; s.remove(); ko(new Error('serve la connessione la prima volta')); };
             document.head.appendChild(s);
         });
-    strumentiQuizInArrivo.then(fn, (e) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
+    return strumentiQuizInArrivo;
+}
+function conStrumentiQuiz(fn) {
+    caricaStrumentiQuiz().then(fn, (e) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
 }
 
 const Simulazioni = (() => {
@@ -17440,7 +17401,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.60.0';
+const VERSIONE = '0.61.0';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
