@@ -6410,7 +6410,7 @@ const Dominio = (() => {
             d.cit = x.cit.filter((c) => c && c.t).map((c) => ({ t: str(c.t), f: str(c.f), l: c.l ? str(c.l) : undefined }));
         if (str(x.r))
             d.r = str(x.r);
-        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(str(x.linguaCodice)))
+        if (/^[A-Za-z][\w+#.-]{0,19}$/.test(str(x.linguaCodice)))
             d.linguaCodice = str(x.linguaCodice);
         return d;
     }
@@ -8735,6 +8735,8 @@ const ImportaDrive = (() => {
         return Object.keys(out).length ? out : null;
     }
     function domanda(x, sk, k) {
+        if (s(x.tipo) && s(x.tipo) !== 'mcq')
+            return altroTipo(x, sk, k);
         const opz = Array.isArray(x.opzioni) ? x.opzioni.map(s) : [];
         const es = Number(x.esatta);
         if (!s(x.domanda) || opz.length !== 4 || opz.some(o => !o) || !Number.isInteger(es) || es < 0 || es > 3)
@@ -8762,6 +8764,54 @@ const ImportaDrive = (() => {
             if (Object.keys(m).length)
                 d.distractorTypes = m;
         }
+        const sr = rifFonte(x.sourceRef, k) || (s(x.fonte) ? rifFonte(x.fonte, k) : undefined);
+        if (sr)
+            d.sourceRef = sr;
+        if (s(x.sottoStep))
+            d.subtopic = s(x.sottoStep);
+        if (s(x.erroreTipico))
+            d.erroreTipico = s(x.erroreTipico);
+        return d;
+    }
+    function altroTipo(x, sk, k) {
+        const l = (v) => Array.isArray(v) ? v.map(s).filter(Boolean) : [], tipo = s(x.tipo);
+        if (!s(x.domanda))
+            return null;
+        const bl = livello(x.livelloCognitivo) || livello(x.livello);
+        const d = { id: 'q-drv-' + (s(x.id) || hash(sk + '|' + s(x.domanda))), sk, t: 'fill', lv: LV[bl] || 'Applicativo', q: s(x.domanda), e: s(x.spiegazione), stepId: k };
+        if (tipo === 'completamento') {
+            const a = l(x.risposte);
+            if (!a.length || !s(x.domanda).includes('___'))
+                return null;
+            d.a = a;
+            d.show = a[0];
+        }
+        else if (tipo === 'ordinamento') {
+            const el = l(x.elementi);
+            if (el.length < 3 || el.length > 7)
+                return null;
+            d.t = 'sequenza';
+            d.sequenzaOk = el;
+            d.show = el.join(' → ');
+        }
+        else if (tipo === 'aperta' || tipo === 'codice') {
+            const rb = l(x.rubrica);
+            if (rb.length < 2 || rb.length > 5 || !s(x.rispostaModello) || (tipo === 'codice' && !s(x.linguaggio)))
+                return null;
+            d.t = 'risposta_aperta_rubrica';
+            d.rubricaPunti = rb;
+            d.show = s(x.rispostaModello);
+            if (tipo === 'codice')
+                d.linguaCodice = s(x.linguaggio);
+        }
+        else
+            return null;
+        if (s(x.fonte))
+            d.r = s(x.fonte);
+        if (bl)
+            d.bloomLevel = bl;
+        if (s(x.spiegazione))
+            d.spiegazione = s(x.spiegazione);
         const sr = rifFonte(x.sourceRef, k) || (s(x.fonte) ? rifFonte(x.fonte, k) : undefined);
         if (sr)
             d.sourceRef = sr;
@@ -13556,7 +13606,11 @@ const QuizApp = (() => {
         StatQC.ricalcola(r);
         r.ultima = ymd(new Date());
         r.esito = giusta;
-        const neuroPrima = r.neuro ? { ...r.neuro } : undefined, logPrima = r.confidenceLog ? r.confidenceLog.slice() : undefined;
+        const neuroPrima = r.neuro ? { ...r.neuro } : undefined, logPrima = r.confidenceLog ? r.confidenceLog.slice() : undefined, autoPrima = r.auto;
+        if (v.auto)
+            r.auto = true;
+        else
+            delete r.auto;
         if (v.cert) {
             const t = { ts: new Date().toISOString(), corretto: giusta, livelloCertezza: v.cert, tempoRispostaMs: Math.max(0, Math.round(v.ms || 0)) };
             r.confidenceLog = Neuro.aggiungiTentativo(r.confidenceLog, t);
@@ -13609,6 +13663,10 @@ const QuizApp = (() => {
                 else
                     delete q.confidenceLog;
             }
+            if (autoPrima)
+                q.auto = true;
+            else
+                delete q.auto;
             if (scelta && q.scelte && q.scelte[scelta]) {
                 q.scelte = Object.assign({}, q.scelte);
                 q.scelte[scelta]--;
@@ -13706,6 +13764,7 @@ const QuizApp = (() => {
         let mq = modo(), storia = [], faticaOn = false, faticaZitta = 0;
         const archM = Dominio.archetipoMateria(m);
         const NOMI_TIPO = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
+        const codice = (d) => d.t === 'risposta_aperta_rubrica' && !!d.linguaCodice;
         const nuovoTipo = (d) => d.t === 'sequenza' || d.t === 'abbinamento' || d.t === 'risposta_aperta_rubrica';
         function ordineIniziale(d) {
             if (d.t === 'mcq')
@@ -13742,8 +13801,18 @@ const QuizApp = (() => {
                         : '<select data-abb="' + k + '"><option value="">Scegli…</option>' + x.ord.map(i => '<option value="' + esc(cp[i][1]) + '">' + esc(cp[i][1]) + '</option>').join('') + '</select>') + '</label>').join('')
                     + (a ? '' : '<button type="submit" class="btn">Verifica</button>') + '</form>';
             }
-            return '<form class="qz-fill qz-rub" autocomplete="off"><textarea id="qz-ans" rows="5" placeholder="Scrivi la tua risposta con parole tue"' + (a ? ' disabled class="' + (x.ok ? 'ok' : 'ko') + '"' : '') + '>' + (a ? esc(x.picked) : '') + '</textarea>'
-                + (a ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI.</p>') + '</form>';
+            const cod = codice(d), chiusa = a || !!x.daConf, ta = cod ? ' class="qz-codice' + (a ? ' ' + (x.ok ? 'ok' : 'ko') : '') + '" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Scrivi il codice (' + esc(d.linguaCodice) + ')"'
+                : ' placeholder="Scrivi la tua risposta con parole tue"' + (a ? ' class="' + (x.ok ? 'ok' : 'ko') + '"' : '');
+            let o = '<form class="qz-fill qz-rub" autocomplete="off"><textarea id="qz-ans" rows="' + (cod ? 8 : 5) + '"' + ta + (chiusa ? ' disabled' : '') + '>' + (chiusa ? esc(x.picked) : '') + '</textarea>'
+                + (chiusa ? '' : '<button type="submit" class="btn">Verifica</button><p class="tenue piccolo">Valutata sui punti chiave, senza AI: poi confermi tu il voto.</p>') + '</form>';
+            if (x.daConf && x.voto) {
+                const k = x.voto.coperti.length, n = k + x.voto.mancanti.length;
+                o += '<div class="qz-box qz-voto" role="group" aria-label="Conferma il voto"><p><b>Coperti ' + k + '/' + n + ' punti chiave</b> · proposta: ' + (x.prop ? 'giusta' : 'sbagliata') + '</p>'
+                    + (x.voto.mancanti.length ? '<p class="tenue piccolo">Non trovati: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '')
+                    + '<p class="tenue piccolo">Confronta con la risposta modello e decidi tu:</p><p class="' + (cod ? 'qz-codice' : '') + '">' + (cod ? esc(d.show) : fmt(d.show)) + '</p>'
+                    + '<div class="chips"><button type="button" class="chip' + (x.prop ? ' on' : '') + '" data-voto="1">✓ Era giusta</button><button type="button" class="chip' + (x.prop ? '' : ' on') + '" data-voto="0">✗ Era sbagliata</button></div></div>';
+            }
+            return o;
         }
         const nuovo = (idx, rip) => {
             P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
@@ -13757,7 +13826,7 @@ const QuizApp = (() => {
             disegnaQ();
             v.corpo.scrollTop = 0;
         };
-        const fatta = (x) => x.picked !== null;
+        const fatta = (x) => x.picked !== null && !x.daConf;
         const punti = () => P.filter(x => x.ok).length;
         const corretta = (x) => x.ord.indexOf(0);
         const passi = (e) => '<ol class="qz-passi">' + (Array.isArray(e) ? e : [e]).map(t => { const m2 = String(t).match(/^([^:]{2,80}):\s([\s\S]*)$/); return '<li>' + (m2 ? '<b>' + fmt(m2[1]) + ':</b> ' + fmt(m2[2]) : fmt(t)) + '</li>'; }).join('') + '</ol>';
@@ -13788,7 +13857,7 @@ const QuizApp = (() => {
             if (!x.ok && d.erroreTipico)
                 s2 += '<div class="qz-perche"><b>Errore tipico</b><p>' + fmt(d.erroreTipico) + '</p></div>';
             if (x.voto)
-                s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + '</div>';
+                s2 += '<div class="qz-perche"><b>Punti chiave: ' + x.voto.coperti.length + ' su ' + (x.voto.coperti.length + x.voto.mancanti.length) + '</b>' + (x.voto.mancanti.length ? '<p>Mancano: ' + x.voto.mancanti.map(fmt).join('; ') + '</p>' : '') + (x.auto ? '<p class="tenue piccolo">Voto deciso da te: la rubrica proponeva «' + (x.prop ? 'giusta' : 'sbagliata') + '».</p>' : '') + '</div>';
             if (!x.ok && mc) { }
             else if (!x.ok && !mc && ew[0])
                 s2 += '<div class="qz-perche"><b>Perché la tua risposta è sbagliata</b><p>' + (x.picked && (d.t === 'fill' || d.t === 'risposta_aperta_rubrica') ? 'Hai scritto «' + esc(x.picked) + '». ' : '') + fmt(ew[0]) + '</p></div>';
@@ -13894,7 +13963,7 @@ const QuizApp = (() => {
         }
         function rispondi(val) {
             const x = P[cur];
-            if (fatta(x))
+            if (fatta(x) || x.daConf)
                 return;
             if (mq === 'neuro' && !x.cert) {
                 avviso('Prima dimmi quanto sei sicuro (1, 2 o 3).');
@@ -13928,11 +13997,26 @@ const QuizApp = (() => {
                 else if (d.t === 'risposta_aperta_rubrica') {
                     const r = Locale.rubrica(val, d.rubricaPunti || []);
                     x.voto = { coperti: r.coperti, mancanti: r.mancanti };
-                    x.ok = r.punteggio >= 0.6;
+                    x.prop = r.punteggio >= 0.6;
+                    x.daConf = true;
+                    x.ok = null;
+                    disegnaQ();
+                    return;
                 }
                 else
                     x.ok = giusta(val, d.a || []);
             }
+            chiudi(x);
+        }
+        function confermaVoto(x, ok) {
+            if (!x.daConf)
+                return;
+            x.daConf = false;
+            x.ok = ok;
+            x.auto = ok !== x.prop;
+            chiudi(x);
+        }
+        function chiudi(x) {
             const annulla = prova ? null : registraStat(x);
             storia.push({ ms: x.ms || 0, ok: !!x.ok });
             if (faticaZitta > 0)
@@ -13944,7 +14028,7 @@ const QuizApp = (() => {
             if (toastAnnulla)
                 toastAnnulla.remove();
             if (annulla)
-                avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+                avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.daConf = false; x.prop = undefined; x.auto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
             toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
             if (!x.ok) {
                 const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null;
@@ -14065,6 +14149,10 @@ const QuizApp = (() => {
                     rispondi(JSON.stringify(x.sel.map(i => seq[i])));
                 else
                     disegnaQ();
+                return;
+            }
+            if (b.dataset.voto) {
+                confermaVoto(P[cur], b.dataset.voto === '1');
                 return;
             }
             if (b.dataset.ai) {
@@ -17404,7 +17492,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.63.1';
+const VERSIONE = '0.64.0';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)

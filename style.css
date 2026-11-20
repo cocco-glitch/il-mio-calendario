@@ -918,3 +918,6 @@ details.personalizza > summary { cursor: pointer; padding: 10px 4px; font-weight
 .centro-albero label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 32px; }
 .centro-impostazioni { border-top: 1px solid var(--linea); padding-top: 8px; }
 .centro-impostazioni textarea { width: 100%; box-sizing: border-box; }
+/* v0.64: risposta di codice in monospazio; conferma del voto della rubrica */
+.qz-fill textarea.qz-codice, .qz-voto .qz-codice { font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.qz-fill textarea.ok { border-color: #2fa866; } .qz-fill textarea.ko { border-color: var(--rosso); }
