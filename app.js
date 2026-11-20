@@ -9333,7 +9333,7 @@ const ImportaDrive = (() => {
             catch (e) {
                 errore = String(e instanceof Error ? e.message : e);
             }
-            const etichetta = g.tipo === 'intero' ? g.files[0].name : nomeStep(g.step);
+            const man = g.files[0].id.startsWith('man-'), etichetta = g.tipo === 'intero' && !(man && g.step) ? g.files[0].name : nomeStep(g.step);
             const btn = h('button.btn', { 'aria-label': 'Importa ' + etichetta }, Stato.prendi('inn-' + (prep ? prep.t.k : '')) ? 'Reimporta' : 'Importa');
             if (!prep) {
                 btn.disabled = true;
@@ -9357,8 +9357,8 @@ const ImportaDrive = (() => {
             };
             let titolo, sotto;
             if (g.tipo === 'intero') {
-                titolo = g.files[0].name;
-                sotto = '📁 ' + g.files[0].cartella + (eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare');
+                titolo = etichetta;
+                sotto = '📁 ' + g.files[0].cartella + (man || eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare');
             }
             else {
                 const r = rigaGruppo(g);
