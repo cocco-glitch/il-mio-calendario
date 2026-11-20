@@ -206,7 +206,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.61.0', () => vero(/const VERSIONE = '0.61.0'/.test(leggi('09-main.ts'))));
+t('versione app 0.62.0', () => vero(/const VERSIONE = '0.62.0'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
@@ -848,6 +848,16 @@ await t('v0.61: strumenti-quiz.js espone Contratto, Validatore e MappaPagine; l\
   const l = vm.runInContext('Contratto.leggi', sb)('```json\n{ "formato": "quiz-v3", "parte": "biologia-3.3-s1", "quiz": [' + es + '] }\n```');
   const qs = vm.runInContext('Contratto.aQuiz', sb)(l, { step: 'biologia-3.3' });
   vero(l.formato === 'quiz-v3' && qs.length === 1 && /^risposta corretta/.test(qs[0].opzioni[qs[0].esatta]) && qs[0].id === 'biologia-3.3-S01-01', 'esempio → id dall\'app, giusta tracciata dopo il mescolamento');
+});
+
+await t('v0.62: Dossier studente — modulo puro su richiesta, privacy prima di copiare, voci tolte in localStorage imc-', () => {
+  const ds = leggi('su-richiesta/07-dossier.ts'), sq = leggi('su-richiesta/07-strumentiquiz.ts'), mp = leggi('su-richiesta/07-masterprompt.ts');
+  vero(!/\bStato\.|\bdocument\.|localStorage|fetch\(|innerHTML/.test(ds), 'dossier puro: niente Stato, DOM, rete o storage');
+  vero(!fs.readdirSync(SRC).some(f => /dossier/.test(f)), 'dossier fuori da app.js');
+  vero(/Dossier\.controllaPrivacy\(/.test(sq) && /btnCopia\.disabled = btnScarica\.disabled = problemiPrivacy\.length > 0/.test(sq), 'Copia e Scarica bloccati se il controllo privacy trova qualcosa');
+  vero(/'imc-dossier-escluse'/.test(sq) && /Privacy\.accLocale\(\)/.test(sq) && /Privacy\.idDispositivo\(\)/.test(sq), 'voci tolte con prefisso imc-; email e dispositivo nel controllo');
+  vero(/dossier\?: string\[\]/.test(mp) && /o\.dossier && o\.dossier\.length/.test(mp), 'master prompt: regole del dossier al posto dei punti deboli');
+  vero(!/new Date\(\)|Date\.now/.test(ds), 'dossier deterministico: la data arriva da fuori');
 });
 
 await t('v0.59.2: quiz in app — confutazioni da spiegazioneDistrattori, sezioni, errore tipico, strumenti in Studio', () => {

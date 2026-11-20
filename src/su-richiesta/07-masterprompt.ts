@@ -15,6 +15,8 @@ interface OpzMP {
   perMessaggio?: 1 | 2; gem?: boolean;
   libri?: LibroMP[]; slide?: string[]; guide?: string[]; quizEsistenti?: string[]; vietati?: string[]; indici?: string[];
   idEsistenti?: string[]; puntiDeboli?: string[]; tabella?: string; note?: string;
+  /** v0.62: regole già decise dal Dossier studente (07-dossier.ts); se presenti sostituiscono puntiDeboli. */
+  dossier?: string[];
 }
 
 const MasterPrompt = (() => {
@@ -149,7 +151,8 @@ const MasterPrompt = (() => {
       ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.',
       ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).',
       ' - Prima scheda: S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (le schede precedenti esistono già: non riscriverle)' : '') + '.');
-    if (o.puntiDeboli && o.puntiDeboli.length) S.push(' - Punti deboli misurati dall\'app (risposte corrette < 60%): ' + o.puntiDeboli.join('; ') + '. Dedica a questi argomenti almeno una scheda in più, con più L3 (trabocchetti) e confutazioni molto esplicite.');
+    if (o.dossier && o.dossier.length) S.push(' - Dossier dello studente (calcolato dall\'app sui suoi quiz, già deciso: applica queste regole senza ricalcolare nulla):', ...o.dossier.map(r => '   • ' + r));
+    else if (o.puntiDeboli && o.puntiDeboli.length) S.push(' - Punti deboli misurati dall\'app (risposte corrette < 60%): ' + o.puntiDeboli.join('; ') + '. Dedica a questi argomenti almeno una scheda in più, con più L3 (trabocchetti) e confutazioni molto esplicite.');
     if (o.note) S.push(' - Richieste dello studente: ' + o.note);
     sez('COMPATIBILITÀ CON L\'APP — COSA FA L\'APP DEI TUOI QUIZ');
     S.push(' - «📥 Importa quiz da Drive» legge i .json nelle cartelle che finiscono in «quiz»: domanda → testo, opzioni → 4 risposte (la corretta la scrivi SEMPRE in `opzioni[0]`, l\'app la sposta in una posizione bilanciata), ' +

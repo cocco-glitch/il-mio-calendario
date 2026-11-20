@@ -171,17 +171,39 @@ const StrumentiQuiz = (() => {
     const offset = MasterPrompt.stimaOffset(campioni);   // ripiego interno quando il PDF non ha etichette
     return { lettura: MasterPrompt.indiceLettura(testi), offset, mappa: mappa || (offset === null ? null : { fonte: 'auto-stampati', tratti: [{ pdfDa: offset + 1, pdfA: MappaPagine.APERTO, stampDa: 1 }], affidabilita: 'stimata' }), pagine: tot };
   }
-  /** Punti deboli dalle statistiche dei quiz: schede di questa materia con meno del 60% di risposte giuste. */
-  function puntiDeboli(m: MateriaRec): string[] {
-    const ms = MasterPrompt.slug(m.nome), cod = m.codice.toLowerCase();
-    const per = new Map<string, { n: number; ok: number }>();
+  // ================== DOSSIER STUDENTE (v0.62) — raccolta dati; il calcolo è in 07-dossier.ts ==================
+  const K_ESCLUSE = 'imc-dossier-escluse';   // prefisso imc-: cancellata al cambio account (Privacy.pulisciLocalStorage)
+  function escluseLette(): string[] {
+    try { const x = JSON.parse(localStorage.getItem(K_ESCLUSE) || '[]'); return Array.isArray(x) ? x.filter(v => typeof v === 'string') : []; }
+    catch (e) { console.warn('[dossier] voci escluse illeggibili', e); return []; }
+  }
+  function escluseSalva(xs: string[]): void {
+    try { localStorage.setItem(K_ESCLUSE, JSON.stringify(xs.slice(-200))); } catch (e) { console.warn('[dossier] voci escluse non salvate', e); }
+  }
+  const LV_NUM: Record<string, number> = { Sbarramento: 1, Completamento: 1, Applicativo: 2, Trabocchetto: 3, Problema: 4 };
+  /** Legge da Stato solo ciò che serve al dossier di questa materia (niente identificativi: qid e sk sono id didattici). */
+  function datiDossier(nome: string, codice: string): DatiDossier {
+    const ms = MasterPrompt.slug(nome), cod = codice.toLowerCase();
+    const testi = new Map<string, DomB>();
+    for (const b of Stato.tutti<BancaImcRec>('bancaimc')) for (const d of b.domande || []) if (d && d.id) testi.set(d.id, d);
+    for (const q of Stato.tutti<QCreato>('qcreato')) for (const d of q.domande || []) if (d && d.id) testi.set(d.id, d);
+    const stat: StatD[] = [];
     for (const s of Stato.tutti<StatQ>('statq')) {
       const sk = String(s.sk || '').toLowerCase();
       if (!sk || !(sk.includes(ms) || sk.startsWith(cod + '-'))) continue;
-      const v = per.get(s.sk) || { n: 0, ok: 0 }; v.n += s.n || 0; v.ok += s.ok || 0; per.set(s.sk, v);
+      const qid = s.id.replace(/^sq-/, ''), d = testi.get(qid), nr = s.neuro;
+      stat.push({ qid, sk: s.sk, n: s.n || 0, ok: s.ok || 0, scelte: s.scelte, testo: d ? d.q : undefined,
+        caso: nr && nr.ultimoCaso, tag: nr && nr.tag, ease: nr && nr.ease, reps: nr && nr.reps,
+        livello: d ? (d.bloomLevel || LV_NUM[d.lv]) : undefined,
+        log: (s.confidenceLog || []).map(t => ({ ts: t.ts, corretto: t.corretto, certezza: t.livelloCertezza, ms: t.tempoRispostaMs })) });
     }
-    return [...per.entries()].filter(([, v]) => v.n >= 3 && v.ok / v.n < 0.6).sort((a, b) => a[1].ok / a[1].n - b[1].ok / b[1].n)
-      .slice(0, 6).map(([sk, v]) => sk + ' (' + Math.round(100 * v.ok / v.n) + '%)');
+    const oggiY = ymd(new Date()), t0 = Date.parse(oggiY + 'T00:00:00');
+    const esami = Stato.tutti<Esame>('esame').filter(e => e.data >= oggiY && (!e.materie || !e.materie.length || e.materie.includes(codice))).sort((a, b) => a.data < b.data ? -1 : 1);
+    const giorniEsame = esami.length ? Math.round((Date.parse(esami[0].data + 'T00:00:00') - t0) / 86400000) : null;
+    const da = ymd(new Date(t0 - 14 * 86400000)), perG = new Map<string, number>();
+    for (const s of Stato.tutti<Sessione>('sessione')) if (s.m === codice && s.data >= da && s.data <= oggiY) perG.set(s.data, (perG.get(s.data) || 0) + (s.minuti || 0));
+    const minutiGiorno = perG.size ? [...perG.values()].reduce((a, b) => a + b, 0) / perG.size : null;
+    return { stat, giorniEsame, minutiGiorno };
   }
   function idGiaUsati(): string[] {
     const out: string[] = [];
@@ -202,7 +224,10 @@ const StrumentiQuiz = (() => {
       h('option', { value: 'standard', selected: true }, 'Standard (18–25 schede)'), h('option', { value: 'intensa' }, 'Intensa (24–30 schede)')) as HTMLSelectElement;
     const perMsg = h('select', { 'aria-label': 'Schede per messaggio' }, h('option', { value: '2' }, '2 schede per messaggio'), h('option', { value: '1' }, '1 scheda per messaggio (account gratuito)')) as HTMLSelectElement;
     const gem = casella('Uso un Gem con le «Regole per il Gem»');
-    const deboli = casella('Insisti sui miei punti deboli (dalle statistiche)', true);
+    const usaDos = casella('Usa il mio dossier (regole dai miei quiz)', true);
+    const dosBox = h('div.dossier', { hidden: true, role: 'region', 'aria-label': 'Dossier studente' });
+    const btnDos = h('button.chip', { type: 'button', 'aria-expanded': 'false', 'aria-label': 'Vedi dossier' }, '👁 Vedi dossier') as HTMLButtonElement;
+    let escluse = escluseLette(), problemiPrivacy: string[] = [];
     const note = area('Richieste particolari (facoltativo)', 2);
     const stato = h('p.piccolo.tenue', { role: 'status', 'aria-live': 'polite' });
     const elenco = h('div');
@@ -287,6 +312,45 @@ const StrumentiQuiz = (() => {
       const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
       return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
     }
+    /** Dossier della materia e dello step (se lo step non ha ancora risposte: tutta la materia). */
+    function dossier(): DossierS | null {
+      const { nome, codice } = materia();
+      if (!nome) return null;
+      const dati = datiDossier(nome, codice), oggiY = ymd(new Date());
+      const d = Dossier.calcola(dati, { materia: nome, step: step.value.trim(), oggi: oggiY });
+      return d.tentativi || !d.step ? d : Dossier.calcola(dati, { materia: nome, oggi: oggiY });
+    }
+    function nomiFileNoti(): string[] {
+      return [...gruppi.flatMap(g => g.files), ...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici, ...altri.vietati].map(f => f.name);
+    }
+    function controllaDossier(regole: string[]): string[] {
+      return Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile: nomiFileNoti() });
+    }
+    function disegnaDossier(): void {
+      dosBox.textContent = '';
+      const d = dossier();
+      if (!d) { dosBox.appendChild(h('p.piccolo.tenue', null, 'Scegli prima la materia.')); return; }
+      const regole = Dossier.regole(d, escluse), problemi = controllaDossier(regole);
+      dosBox.appendChild(h('p.piccolo', null, h('b', null, '🗂️ Dossier — ' + d.materia + (d.step ? ' · step ' + d.step : ' · tutta la materia')), ' · ' + d.tentativi + ' risposte'));
+      if (d.insufficiente || !d.voci.length) dosBox.appendChild(h('p.piccolo.tenue', null, 'Dati insufficienti: fai qualche quiz in app di questa materia e il dossier ti dirà dove insistere.'));
+      for (const v of d.voci) {
+        const testoV = h('span', null, h('b', null, v.titolo), h('br'), h('span.piccolo.tenue', null, v.motivo), v.regola ? h('span.piccolo', null, h('br'), '→ all\'AI: ' + v.regola) : h('span.piccolo.tenue', null, ' (solo per te, non va all\'AI)'));
+        if (!v.regola) { dosBox.appendChild(h('p.dossier-voce', null, testoV)); continue; }
+        const c = h('input', { type: 'checkbox', checked: escluse.includes(v.id) ? undefined : true, 'aria-label': 'Manda all\'AI: ' + v.titolo }) as HTMLInputElement;
+        c.addEventListener('change', () => {
+          escluse = c.checked ? escluse.filter(x => x !== v.id) : escluse.concat(v.id);
+          escluseSalva(escluse); disegnaDossier(); if (out.value) genera();
+        });
+        dosBox.appendChild(h('label.dossier-voce.riga-tra', null, testoV, c));
+      }
+      dosBox.appendChild(h('p.piccolo', { role: 'status' }, problemi.length ? '⛔ Controllo privacy: ' + problemi.join(' ') + ' Togli la voce per poter copiare.'
+        : '✅ Controllo privacy: nessun dato identificativo. All\'AI ' + (regole.length === 1 ? 'va 1 regola' : 'vanno ' + regole.length + ' regole') + '.'));
+    }
+    btnDos.addEventListener('click', () => {
+      const apri = dosBox.hidden;
+      dosBox.hidden = !apri; btnDos.setAttribute('aria-expanded', String(apri));
+      if (apri) disegnaDossier();
+    });
     function genera(): void {
       const { m, nome, codice } = materia();
       if (!nome) { avviso('Scegli o scrivi la materia.'); return; }
@@ -300,21 +364,29 @@ const StrumentiQuiz = (() => {
         intensita: intens.value as OpzMP['intensita'], perMessaggio: perMsg.value === '1' ? 1 : 2, gem: gem.c.checked,
         libri: gruppi.filter(g => g.usa).map(g => g.libro), slide: nomi(altri.slide), guide: nomi(altri.guide), indici: nomi(altri.indici),
         quizEsistenti: nomi(altri.quiz), vietati: altri.vietati.map(f => f.name), idEsistenti: idGiaUsati(),
-        puntiDeboli: deboli.c.checked && m ? puntiDeboli(m) : [], note: note.value.trim() || undefined,
+        note: note.value.trim() || undefined,
       };
+      const d = usaDos.c.checked ? dossier() : null;
+      opz.dossier = d ? Dossier.regole(d, escluse) : [];
+      problemiPrivacy = controllaDossier(opz.dossier);
       out.value = MasterPrompt.costruisci(opz);
+      bloccaCopia();
+      if (!dosBox.hidden) disegnaDossier();
+      if (problemiPrivacy.length) avviso('⛔ Il dossier contiene dati identificativi: apri «Vedi dossier» e togli la voce.', 6000);
       const nonMisurati = (opz.libri || []).filter(l => !l.lettura).length;
       info.textContent = out.value.length.toLocaleString('it-IT') + ' caratteri' + (nonMisurati ? ' · ' + nonMisurati + ' libri non misurati: Gemini citerà capitolo e paragrafo.' : '') +
         ' · Allega a Gemini il Drive (o i file elencati), incolla il prompt, poi controlla ogni risposta con «🩺 Diagnostica quiz».';
     }
+    const btnCopia = h('button.chip', { type: 'button', onclick: () => { if (out.value && !problemiPrivacy.length) copia(out.value, out); } }, '📋 Copia prompt') as HTMLButtonElement;
+    const btnScarica = h('button.chip', { type: 'button', onclick: () => { if (out.value && !problemiPrivacy.length) scarica('prompt-quiz-' + MasterPrompt.slug(materia().nome) + '-' + step.value.trim() + '.txt', out.value, 'text/plain'); } }, '💾 Scarica .txt') as HTMLButtonElement;
+    function bloccaCopia(): void { btnCopia.disabled = btnScarica.disabled = problemiPrivacy.length > 0; }
     const corpo = h('div', null,
       h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'),
-      selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), deboli.el, note,
+      selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), usaDos.el, h('div.chips', null, btnDos), dosBox, note,
       h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco,
       h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info,
       h('div.chips', null,
-        h('button.chip', { type: 'button', onclick: () => { if (out.value) copia(out.value, out); } }, '📋 Copia prompt'),
-        h('button.chip', { type: 'button', onclick: () => { if (out.value) scarica('prompt-quiz-' + MasterPrompt.slug(materia().nome) + '-' + step.value.trim() + '.txt', out.value, 'text/plain'); } }, '💾 Scarica .txt'),
+        btnCopia, btnScarica,
         h('button.chip', { type: 'button', onclick: () => diagnostica() }, '🩺 Diagnostica quiz')));
     foglio({ titolo: '🧠 Prompt quiz per Gemini', corpo });
   }

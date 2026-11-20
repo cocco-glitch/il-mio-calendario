@@ -268,6 +268,18 @@ t('pacchetti: blocco quiz-v3 con «parte» → pacchetto con ID, esatta e meta; 
   vero(C.pacchetti('{"blocchi":[{"codice":"B1"}]}').lettura.avvisi.some(a => /Piano Intelligente/.test(a)));
 });
 
+// ---------- dossier studente (v0.62) ----------
+t('master prompt: le regole del dossier entrano nel TARGET al posto dei punti deboli; senza dossier resta il ripiego', () => {
+  const MP = sb.MasterPrompt, base = { materia: 'Biologia', codice: 'B', step: '2.2' };
+  const r = ['Sotto-step 2.2.1: aggiungi almeno una scheda in più.', 'Domande L1 brevi.'];
+  const p = MP.costruisci({ ...base, dossier: r, puntiDeboli: ['B-2.2.1-1 (30%)'] });
+  vero(/Dossier dello studente/.test(p) && r.every(x => p.includes('• ' + x)), 'regole elencate');
+  vero(!/Punti deboli misurati/.test(p), 'il dossier sostituisce i punti deboli');
+  vero(p.indexOf('Dossier dello studente') < p.indexOf('COMPATIBILITÀ CON L'), 'dentro il TARGET');
+  vero(/Punti deboli misurati/.test(MP.costruisci({ ...base, puntiDeboli: ['B-2.2.1-1 (30%)'] })), 'ripiego');
+  vero(!/Dossier dello studente/.test(MP.costruisci({ ...base, dossier: [] })), 'dossier vuoto = nessuna riga');
+});
+
 // =====================================================================
 const fine = 'Contratto ' + ok + '/' + (ok + ko);
 console.log('\n' + fine + (ko ? ' — ' + ko + ' falliti' : ''));
