@@ -16,13 +16,17 @@ function sezioniSpiegazione(sp: string): Array<{ etichetta: string; testo: strin
 /** v0.59.2: «🧠 Prompt quiz per Gemini» e «🩺 Diagnostica quiz» stanno in strumenti-quiz.js, caricato solo al primo uso
  *  (≈ 22 KB gzip in meno per tutti, budget peso di CONSTRAINTS.md). Il service worker lo tiene in cache per l'offline. */
 let strumentiQuizInArrivo: Promise<void> | null = null;
-function conStrumentiQuiz(fn: () => void): void {
-  if (typeof StrumentiQuiz !== 'undefined') { fn(); return; }
+/** v0.61: attendibile (ImportaDrive.apri usa il Validatore unico che sta lì). */
+function caricaStrumentiQuiz(): Promise<void> {
+  if (typeof StrumentiQuiz !== 'undefined') return Promise.resolve();
   if (!strumentiQuizInArrivo) strumentiQuizInArrivo = new Promise<void>((ok, ko) => {
     const s = document.createElement('script'); s.src = 'strumenti-quiz.js?v=' + encodeURIComponent(VERSIONE);
     s.onload = () => ok();
     s.onerror = () => { strumentiQuizInArrivo = null; s.remove(); ko(new Error('serve la connessione la prima volta')); };
     document.head.appendChild(s);
   });
-  strumentiQuizInArrivo.then(fn, (e: Error) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
+  return strumentiQuizInArrivo;
+}
+function conStrumentiQuiz(fn: () => void): void {
+  caricaStrumentiQuiz().then(fn, (e: Error) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
 }

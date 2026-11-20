@@ -1,0 +1,6 @@
+Ecco il piano:
+@B 3.3 | Membrane e trasporto
+COPRE S1 S2 | 3.3.1
+COPRE S3 | 3.3.2 3.3.3
+@B 3.4 | Energia cellulare
+COPRE S1 | 3.4.1

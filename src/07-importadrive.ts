@@ -414,16 +414,22 @@ const ImportaDrive = (() => {
     return out.sort((a, b) => (Number(eNomeQuiz(b.name)) - Number(eNomeQuiz(a.name))) || a.name.localeCompare(b.name, 'it', { numeric: true }));
   }
   /** Scarica e riconosce dal CONTENUTO (intero / parte / chiusura). Un JSON illeggibile resta in elenco con l'errore. */
+  /** v0.61: un testo (file di Drive, incollato o scelto) → voci lette, una per blocco quiz (Contratto: ID, esatta e meta dall'app).
+   *  Serve strumenti-quiz.js già caricato. */
+  function daTesto(testo: string, b: { id: string; name: string; cartella: string; modificato: string }): { voci: FileQuizLetto[]; lettura: LetturaAI } {
+    const r = Contratto.pacchetti(testo), ps = r.pacchetti.map(p => p as unknown as PacchettoDrive).filter(p => ImportaParti.classifica(p) !== 'ignoto');
+    if (!ps.length) return { voci: [{ ...b, tipo: 'ignoto', step: '', json: null, errore: r.lettura.errori[0] || r.lettura.avvisi[0] || 'Non è un pacchetto quiz' }], lettura: r.lettura };
+    return { voci: ps.map((j, k) => ({ ...b, id: ps.length > 1 ? b.id + '#' + (k + 1) : b.id, tipo: ImportaParti.classifica(j), step: ImportaParti.stepDi(j), json: j })), lettura: r.lettura };
+  }
   async function leggiTutti(files: FileDrive[]): Promise<FileQuizLetto[]> {
-    const out: FileQuizLetto[] = new Array(files.length);
+    const out: FileQuizLetto[][] = new Array(files.length);
     let i = 0;
-    const lavora = async () => { while (i < files.length) { const n = i++, f = files[n];
-      try { const j = JsonAI.leggiFile(await Drive.scaricaTesto(f.id)) as PacchettoDrive, tipo = ImportaParti.classifica(j);
-        out[n] = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '', tipo, step: tipo === 'ignoto' ? '' : ImportaParti.stepDi(j), json: tipo === 'ignoto' ? null : j, errore: tipo === 'ignoto' ? 'Non è un pacchetto quiz' : undefined };
-      } catch (e: unknown) { if (String(e instanceof Error ? e.message : e) === 'NOLOGIN') throw e; out[n] = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '', tipo: 'ignoto', step: '', json: null, errore: 'JSON non valido' }; }
+    const lavora = async () => { while (i < files.length) { const n = i++, f = files[n], b = { id: f.id, name: f.name, cartella: f.cartella, modificato: f.modificato || '' };
+      try { out[n] = daTesto(await Drive.scaricaTesto(f.id), b).voci; }
+      catch (e: unknown) { if (String(e instanceof Error ? e.message : e) === 'NOLOGIN') throw e; out[n] = [{ ...b, tipo: 'ignoto', step: '', json: null, errore: 'JSON non valido' }]; }
     } };
     await Promise.all([lavora(), lavora(), lavora(), lavora()]);
-    return out;
+    return out.flat();
   }
   async function leggiFile(f: FileDrive): Promise<TraduzioneDrive> { return traduci(JsonAI.leggiFile(await Drive.scaricaTesto(f.id)) as PacchettoDrive); }
   /** Una voce dell'elenco → traduzione + rapporto di qualità (puro, testato in Node). */
@@ -507,49 +513,83 @@ const ImportaDrive = (() => {
     return h('details.drv-qualita', null, h('summary.piccolo', null, n ? '⛔ ' + n + ' bloccanti (saltati) · ' + a + ' avvisi' : a ? '⚠️ ' + a + ' avvisi di qualità' : '✓ Controllo qualità superato'),
       h('ul.piccolo', { style: { margin: '4px 0', paddingLeft: '18px' } }, ...r.bloccanti.slice(0, 12).map(x => h('li', { style: { color: 'var(--rosso, #c0392b)' } }, x)), ...r.avvisi.map(x => h('li', null, x)), ...r.righe.map(x => h('li.tenue', null, x))));
   }
-  /** Il foglio: una voce per pacchetto intero o per step a parti; «Importa» riconosce il posto e lo propone. */
+  /** Voci lette → righe dell'elenco con «Importa» (riconosce il posto e lo propone). Torna il testo di stato. */
+  function mostraGruppi(letti: FileQuizLetto[], lista: HTMLElement, gia: HTMLElement, f: { chiudi(): void }): string {
+    const gruppi = ImportaParti.raggruppa(letti.filter(x => x.tipo !== 'ignoto')), ignoti = letti.filter(x => x.tipo === 'ignoto');
+    for (const g of gruppi) {
+      const esito = h('div.tenue.piccolo'), zona = h('div');
+      let prep: { t: TraduzioneDrive; rapporto: RapportoQuiz } | null = null, errore = '';
+      try { prep = preparaGruppo(g); } catch (e: unknown) { errore = String(e instanceof Error ? e.message : e); }
+      const etichetta = g.tipo === 'intero' ? g.files[0].name : nomeStep(g.step);
+      const btn = h('button.btn', { 'aria-label': 'Importa ' + etichetta }, Stato.prendi('inn-' + (prep ? prep.t.k : '')) ? 'Reimporta' : 'Importa') as HTMLButtonElement;
+      if (!prep) { btn.disabled = true; esito.textContent = '✗ ' + errore; }
+      btn.onclick = () => {
+        if (!prep) return;
+        const { t, rapporto } = prep, d = proponi(t), prima = Stato.prendi<InnestoRec>('inn-' + t.k);
+        svuota(zona);
+        esito.textContent = 'Riconosciuto: ' + t.nome + ' ' + t.sotto + (t.ud ? ' · ' + t.ud : '') + ' · ' + t.domande + ' domande' + (t.scartate ? ' (' + t.scartate + ' scartate)' : '') + (t.dataPacchetto ? ' · pacchetto del ' + breve(t.dataPacchetto) : '');
+        zona.appendChild(pannelloScelta(t.k, t.nome + ' ' + t.sotto + ' · ' + t.titolo, d, prima ? { corso: prima.corso, piano: prima.piano, data: prima.data } : null, 'Inserisci', sc => {
+          const t0 = performance.now(), inn = salva(t, sc, etichetta, { accumula: g.tipo === 'parti', rapporto });
+          console.info('ImportaDrive.salva', t.k, t.domande, 'domande', Math.round(performance.now() - t0), 'ms');
+          svuota(zona); btn.textContent = 'Reimporta';
+          esito.textContent = '✓ ' + t.domande + ' domande in Banca · ' + dove(inn) + (g.tipo === 'parti' && !g.chiusura ? ' · il piano arriverà con il file di chiusura' : '');
+          listaInnesti(gia);
+          avviso('📥 ' + t.k + ' → ' + dove(inn), 5000, () => { f.chiudi(); vai('oggi'); });
+        }));
+      };
+      let titolo: string, sotto: string;
+      if (g.tipo === 'intero') { titolo = g.files[0].name; sotto = '📁 ' + g.files[0].cartella + (eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare'); }
+      else { const r = rigaGruppo(g); titolo = r.titolo; sotto = '📁 ' + g.files[0].cartella + ' · ' + r.stato; }
+      lista.appendChild(h('div.cat-riga', { 'data-step': g.step }, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, titolo), h('div.tenue.piccolo.drv-stato', null, sotto), prep ? riepilogo(prep.rapporto) : null, esito, zona), btn));
+    }
+    for (const x of ignoti) lista.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, x.name), h('div.tenue.piccolo', null, '📁 ' + x.cartella + ' · ✗ ' + (x.errore || 'non riconosciuto') + ' (saltato)'))));
+    return gruppi.length + (gruppi.length === 1 ? ' pacchetto trovato' : ' pacchetti trovati') + (ignoti.length ? ' (' + ignoti.length + ' non riconosciuti)' : '') + '. «Importa» riconosce dove va nei tuoi programmi: puoi cambiarlo prima di confermare.';
+  }
+  /** v0.61: import manuale (anche ospite) — «📋 Incolla testo» o «📁 Scegli file»; una risposta interrotta offre «continua da qui». */
+  function manuale(pronti: Promise<void>, gia: HTMLElement, f: { chiudi(): void }): HTMLElement {
+    const stato = h('p.tenue.piccolo', { role: 'status' }), lista = h('div.lista-drv');
+    let n = 0;
+    const leggiTesti = (testi: Array<{ testo: string; name: string; cartella: string }>) => pronti.then(() => {
+      svuota(lista);
+      const voci: FileQuizLetto[] = [], tronche: LetturaAI[] = [];
+      for (const x of testi) { const r = daTesto(x.testo, { id: 'man-' + (++n), name: x.name, cartella: x.cartella, modificato: '' }); voci.push(...r.voci); if (r.lettura.troncato) tronche.push(r.lettura); }
+      stato.textContent = mostraGruppi(voci, lista, gia, f);
+      for (const l of tronche) {
+        const copia = async () => { const p = Contratto.continua(l); try { await navigator.clipboard.writeText(p); avviso('Prompt copiato: incollalo in Gemini.'); } catch (_) { area.value = p; avviso('Appunti non disponibili: il prompt è nel riquadro, copialo da lì.', 6000); } };
+        lista.appendChild(h('div.cat-riga', null, h('div.tenue.piccolo', { style: { flex: '1', minWidth: '0' } }, '✂️ La risposta si è interrotta a metà' + (l.ultimoCompleto ? ' dopo «' + l.ultimoCompleto.slice(0, 60) + '…»' : '') + ': le domande complete si importano, per le altre chiedi a Gemini di continuare.'),
+          h('button.btn.neutro', { type: 'button', 'aria-label': 'Copia prompt continua da qui', onclick: copia }, '📋 Copia «continua da qui»')));
+      }
+    }).catch((e: unknown) => { stato.textContent = '⚠️ ' + String(e instanceof Error ? e.message : e); });
+    const area = h('textarea', { rows: 5, 'aria-label': 'Testo da importare', placeholder: 'Incolla qui la risposta di Gemini (anche più blocchi di codice)…', style: { width: '100%', boxSizing: 'border-box' } }) as HTMLTextAreaElement;
+    const zonaTesto = h('div', { hidden: true }, area, h('button.btn', { type: 'button', onclick: () => leggiTesti([{ testo: area.value, name: 'Testo incollato', cartella: 'incollato' }]) }, 'Leggi'));
+    const scegli = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', multiple: true, 'aria-label': 'File da importare', style: { display: 'none' },
+      onchange: async () => { const fs = Array.from(scegli.files || []); scegli.value = ''; leggiTesti(await Promise.all(fs.map(async x => ({ testo: await x.text(), name: x.name, cartella: 'file' })))); } }) as HTMLInputElement;
+    return h('div.drv-manuale', null,
+      h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+        h('button.btn.neutro', { type: 'button', 'aria-label': 'Incolla testo', onclick: () => { zonaTesto.hidden = !zonaTesto.hidden; if (!zonaTesto.hidden) area.focus(); } }, '📋 Incolla testo'),
+        h('button.btn.neutro', { type: 'button', 'aria-label': 'Scegli file', onclick: () => scegli.click() }, '📁 Scegli file'), scegli),
+      zonaTesto, stato, lista);
+  }
+  /** Il foglio: import manuale sempre; con Drive collegato, anche le voci delle cartelle «… quiz». */
   function apri(): void {
-    if (serveGoogle()) return;
     migraVecchi();
     const stato = h('p.tenue', { role: 'status' }, 'Cerco le cartelle «… quiz» su Drive…');
     const gia = h('div'), lista = h('div.lista-drv');
-    const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo: h('div', null, stato, lista, gia) });
+    const pronti = caricaStrumentiQuiz().catch((e: Error) => { throw new Error('Strumenti quiz non disponibili: ' + e.message); });   // v0.61: lettore e controllo qualità stanno in strumenti-quiz.js
+    const corpo = h('div', null, stato, lista, gia);
+    const f = foglio({ titolo: '📥 Importa quiz da Drive', corpo });
+    corpo.insertBefore(manuale(pronti, gia, f), stato);
     listaInnesti(gia);
-    elenca().then(async files => {
+    if (!Drive.pronto) { svuota(stato); stato.append('Senza Drive collegato: incolla la risposta di Gemini o scegli i file .json. ', h('button.btn.neutro', { type: 'button', onclick: () => { f.chiudi(); serveGoogle(); } }, 'Collega Drive')); return; }
+    Promise.all([elenca(), pronti]).then(async ([files]) => {
       if (!files.length) { stato.textContent = 'Nessun .json nelle cartelle «… quiz» del tuo Drive.'; return; }
       stato.textContent = 'Leggo ' + files.length + ' file…';
-      const letti = await leggiTutti(files), gruppi = ImportaParti.raggruppa(letti.filter(x => x.tipo !== 'ignoto'));
-      const ignoti = letti.filter(x => x.tipo === 'ignoto');
-      stato.textContent = gruppi.length + (gruppi.length === 1 ? ' pacchetto trovato' : ' pacchetti trovati') + (ignoti.length ? ' (' + ignoti.length + ' file non riconosciuti)' : '') + '. «Importa» riconosce dove va nei tuoi programmi: puoi cambiarlo prima di confermare.';
-      for (const g of gruppi) {
-        const esito = h('div.tenue.piccolo'), zona = h('div');
-        let prep: { t: TraduzioneDrive; rapporto: RapportoQuiz } | null = null, errore = '';
-        try { prep = preparaGruppo(g); } catch (e: unknown) { errore = String(e instanceof Error ? e.message : e); }
-        const etichetta = g.tipo === 'intero' ? g.files[0].name : nomeStep(g.step);
-        const btn = h('button.btn', { 'aria-label': 'Importa ' + etichetta }, Stato.prendi('inn-' + (prep ? prep.t.k : '')) ? 'Reimporta' : 'Importa') as HTMLButtonElement;
-        if (!prep) { btn.disabled = true; esito.textContent = '✗ ' + errore; }
-        btn.onclick = () => {
-          if (!prep) return;
-          const { t, rapporto } = prep, d = proponi(t), prima = Stato.prendi<InnestoRec>('inn-' + t.k);
-          svuota(zona);
-          esito.textContent = 'Riconosciuto: ' + t.nome + ' ' + t.sotto + (t.ud ? ' · ' + t.ud : '') + ' · ' + t.domande + ' domande' + (t.scartate ? ' (' + t.scartate + ' scartate)' : '') + (t.dataPacchetto ? ' · pacchetto del ' + breve(t.dataPacchetto) : '');
-          zona.appendChild(pannelloScelta(t.k, t.nome + ' ' + t.sotto + ' · ' + t.titolo, d, prima ? { corso: prima.corso, piano: prima.piano, data: prima.data } : null, 'Inserisci', sc => {
-            const t0 = performance.now(), inn = salva(t, sc, etichetta, { accumula: g.tipo === 'parti', rapporto });
-            console.info('ImportaDrive.salva', t.k, t.domande, 'domande', Math.round(performance.now() - t0), 'ms');
-            svuota(zona); btn.textContent = 'Reimporta';
-            esito.textContent = '✓ ' + t.domande + ' domande in Banca · ' + dove(inn) + (g.tipo === 'parti' && !g.chiusura ? ' · il piano arriverà con il file di chiusura' : '');
-            listaInnesti(gia);
-            avviso('📥 ' + t.k + ' → ' + dove(inn), 5000, () => { f.chiudi(); vai('oggi'); });
-          }));
-        };
-        let titolo: string, sotto: string;
-        if (g.tipo === 'intero') { titolo = g.files[0].name; sotto = '📁 ' + g.files[0].cartella + (eNomeQuiz(g.files[0].name) ? '' : ' · schema da verificare'); }
-        else { const r = rigaGruppo(g); titolo = r.titolo; sotto = '📁 ' + g.files[0].cartella + ' · ' + r.stato; }
-        lista.appendChild(h('div.cat-riga', { 'data-step': g.step }, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, titolo), h('div.tenue.piccolo.drv-stato', null, sotto), prep ? riepilogo(prep.rapporto) : null, esito, zona), btn));
-      }
-      for (const x of ignoti) lista.appendChild(h('div.cat-riga', null, h('div', { style: { flex: '1', minWidth: '0' } }, h('div.forte', { style: { overflowWrap: 'anywhere' } }, x.name), h('div.tenue.piccolo', null, '📁 ' + x.cartella + ' · ✗ ' + (x.errore || 'non riconosciuto') + ' (saltato)'))));
-    }).catch((e: unknown) => { console.warn('ImportaDrive.elenca', e); stato.textContent = String(e instanceof Error ? e.message : e) === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : 'Errore Drive: ' + String(e instanceof Error ? e.message : e); });
+      stato.textContent = mostraGruppi(await leggiTutti(files), lista, gia, f);
+    }).catch((e: unknown) => {
+      console.warn('ImportaDrive.elenca', e); const m = String(e instanceof Error ? e.message : e);
+      stato.textContent = m === 'NOLOGIN' ? 'Accedi a Google (Altro → Drive) e riprova.' : /^Strumenti quiz/.test(m) ? '⚠️ ' + m : 'Errore Drive: ' + m;
+    });
   }
 
-  return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
+  return { traduci, riconosci, applicaCorsi, applicaPiani, salva, sposta, rimuovi, migraVecchi, elenca, leggiTutti, daTesto, leggiFile, preparaGruppo, importaFile, proponi, apri, gestisci, eNomeQuiz, cmpNum };
 })();

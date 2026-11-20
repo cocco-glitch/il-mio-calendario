@@ -78,14 +78,9 @@ const ImportaParti = (() => {
     return out;
   }
 
-  /** Blocchi per una singola domanda (vuoto = valida). */
-  function bloccantiDomanda(q: QuizDrive): string[] {
-    const b: string[] = [], o = Array.isArray(q.opzioni) ? q.opzioni : [];
-    if (!s(q.domanda)) b.push('testo mancante');
-    if (o.length !== 4) b.push(o.length + ' opzioni invece di 4');
-    const e = Number(q.esatta); if (!Number.isInteger(e) || e < 0 || e > 3 || e >= o.length) b.push('«esatta» fuori da 0..3');
-    return b;
-  }
+  /** Blocchi per una singola domanda (vuoto = valida): regola del Validatore unico (strumenti-quiz.js, caricato da ImportaDrive.apri). */
+  const bloccantiDomanda = (q: QuizDrive): string[] => Validatore.bloccanti(q);
+
   /**
    * Parti (+ chiusura) → un pacchetto unico come un file intero. Le parti si applicano dalla più vecchia alla
    * più recente: un id già visto viene sostituito (vince il più recente). Le domande bloccate non entrano.
@@ -113,60 +108,9 @@ const ImportaParti = (() => {
     return { pacchetto: { ...base, meta, quiz: [...perId.values()] }, duplicati, bloccanti };
   }
 
-  const pct = (n: number, tot: number) => tot ? Math.round(n * 100 / tot) : 0;
-  const LIV_ATTESI = [25, 35, 25, 15];
-  const livelloDi = (q: QuizDrive) => { const n = Number(s(q.livelloCognitivo).replace(/^L/i, '')) || Number(s(q.livello).replace(/^L/i, '')); return n >= 1 && n <= 4 ? n : 0; };
-  /** Controllo qualità locale (zero token): gli avvisi non bloccano, si vedono prima di «Importa» e restano nel rapporto. */
-  function valida(p: PacchettoDrive, extra: { bloccanti?: string[]; duplicati?: string[]; completo?: boolean } = {}): RapportoQuiz {
-    const quiz = (p.quiz || []).filter(q => q && typeof q === 'object'), tot = quiz.length;
-    const bloccanti = (extra.bloccanti || []).slice(), avvisi: string[] = [], righe: string[] = [];
-    if (extra.duplicati && extra.duplicati.length) avvisi.push(extra.duplicati.length + ' domande ripetute tra parti: tengo la più recente (' + extra.duplicati.slice(0, 3).join('; ') + (extra.duplicati.length > 3 ? '…' : '') + ')');
-    if (!tot) return { bloccanti, avvisi, righe: ['Nessuna domanda valida'] };
-    // schede
-    const perScheda = new Map<number, number>(); for (const q of quiz) { const n = numScheda(q.scheda); if (n) perScheda.set(n, (perScheda.get(n) || 0) + 1); }
-    if (perScheda.size) {
-      const storte = [...perScheda].filter(([, c]) => c !== 18).sort((a, b) => a[0] - b[0]);
-      righe.push(perScheda.size + ' schede · ' + tot + ' domande');
-      if (storte.length) avvisi.push('Schede con domande ≠ 18: ' + storte.slice(0, 6).map(([n, c]) => 'S' + String(n).padStart(2, '0') + '=' + c).join(', ') + (storte.length > 6 ? '…' : ''));
-      if (extra.completo !== false && (perScheda.size < 18 || perScheda.size > 25)) avvisi.push(perScheda.size + ' schede nello step (attese 18–25)');
-    } else righe.push(tot + ' domande');
-    // livelli
-    const liv = [0, 0, 0, 0]; for (const q of quiz) { const l = livelloDi(q); if (l) liv[l - 1]++; }
-    const lp = liv.map(n => pct(n, tot));
-    righe.push('Livelli L1–L4: ' + lp.join('/') + '% (attesi 25/35/25/15)');
-    if (lp.some((x, i) => Math.abs(x - LIV_ATTESI[i]) > 3)) avvisi.push('Livelli fuori soglia (±3): ' + lp.join('/') + '% invece di 25/35/25/15');
-    // posizione dell'esatta e corretta più lunga
-    const pos = [0, 0, 0, 0]; let lunga = 0;
-    for (const q of quiz) {
-      const e = Number(q.esatta), o = (q.opzioni || []).map(x => s(x).length);
-      if (e >= 0 && e <= 3) pos[e]++;
-      if (o.length > 1 && o.every((l, i) => i === e || l < o[e])) lunga++;
-    }
-    const pp = pos.map(n => pct(n, tot));
-    righe.push('Esatta in A/B/C/D: ' + pp.join('/') + '% · corretta più lunga: ' + pct(lunga, tot) + '%');
-    if (pp.some(x => Math.abs(x - 25) > 10)) avvisi.push('Posizione dell\'esatta sbilanciata: ' + pp.join('/') + '% (attesa ~25% ciascuna)');
-    if (pct(lunga, tot) > 25) avvisi.push('La corretta è la più lunga nel ' + pct(lunga, tot) + '% delle domande (attesa ≤ 25%): si indovina dalla lunghezza');
-    // coppie gemelle
-    const gem = new Map<string, number>(); for (const q of quiz) { const g = s(q.coppiaGemellaId); if (g) gem.set(g, (gem.get(g) || 0) + 1); }
-    const coppie = [...gem.values()].filter(n => n >= 2).length, sole = [...gem].filter(([, n]) => n < 2).map(([g]) => g);
-    const schede = perScheda.size || Math.ceil(tot / 18), attese = Math.floor(schede / 3);
-    righe.push('Coppie gemelle complete: ' + coppie);
-    if (coppie < attese) avvisi.push('Coppie gemelle: ' + coppie + ' (attese ≥ ' + attese + ', una ogni 3 schede)');
-    if (sole.length) avvisi.push(sole.length + ' gemelle senza l\'altra metà: ' + sole.slice(0, 3).join(', ') + (sole.length > 3 ? '…' : ''));
-    // campi
-    const senzaErrore = quiz.filter(q => !s(q.erroreTipico)).length;
-    if (senzaErrore) avvisi.push(senzaErrore + ' domande senza «erroreTipico»');
-    const conSd = quiz.filter(q => q.spiegazioneDistrattori !== undefined);
-    const sdStorte = (conSd.length || perScheda.size ? quiz : []).filter(q => !(Array.isArray(q.spiegazioneDistrattori) && q.spiegazioneDistrattori.length === 3)).length;
-    if (sdStorte) avvisi.push(sdStorte + ' domande senza 3 «spiegazioneDistrattori»');
-    const daVerificare = quiz.filter(q => /da verificare|p\.\s*_{2,}/i.test(s(q.fonte))).length;
-    if (daVerificare) avvisi.push(daVerificare + ' fonti «da verificare» o senza pagina');
-    // ripassi e durate (chiusura)
-    const ps = (p.programmaCalendario && p.programmaCalendario.pianoStrutturato) || {};
-    const brac = (Array.isArray(ps.sottoSchede) ? ps.sottoSchede : Array.isArray(p.sottoSchede) ? p.sottoSchede : []).map(x => Number(x && (x.durataBracMin || x.durataMin)) || 0).filter(Boolean);
-    if (brac.some(m => m < 45 || m > 50)) avvisi.push('Blocchi di studio fuori 45–50 min (BRAC): ' + brac.filter(m => m < 45 || m > 50).join(', '));
-    return { bloccanti, avvisi, righe };
-  }
+  /** Controllo qualità locale (zero token): sta nel Validatore unico (07-validatore.ts). */
+  const valida = (p: PacchettoDrive, extra: { bloccanti?: string[]; duplicati?: string[]; completo?: boolean } = {}): RapportoQuiz => Validatore.rapporto(p, extra);
+
 
   return { classifica, stepDi, nomeParte, numScheda, raggruppa, unisci, valida, bloccantiDomanda };
 })();

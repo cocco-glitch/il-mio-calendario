@@ -150,8 +150,8 @@ const StrumentiQuiz = (() => {
   }
 
   // ================== MASTER PROMPT ==================
-  /** Pagine campione di un PDF di Drive → indice di lettura e scostamento pagina PDF ↔ stampata. */
-  async function misura(f: FileDrvSQ): Promise<{ lettura: LetturaPdfMP; offset: number | null; pagine: number }> {
+  /** Pagine campione di un PDF di Drive → indice di lettura e mappa pagine PDF ↔ stampata (etichette del PDF, se no scostamento stimato). */
+  async function misura(f: FileDrvSQ): Promise<{ lettura: LetturaPdfMP; offset: number | null; mappa: MappaPag | null; pagine: number }> {
     const L = await caricaPdfJs();
     const blob = await Drive.scaricaBlob(f.id);
     const doc = await L.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
@@ -163,8 +163,13 @@ const StrumentiQuiz = (() => {
       const t = tc.items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
       testi.push(t); campioni.push({ pdf: base + i, testo: t });
     }
+    let mappa: MappaPag | null = null;
+    try { const et: Array<string | null> | null = await doc.getPageLabels(); if (et) mappa = MappaPagine.daEtichette(et); }
+    catch (e) { console.warn('[prompt quiz] etichette pagine', e); }
+    if (mappa) mappa.tratti.forEach(t => { t.pdfDa += base; t.pdfA += base; });   // segmenti: pagine PDF assolute
     if (typeof doc.destroy === 'function') await doc.destroy();
-    return { lettura: MasterPrompt.indiceLettura(testi), offset: MasterPrompt.stimaOffset(campioni), pagine: tot };
+    const offset = MasterPrompt.stimaOffset(campioni);   // ripiego interno quando il PDF non ha etichette
+    return { lettura: MasterPrompt.indiceLettura(testi), offset, mappa: mappa || (offset === null ? null : { fonte: 'auto-stampati', tratti: [{ pdfDa: offset + 1, pdfA: MappaPagine.APERTO, stampDa: 1 }], affidabilita: 'stimata' }), pagine: tot };
   }
   /** Punti deboli dalle statistiche dei quiz: schede di questa materia con meno del 60% di risposte giuste. */
   function puntiDeboli(m: MateriaRec): string[] {
@@ -257,7 +262,7 @@ const StrumentiQuiz = (() => {
           b.disabled = true; esito.textContent = 'Scarico e leggo pagine campione…';
           try {
             const r = await misura(g.files[0]);
-            g.libro.lettura = r.lettura; g.libro.offset = r.offset; esito.textContent = descrivi(g);
+            g.libro.lettura = r.lettura; g.libro.offset = r.offset; g.libro.mappa = r.mappa; esito.textContent = descrivi(g);
           } catch (e) { esito.textContent = '⚠️ ' + (e instanceof Error ? e.message : String(e)); }
           b.disabled = false;
         });
@@ -280,7 +285,7 @@ const StrumentiQuiz = (() => {
       const r = g.libro.lettura;
       if (!r) return '';
       const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
-      return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (typeof g.libro.offset === 'number' ? ' · pag. PDF = libro + ' + g.libro.offset : ' · scostamento pagine non rilevato');
+      return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
     }
     function genera(): void {
       const { m, nome, codice } = materia();
@@ -299,12 +304,12 @@ const StrumentiQuiz = (() => {
       };
       out.value = MasterPrompt.costruisci(opz);
       const nonMisurati = (opz.libri || []).filter(l => !l.lettura).length;
-      info.textContent = out.value.length.toLocaleString('it-IT') + ' caratteri' + (nonMisurati ? ' · ' + nonMisurati + ' libri non misurati: Gemini verificherà da solo pagine e scostamento.' : '') +
+      info.textContent = out.value.length.toLocaleString('it-IT') + ' caratteri' + (nonMisurati ? ' · ' + nonMisurati + ' libri non misurati: Gemini citerà capitolo e paragrafo.' : '') +
         ' · Allega a Gemini il Drive (o i file elencati), incolla il prompt, poi controlla ogni risposta con «🩺 Diagnostica quiz».';
     }
     const corpo = h('div', null,
       h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'),
-      selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, deboli.el, note,
+      selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), deboli.el, note,
       h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco,
       h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info,
       h('div.chips', null,
