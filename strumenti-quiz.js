@@ -761,6 +761,180 @@ const DiagnosiQuiz = (() => {
         promptCorrezione, avvisiUso, pianoConteggi, piano, tabella, REGOLE_GEM };
 })();
 
+const Dossier = (() => {
+    const MIN_ARG = 5, SOGLIA_DEBOLE = 0.6, MAX_CONFUSIONI = 5, MAX_REGOLE = 8, TAGLIO = 140;
+    const pct = (a, b) => Math.round(100 * a / b);
+    const taglia = (s) => { const x = String(s || '').replace(/\s+/g, ' ').trim(); return x.length > TAGLIO ? x.slice(0, TAGLIO - 1) + '…' : x; };
+    const mediana = (a) => { if (!a.length)
+        return 0; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+    function argomentoDaSk(sk) {
+        const m = /(\d+(?:\.\d+)+|\d+)(?=-(?:S?\d+)$|$)/i.exec(String(sk || ''));
+        return m ? m[1] : '';
+    }
+    const nelloStep = (arg, step) => !step || arg === step || arg.startsWith(step + '.');
+    function calcola(dati, o) {
+        const step = String(o.step || '').trim();
+        const stat = (dati.stat || []).filter(s => s && nelloStep(argomentoDaSk(s.sk), step));
+        const voci = [];
+        const perArg = new Map();
+        for (const s of stat) {
+            const a = argomentoDaSk(s.sk);
+            if (!a)
+                continue;
+            const l = perArg.get(a) || [];
+            l.push(s);
+            perArg.set(a, l);
+        }
+        const tentativi = stat.reduce((x, s) => x + (s.n || 0), 0);
+        const g = dati.giorniEsame;
+        if (typeof g === 'number' && g >= 0) {
+            const motivo = 'Esame tra ' + g + (g === 1 ? ' giorno.' : ' giorni.');
+            if (g <= 7)
+                voci.push({ id: 'esame', tipo: 'esame', titolo: 'Esame vicino', motivo, peso: 100,
+                    regola: 'Esame tra pochi giorni: niente approfondimenti fuori programma; privilegia domande d\'esame L3–L4 e trabocchetti sui sotto-step deboli.' });
+            else if (g <= 21)
+                voci.push({ id: 'esame', tipo: 'esame', titolo: 'Esame entro tre settimane', motivo, peso: 45,
+                    regola: 'Esame entro tre settimane: bilancia richiamo (L1–L2) e applicazione (L3–L4) in ogni scheda.' });
+            else
+                voci.push({ id: 'esame', tipo: 'esame', titolo: 'Esame lontano', motivo: motivo + ' C\'è tempo per costruire le basi.', peso: 5 });
+        }
+        for (const [arg, xs] of perArg) {
+            const n = xs.reduce((a, s) => a + (s.n || 0), 0), ok = xs.reduce((a, s) => a + (s.ok || 0), 0);
+            if (n >= MIN_ARG && ok / n < SOGLIA_DEBOLE)
+                voci.push({ id: 'debole:' + arg, tipo: 'debole', arg, titolo: 'Sotto-step ' + arg + ' debole',
+                    motivo: pct(ok, n) + ' % di risposte giuste su ' + n + ' tentativi.', peso: 80 + Math.round(60 - 100 * ok / n),
+                    regola: 'Sotto-step ' + arg + ': aggiungi almeno una scheda in più, con più domande L3 (trabocchetti) e confutazioni esplicite.' });
+            const ill = xs.filter(s => s.caso === 'illusione_competenza' || (s.tag || []).includes('illusione_competenza') ||
+                (s.log || []).some(t => !t.corretto && t.certezza === 3)).length;
+            if (ill >= 2)
+                voci.push({ id: 'illusione:' + arg, tipo: 'illusione', arg, titolo: 'Sicurezza mal riposta nel sotto-step ' + arg,
+                    motivo: ill + ' domande sbagliate dicendo «sicuro».', peso: 70 + ill,
+                    regola: 'Sotto-step ' + arg + ': ci sono risposte sbagliate date con sicurezza; aggiungi coppie gemelle (G1, G2…) e trabocchetti L3 sui punti che sembrano facili.' });
+            const rip = xs.filter(s => typeof s.ease === 'number' && (s.reps || 0) >= 1);
+            if (rip.length >= 3) {
+                const e = rip.reduce((a, s) => a + s.ease, 0) / rip.length;
+                if (e <= 2.0)
+                    voci.push({ id: 'oblio:' + arg, tipo: 'oblio', arg, titolo: 'Il sotto-step ' + arg + ' si dimentica in fretta',
+                        motivo: 'Facilità media dei ripassi ' + e.toFixed(1).replace('.', ',') + ' su ' + rip.length + ' domande (2,5 = normale).', peso: 50,
+                        regola: 'Sotto-step ' + arg + ': più domande di richiamo (L1–L2) sugli stessi concetti, formulate in modi diversi.' });
+            }
+        }
+        const conf = [];
+        for (const s of stat)
+            if (s.scelte && !/^g-/.test(s.qid))
+                for (const [scelta, volte] of Object.entries(s.scelte))
+                    if (volte >= 2 && scelta.trim())
+                        conf.push({ s, scelta, volte });
+        conf.sort((a, b) => b.volte - a.volte || (a.s.qid < b.s.qid ? -1 : a.s.qid > b.s.qid ? 1 : 0) || (a.scelta < b.scelta ? -1 : 1));
+        for (const c of conf.slice(0, MAX_CONFUSIONI)) {
+            const arg = argomentoDaSk(c.s.sk), dove = c.s.testo ? 'a «' + taglia(c.s.testo) + '»' : 'nel sotto-step ' + arg;
+            voci.push({ id: 'confusione:' + c.s.qid + ':' + taglia(c.scelta).slice(0, 24), tipo: 'confusione', arg, titolo: 'Idea sbagliata ricorrente (sotto-step ' + arg + ')',
+                motivo: 'Risposta sbagliata «' + taglia(c.scelta) + '» scelta ' + c.volte + ' volte.', peso: 60 + c.volte,
+                regola: 'Smonta l\'idea sbagliata: ' + dove + ' si risponde spesso «' + taglia(c.scelta) + '». Aggiungi 2 domande con questa risposta come distrattore e confutazione esplicita.' });
+        }
+        const tL1 = stat.filter(s => s.livello === 1).flatMap(s => (s.log || []).map(t => t.ms).filter(ms => ms > 0));
+        if (tL1.length >= 8) {
+            const m = mediana(tL1);
+            if (m > 25000)
+                voci.push({ id: 'tempo:L1', tipo: 'tempo', titolo: 'Domande di base lente', motivo: 'Mediana ' + Math.round(m / 1000) + ' s per una domanda L1 (su ' + tL1.length + ' risposte).', peso: 40,
+                    regola: 'Domande L1 brevi: testo sotto le 25 parole, una sola idea per domanda.' });
+        }
+        const tutti = stat.flatMap(s => s.log || []).filter(t => t && t.ts && !isNaN(Date.parse(t.ts))).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+        const sessioni = [];
+        for (const t of tutti) {
+            const u = sessioni[sessioni.length - 1];
+            if (u && Date.parse(t.ts) - Date.parse(u[u.length - 1].ts) <= 20 * 60000)
+                u.push(t);
+            else
+                sessioni.push([t]);
+        }
+        const cali = [];
+        for (const s of sessioni) {
+            if (s.length < 12)
+                continue;
+            const base = s.slice(0, 8), acc0 = base.filter(t => t.corretto).length / 8, ms0 = mediana(base.map(t => t.ms).filter(x => x > 0));
+            for (let i = 8; i + 5 <= s.length; i++) {
+                const w = s.slice(i, i + 5), acc = w.filter(t => t.corretto).length / 5, ms = mediana(w.map(t => t.ms).filter(x => x > 0));
+                if (acc < acc0 - 0.25 || (ms0 > 0 && ms > 1.6 * ms0)) {
+                    const primo = w.findIndex(t => !t.corretto);
+                    cali.push(i + (primo >= 0 ? primo : 0));
+                    break;
+                }
+            }
+        }
+        if (cali.length >= 2) {
+            const n = Math.round(mediana(cali));
+            voci.push({ id: 'concentrazione', tipo: 'concentrazione', titolo: 'La concentrazione cala dopo circa ' + n + ' domande',
+                motivo: 'Mediana su ' + cali.length + ' sessioni: fai una pausa breve ogni ' + n + ' domande.', peso: 20 });
+        }
+        const FASCE = ['notte', 'mattina', 'pomeriggio', 'sera'];
+        const perF = FASCE.map(() => ({ n: 0, ok: 0 }));
+        for (const t of tutti) {
+            const f = perF[Math.floor(new Date(t.ts).getHours() / 6)];
+            f.n++;
+            if (t.corretto)
+                f.ok++;
+        }
+        const valide = perF.map((f, i) => ({ i, n: f.n, p: f.n ? f.ok / f.n : 0 })).filter(f => f.n >= 10).sort((a, b) => b.p - a.p || a.i - b.i);
+        if (valide.length >= 2) {
+            const su = valide[0], giu = valide[valide.length - 1];
+            if (su.p - giu.p >= 0.15)
+                voci.push({ id: 'orario', tipo: 'orario', titolo: 'Rendi di più di ' + FASCE[su.i],
+                    motivo: FASCE[su.i] + ' ' + Math.round(100 * su.p) + ' % · ' + FASCE[giu.i] + ' ' + Math.round(100 * giu.p) + ' % di risposte giuste.', peso: 15 });
+        }
+        const mg = dati.minutiGiorno;
+        if (typeof mg === 'number' && mg > 0)
+            voci.push({ id: 'studio', tipo: 'studio', titolo: 'Circa ' + Math.round(mg) + ' minuti nei giorni di studio',
+                motivo: 'Media degli ultimi 14 giorni in cui hai studiato.', peso: 10 });
+        voci.sort((a, b) => b.peso - a.peso || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        return { materia: o.materia, step, voci, tentativi, insufficiente: tentativi < MIN_ARG };
+    }
+    function regole(d, escluse = []) {
+        const via = new Set(escluse);
+        return d.voci.filter(v => v.regola && !via.has(v.id)).slice(0, MAX_REGOLE).map(v => v.regola);
+    }
+    function testo(d, r) {
+        const L = ['Dossier — ' + d.materia + (d.step ? ' · step ' + d.step : ' · tutta la materia') + ' (' + d.tentativi + ' risposte)'];
+        if (d.insufficiente)
+            L.push('Dati insufficienti: servono più quiz fatti in app perché il dossier dica qualcosa.');
+        for (const v of d.voci)
+            L.push('• ' + v.titolo + ' — ' + v.motivo + (v.regola ? '' : ' (solo per te)'));
+        L.push('All\'AI vanno ' + (r.length === 1 ? '1 regola.' : r.length + ' regole.'));
+        return L.join('\n');
+    }
+    function controllaPrivacy(t, ctx = {}) {
+        const s = String(t || ''), basso = s.toLowerCase(), out = new Set();
+        if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(s))
+            out.add('Contiene un\'email.');
+        const email = String(ctx.email || '').toLowerCase();
+        if (email) {
+            const loc = email.split('@')[0];
+            if (basso.includes(email) || (loc.length >= 4 && basso.includes(loc)))
+                out.add('Contiene l\'email dell\'account (o una sua parte).');
+        }
+        const nome = String(ctx.nome || '').trim().toLowerCase();
+        if (nome.length >= 3 && basso.includes(nome))
+            out.add('Contiene il nome dell\'account.');
+        if ((ctx.dispositivo && s.includes(ctx.dispositivo)) || /\bdev-[a-z0-9]{6,}/i.test(s))
+            out.add('Contiene l\'id del dispositivo.');
+        if (/\b\d{4}-\d{2}-\d{2}\b/.test(s) || /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(s))
+            out.add('Contiene una data.');
+        if (/\b([01]?\d|2[0-3]):[0-5]\d\b/.test(s))
+            out.add('Contiene un\'ora esatta.');
+        for (const f of ctx.nomiFile || []) {
+            const x = String(f || '').toLowerCase(), senza = x.replace(/\.[a-z0-9]{2,5}$/, '');
+            if (senza.length >= 5 && basso.includes(senza)) {
+                out.add('Contiene il nome di un file.');
+                break;
+            }
+        }
+        if (/(?:\+|\b00)\d{2}[\s.-]?\d{2,4}[\s.-]?\d{5,8}\b/.test(s) || /\b3\d{2}[\s.-]?\d{6,7}\b/.test(s))
+            out.add('Contiene un numero di telefono.');
+        return [...out];
+    }
+    return { argomentoDaSk, nelloStep, calcola, regole, testo, controllaPrivacy };
+})();
+
 const MappaPagine = (() => {
     const APERTO = 99999;
     const ROMANI = [[1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'], [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
@@ -1039,7 +1213,9 @@ const MasterPrompt = (() => {
         S.push('', 'RUOLO', 'Sei l\'architetto didattico e neuroscientifico dell\'app di studio «il-mio-calendario». Lavori in AUTONOMIA: nessuno allungherà o correggerà il tuo output a mano (un controllo automatico scarta ciò che non rispetta il formato). Quantità e qualità qui sotto sono obbligatorie. Tutto in italiano, niente chiacchiere.', registro(o.tono || 'tecnico_accademico'));
         sez('TARGET (già compilato dall\'app)');
         S.push(' - Materia: ' + mat + ' (codice ' + cod + ', id in minuscolo «' + ms + '») · archetipo: ' + (o.etichettaArchetipo || arch) + '.', ' - Step: ' + step + (o.titolo ? ' «' + o.titolo + '»' : '') + ' · unità ' + ud + ' · data: ' + (o.data || 'da definire') + '.', ' - Schede: ' + smin + '–' + smax + ' (1 scheda = 18 domande) raggruppate in ' + blocchi + ' sotto-schede BRAC da 45–50 min (' + durata + ' min in tutto).', ' - Prima scheda: S' + String(nx.scheda).padStart(2, '0') + (nx.primo > 1 ? ' (le schede precedenti esistono già: non riscriverle)' : '') + '.');
-        if (o.puntiDeboli && o.puntiDeboli.length)
+        if (o.dossier && o.dossier.length)
+            S.push(' - Dossier dello studente (calcolato dall\'app sui suoi quiz, già deciso: applica queste regole senza ricalcolare nulla):', ...o.dossier.map(r => '   • ' + r));
+        else if (o.puntiDeboli && o.puntiDeboli.length)
             S.push(' - Punti deboli misurati dall\'app (risposte corrette < 60%): ' + o.puntiDeboli.join('; ') + '. Dedica a questi argomenti almeno una scheda in più, con più L3 (trabocchetti) e confutazioni molto esplicite.');
         if (o.note)
             S.push(' - Richieste dello studente: ' + o.note);
@@ -1277,20 +1453,57 @@ const StrumentiQuiz = (() => {
         const offset = MasterPrompt.stimaOffset(campioni);
         return { lettura: MasterPrompt.indiceLettura(testi), offset, mappa: mappa || (offset === null ? null : { fonte: 'auto-stampati', tratti: [{ pdfDa: offset + 1, pdfA: MappaPagine.APERTO, stampDa: 1 }], affidabilita: 'stimata' }), pagine: tot };
     }
-    function puntiDeboli(m) {
-        const ms = MasterPrompt.slug(m.nome), cod = m.codice.toLowerCase();
-        const per = new Map();
+    const K_ESCLUSE = 'imc-dossier-escluse';
+    function escluseLette() {
+        try {
+            const x = JSON.parse(localStorage.getItem(K_ESCLUSE) || '[]');
+            return Array.isArray(x) ? x.filter(v => typeof v === 'string') : [];
+        }
+        catch (e) {
+            console.warn('[dossier] voci escluse illeggibili', e);
+            return [];
+        }
+    }
+    function escluseSalva(xs) {
+        try {
+            localStorage.setItem(K_ESCLUSE, JSON.stringify(xs.slice(-200)));
+        }
+        catch (e) {
+            console.warn('[dossier] voci escluse non salvate', e);
+        }
+    }
+    const LV_NUM = { Sbarramento: 1, Completamento: 1, Applicativo: 2, Trabocchetto: 3, Problema: 4 };
+    function datiDossier(nome, codice) {
+        const ms = MasterPrompt.slug(nome), cod = codice.toLowerCase();
+        const testi = new Map();
+        for (const b of Stato.tutti('bancaimc'))
+            for (const d of b.domande || [])
+                if (d && d.id)
+                    testi.set(d.id, d);
+        for (const q of Stato.tutti('qcreato'))
+            for (const d of q.domande || [])
+                if (d && d.id)
+                    testi.set(d.id, d);
+        const stat = [];
         for (const s of Stato.tutti('statq')) {
             const sk = String(s.sk || '').toLowerCase();
             if (!sk || !(sk.includes(ms) || sk.startsWith(cod + '-')))
                 continue;
-            const v = per.get(s.sk) || { n: 0, ok: 0 };
-            v.n += s.n || 0;
-            v.ok += s.ok || 0;
-            per.set(s.sk, v);
+            const qid = s.id.replace(/^sq-/, ''), d = testi.get(qid), nr = s.neuro;
+            stat.push({ qid, sk: s.sk, n: s.n || 0, ok: s.ok || 0, scelte: s.scelte, testo: d ? d.q : undefined,
+                caso: nr && nr.ultimoCaso, tag: nr && nr.tag, ease: nr && nr.ease, reps: nr && nr.reps,
+                livello: d ? (d.bloomLevel || LV_NUM[d.lv]) : undefined,
+                log: (s.confidenceLog || []).map(t => ({ ts: t.ts, corretto: t.corretto, certezza: t.livelloCertezza, ms: t.tempoRispostaMs })) });
         }
-        return [...per.entries()].filter(([, v]) => v.n >= 3 && v.ok / v.n < 0.6).sort((a, b) => a[1].ok / a[1].n - b[1].ok / b[1].n)
-            .slice(0, 6).map(([sk, v]) => sk + ' (' + Math.round(100 * v.ok / v.n) + '%)');
+        const oggiY = ymd(new Date()), t0 = Date.parse(oggiY + 'T00:00:00');
+        const esami = Stato.tutti('esame').filter(e => e.data >= oggiY && (!e.materie || !e.materie.length || e.materie.includes(codice))).sort((a, b) => a.data < b.data ? -1 : 1);
+        const giorniEsame = esami.length ? Math.round((Date.parse(esami[0].data + 'T00:00:00') - t0) / 86400000) : null;
+        const da = ymd(new Date(t0 - 14 * 86400000)), perG = new Map();
+        for (const s of Stato.tutti('sessione'))
+            if (s.m === codice && s.data >= da && s.data <= oggiY)
+                perG.set(s.data, (perG.get(s.data) || 0) + (s.minuti || 0));
+        const minutiGiorno = perG.size ? [...perG.values()].reduce((a, b) => a + b, 0) / perG.size : null;
+        return { stat, giorniEsame, minutiGiorno };
     }
     function idGiaUsati() {
         const out = [];
@@ -1312,7 +1525,10 @@ const StrumentiQuiz = (() => {
         const intens = h('select', { 'aria-label': 'Intensità' }, h('option', { value: 'leggera' }, 'Leggera (10–14 schede)'), h('option', { value: 'standard', selected: true }, 'Standard (18–25 schede)'), h('option', { value: 'intensa' }, 'Intensa (24–30 schede)'));
         const perMsg = h('select', { 'aria-label': 'Schede per messaggio' }, h('option', { value: '2' }, '2 schede per messaggio'), h('option', { value: '1' }, '1 scheda per messaggio (account gratuito)'));
         const gem = casella('Uso un Gem con le «Regole per il Gem»');
-        const deboli = casella('Insisti sui miei punti deboli (dalle statistiche)', true);
+        const usaDos = casella('Usa il mio dossier (regole dai miei quiz)', true);
+        const dosBox = h('div.dossier', { hidden: true, role: 'region', 'aria-label': 'Dossier studente' });
+        const btnDos = h('button.chip', { type: 'button', 'aria-expanded': 'false', 'aria-label': 'Vedi dossier' }, '👁 Vedi dossier');
+        let escluse = escluseLette(), problemiPrivacy = [];
         const note = area('Richieste particolari (facoltativo)', 2);
         const stato = h('p.piccolo.tenue', { role: 'status', 'aria-live': 'polite' });
         const elenco = h('div');
@@ -1437,6 +1653,57 @@ const StrumentiQuiz = (() => {
             const sim = r.giudizio === 'testo pieno' ? '🟢' : r.giudizio === 'parziale' ? '🟡' : '🔴';
             return sim + ' lettura ' + r.pct + '% (' + r.giudizio + ')' + (g.libro.mappa ? ' · pagine ' + (g.libro.mappa.affidabilita === 'esatta' ? 'dalle etichette del PDF' : 'stimate (PDF = libro + ' + g.libro.offset + ')') : ' · pagine non rilevate: si citano capitolo e paragrafo');
         }
+        function dossier() {
+            const { nome, codice } = materia();
+            if (!nome)
+                return null;
+            const dati = datiDossier(nome, codice), oggiY = ymd(new Date());
+            const d = Dossier.calcola(dati, { materia: nome, step: step.value.trim(), oggi: oggiY });
+            return d.tentativi || !d.step ? d : Dossier.calcola(dati, { materia: nome, oggi: oggiY });
+        }
+        function nomiFileNoti() {
+            return [...gruppi.flatMap(g => g.files), ...altri.slide, ...altri.guide, ...altri.quiz, ...altri.indici, ...altri.vietati].map(f => f.name);
+        }
+        function controllaDossier(regole) {
+            return Dossier.controllaPrivacy(regole.join('\n'), { email: Privacy.accLocale(), dispositivo: Privacy.idDispositivo(), nomiFile: nomiFileNoti() });
+        }
+        function disegnaDossier() {
+            dosBox.textContent = '';
+            const d = dossier();
+            if (!d) {
+                dosBox.appendChild(h('p.piccolo.tenue', null, 'Scegli prima la materia.'));
+                return;
+            }
+            const regole = Dossier.regole(d, escluse), problemi = controllaDossier(regole);
+            dosBox.appendChild(h('p.piccolo', null, h('b', null, '🗂️ Dossier — ' + d.materia + (d.step ? ' · step ' + d.step : ' · tutta la materia')), ' · ' + d.tentativi + ' risposte'));
+            if (d.insufficiente || !d.voci.length)
+                dosBox.appendChild(h('p.piccolo.tenue', null, 'Dati insufficienti: fai qualche quiz in app di questa materia e il dossier ti dirà dove insistere.'));
+            for (const v of d.voci) {
+                const testoV = h('span', null, h('b', null, v.titolo), h('br'), h('span.piccolo.tenue', null, v.motivo), v.regola ? h('span.piccolo', null, h('br'), '→ all\'AI: ' + v.regola) : h('span.piccolo.tenue', null, ' (solo per te, non va all\'AI)'));
+                if (!v.regola) {
+                    dosBox.appendChild(h('p.dossier-voce', null, testoV));
+                    continue;
+                }
+                const c = h('input', { type: 'checkbox', checked: escluse.includes(v.id) ? undefined : true, 'aria-label': 'Manda all\'AI: ' + v.titolo });
+                c.addEventListener('change', () => {
+                    escluse = c.checked ? escluse.filter(x => x !== v.id) : escluse.concat(v.id);
+                    escluseSalva(escluse);
+                    disegnaDossier();
+                    if (out.value)
+                        genera();
+                });
+                dosBox.appendChild(h('label.dossier-voce.riga-tra', null, testoV, c));
+            }
+            dosBox.appendChild(h('p.piccolo', { role: 'status' }, problemi.length ? '⛔ Controllo privacy: ' + problemi.join(' ') + ' Togli la voce per poter copiare.'
+                : '✅ Controllo privacy: nessun dato identificativo. All\'AI ' + (regole.length === 1 ? 'va 1 regola' : 'vanno ' + regole.length + ' regole') + '.'));
+        }
+        btnDos.addEventListener('click', () => {
+            const apri = dosBox.hidden;
+            dosBox.hidden = !apri;
+            btnDos.setAttribute('aria-expanded', String(apri));
+            if (apri)
+                disegnaDossier();
+        });
         function genera() {
             const { m, nome, codice } = materia();
             if (!nome) {
@@ -1457,16 +1724,27 @@ const StrumentiQuiz = (() => {
                 intensita: intens.value, perMessaggio: perMsg.value === '1' ? 1 : 2, gem: gem.c.checked,
                 libri: gruppi.filter(g => g.usa).map(g => g.libro), slide: nomi(altri.slide), guide: nomi(altri.guide), indici: nomi(altri.indici),
                 quizEsistenti: nomi(altri.quiz), vietati: altri.vietati.map(f => f.name), idEsistenti: idGiaUsati(),
-                puntiDeboli: deboli.c.checked && m ? puntiDeboli(m) : [], note: note.value.trim() || undefined,
+                note: note.value.trim() || undefined,
             };
+            const d = usaDos.c.checked ? dossier() : null;
+            opz.dossier = d ? Dossier.regole(d, escluse) : [];
+            problemiPrivacy = controllaDossier(opz.dossier);
             out.value = MasterPrompt.costruisci(opz);
+            bloccaCopia();
+            if (!dosBox.hidden)
+                disegnaDossier();
+            if (problemiPrivacy.length)
+                avviso('⛔ Il dossier contiene dati identificativi: apri «Vedi dossier» e togli la voce.', 6000);
             const nonMisurati = (opz.libri || []).filter(l => !l.lettura).length;
             info.textContent = out.value.length.toLocaleString('it-IT') + ' caratteri' + (nonMisurati ? ' · ' + nonMisurati + ' libri non misurati: Gemini citerà capitolo e paragrafo.' : '') +
                 ' · Allega a Gemini il Drive (o i file elencati), incolla il prompt, poi controlla ogni risposta con «🩺 Diagnostica quiz».';
         }
-        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'), selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), deboli.el, note, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => { if (out.value)
-                copia(out.value, out); } }, '📋 Copia prompt'), h('button.chip', { type: 'button', onclick: () => { if (out.value)
-                scarica('prompt-quiz-' + MasterPrompt.slug(materia().nome) + '-' + step.value.trim() + '.txt', out.value, 'text/plain'); } }, '💾 Scarica .txt'), h('button.chip', { type: 'button', onclick: () => diagnostica() }, '🩺 Diagnostica quiz')));
+        const btnCopia = h('button.chip', { type: 'button', onclick: () => { if (out.value && !problemiPrivacy.length)
+                copia(out.value, out); } }, '📋 Copia prompt');
+        const btnScarica = h('button.chip', { type: 'button', onclick: () => { if (out.value && !problemiPrivacy.length)
+                scarica('prompt-quiz-' + MasterPrompt.slug(materia().nome) + '-' + step.value.trim() + '.txt', out.value, 'text/plain'); } }, '💾 Scarica .txt');
+        function bloccaCopia() { btnCopia.disabled = btnScarica.disabled = problemiPrivacy.length > 0; }
+        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Prepara il prompt completo per far creare a Gemini le schede di quiz di uno step, nel formato che l\'app importa. Più dati trova l\'app, più il prompt è mirato.'), selMat, altra, h('div.chips', null, step, data), titolo, intens, perMsg, gem.el, h('p.piccolo.tenue', null, 'Hai un Gem con le regole vecchie? Copia queste istruzioni nuove nel Gem: l\'app ora chiede il formato quiz-v3 e fa da sola ID, posizioni e conteggi.'), usaDos.el, h('div.chips', null, btnDos), dosBox, note, h('button.btn.neutro', { type: 'button', onclick: () => { cercaDrive(); } }, '🔎 Cerca materiale su Drive'), stato, elenco, h('button.btn', { type: 'button', onclick: genera }, '🧠 Genera il prompt'), out, info, h('div.chips', null, btnCopia, btnScarica, h('button.chip', { type: 'button', onclick: () => diagnostica() }, '🩺 Diagnostica quiz')));
         foglio({ titolo: '🧠 Prompt quiz per Gemini', corpo });
     }
     return { diagnostica, prompt };

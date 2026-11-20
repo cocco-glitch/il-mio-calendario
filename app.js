@@ -17401,7 +17401,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.61.0';
+const VERSIONE = '0.62.0';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)

@@ -96,6 +96,8 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .segmenti button { flex: 1; text-align: center; padding: 7px 4px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--tenue); min-height: 36px; }
 .segmenti button.attivo { background: var(--sup); color: var(--testo); box-shadow: 0 1px 3px rgba(0, 0, 0, .15); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dossier { border: 1px solid var(--linea); border-radius: var(--raggio); padding: 8px 10px; margin: 6px 0; }
+.dossier-voce { align-items: flex-start; gap: 10px; margin: 6px 0; line-height: 1.35; }
 .chip { padding: 7px 12px; border-radius: 99px; background: var(--sup2); font-size: 14px; font-weight: 600; min-height: 36px; }
 .chip.attivo { background: color-mix(in srgb, var(--accento) 22%, var(--sup)); color: var(--accento-testo); }
 
