@@ -57,6 +57,10 @@ const Privacy = (() => {
   /** Tutto ciò che appartiene all'account precedente, su questo dispositivo. */
   async function svuotaAccount(): Promise<void> {
     await Stato.svuotaLocale(); pulisciLocalStorage(true); await pulisciCache(); if (typeof Allegati !== 'undefined') await Allegati.svuota();
+    // P0-A: la coda quiz è solo locale. Va eliminata al cambio account anche se il chunk
+    // strumenti-quiz non è mai stato caricato in questa sessione.
+    if (typeof CodaQuiz !== 'undefined') await CodaQuiz.svuotaTutto();
+    else await new Promise<void>(ok => { try { const rq = indexedDB.deleteDatabase('imc-coda-quiz'); rq.onsuccess = () => ok(); rq.onerror = () => ok(); rq.onblocked = () => ok(); } catch (_) { ok(); } });
     if (typeof Drive !== 'undefined' && Drive.dimenticaCartelle) Drive.dimenticaCartelle();
   }
   /** Chiamata appena si conosce l'account del login, PRIMA di unire i dati remoti. */

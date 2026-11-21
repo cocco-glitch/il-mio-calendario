@@ -31,11 +31,39 @@ const js = FILE.map(f => ts.transpileModule(leggi(f), { compilerOptions: { targe
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const sb = { console, ymd, oggi: () => new Date(), materiaDi: k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; } };
 vm.createContext(sb);
-const ESPORTA = ['JsonAI', 'ImportaParti', 'ImportaDrive', 'DiagnosiQuiz', 'MasterPrompt', 'Contratto', 'Validatore', 'MappaPagine'];
+const ESPORTA = ['JsonAI', 'ImportaParti', 'ImportaDrive', 'DiagnosiQuiz', 'MasterPrompt', 'Contratto', 'Validatore', 'MappaPagine', 'CodaQuiz'];
 vm.runInContext(js + '\n;' + ESPORTA.map(n => 'this.' + n + ' = typeof ' + n + " !== 'undefined' ? " + n + ' : undefined;').join(' '), sb);
 const { Contratto: C, Validatore: V, MappaPagine: M, DiagnosiQuiz: DQ, ImportaParti: IP, ImportaDrive: ID } = sb;
 const serve = (o, n) => { if (!o) throw new Error(n + ' non esiste ancora'); return o; };
 const copia = x => JSON.parse(JSON.stringify(x));
+
+// =====================================================================
+console.log('\n== P0-A coda quiz persistente ==');
+const CQ = serve(sb.CodaQuiz, 'CodaQuiz');
+const SRC_CQ = { tipo: 'testo', id: 'appunti-membrane', versione: 'sha256:abc' };
+t('ID deterministico: ordine delle opzioni e maiuscole account non creano duplicati', () => {
+  eq(CQ.idDeterministico('Studente@Example.IT', SRC_CQ, { quantita: 30, tipi: ['mcq', 'aperta'] }),
+    CQ.idDeterministico('studente@example.it', SRC_CQ, { tipi: ['mcq', 'aperta'], quantita: 30 }));
+});
+t('ID separa account, versione della sorgente e specifica senza esporne il contenuto', () => {
+  const a = CQ.idDeterministico('a@example.it', SRC_CQ, { quantita: 30 });
+  const ids = [a, CQ.idDeterministico('b@example.it', SRC_CQ, { quantita: 30 }), CQ.idDeterministico('a@example.it', { ...SRC_CQ, versione: 'sha256:def' }, { quantita: 30 }), CQ.idDeterministico('a@example.it', SRC_CQ, { quantita: 31 })];
+  vero(new Set(ids).size === 4 && !a.includes('example') && !a.includes('appunti'), ids.join(', '));
+});
+t('nuovo lavoro contiene stato, tentativi, sorgente/versione, prossimo tentativo e ultimo errore', () => {
+  const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 30 }, 1000);
+  eq([l.stato, l.tentativi, l.sorgente.versione, l.prossimoTentativoIl, l.ultimoErrore, l.creatoIl, l.aggiornatoIl], ['in_coda', 0, 'sha256:abc', null, null, 1000, 1000]);
+});
+t('macchina a stati: pausa/ripresa/esecuzione/completamento ammessi, terminali bloccati', () => {
+  const l = CQ.nuovo('a@example.it', SRC_CQ, {}, 1), p = CQ.cambia(l, 'in_pausa', 2), q = CQ.cambia(p, 'in_coda', 3), e = CQ.cambia(q, 'in_esecuzione', 4), f = CQ.cambia(e, 'completato', 5);
+  eq([p.stato, q.stato, e.stato, f.stato], ['in_pausa', 'in_coda', 'in_esecuzione', 'completato']);
+  let errore = ''; try { CQ.cambia(f, 'in_coda', 6); } catch (x) { errore = String(x && x.message); }
+  vero(/transizione non valida/.test(errore), errore);
+});
+t('fondazione P0-A senza rete, router AI, OCR o racing', () => {
+  const s = leggi('su-richiesta/07-codaquiz.ts');
+  vero(!/\bfetch\s*\(|\bIA\.|OCR|Promise\.race/.test(s), 'dipendenza vietata trovata');
+});
 
 // =====================================================================
 console.log('\n== Lettore (Contratto.leggi) ==');
