@@ -221,7 +221,7 @@ const Pianificatore = (() => {
 
   // ---------- Stadio 2: struttura delle fonti (indice locale, 0 token) ----------
   /** Righe d'indice «1.2 Titolo ..... 34», «Capitolo 3 – Titolo 51», «Titolo 12». */
-  function righeIndice(testo: string): { num: string; titolo: string; pagina?: number }[] {
+  function righeIndice(testo: string, elencoLibero = false): { num: string; titolo: string; pagina?: number }[] {
     const out: { num: string; titolo: string; pagina?: number }[] = [];
     for (const r0 of String(testo || '').split(/\r?\n/)) {
       const r = r0.replace(/\s+/g, ' ').trim(); if (r.length < 3 || r.length > 160 || /^(indice|sommario|contents|index)$/i.test(r)) continue;
@@ -229,6 +229,7 @@ const Pianificatore = (() => {
       if (m && m[2] && /[a-zà-ü]/i.test(m[2])) { out.push({ num: m[1], titolo: m[2].replace(/[\s.·…_-]+$/, '').trim(), pagina: m[3] ? parseInt(m[3], 10) : undefined }); continue; }
       const p = /^([A-Za-zÀ-ÿ][^\d]{2,}?)(?:\s*\.{2,}\s*|\s+)(\d{1,4})$/.exec(r);
       if (p) out.push({ num: String(out.length + 1), titolo: p[1].replace(/[\s.·…_-]+$/, '').trim(), pagina: parseInt(p[2], 10) });
+      else if (elencoLibero && /[\p{L}]/u.test(r)) out.push({ num: String(out.length + 1), titolo: r.replace(/^[-•*]\s+/, '') });
     }
     return out.filter((c, i) => !(out[i + 1] && out[i + 1].num.startsWith(c.num + '.')));   // solo le foglie
   }
@@ -238,11 +239,12 @@ const Pianificatore = (() => {
     const righe: string[] = [];
     for (const f of fonti || []) {
       if (!f) continue;
-      const voci = righeIndice((f.pagine || []).join('\n')), n = Math.max(1, (f.pagine || []).length);
+      const voci = righeIndice((f.pagine || []).join('\n'), f.fileId === 'indice'), n = Math.max(1, (f.pagine || []).length);
       if (!voci.length) { righe.push([pulisci(f.fileId), pulisci(f.nome), '1-' + n, pulisci(f.nome)].join(' | ')); continue; }
       voci.forEach((c, i) => {
         const a = c.pagina || 1, succ = voci.slice(i + 1).find(x => x.pagina != null), b = succ && succ.pagina! > a ? succ.pagina! - 1 : a + 9;
-        righe.push([pulisci(f.fileId), pulisci(f.nome), a + '-' + b, pulisci(c.titolo).slice(0, 80)].join(' | '));
+        const pagine = f.fileId === 'indice' && c.pagina == null ? '—' : a + '-' + b;
+        righe.push([pulisci(f.fileId), pulisci(f.nome), pagine, pulisci(c.titolo).slice(0, 80)].join(' | '));
       });
     }
     let out = ''; for (const r of righe) { if (out.length + r.length + 1 > MAX_CHARS_STRUTTURA) break; out += (out ? '\n' : '') + r; }
@@ -262,7 +264,8 @@ const Pianificatore = (() => {
       const p = r.split('|').map(x => x.trim()); if (p.length < 4 || !p[3]) continue;
       const m = /^(\d+)-(\d+)$/.exec(p[2]), a = m ? +m[1] : 1, b = m ? Math.max(+m[1], +m[2]) : a;
       const uid = 'U' + (out.length + 1);
-      out.push({ uid, titolo: p[3].slice(0, 60), prereq: out.length ? [out[out.length - 1].uid] : [], densita: 3, minutiBase: clamp((b - a + 1) * 8, 30, 240), fileId: p[0], nomeFile: p[1], pagine: [a, b], concettiChiave: [] });
+      out.push({ uid, titolo: p[3].slice(0, 60), prereq: out.length ? [out[out.length - 1].uid] : [], densita: 3,
+        minutiBase: clamp((b - a + 1) * 8, 30, 240), fileId: p[0], nomeFile: p[1], pagine: m ? [a, b] : undefined, concettiChiave: [] });
     }
     return out;
   }
@@ -446,14 +449,17 @@ const Pianificatore = (() => {
       for (const r of ripassi.filter(x => x.data && x.data <= leg.data)) { if ((usato.get(leg.data) || 0) + r.voce.min! <= 60 && metti(leg, r.voce, r.voce.min!)) r.data = ''; }
       voci.get(leg.data)!.push({ k: cod + '~' + pidC + '~RIPOSO', t: '🌿 Riposo attivo (Wakeful Rest): niente studio nuovo', speciale: true, d: 'Giorno prima dell\'obiettivo: al massimo 60 minuti di ripasso leggero.' });
     }
-    const avanzi = coda.length;
+    const esclusi = coda.map(c => c.u.titolo + ' · ' + NOMI_LIV[c.liv])
+      .concat(ripassi.filter(r => r.data && r.data < v.dataTarget).map(r => r.voce.t));
+    const avanzi = esclusi.length;
     const gg: GiornoPianoAI[] = giorni.filter(g => voci.get(g.data)!.length).map((g, i) => ({ data: g.data, n: i + 1, voci: voci.get(g.data)! }));
     return {
       formato: 'pacchetto-studio', tipo: 'piano', id: o.pid, titolo: o.titolo || '✨ Piano intelligente ' + v.materiaCodice, aggiornato: new Date().toISOString(),
-      giorniTeoria: gg.length, giorni: gg, origine: 'ai_neuro', proprio: true, vincoliAI: v, statoFattibilita: f.stato,
+      giorniTeoria: gg.length, giorni: gg, origine: 'ai_neuro', proprio: true, vincoliAI: v,
+      statoFattibilita: avanzi && f.stato === 'ottimale' ? 'serrato' : f.stato,
       capienza: Math.max(3, ...gg.map(x => x.voci.length)) + 1, unita, fonteMappa: 'toc', iper: errori || undefined,
       livelloIntensita: bio ? bio.livello : undefined, avvisiBio: bio && bio.avvisi.length ? bio.avvisi : undefined,
-      nota: avanzi ? avanzi + ' attività non sono entrate nel calendario: valuta i rimedi (più minuti o data più lontana).' : undefined,
+      nota: avanzi ? 'Piano parziale. Attività fuori calendario (' + avanzi + '): ' + [...new Set(esclusi)].join(', ') + '.' : undefined,
     };
   }
 
@@ -782,6 +788,7 @@ const Pianificatore = (() => {
     if (fatt.stato === 'critico' || !stima.length) return { piano: null, fatt, segnali: seg, fonte: 'toc', chiamate: 0, tokenStimati: 0, struttura };
     const m = dip.unita ? { unita: dip.unita, fonte: 'toc' as const, chiamate: 0, tokenStimati: 0 } : await mappaCurriculumAI(struttura, v, seg, dip.ia);
     if (m.fonte === 'ai') fatt = calcolaFattibilita(v, m.unita, ctx);
+    if (fatt.stato === 'critico') return { piano: null, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura };
     const pid = dip.pid || 'ai-' + Date.now().toString(36);
     const rMin = v.livelloIntensita ? MATRICE_LIVELLI[livelloValido(v.livelloIntensita) - 1].ritenzioneTargetFSRS : 0;
     const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo, ritenzione: dip.ritenzione ? dip.ritenzione(rMin) : undefined, intervallo: dip.intervallo });

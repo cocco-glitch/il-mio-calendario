@@ -13,7 +13,7 @@
 // quiz ("Domanda 1 di 3 · ripasso errori"). Se un quiz ha un formato diverso, non succede nulla:
 // il punteggio si scrive a mano come prima.
 
-interface RisultatoQuiz { imc: 'quiz-risultato'; pct: number; giuste: number | null; totale: number | null; livelli: [string, number, number][]; debole: string | null; errori: boolean;
+interface RisultatoQuiz { domandeSvolte?: string[]; imc: 'quiz-risultato'; pct: number; giuste: number | null; totale: number | null; livelli: [string, number, number][]; debole: string | null; errori: boolean;
   sbagliate?: [string, string, string][];   // v0.16: [domanda, risposta corretta, spiegazione] dalla sezione «Da rivedere»
 }
 
@@ -50,7 +50,7 @@ const Cattura = (() => {
   }
 
   /** Salva il risultato; restituisce la funzione per annullare. */
-  function salva(id: string, d: RisultatoQuiz): () => void {
+  function salva(id: string, d: RisultatoQuiz, ritiraRisposte?: () => void): () => void {
     const oggiK = ymd(new Date());
     const p0 = Studio.prog(id), primaProg = p0 ? JSON.parse(JSON.stringify(p0)) : null;
     const t = trovaScheda(id), idMem = t ? 'mem-sub-' + t.k : '';
@@ -66,7 +66,11 @@ const Cattura = (() => {
       Studio.segna(id, { fatta: true, data: oggiK, punteggio: d.pct, deboli: d.livelli && d.livelli.length ? d.livelli : undefined } as Partial<Progresso>);
       testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
     }
+    let ritirato = false;
     const annulla = () => {
+      if (ritirato) return;
+      ritirato = true;
+      ritiraRisposte?.();
       annullaDom();
       if (primaProg) Stato.salva(primaProg); else Stato.elimina('prog-' + id);
       if (idMem) { if (primaMem) Stato.salva(primaMem); else if (Stato.prendi<Rec>(idMem)) Stato.elimina(idMem); }

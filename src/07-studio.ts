@@ -40,21 +40,17 @@ interface Progresso extends Rec { type: 'progresso'; fatta: boolean; data?: stri
 // ---------- Materie (generiche) ----------
 // Una materia ha un CODICE di lettere maiuscole (C, B, F, ANA, STAT…). Le chiavi dei sotto-step sono
 // codice + numero ("C2.3", "ANA1.2"). Nome, sigla e colore vengono, in ordine: dal record 'materia'
-// (modificabile dall'utente), dal pacchetto che la contiene, dai valori di base sotto.
-const MATERIE_BASE: Record<string, { nome: string; breve: string; colore: string }> = {
-  C: { nome: 'Chimica', breve: 'Chi', colore: '#e9a23b' }, B: { nome: 'Biologia', breve: 'Bio', colore: '#2fbf8f' }, F: { nome: 'Fisica', breve: 'Fis', colore: '#6c8cff' },
-};
+// (modificabile dall'utente) e dal pacchetto che la contiene.
 const PALETTE_MATERIE = ['#e9a23b', '#2fbf8f', '#6c8cff', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#14b8a6', '#eab308', '#ec4899'];
 interface MateriaRec extends Rec { type: 'materia'; codice: string; nome: string; breve?: string; colore: string; archetipo?: string; }   // v0.52: archetipo disciplinare (facoltativo)
 function materiaDi(k: string): string { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; }
 function infoMateria(code: string): { nome: string; breve: string; colore: string } {
   const r = Stato.prendi<MateriaRec>('mat-' + code);
-  const base = MATERIE_BASE[code];
-  let nome = r ? r.nome : base ? base.nome : '', colore = r ? r.colore : base ? base.colore : '';
+  let nome = r ? r.nome : '', colore = r ? r.colore : '';
   if (!nome || !colore) for (const pk of Studio.pkStep()) { const m = pk.materie.find(x => x.m === code); if (m) { nome = nome || m.nome; colore = colore || (m as any).colore || ''; break; } }
   if (!colore) { let hsh = 0; for (const ch of code) hsh = (hsh * 31 + ch.charCodeAt(0)) >>> 0; colore = PALETTE_MATERIE[hsh % PALETTE_MATERIE.length]; }
   nome = nome || code;
-  return { nome, breve: (r && r.breve) || (base && base.breve) || nome.slice(0, 3), colore };
+  return { nome, breve: (r && r.breve) || nome.slice(0, 3), colore };
 }
 const nomeMateria = (c: string) => infoMateria(c).nome;
 const coloreMateria = (c: string) => infoMateria(c).colore;
@@ -68,6 +64,23 @@ const formaChiave = (k: string) => materiaDi(k) ? formaMateria(materiaDi(k)) : '
 function segnoMateria(k: string): HTMLElement | null { const f = formaChiave(k); return f ? h('span.forma-mat', { style: { color: coloreChiave(k) }, 'aria-hidden': 'true' }, f) : null; }
 
 const Studio = (() => {
+  /** v0.64.1: una tantum per l'account proprietario, porta le tre materie storiche nei dati sincronizzati. */
+  function migraMaterieBase(): number {
+    const email = String(Drive.stato.email || '').trim().toLowerCase();
+    if (!email || !Drive.eProprietario()) return 0;
+    const idFlag = 'mig-materie-v0641-' + sha256Hex(email).slice(0, 12);
+    if (Stato.esiste(idFlag)) return 0;
+    const iniziali: Array<Omit<MateriaRec, 'updatedAt'>> = [
+      { id: 'mat-C', type: 'materia', codice: 'C', nome: 'Chimica', breve: 'Chi', colore: '#e9a23b', archetipo: 'scienze_sperimentali' },
+      { id: 'mat-B', type: 'materia', codice: 'B', nome: 'Biologia', breve: 'Bio', colore: '#2fbf8f', archetipo: 'scienze_sperimentali' },
+      { id: 'mat-F', type: 'materia', codice: 'F', nome: 'Fisica', breve: 'Fis', colore: '#6c8cff', archetipo: 'stem_calcolo' },
+    ];
+    let create = 0;
+    for (const m of iniziali) if (!Stato.esiste(m.id)) { Stato.salva({ ...m, updatedAt: 0 } as MateriaRec, true); create++; }
+    Stato.salva({ id: idFlag, type: 'migrazione', updatedAt: 0, versione: '0.64.1', ambito: 'materie-base' } as Rec, true);
+    Stato.notifica();
+    return create;
+  }
   /**
    * "Piani" ricavati da altri dati: i corsi creati dall'utente (sotto-step con data) e gli esami.
    * Così compaiono nel calendario, in Oggi e nel ritardo come gli step del piano principale.
@@ -261,7 +274,7 @@ const Studio = (() => {
     return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
   }
 
-  return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, trovati, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+  return { migraMaterieBase, togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, trovati, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
     dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 
@@ -316,15 +329,16 @@ const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
  */
 const PdfCache = (() => {
   const NOME = 'imc-pdf', MAX = 10, CH = 'imc-pdf-uso';
-  const url = (id: string) => location.origin + '/__pdf/' + id;
+  const chiave = (id: string, versione?: string) => versione ? id + '@' + versione : id;
+  const url = (id: string) => location.origin + '/__pdf/' + encodeURIComponent(id);
   const uso = (): Record<string, number> => { try { return JSON.parse(localStorage.getItem(CH) || '{}'); } catch (_) { return {}; } };
   const segna = (u: Record<string, number>) => { try { localStorage.setItem(CH, JSON.stringify(u)); } catch (_) { /* niente */ } };
   async function cache(): Promise<Cache | null> { try { return await caches.open(NOME); } catch (_) { return null; } }
   async function presente(id: string): Promise<boolean> { const c = await cache(); return !!(c && await c.match(url(id))); }
-  async function prendi(id: string, avanz?: (fatti: number, tot: number) => void): Promise<Uint8Array> {
-    const c = await cache(), u = uso();
-    const vecchia = c && await c.match(url(id));
-    if (vecchia) { u[id] = Date.now(); segna(u); return new Uint8Array(await vecchia.arrayBuffer()); }
+  async function prendi(id: string, avanz?: (fatti: number, tot: number) => void, versione?: string): Promise<Uint8Array> {
+    const c = await cache(), u = uso(), k = chiave(id, versione);
+    const vecchia = c && await c.match(url(k));
+    if (vecchia) { u[k] = Date.now(); segna(u); return new Uint8Array(await vecchia.arrayBuffer()); }
     const token = await Drive.tokenValido(false);
     if (!token) throw new Error('Accedi a Google per scaricare il PDF.');
     const r = await fetch('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media', { headers: { Authorization: 'Bearer ' + token } });
@@ -335,8 +349,8 @@ const PdfCache = (() => {
     const tutto = new Uint8Array(fatti); let pos = 0; for (const p of pezzi) { tutto.set(p, pos); pos += p.length; }
     if (c) {
       try {
-        await c.put(url(id), new Response(tutto.slice(0), { headers: { 'content-type': 'application/pdf' } }));
-        u[id] = Date.now();
+        await c.put(url(k), new Response(tutto.slice(0), { headers: { 'content-type': 'application/pdf' } }));
+        u[k] = Date.now();
         for (const vecchio of Object.keys(u).sort((a, b) => u[b] - u[a]).slice(MAX)) { await c.delete(url(vecchio)); delete u[vecchio]; }
         segna(u);
       } catch (_) { /* spazio esaurito: lo uso senza salvarlo */ }
@@ -447,10 +461,11 @@ function barra(fatte: number, tot: number, colore?: string): HTMLElement {
 function rigaStudio(x: VoceGiorno): HTMLElement {
   const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k.replace(/^G2-/, ''));
   const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k); // v0.11: apre la modalità simulazione
-  return lungo(h('button.voce-lista', { onclick: () => { if (sim) { apriSimulazioni(); return; } if (t) { UI.studioSub = t.sub.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
+  const riga = lungo(h('button.voce-lista', { onclick: () => { if (sim) { apriSimulazioni(); return; } if (t) { UI.studioSub = t.sub.k; UI.studioVista = 'schede'; UI.studioStep = t.pk.id; vai('studio'); } else { UI.studioVista = 'piano'; UI.studioPiano = x.p.id; vai('studio'); } } },
     h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }),
     h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)),
       h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : ''))), () => sim ? MenuLungo.esame() : MenuLungo.step(x.v.k), x.v.speciale ? x.v.t : Studio.etichetta(x.v.k));
+  return x.v.speciale ? riga : h('div', { onclick: (e: Event) => { if (e.target === e.currentTarget) riga.click(); } }, riga, h('button.btn-testo', { onclick: () => CreaQuiz.dalPiano(x.p, x.v), 'aria-label': 'Quiz su ' + x.v.t }, 'Quiz'));
 }
 /** "3/9 prioritarie · 19 pag." (teoria) oppure "1 · priorità ... 2 · raffina ..." (raffinamento). */
 /** v0.20.2: flashcard collegate al sotto-step, da aggiungere al sottotitolo delle voci del piano. */
@@ -638,6 +653,7 @@ function vistaPiano(piano: PkPiano): HTMLElement {
             h('button.voce-corpo', { onclick: () => { if (t) { UI.studioSub = v.k; disegna(); } } },
               h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t),
               h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? (v.d || '') + (/^G2-/.test(v.k) ? testoCarte(v.k.slice(3)) : '') : testoAvanzamento(v.k, piano), tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')),
+            v.speciale ? null : h('button.btn-testo', { onclick: () => CreaQuiz.dalPiano(piano, v), 'aria-label': 'Quiz su ' + v.t }, 'Quiz'),
             v.speciale ? null : h('button.btn-testo', { onclick: () => apriSposta(v, go, piano) }, 'Sposta'));
         }),
         !voci.length ? h('div.tenue.piccolo', { style: { padding: '8px 0' } }, 'Step spostati altrove.') : null,

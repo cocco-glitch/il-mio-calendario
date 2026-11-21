@@ -29,6 +29,7 @@ const Domande = (() => {
     const oggiK = ymd(new Date()), sb = d.sbagliate || [];
     const mie = tutte().filter(x => x.schedaId === schedaId);
     const prima = mie.map(x => JSON.parse(JSON.stringify(x)) as Domanda), nuove: string[] = [];
+    const svolte = d.domandeSvolte && new Set(d.domandeSvolte.map(norm));
     const sbagliateId = new Set<string>();
     for (const [q, giusta, spieg] of sb) {
       if (!q) continue;
@@ -40,7 +41,7 @@ const Domande = (() => {
     // Le domande note che stavolta non sono tra le sbagliate: giuste (nel ripasso errori, solo quelle aperte)
     // (solo se il quiz ha mostrato «Da rivedere» o è tutto giusto: un formato diverso non deve «risolvere» nulla)
     if (sb.length || d.pct === 100) for (const r of mie) {
-      if (sbagliateId.has(r.id) || (d.errori && r.esito !== 'sbagliata')) continue;
+      if ((svolte && !svolte.has(norm(r.q))) || sbagliateId.has(r.id) || (d.errori && r.esito !== 'sbagliata')) continue;
       Stato.salva(Object.assign(r, { giuste: r.giuste + 1, ultima: oggiK, esito: 'giusta' }), true);
     }
     const carteNuove = Carte.daErrori(Domande_aperte());   // v0.20.3: errori → flashcard (anche quelli vecchi ancora aperti)

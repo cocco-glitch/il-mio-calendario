@@ -13,7 +13,7 @@
 
 interface CitB { t: string; f: string; l?: string; }
 // v0.52 (BP2): tipi universali (sequenza, abbinamento, risposta aperta con rubrica) e archetipo — campi facoltativi
-interface DomB { id: string; sk: string; t: 'mcq' | 'fill' | 'sequenza' | 'abbinamento' | 'risposta_aperta_rubrica'; lv: string;
+interface DomB { schedaQuiz?: number; applicazione?: string; id: string; sk: string; t: 'mcq' | 'fill' | 'sequenza' | 'abbinamento' | 'risposta_aperta_rubrica'; lv: string;
   archetipo?: string; sequenzaOk?: string[]; coppieOk?: Array<[string, string]>; rubricaPunti?: string[]; linguaCodice?: string; q: string; o?: string[]; a?: string[]; show?: string; e: string | string[]; ew?: string[]; r?: string; cit?: CitB[]; cl?: string; img?: { i: string; cap: string; f?: string }[]; mod?: boolean; nuova?: boolean; gen?: boolean; dk?: string[];
   // v0.54 (BP3 §1.1): metadati neuro-cognitivi, tutti facoltativi (i quiz v0.51–v0.53 restano validi così come sono)
   bloomLevel?: BloomN; distractorTypes?: Record<number, TipoDistr>; confidenceLog?: TentativoN[]; sourceRef?: SourceRefN; subtopic?: string; stepId?: string;
@@ -152,6 +152,7 @@ const QuizApp = (() => {
   function registraStat(v: Voce): () => void {
     const id = 'sq-' + v.d.id, p = Stato.prendi<StatQ>(id), dev = Privacy.idDispositivo(), giusta = !!v.ok;
     const r: StatQ = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false, c: {} };
+    const esitoPrima = r.esito, ultimaPrima = r.ultima;
     const x = StatQC.mio(r, dev); x.n++; if (giusta) x.ok++; StatQC.ricalcola(r);
     r.ultima = ymd(new Date()); r.esito = giusta;
     // v0.54 (BP3 §1.2): calibrazione metacognitiva (solo se lo studente ha dichiarato la certezza)
@@ -177,6 +178,7 @@ const QuizApp = (() => {
       const q = Stato.prendi<StatQ>(id); if (!q) return;
       const y = StatQC.mio(q, dev); y.xn++; if (giusta) y.xok++; StatQC.ricalcola(q);
       if (v.cert) { if (neuroPrima) q.neuro = neuroPrima; else delete q.neuro; if (logPrima) q.confidenceLog = logPrima; else delete q.confidenceLog; }
+      q.esito = esitoPrima; q.ultima = ultimaPrima;
       if (autoPrima) q.auto = true; else delete q.auto;
       if (scelta && q.scelte && q.scelte[scelta]) { q.scelte = Object.assign({}, q.scelte); q.scelte[scelta]--; if (!q.scelte[scelta]) delete q.scelte[scelta]; }
       Stato.salva(q, true);
@@ -223,7 +225,7 @@ const QuizApp = (() => {
 
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi).
    *  info.prova (v0.63, Centro di creazione): prova della scheda prima dell'import — nessuno statq, nessuna sessione, nessuna carta. */
-  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void; immagini?: Record<string, string>; prova?: boolean }): Promise<void> {
+  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void; immagini?: Record<string, string>; modo?: ModoQ; prova?: boolean }): Promise<void> {
     const prova = !!(info && info.prova);
     const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { /* */ })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
     v.corpo.classList.add('qz');
@@ -238,7 +240,7 @@ const QuizApp = (() => {
     v.corpo.appendChild(app);
     let P: Voce[] = [], cur = 0, ripasso = false, apertaX = false, finito = false;
     // v0.54 (BP3): certezza prima della risposta (modo neuro), tempi per la fatica attentiva (zero token)
-    let mq: ModoQ = modo(), storia: { ms: number; ok: boolean }[] = [], faticaOn = false, faticaZitta = 0;
+    let mq: ModoQ = info?.modo || modo(), storia: { ms: number; ok: boolean }[] = [], faticaOn = false, faticaZitta = 0;
     const archM = Dominio.archetipoMateria(m);
     // v0.52 (BP2): sequenza (ordine da ricostruire), abbinamento (coppie) e risposta aperta valutata con una rubrica locale
     const NOMI_TIPO: Record<string, string> = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
@@ -281,8 +283,11 @@ const QuizApp = (() => {
           + '<div class="chips"><button type="button" class="chip' + (x.prop ? ' on' : '') + '" data-voto="1">✓ Era giusta</button><button type="button" class="chip' + (x.prop ? '' : ' on') + '" data-voto="0">✗ Era sbagliata</button></div></div>'; }
       return o;
     }
+    const annulli = new Map<Voce, () => void>();
+    let registrato = false;
     const nuovo = (idx: number[], rip: boolean) => {
       P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
+      annulli.clear(); registrato = false;
       storia = []; faticaOn = false; faticaZitta = 0;
       cur = 0; ripasso = rip; apertaX = false; finito = false; disegnaQ(); v.corpo.scrollTop = 0;
     };
@@ -406,13 +411,14 @@ const QuizApp = (() => {
     }
     function chiudi(x: Voce): void {
       const annulla = prova ? null : registraStat(x);
+      if (annulla) annulli.set(x, annulla);
       // v0.54 (BP3 §1.3): fatica attentiva — banner non bloccante, al massimo una volta ogni 5 risposte
       storia.push({ ms: x.ms || 0, ok: !!x.ok });
       if (faticaZitta > 0) faticaZitta--;
       else if (Neuro.fatica(storia.map(z => z.ms), storia.map(z => z.ok)).allarme) { faticaOn = true; faticaZitta = 5; }
       // v0.48: annulla la risposta (tocco sbagliato) per 8 s; un solo avviso alla volta
       if (toastAnnulla) toastAnnulla.remove();
-      if (annulla) avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.daConf = false; x.prop = undefined; x.auto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+      if (annulla) avviso('Risposta registrata · tocca per annullare', 8000, () => { if (finito || !annulli.delete(x)) return; annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.daConf = false; x.prop = undefined; x.auto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
       toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
       if (!x.ok) { const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null; x.avv = Regole.avvisoRisposta(x.d, dk);
         // v0.52 (BP2 §3): diagnostica locale secondo l'archetipo della materia (zero token)
@@ -430,7 +436,7 @@ const QuizApp = (() => {
       const dd: DatiDomanda = { q: d.q, opts: mc ? x.ord.map(i => d.o![i]) : [], corretta: mc ? d.o![0] : (d.show || (d.a || [''])[0]),
         scelta: x.ok ? '' : mc ? (typeof x.picked === 'number' ? d.o![x.ord[x.picked]] : '') : String(x.picked || ''),
         cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo,
-        archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: MATERIE_BASE[m] ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
+        archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: Stato.prendi<MateriaRec>('mat-' + m) ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
       const id = Spiega.idDi(dd, l), c = Stato.prendi<Spiegazione>(id);
       // v0.54 (BP3 §2): imbuto AI — livello 0 locale → livello 1 spiegazione già pronta / salvata → livello 2 micro-chiamata (≤350 token)
       if (l === 'perche' || l === 'breve') {
@@ -483,9 +489,16 @@ const QuizApp = (() => {
       s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen && !prova ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
         + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
       app.innerHTML = s2; v.corpo.scrollTop = 0;
-      const r: RisultatoQuiz = { imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
+      const r: RisultatoQuiz = { domandeSvolte: P.map(x => x.d.q), imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
         sbagliate: sb.map(x => [x.d.q, x.d.t === 'mcq' ? x.d.o![0] : String(x.d.show || ''), (Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e)] as [string, string, string]) };
+      if (registrato) return;
+      registrato = true;
       if (!gen && !prova) Cattura.salva(s.id, r);
+      if (gen && !prova && Stato.prendi<QCreato>(s.id)?.type === 'qcreato') {
+        toastAnnulla?.remove();
+        const ritira = Array.from(annulli.values()).reverse();
+        Cattura.salva(s.id, r, () => ritira.forEach(fn => fn()));
+      }
     }
     app.addEventListener('click', ev => {
       const b = (ev.target as Element).closest('button') as HTMLButtonElement | null; if (!b || b.disabled) return;
@@ -559,7 +572,7 @@ const Editor = (() => {
   const area = (v: string, righe = 2, ph = '') => h('textarea', { rows: righe, value: v, placeholder: ph }) as HTMLTextAreaElement;
   const pulisci = (d: DomB): Partial<DomB> => { const c: any = { ...d }; delete c.id; delete c.sk; delete c.mod; delete c.nuova; return c; };
 
-  function apri(d0: DomB | null, sk: string, fatto: (d: DomB | null) => void): void {
+  function apri(d0: DomB | null, sk: string, fatto: (d: DomB | null) => void, inBozza = false): void {
     const nuova = !d0;
     const d: DomB = d0 ? JSON.parse(JSON.stringify(d0)) : { id: 'q-u-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), sk, t: 'mcq', lv: 'Applicativo', q: '', o: ['', '', '', '', ''], ew: ['', '', '', ''], e: '' };
     const recId = 'mq-' + d.id, r0 = Stato.prendi<ModQ>(recId);
@@ -621,7 +634,7 @@ const Editor = (() => {
         blocco,
         h('div.gruppo', null, h('div.gruppo-titolo', null, 'Correzione passo-passo'), passi),
         h('div.tenue.piccolo', null, 'Le modifiche si salvano con i tuoi dati su Drive; l\'originale resta e puoi ripristinarlo. Statistiche e spiegazioni AI della domanda restano collegate.'),
-        nuova ? null : h('div.bottoni', null,
+        nuova || inBozza ? null : h('div.bottoni', null,
           d0 && d0.mod && !d0.nuova ? h('button.btn.neutro', { onclick: () => { const orig = r0 && r0.originale; if (r0) Stato.elimina(recId); f.chiudi(); fatto({ ...(orig || {}), id: d.id, sk } as DomB); avviso('Ripristinato l\'originale.'); } }, '↩︎ Ripristina originale') : null,
           h('button.btn.pericolo', { onclick: async () => {
             const x = await chiedi('Nascondere questa domanda?', [{ testo: 'Nascondi', valore: 'si', pericolo: true }, { testo: 'Annulla', valore: 'no' }], 'Non comparirà più nel quiz. Puoi ripristinarla dalla schermata del risultato.');
@@ -631,6 +644,7 @@ const Editor = (() => {
       etichettaSalva: 'Salva',
       salva: () => {
         const n = leggi(); if (!n) return false;
+        if (inBozza) { fatto(n); return; }
         if (nuova || (d0 && d0.nuova)) salvaRec({ nuova: true, campi: pulisci(n), nascosta: false });
         else salvaRec({ campi: pulisci(n), nascosta: false });
         fatto({ ...n, mod: true, nuova: nuova || !!(d0 && d0.nuova) });

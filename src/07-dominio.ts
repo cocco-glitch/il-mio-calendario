@@ -122,13 +122,12 @@ const Dominio = (() => {
     for (const [a, re] of REGOLE) if (re.test(t)) return a;
     return null;
   }
-  /** Archetipo di una materia: scelto (record 'materia'), storico (C/B/F), dedotto dal nome, predefinito. */
+  /** Archetipo di una materia: scelto nel record, altrimenti dedotto dal suo nome, infine predefinito. */
   function archetipoMateria(codice: string): ArchetipoDisciplinare {
     const r = Stato.prendi<MateriaRec>('mat-' + codice);
     if (r && eArchetipo(r.archetipo)) return r.archetipo;
-    if (MATERIE_BASE[codice]) return risolviArchetipoMateria(codice);
     const ind = indovinaArchetipo(r ? r.nome : nomeMateria(codice));
-    return risolviArchetipoMateria(codice, ind || undefined);
+    return ind || 'scienze_sperimentali';
   }
   function impostaArchetipo(codice: string, a: ArchetipoDisciplinare): void {
     const r = Stato.prendi<MateriaRec>('mat-' + codice), inf = infoMateria(codice);
@@ -444,7 +443,7 @@ const Dominio = (() => {
 
   // ---------- Impostazioni (Altro → Studio) ----------
   function codiciMaterie(): string[] {
-    const s = new Set<string>([...Object.keys(MATERIE_BASE).filter(() => ruolo() === 'owner'), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
+    const s = new Set<string>([...Stato.tutti<MateriaRec>('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
     return Array.from(s).filter(Boolean);
   }
   function sezione(): HTMLElement {

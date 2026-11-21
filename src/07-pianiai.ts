@@ -13,8 +13,7 @@ const PianiAI = (() => {
   const pianiAI = (): PkPianoAI[] => Studio.pkPiani().filter(eAI) as PkPianoAI[];
 
   function codiciMaterie(): string[] {
-    // v0.57.1 (D1): le materie del proprietario solo al proprietario, come 07-dominio.ts
-    const s = new Set<string>([...Object.keys(MATERIE_BASE).filter(() => Drive.eProprietario()), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
+    const s = new Set<string>([...Stato.tutti<MateriaRec>('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
     return Array.from(s).filter(Boolean);
   }
   /** v0.58 (Q4): codice materia di un quiz creato in app (sk «qc-…»), dal campo materia del record qcreato. */

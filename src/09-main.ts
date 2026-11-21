@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.64.0';
+const VERSIONE = '0.64.1';
 
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
@@ -188,11 +188,16 @@ function controllaAvvisi(): void {
 
 /** v0.58: scorciatoie del manifest (`?az=studia|aggiungi|ripassa`): un tocco dall'icona → azione. Poi pulisce l'indirizzo. */
 function scorciatoiaAvvio(): void {
-  let az = '';
-  try { az = new URLSearchParams(location.search).get('az') || ''; } catch (e) { console.warn('scorciatoia: indirizzo illeggibile', e); }
+  let az = '', condiviso = '';
+  try {
+    const q = new URLSearchParams(location.search);
+    az = q.get('az') || '';
+    if (az === 'condividi') condiviso = q.get('text') || q.get('url') || q.get('title') || '';
+  } catch (e) { console.warn('scorciatoia: indirizzo illeggibile', e); }
   if (!az) return;
   try { history.replaceState(null, '', location.pathname); } catch (e) { console.warn('scorciatoia: replaceState', e); }
-  if (az === 'studia') { if (StudiaOra.leggi()) { apriSessione(); return; } const a = adesso(); if (a.minuti) { StudiaOra.avvia(a.minuti); setTimeout(apriSessione, 50); } else apriStudiaOra(); }
+  if (az === 'condividi') conStrumentiQuiz(() => CentroUI.apri(condiviso));
+  else if (az === 'studia') { if (StudiaOra.leggi()) { apriSessione(); return; } const a = adesso(); if (a.minuti) { StudiaOra.avvia(a.minuti); setTimeout(apriSessione, 50); } else apriStudiaOra(); }
   else if (az === 'aggiungi') apriNuovo();
   else if (az === 'ripassa') avviaCarte(undefined, 'Flashcard');
 }
@@ -206,7 +211,7 @@ async function avvia(): Promise<void> {
   Stato.pulisci(); // v0.17: lapidi vecchie del registro notifiche
   Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
   Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
-  Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo')) disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva) Spiega.recuperaDaDrive(); if (Drive.stato.sync === 'ok' && Dominio.serveBenvenuto()) Dominio.benvenuto(); });   // v0.52: wizard di benvenuto per gli ospiti
+  Drive.ascolta(() => { if (Drive.stato.sync === 'ok') Studio.migraMaterieBase(); if (!document.querySelector('.foglio-sfondo')) disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva) Spiega.recuperaDaDrive(); if (Drive.stato.sync === 'ok' && Dominio.serveBenvenuto()) Dominio.benvenuto(); });   // v0.52: wizard di benvenuto per gli ospiti
   attivaSimboli();
   Tocco.attiva();
   disegna();
@@ -217,6 +222,7 @@ async function avvia(): Promise<void> {
   Drive.precarica();
   Timer.parti();
   Studio.caricaDalSito();
+  Studio.migraMaterieBase();
   if (Drive.collegato && navigator.onLine) Drive.sincronizza(false);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applicaTema);
 

@@ -8,8 +8,10 @@ interface CreazioneRec extends Rec, StatoCreazione {
   type: 'creazione'; materia: string; nomeMateria: string; step: string; titolo?: string; data?: string;
   intensita?: OpzMP['intensita']; piano?: PianoCentro; fonti?: FontiSQ;
   /** T12: ultima verifica delle citazioni sul PDF (problemi con la fonte di allora: valgono finché la fonte non cambia). */
-  citazioni?: { quando: string; libro: string; ok: number; dubbi: string[]; registro: string[]; problemi: Array<ProblemaQ & { fonte: string }> };
+  citazioni?: { quando: string; libro: string; firma?: string; drive?: VersionePdfDrive[]; ok: number; dubbi: string[]; registro: string[]; problemi: Array<ProblemaQ & { fonte: string }> };
 }
+
+interface VersionePdfDrive { nome: string; id: string; modificato: string; }
 
 /** v0.64: la piattaforma AI scelta nel passo 1 (un record per account: `acc` lo mette Stato.salva). */
 interface ProfiloAIRec extends Rec { type: 'profiloai'; profilo: ProfiloAI; }
@@ -61,23 +63,43 @@ const CentroUI = (() => {
     const corr = DiagnosiQuiz.promptCorrezione(qs, problemi, { avvisi });
     return { v, problemi, corr };
   }
-  /** Problemi di citazione ancora validi: la domanda c'è e la sua fonte è quella verificata (dopo una patch alla fonte si riverifica). */
-  const problemiCit = (r: CreazioneRec, qs: DomAI[]): ProblemaQ[] => (r.citazioni ? r.citazioni.problemi : [])
-    .filter(p => qs.some(q => String(q.id) === p.id && q.fonte === p.fonte)).map(p => ({ sev: p.sev, id: p.id, msg: p.msg }));
-  /** Libri del record con una mappa delle pagine utilizzabile (fonte ≠ nessuna): il primo serve alla verifica delle citazioni. */
+  /** Libri del record con una mappa delle pagine utilizzabile: il primo serve alla verifica delle citazioni. */
   const libriVerificabili = (r: CreazioneRec) => (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, l.nome)))
     .filter((x): x is LibroRec => !!x && !x.deleted && x.fonte !== 'nessuna' && !!x.mappa && x.mappa.fonte !== 'nessuna' && x.mappa.tratti.length > 0);
-  const pdfScelti = new Map<string, Blob>();   // PDF scelti dal dispositivo in questa sessione (nome del file → contenuto)
-  /** Un PDF del libro: scelto dal dispositivo, se no da Drive per nome (cache «imc-pdf»: scaricato una volta sola). */
-  async function datiPdf(nome: string): Promise<Uint8Array> {
-    const loc = pdfScelti.get(nome);
-    if (loc) return new Uint8Array(await loc.arrayBuffer());
+  const pdfScelti = new Map<string, { file: Blob; versione: string }>();
+  const validitaDrive = new Map<string, 'attesa' | 'valida' | 'cambiata' | 'non-disponibile'>();
+  const chiavePdf = (l: LibroRec, nome: string) => JSON.stringify([Drive.stato.email, l.id, nome]);
+  const versionePdf = (l: LibroRec, nome: string) => pdfScelti.get(chiavePdf(l, nome))?.versione;
+  function firmaCitazioni(l: LibroRec, qs: DomAI[]): string {
+    return sha256Hex(JSON.stringify([l.id, l.mappa, l.pdf.map(f => [f, versionePdf(l, f.nome)]),
+      qs.map(q => [q.id, q.domanda, q.fonte])]));
+  }
+  const chiaveValidita = (r: CreazioneRec) => JSON.stringify([Drive.stato.email, r.id, r.citazioni?.firma, r.citazioni?.drive]);
+  function citazioniValide(r: CreazioneRec, qs: DomAI[]): boolean {
+    const l = libriVerificabili(r)[0], c = r.citazioni;
+    if (!l || !c?.firma || c.firma !== firmaCitazioni(l, qs) || !c.drive) return false;
+    return c.drive.length === 0 || validitaDrive.get(chiaveValidita(r)) === 'valida';
+  }
+  function problemiCit(r: CreazioneRec, qs: DomAI[]): ProblemaQ[] {
+    const c = r.citazioni;
+    if (!c || !citazioniValide(r, qs)) return [];
+    return c.problemi.map(({ sev, id, msg }) => ({ sev, id, msg }));
+  }
+  async function pdfDrive(nome: string): Promise<VersionePdfDrive> {
     const f = (await Drive.cerca(nome.replace(/\.pdf$/i, ''), 'application/pdf')).find(x => x.name === nome);
     if (!f) throw new Error('«' + nome + '» non trovato su Drive');
-    return PdfCache.prendi(f.id);
+    return { nome, id: f.id, modificato: f.modifiedTime };
+  }
+  /** Un PDF del libro: scelto dal dispositivo, se no da Drive per nome (cache «imc-pdf»: scaricato una volta sola). */
+  async function datiPdf(l: LibroRec, nome: string, versioni?: Map<string, VersionePdfDrive>): Promise<Uint8Array> {
+    const loc = pdfScelti.get(chiavePdf(l, nome));
+    if (loc) return new Uint8Array(await loc.file.arrayBuffer());
+    const f = await pdfDrive(nome);
+    if (versioni) versioni.set(nome, f);
+    return PdfCache.prendi(f.id, undefined, f.modificato);
   }
   /** Testo delle pagine PDF assolute richieste, aprendo ogni segmento del libro una volta sola (pdf.js senza eval). */
-  async function testiPagine(l: LibroRec, pagine: number[], avanza: (m: string) => void): Promise<Map<number, string>> {
+  async function testiPagine(l: LibroRec, pagine: number[], avanza: (m: string) => void, versioni?: Map<string, VersionePdfDrive>): Promise<Map<number, string>> {
     const testi = new Map<number, string>();
     const seg = l.pdf.map(f => ({ nome: f.nome, base: f.segmentoDa ? f.segmentoDa - 1 : 0 })).sort((a, b) => a.base - b.base);
     const L = await caricaPdfJs();
@@ -85,7 +107,7 @@ const CentroUI = (() => {
       const fine = k + 1 < seg.length ? seg[k + 1].base : Infinity, mie = pagine.filter(p => p > sg.base && p <= fine);
       if (!mie.length) continue;
       avanza('Apro «' + sg.nome + '»…');
-      const doc = await L.getDocument({ data: await datiPdf(sg.nome), isEvalSupported: false }).promise;
+      const doc = await L.getDocument({ data: await datiPdf(l, sg.nome, versioni), isEvalSupported: false }).promise;
       try {
         for (const p of mie) {
           if (p - sg.base > doc.numPages) continue;
@@ -160,9 +182,11 @@ const CentroUI = (() => {
       problemi.length > max ? h('li.tenue', null, '…e altri ' + (problemi.length - max)) : null)
     : null;
 
-  function apri(): void {
+  function apri(testoCondiviso: string | null = null): void {
+    const condiviso = testoCondiviso === null ? null : String(testoCondiviso);
     let rec: CreazioneRec | null = aperte()[0] || null;
-    let passo = rec ? Centro.passoDi(rec) : 1;
+    let passo = condiviso === null ? (rec ? Centro.passoDi(rec) : 1) : 4;
+    if (rec?.citazioni?.drive) validitaDrive.delete(chiaveValidita(rec));
     const indicatore = h('p.centro-passo', { role: 'status', 'aria-live': 'polite' });
     const indietro = h('button.chip', { type: 'button', 'aria-label': 'Torna al passo precedente' }, '← Indietro') as HTMLButtonElement;
     const zona = h('div.centro-zona');
@@ -171,7 +195,36 @@ const CentroUI = (() => {
     let nota: HTMLElement | null = null;      // esito dell'ultima azione, mostrato in cima al passo successivo
     let registroRip: string[] = [];          // riparazioni automatiche fatte in questa apertura
     function salva(r: CreazioneRec): void { Stato.salva(r, true); rec = r; }
+    async function riconfermaDrive(r: CreazioneRec, forza = false): Promise<void> {
+      const c = r.citazioni;
+      if (!c?.drive?.length) return;
+      const k = chiaveValidita(r);
+      if (!forza && validitaDrive.has(k)) return;
+      validitaDrive.set(k, 'attesa');
+      try {
+        const correnti = await Promise.all(c.drive.map(x => pdfDrive(x.nome)));
+        validitaDrive.set(k, JSON.stringify(correnti) === JSON.stringify(c.drive) ? 'valida' : 'cambiata');
+      } catch (e) {
+        console.warn('[centro] riconferma PDF Drive', e);
+        validitaDrive.set(k, 'non-disponibile');
+      }
+      if (rec && rec.id === r.id && passo === 4) vai(4);
+    }
+    function ricontrolla(): void {
+      if (rec?.citazioni?.drive?.length) void riconfermaDrive(rec, true);
+      vai(4);
+    }
     function vai(n: number): void {
+      if (condiviso !== null) {
+        passo = 4;
+        indicatore.textContent = 'Passo 4 di 7 · Controllo — risposta condivisa';
+        indietro.disabled = true;
+        svuota(zona);
+        zona.appendChild(passoCondiviso(condiviso));
+        const primoCondiviso = zona.querySelector<HTMLElement>('button, textarea');
+        if (primoCondiviso) primoCondiviso.focus({ preventScroll: true });
+        return;
+      }
       passo = Math.max(1, Math.min(7, n));
       indicatore.textContent = 'Passo ' + passo + ' di 7 · ' + PASSI[passo - 1] + (rec ? ' — ' + rec.nomeMateria + ' · step ' + rec.step : '');
       indietro.disabled = passo === 1;
@@ -180,6 +233,7 @@ const CentroUI = (() => {
         : passo === 4 ? passoControllo() : passo === 5 ? passoCorreggi() : passo === 6 ? passoProva() : passoImporta();
       if (nota) { corpo.insertBefore(nota, corpo.firstChild); nota = null; }
       zona.appendChild(corpo);
+      if (passo === 4 && rec?.citazioni?.drive?.length && !validitaDrive.has(chiaveValidita(rec))) void riconfermaDrive(rec);
       const primo = zona.querySelector<HTMLElement>('input, select, textarea, button');
       if (primo) primo.focus({ preventScroll: true });
     }
@@ -268,6 +322,31 @@ const CentroUI = (() => {
       out.value = testo;
       return [h('button.btn', { type: 'button', onclick: () => { StrumentiQuiz.copia(testo, out); } }, bottone), out];
     };
+
+    /** T12 v0.64.1: controllo effimero del testo condiviso; non scrive alcun record. */
+    function passoCondiviso(testo: string): HTMLElement {
+      const originale = h('textarea', { rows: 5, readonly: true, 'aria-label': 'Testo condiviso da controllare', spellcheck: 'false' }) as HTMLTextAreaElement;
+      originale.value = testo;
+      const l = Contratto.leggi(testo), quiz = FORMATI_QUIZ.includes(l.formato);
+      const errore = l.errori[0] || (l.formato === 'ignoto' ? 'Serve un blocco JSON con «quiz».' : 'Il testo è un ' + l.formato + ', non una risposta quiz.');
+      const continua = l.troncato ? copiabile(Contratto.continua(l, { perScheda: PER() }), 'Prompt per continuare la risposta condivisa', 'Copia «continua da qui»') : [];
+      if (!quiz) return h('div.centro-passo-corpo', null,
+        h('p.piccolo', null, '✗ Non trovo domande di quiz. ' + errore),
+        ...continua,
+        h('details', null, h('summary.piccolo', null, 'Testo ricevuto'), originale));
+      const grezze = Contratto.aQuiz(l), rip = Validatore.ripara(grezze), qs = rip.qs as DomAI[];
+      const { v, problemi, corr } = controlla(qs), err = problemi.filter(p => p.sev === 'err'), warn = problemi.filter(p => p.sev !== 'err');
+      return h('div.centro-passo-corpo', null,
+        h('p.piccolo', null, h('b', null, qs.length + ' domande condivise'), ' · pronte da importare ' + v.pronte + ' · da correggere con patch ' + corr.nDomande),
+        l.troncato ? h('p.piccolo', null, '✂️ La risposta sembra interrotta: le domande complete restano visibili qui.') : null,
+        rip.log.length ? h('details', null, h('summary.piccolo', null, '↔ Riparazioni applicabili: ' + rip.log.length),
+          h('ul.piccolo.tenue.centro-avvisi', { 'aria-label': 'Riparazioni della risposta condivisa' }, ...rip.log.map(t => h('li', null, t)))) : null,
+        err.length ? h('h3.centro-sotto', null, '✗ Da rifare') : null, elencoProblemi(err, 'Problemi da rifare'),
+        warn.length ? h('details', null, h('summary.piccolo', null, '⚠️ Avvisi di qualità: ' + warn.length), elencoProblemi(warn, 'Avvisi di qualità')) : null,
+        !problemi.length ? h('p.piccolo', null, '✓ Nessun problema trovato.') : null,
+        ...continua,
+        h('details', null, h('summary.piccolo', null, 'Testo ricevuto'), originale));
+    }
 
     function passoPiano(): HTMLElement {
       const r = rec!;
@@ -509,7 +588,7 @@ const CentroUI = (() => {
         h('div.chips', null,
           daCorreggere ? h('button.btn', { type: 'button', onclick: () => vai(5) }, 'Correggi ' + daCorreggere + (daCorreggere === 1 ? ' domanda →' : ' domande →'))
             : h('button.btn', { type: 'button', onclick: () => vai(6) }, 'Avanti: Prova →'),
-          h('button.chip', { type: 'button', onclick: () => vai(4) }, '🔁 Ricontrolla'),
+          h('button.chip', { type: 'button', onclick: ricontrolla }, '🔁 Ricontrolla'),
           h('button.chip', { type: 'button', onclick: () => vai(3) }, '📋 Torna alle schede')));
     }
 
@@ -520,19 +599,25 @@ const CentroUI = (() => {
         h('p.piccolo.tenue', null, 'Nessun libro con la mappa delle pagine: le citazioni non si possono verificare sul PDF (Obiettivo → Fonti → ⚙️ Pagine).'));
       const stato = h('span.piccolo', { role: 'status' }), btn = h('button.chip', { type: 'button', 'aria-label': 'Verifica le citazioni sul PDF di ' + l.nome }, '🔎 Verifica le citazioni sul PDF') as HTMLButtonElement;
       const scegli = h('input', { type: 'file', accept: 'application/pdf', multiple: true, 'aria-label': 'Scegli dal dispositivo il PDF di ' + l.nome }) as HTMLInputElement;
-      scegli.addEventListener('change', () => { for (const f of Array.from(scegli.files || [])) pdfScelti.set(f.name, f);
-        for (const [k, v] of testiPer) if (v === null) testiPer.delete(k);   // PDF scelto ora: il prompt del Quiz riprova a estrarre il testo
-        stato.textContent = (scegli.files || []).length + ' PDF scelti: ora verifica.'; });
+      scegli.addEventListener('change', () => { for (const f of Array.from(scegli.files || [])) pdfScelti.set(chiavePdf(l, f.name), { file: f, versione: f.size + ':' + f.lastModified });
+        testiPer.clear();   // il PDF scelto può avere lo stesso nome ma contenuto diverso
+        nota = notaDi([(scegli.files || []).length + ' PDF scelti: ora verifica.']);
+        vai(4); });
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {
           const pagine = Centro.pagineDaLeggere(qs, l.mappa);
           if (!pagine.length) { stato.textContent = 'Nessuna citazione con numero di pagina da verificare.'; return; }
-          const testi = await testiPagine(l, pagine, m => { stato.textContent = m; });
+          const versioni = new Map<string, VersionePdfDrive>();
+          const testi = await testiPagine(l, pagine, m => { stato.textContent = m; }, versioni);
           const { qs: dopo, daScheda } = domande(r), res = Centro.verificaCitazioni(dopo, l.mappa, p => testi.get(p) || '');
           if (res.registro.length) salvaDomande(r, res.qs, daScheda);
           const fonteDi = (id: string) => String((res.qs.find(q => String(q.id) === id) || {}).fonte || '');
-          salva({ ...r, citazioni: { quando: ymd(new Date()), libro: l.nome, ok: res.ok, dubbi: res.dubbi, registro: res.registro, problemi: res.problemi.map(p => ({ ...p, fonte: fonteDi(p.id) })) } });
+          const nuovo: CreazioneRec = { ...r, citazioni: { quando: ymd(new Date()), libro: l.nome, firma: firmaCitazioni(l, res.qs),
+            drive: Array.from(versioni.values()), ok: res.ok, dubbi: res.dubbi, registro: res.registro,
+            problemi: res.problemi.map(p => ({ ...p, fonte: fonteDi(p.id) })) } };
+          validitaDrive.set(chiaveValidita(nuovo), 'valida');
+          salva(nuovo);
           vai(4);
         } catch (e) {
           console.warn('[centro] verifica citazioni', e);
@@ -540,13 +625,14 @@ const CentroUI = (() => {
           btn.disabled = false;
         }
       });
-      const fatto = c && c.libro === l.nome ? (() => {
+      const fatto = c && c.libro === l.nome && citazioniValide(r, qs) ? (() => {
         const [a, m, g] = c.quando.split('-'), np = problemiCit(r, qs).length;
         return [h('p.piccolo', null, 'Verificate il ' + g + '/' + m + '/' + a + ' su «' + l.nome + '»: ✅ ' + c.ok + ' giuste · ↔ ' + c.registro.length + ' corrette da sole · ⚠/✗ ' + np + ' nel prompt di correzione · ❓ ' + c.dubbi.length + ' non verificabili'),
           c.dubbi.length ? h('p.piccolo.tenue', null, '❓ Pagina senza testo leggibile o citazione senza numero: ' + c.dubbi.join(', ') + '. Controllale tu sul libro.') : null,
           c.registro.length ? h('details', null, h('summary.piccolo', null, '↔ Citazioni corrette sulla pagina accanto: ' + c.registro.length),
             h('ul.piccolo.tenue.centro-avvisi', { 'aria-label': 'Citazioni corrette' }, ...c.registro.map(t => h('li', null, t)))) : null];
-      })() : [h('p.piccolo.tenue', null, 'Controlla che ogni «fonte» citi la pagina giusta di «' + l.nome + '»: l\'app legge la pagina (e quelle accanto) e cerca le parole chiave della domanda.' + (libri.length > 1 ? ' Si usa il primo libro con la mappa.' : ''))];
+      })() : [c ? h('p.piccolo', null, 'Verifica precedente da ripetere: la fonte è cambiata o deve essere riconfermata.')
+        : h('p.piccolo.tenue', null, 'Controlla che ogni «fonte» citi la pagina giusta di «' + l.nome + '»: l\'app legge la pagina (e quelle accanto) e cerca le parole chiave della domanda.' + (libri.length > 1 ? ' Si usa il primo libro con la mappa.' : ''))];
       return h('div', null, h('h3.centro-sotto', null, '📖 Citazioni sul libro'), ...fatto,
         h('div.chips', null, btn, h('label.piccolo', null, 'PDF dal dispositivo: ', scegli)), stato);
     }
@@ -580,7 +666,7 @@ const CentroUI = (() => {
         h('h3.centro-sotto', null, 'Patch dell\'AI'),
         rispostaAI('Patch JSON dell\'AI', 'Incolla qui le patch ([{"id":"…","campo":"…"}])…', '🩹 Applica le patch', applica),
         h('div.chips', null,
-          h('button.chip', { type: 'button', onclick: () => vai(4) }, '🔁 Ricontrolla'),
+          h('button.chip', { type: 'button', onclick: ricontrolla }, '🔁 Ricontrolla'),
           h('button.chip', { type: 'button', 'aria-label': 'Prosegui senza correggere: le domande bloccate non si importano',
             onclick: () => { salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere: 0 } }); vai(6); } }, '⏭ Prosegui senza correggere')));
     }

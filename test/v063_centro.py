@@ -98,6 +98,26 @@ with sync_playwright() as p:
     ok(len(f2) == 1 and '[[Manuale, p. 2]]' not in f2[0] and ('p. 1]]' in f2[0] or 'p. 3]]' in f2[0]), 'la fonte di p. 2 è corretta nel quiz salvato (%s)' % f2)
     ok('Verificate il 20/11/2026' in zona().inner_text(), 'riepilogo della verifica nel Controllo')
 
+    pg.evaluate("""() => {
+      const l = Stato.prendi(Centro.idLibro('Biologia', 'Manuale'));
+      Stato.salva({ ...l, mappa: { ...l.mappa, tratti: l.mappa.tratti.map(t => ({ ...t, stampDa: t.stampDa + 1 })) } }, true);
+    }""")
+    zona().get_by_role('button', name='Ricontrolla', exact=False).click()
+    ok('Verifica precedente da ripetere' in zona().inner_text() and 'Verificate il' not in zona().inner_text(),
+       'modifica della mappa: il riepilogo precedente non vale più')
+    pg.evaluate("""() => {
+      const l = Stato.prendi(Centro.idLibro('Biologia', 'Manuale'));
+      Stato.salva({ ...l, mappa: { ...l.mappa, tratti: l.mappa.tratti.map(t => ({ ...t, stampDa: t.stampDa - 1 })) } }, true);
+    }""")
+    zona().get_by_role('button', name='Ricontrolla', exact=False).click()
+    ok('Verificate il 20/11/2026' in zona().inner_text(), 'ripristino della mappa: si riusa la verifica corrispondente')
+    with open(PDF, 'rb') as originale:
+        sostituto = originale.read().replace(b'glicolisi', b'cellulare')
+    pg.get_by_label('Scegli dal dispositivo il PDF di Manuale').set_input_files(
+        {'name': 'Manuale.pdf', 'mimeType': 'application/pdf', 'buffer': sostituto})
+    ok('Verifica precedente da ripetere' in zona().inner_text() and 'Verificate il' not in zona().inner_text(),
+       'PDF sostituito con lo stesso nome: il riepilogo precedente non vale più')
+
     zona().locator('button', has_text='Correggi').first.click(); pg.wait_for_timeout(300)
     ok('Passo 5 di 7' in passo(), 'Correggi apre il passo 5 con il prompt di correzione')
     rotta = pg.evaluate("Stato.prendi('prq-biologia-3.3-s1').quiz.find(q => q.opzioni.length !== 4).id")
@@ -133,6 +153,35 @@ with sync_playwright() as p:
     senza = pg.evaluate("[...document.querySelectorAll('.foglio button, .foglio input, .foglio select, .foglio textarea')].filter(b => !(b.getAttribute('aria-label') || (b.labels && b.labels.length) || b.textContent.trim())).length")
     ok(senza == 0, 'nessun controllo senza nome nel foglio (%d)' % senza)
     ok(not pg.evaluate("document.querySelector('.foglio').scrollWidth > document.querySelector('.foglio').clientWidth"), 'nessuno sforamento orizzontale a 375 px')
+
+    # Un PDF remoto cambiato conserva l'id ma non la revisione: cache e verifica devono accorgersene.
+    pdf_bytes = list(open(PDF, 'rb').read())
+    pg.reload(); pg.wait_for_selector('.tabbar')
+    pg.evaluate("""([bytes, mappa]) => {
+      window._driveMod = '2026-11-20T08:00:00Z'; window._pdfCalls = [];
+      Drive.cerca = async () => [{ id: 'pdf-remoto', name: 'Manuale.pdf', mimeType: 'application/pdf', webViewLink: '', modifiedTime: window._driveMod }];
+      PdfCache.prendi = async (id, avanz, versione) => { window._pdfCalls.push([id, versione]); return new Uint8Array(bytes); };
+      const r = Stato.prendi('cre-biologia-3.3');
+      Stato.salva({ ...r, deleted: false, esiti: { controllato: true, daCorreggere: 0 } }, true);
+      conStrumentiQuiz(() => {
+        const l = Stato.prendi(Centro.idLibro('Biologia', 'Manuale'));
+        Stato.salva({ ...l, mappa }, true);
+        CentroUI.apri();
+      });
+    }""", [pdf_bytes, MAPPA])
+    pg.wait_for_selector('.centro-zona'); pg.get_by_role('button', name='Torna al passo precedente').click(); pg.get_by_role('button', name='Torna al passo precedente').click()
+    ok('Passo 4 di 7' in passo(), 'fixture remota riaperta al Controllo')
+    pg.get_by_role('button', name='Verifica le citazioni sul PDF di Manuale').click()
+    pg.wait_for_function("((Stato.prendi('cre-biologia-3.3').citazioni || {}).drive || []).length > 0", timeout=15000)
+    c = pg.evaluate("Stato.prendi('cre-biologia-3.3').citazioni")
+    chiamate = pg.evaluate("window._pdfCalls")
+    ok(c['drive'] == [{'nome': 'Manuale.pdf', 'id': 'pdf-remoto', 'modificato': '2026-11-20T08:00:00Z'}],
+       'la verifica salva id e revisione del PDF Drive')
+    ok(chiamate and chiamate[-1] == ['pdf-remoto', '2026-11-20T08:00:00Z'], 'la cache PDF usa anche modifiedTime (%s)' % chiamate)
+    pg.evaluate("window._driveMod = '2026-11-21T08:00:00Z'")
+    zona().get_by_role('button', name='Ricontrolla', exact=False).click()
+    pg.wait_for_function("document.querySelector('.centro-zona').innerText.includes('Verifica precedente da ripetere')")
+    ok('Verificate il' not in zona().inner_text(), 'modifica del PDF Drive: il riepilogo precedente non vale più')
 
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)

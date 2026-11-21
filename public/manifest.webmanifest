@@ -9,6 +9,12 @@
   "orientation": "any",
   "background_color": "#0e1014",
   "theme_color": "#0e1014",
+  "share_target": {
+    "action": "./?az=condividi",
+    "method": "GET",
+    "enctype": "application/x-www-form-urlencoded",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  },
   "shortcuts": [
     { "name": "Studia ora", "short_name": "Studia", "description": "Avvia subito la sessione consigliata", "url": "./?az=studia", "icons": [{ "src": "icone/icona-192.png", "sizes": "192x192" }] },
     { "name": "Aggiungi", "short_name": "Aggiungi", "description": "Nuovo impegno", "url": "./?az=aggiungi", "icons": [{ "src": "icone/icona-192.png", "sizes": "192x192" }] },

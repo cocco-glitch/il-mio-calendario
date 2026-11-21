@@ -150,7 +150,8 @@ t('v0.57.1 Q1: cloze da appunto — {{x}} = risposta x, «q :: r» = domanda/ris
   vero(c.every(x => !/\{\{|\}\}|::/.test(x.q)), 'nessuna graffa o :: nel testo');
 });
 t('v0.57.1 D1/D2/D3/D5/Q3/Q6: guardie statiche', () => {
-  vero(/MATERIE_BASE\)\.filter\(\(\) => Drive\.eProprietario\(\)\)/.test(leggi('07-pianiai.ts')), 'D1 pianiai');
+  vero(!/MATERIE_BASE/.test(leggi('07-studio.ts') + leggi('07-dominio.ts') + leggi('07-extra.ts') + leggi('07-pianiai.ts') + leggi('07-quizapp.ts'))
+    && /Stato\.tutti<MateriaRec>\('materia'\)/.test(leggi('07-pianiai.ts')), 'D1/T11 materie solo dai record');
   vero(/Drive\.eProprietario\(\) \? \['Chimica'/.test(leggi('07-creaquiz.ts')), 'D2 creaquiz');
   vero(/case 'studiaora': return widgetStudiaOra\(\)/.test(leggi('08-viste.ts')), 'D3 Studia ora (v0.58: sempre)');
   vero(/MATRICE_LIVELLI\.map\(/.test(leggi('07-pianiai.ts')) && !/MATRICE_5_LIVELLI/.test(leggi('07-pianiai.ts')), 'D5 → v0.60: wizard 1–3');

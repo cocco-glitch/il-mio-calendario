@@ -225,7 +225,7 @@ function salvaPacchetto(pk: PkStep): void {
   pk.materie = pk.materie.filter(m => !m.sottostep.length || m.sottostep.some(x => !x.innesto)).map(m => ({ ...m, sottostep: m.sottostep.filter(x => !x.innesto).map(x => x.microstep.some(z => z.innesto) ? { ...x, microstep: x.microstep.filter(z => !z.innesto) } : x) }));
   pk.aggiornato = ymd(new Date()); const r = pacchettoRec(pk) || { id: 'pk-' + pk.id, type: 'pacchetto', updatedAt: 0 } as Rec; r.contenuto = pk; r.deleted = false; Stato.salva(r); }
 function nuovoCodice(nome: string): string {
-  const usati = new Set([...Object.keys(MATERIE_BASE), ...tutteLeSchede().map(x => x.mat.m), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m)), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice)]);
+  const usati = new Set([...tutteLeSchede().map(x => x.mat.m), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m)), ...Stato.tutti<MateriaRec>('materia').map(m => m.codice)]);
   const base = norm(nome).replace(/[^a-z]/g, '').toUpperCase() || 'M';
   for (let l = 2; l <= base.length; l++) if (!usati.has(base.slice(0, l))) return base.slice(0, l);
   let i = 2; while (usati.has(base.slice(0, 3) + 'X'.repeat(i - 1))) i++; return base.slice(0, 3) + 'X'.repeat(i - 1);
