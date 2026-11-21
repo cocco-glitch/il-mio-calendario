@@ -5461,7 +5461,7 @@ const Cattura = (() => {
         else
             salva(ctx.schedaId, d);
     }
-    function salva(id, d) {
+    function salva(id, d, ritiraRisposte) {
         const oggiK = ymd(new Date());
         const p0 = Studio.prog(id), primaProg = p0 ? JSON.parse(JSON.stringify(p0)) : null;
         const t = trovaScheda(id), idMem = t ? 'mem-sub-' + t.k : '';
@@ -5478,7 +5478,12 @@ const Cattura = (() => {
             Studio.segna(id, { fatta: true, data: oggiK, punteggio: d.pct, deboli: d.livelli && d.livelli.length ? d.livelli : undefined });
             testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
         }
+        let ritirato = false;
         const annulla = () => {
+            if (ritirato)
+                return;
+            ritirato = true;
+            ritiraRisposte?.();
             annullaDom();
             if (primaProg)
                 Stato.salva(primaProg);
@@ -5652,6 +5657,7 @@ function widgetRipassa() {
 }
 
 const CreaQuiz = (() => {
+    const limiteTesto = (n) => Math.floor((IA.gemini ? 120000 : 22000) / Math.max(1, n));
     const LV = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
     const n2 = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[«»"“”‘’']/g, '').replace(/\s+/g, ' ').trim();
     const parole = (s) => new Set(n2(s).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(w => w.length > 3));
@@ -5753,7 +5759,7 @@ const CreaQuiz = (() => {
         }
     }
     const REGOLE = [
-        'Stile: test di ammissione / semestre filtro di Medicina italiano. Italiano corretto, frasi chiare, nessun refuso.',
+        'Adatta il linguaggio, gli esempi e le applicazioni alla materia e alle fonti indicate. Italiano corretto e frasi chiare.',
         'Usa SOLO le informazioni delle FONTI: niente dati, numeri o fatti che non ci sono. Se un calcolo serve, i dati devono essere nel testo della domanda.',
         'Multiple (t:"mcq"): 5 opzioni in "o", la CORRETTA È SEMPRE LA PRIMA (verranno mescolate). La corretta NON deve essere la più lunga né la più dettagliata: scrivila breve e simile ai distrattori; allunga i distrattori se serve. Ogni distrattore nasce da un errore tipico preciso (formula invertita, unità non convertita, fattore 2, concetti simili confusi, lettura affrettata).',
         'Completamenti (t:"fill", lv:"Completamento"): testo con «……» al posto della risposta; "a" = risposte accettate DIGITABILI da tastiera iPhone (numeri semplici, parole; niente apici, pedici, ², ⁻, ·, Δ, π, →); varianti utili (sinonimi, singolare/plurale, con/senza unità); "show" = risposta da mostrare.',
@@ -5763,10 +5769,12 @@ const CreaQuiz = (() => {
         '"cit" = 1-2 citazioni copiate PAROLA PER PAROLA dalle FONTI (frase intera, 10-50 parole), con "f" = nome del file e pagina come indicato tra [[ ]]. Non riformulare le citazioni. "r" = fonte breve (file, pagina).',
         'Niente domande duplicate o quasi uguali tra loro né con quelle elencate come già presenti.',
     ];
-    function msgGenera(o, fonti, nMcq, nFill, gia, feedback = '') {
-        return [{ role: 'system', content: 'Sei un docente esperto che scrive schede di quiz di ' + o.materia + '. Regole obbligatorie:\n- ' + REGOLE.join('\n- ') + MemoriaIA.linee('quiz', 8) + '\nRispondi SOLO con JSON valido: {"domande":[{"t","lv","q","o","e","ew","a","show","r","cit":[{"t","f"}]}]}.' },
+    function msgGenera(o, fonti, nMcq, nFill, gia, applicazioni, feedback = '') {
+        return [{ role: 'system', content: 'Sei un docente esperto che scrive schede di quiz di ' + o.materia + '. Regole obbligatorie:\n- ' + REGOLE.join('\n- ') + MemoriaIA.linee('quiz', 8) + '\nRispondi SOLO con JSON valido: {"applicazioni":["sottoargomento — azione concreta"],"domande":[{"applicazione","t","lv","q","o","e","ew","a","show","r","cit":[{"t","f"}]}]}.' },
             { role: 'user', content: 'ARGOMENTO: ' + o.argomento + '\nCOSA VOGLIO: ' + o.cosa + (o.extra ? '\nINDICAZIONI: ' + o.extra : '') + '\n\nScrivi ' + (nMcq ? nMcq + ' domande a risposta multipla' : '') + (nMcq && nFill ? ' e ' : '') + (nFill ? nFill + ' completamenti' : '') + ' (prima le multiple).'
-                    + (gia.length ? '\n\nDOMANDE GIÀ PRESENTI (non ripeterle):\n- ' + gia.slice(0, 40).join('\n- ') : '') + (feedback ? '\n\nCORREGGI QUESTI PROBLEMI:\n' + feedback : '')
+                    + (applicazioni.length ? '\nUsa queste applicazioni, copiando il nome esatto in ogni domanda: ' + JSON.stringify(applicazioni)
+                        : '\nRicava dalle fonti le applicazioni richieste per questo argomento, incluse quelle che non entrano nel quiz. Elencale in applicazioni. Per ogni domanda copia in applicazione la voce che mette alla prova.')
+                    + (gia.length ? '\n\nDOMANDE GIÀ PRESENTI (non ripeterle):\n- ' + gia.slice(-40).join('\n- ') : '') + (feedback ? '\n\nCORREGGI QUESTI PROBLEMI:\n' + feedback : '')
                     + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }];
     }
     const NON_DIGITABILE = /[²³¹⁰⁴-⁹⁻⁺·×÷Δδπ→←↔≈≠≤≥√∞°µ±_^]/;
@@ -5814,75 +5822,143 @@ const CreaQuiz = (() => {
         }
         else
             p.push('tipo sconosciuto');
-        const ft = n2(fontiTesto).replace(/[^a-z0-9]/g, '');
-        d.cit = (Array.isArray(d.cit) ? d.cit : []).filter((c) => c && typeof c.t === 'string' && c.t.length > 20 && ft.includes(n2(c.t).replace(/[^a-z0-9]/g, '')));
+        const ft = n2(fontiTesto);
+        d.cit = (Array.isArray(d.cit) ? d.cit : []).filter((c) => c && typeof c.t === 'string' && c.t.length > 20 && ft.includes(n2(c.t)));
         if (!d.cit.length)
             p.push('citazione non trovata parola per parola nelle fonti');
-        if (altre.some(q => simile(q, d.q) >= .6))
+        if (altre.some(q => n2(q) === n2(d.q) || simile(q, d.q) >= .6))
             p.push('quasi uguale a un\'altra domanda');
         return p;
     }
-    async function revisiona(ds, fonti, evita) {
+    function chiediMisurato(misure, ...parametri) {
+        const [messaggi, fase] = parametri;
+        misure.push({ fase, caratteri: messaggi.reduce((n, m) => n + m.content.length, 0) });
+        return IA.chiedi(...parametri);
+    }
+    async function revisiona(ds, fonti, evita, specifica = '', misure = []) {
         const L = 'ABCDE', ordini = ds.map(d => d.t === 'mcq' ? mescolaU([0, 1, 2, 3, 4]) : []);
-        const elenco = ds.map((d, i) => d.t === 'mcq' ? i + ') ' + d.q + '\n' + ordini[i].map((k, j) => '   ' + L[j] + ') ' + d.o[k]).join('\n') : i + ') [completamento] ' + d.q);
-        const r = await IA.chiedi([{ role: 'system', content: 'Sei un revisore severo di quiz universitari italiani. Hai SOLO le fonti. Rispondi in JSON.' },
-            { role: 'user', content: 'Risolvi ogni domanda basandoti SOLO sulle fonti, poi controllala. JSON: {"esiti":[{"i":numero,"risposta":"lettera A-E oppure testo del completamento","ambigua":bool,"errori_contenuto":"…o vuoto","errori_italiano":"…o vuoto"}]}. Segnala come ambigua una multipla con più opzioni difendibili. Segnala errori di italiano (ortografia, grammatica, concordanze, punteggiatura) anche piccoli.\n\nDOMANDE:\n' + elenco.join('\n\n') + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }], 'revisiona', { evita, temp: 0 });
+        const elenco = ds.map((d, i) => (d.t === 'mcq' ? i + ') ' + d.q + '\n' + ordini[i].map((k, j) => '   ' + L[j] + ') ' + d.o[k]).join('\n') : i + ') [completamento] ' + d.q) + (d.applicazione ? '\nApplicazione da verificare: ' + d.applicazione : ''));
+        const r = await chiediMisurato(misure, [{ role: 'system', content: 'Sei un revisore severo di quiz universitari italiani. Hai SOLO le fonti. Rispondi in JSON.' },
+            { role: 'user', content: 'Risolvi ogni domanda basandoti SOLO sulle fonti, poi controllala. JSON: {"esiti":[{"i":numero,"risposta":"lettera A-E oppure testo del completamento","ambigua":bool,"errori_contenuto":"…o vuoto","errori_italiano":"…o vuoto"}]}. Se è indicata una applicazione, restituisci anche applicazione_verificata (booleano): vera solo se la fonte sostiene questa applicazione e rispondere richiede davvero quella capacità. Segnala in errori_contenuto gli indizi da dettaglio, concordanza grammaticale o ripetizione della consegna, i distrattori implausibili e gli scostamenti dalla specifica confermata. ' + specifica + ' Segnala come ambigua una multipla con più opzioni difendibili. Segnala errori di italiano (ortografia, grammatica, concordanze, punteggiatura) anche piccoli.\n\nDOMANDE:\n' + elenco.join('\n\n') + '\n\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') }], 'revisiona', { evita, temp: 0 });
         const esiti = new Map();
         for (const x of (r.j && r.j.esiti) || []) {
-            const i = +x.i, d = ds[i];
-            if (!d)
+            if (!x || !Number.isInteger(x.i) || !ds[x.i])
                 continue;
-            const p = [];
+            const i = x.i, d = ds[i], p = [];
+            if (esiti.has(i) || typeof x.risposta !== 'string' || !x.risposta.trim() ||
+                typeof x.ambigua !== 'boolean' || typeof x.errori_contenuto !== 'string' || typeof x.errori_italiano !== 'string') {
+                esiti.set(i, ['Esito incompleto o duplicato.']);
+                continue;
+            }
             if (d.t === 'mcq') {
-                const k = L.indexOf(String(x.risposta || '').trim().toUpperCase().charAt(0));
+                const lettera = x.risposta.trim().toUpperCase();
+                const k = /^[A-E]$/.test(lettera) ? L.indexOf(lettera) : -1;
                 if (k < 0 || ordini[i][k] !== 0)
                     p.push('il revisore, risolvendola alla cieca, ha scelto un\'altra opzione: la domanda è ambigua o la risposta indicata è sbagliata');
             }
             else if (!giustaR(String(x.risposta || ''), d.a || []))
                 p.push('il revisore ha completato con «' + String(x.risposta || '').slice(0, 40) + '»: rendi la frase univoca o aggiungi la variante se corretta');
+            if (d.applicazione && x.applicazione_verificata !== true)
+                p.push('Applicazione didattica da verificare.');
             if (x.ambigua)
                 p.push('più risposte difendibili');
-            if (x.errori_contenuto && String(x.errori_contenuto).trim().length > 3)
+            if (x.errori_contenuto && String(x.errori_contenuto).trim().length > 0)
                 p.push('contenuto: ' + x.errori_contenuto);
-            if (x.errori_italiano && String(x.errori_italiano).trim().length > 3)
+            if (x.errori_italiano && String(x.errori_italiano).trim().length > 0)
                 p.push('italiano: ' + x.errori_italiano);
-            if (p.length)
-                esiti.set(i, p);
+            esiti.set(i, p);
+        }
+        const correzioni = ds.flatMap((d, i) => esiti.get(i)?.length === 0 ? [{
+                i, domanda: d.q, opzioni: d.o, risposta: d.t === 'mcq' ? d.o[0] : d.a,
+                mostrata: d.show, spiegazione: d.e, motivi: d.ew, citazioni: d.cit,
+            }] : []);
+        if (correzioni.length) {
+            const controllo = await chiediMisurato(misure, [
+                { role: 'system', content: 'Sei un revisore delle correzioni didattiche. Rispondi in JSON.' },
+                { role: 'user', content: 'Verifica sui brani delle fonti la pertinenza delle citazioni, la risposta mostrata, ogni passaggio, formule e unità se pertinenti, e il motivo di ciascun distrattore nel suo ordine. Per i completamenti controlla varianti accettate ed errori tipici. Restituisci {"correzioni":[{"i":numero,"problema":stringa}]}, con problema vuoto solo se tutti i controlli passano.\n' + JSON.stringify(correzioni) + '\nFONTI:\n' + fonti.map(f => f.testo).join('\n\n') },
+            ], 'revisiona', { evita, temp: 0 });
+            const giudizi = Array.isArray(controllo.j?.correzioni) ? controllo.j.correzioni : [];
+            for (const { i } of correzioni) {
+                const voci = giudizi.filter((v) => typeof v === 'object' && v !== null && 'i' in v && v.i === i);
+                if (voci.length !== 1 || typeof voci[0].problema !== 'string')
+                    esiti.set(i, ['Esito incompleto o duplicato.']);
+                else if (voci[0].problema.trim())
+                    esiti.set(i, ['Correzione: ' + voci[0].problema.trim()]);
+            }
         }
         return { esiti, modello: r.modello };
     }
     const normR = (s) => n2(s).replace(',', '.').replace(/[^a-z0-9.\- ]/g, '').trim();
-    function giustaR(v, a) { const x = normR(v); return a.some(y => { const z = normR(y); return x === z || (!!z && x.startsWith(z + ' ')) || (!isNaN(+x.split(' ')[0]) && +x.split(' ')[0] === +z.split(' ')[0] && /\d/.test(z)); }); }
-    async function crea(o, passo) {
+    function giustaR(v, a) { const x = normR(v); return !!x && a.some(y => { const z = normR(y); return x === z || (/^-?\d+(\.\d+)?$/.test(x) && /^-?\d+(\.\d+)?$/.test(z) && Number(x) === Number(z)); }); }
+    async function crea(o, passo, destinazione) {
         const chiavi = Array.from(new Set((o.argomento + ' ' + o.extra).split(/[\s,;:/()«»"]+/).map(n2).filter(w => w.length > 3))).slice(0, 12);
-        const budget = IA.gemini ? 120000 : 22000, fonti = [];
+        const fonti = [];
+        const testoIncollato = o.testoIncollato?.trim();
+        const quota = limiteTesto(o.fonti.length + (testoIncollato ? 1 : 0));
+        if (testoIncollato) {
+            if (testoIncollato.length > quota)
+                throw new Error('Il testo supera il limite per queste fonti (' + quota + ' caratteri). Riduci il testo o togli una fonte.');
+            fonti.push({ id: 'testo-incollato', nome: 'Testo incollato', pagine: '', testo: '[[Testo incollato]]\n' + testoIncollato });
+        }
         for (const f of o.fonti) {
-            const x = await leggi(f, chiavi, Math.round(budget / Math.max(1, o.fonti.length)), passo, o.argomento);
+            const x = await leggi(f, chiavi, quota, passo, o.argomento);
             if (x)
                 fonti.push(x);
         }
         if (!fonti.length)
             throw new Error('Nelle fonti scelte non ho trovato pagine su «' + o.argomento + '». Prova parole chiave diverse (sinonimi, nome del capitolo) o altre fonti.');
+        const scheda = o.scheda === undefined ? undefined : o.pianoSchede?.[o.scheda];
+        const misure = [];
+        if (scheda) {
+            const termini = Array.from(parole(scheda.micro + ' ' + scheda.copertura));
+            for (const fonte of fonti) {
+                const pagine = fonte.testo.split(/(?=\[\[)/).filter(p => p.trim() && !/^\[\[Testo incollato\]\]\s*$/.test(p));
+                if (pagine.length < 2)
+                    continue;
+                const pertinenti = pagine.filter(p => termini.some(w => parole(p).has(w)));
+                if (pertinenti.length)
+                    fonte.testo = pertinenti.join('\n');
+            }
+        }
         const testoFonti = fonti.map(f => f.testo).join('\n');
         const banca = Stato.tutti('qcreato').flatMap(r => r.domande.map(d => d.q)).slice(-200);
+        if (destinazione)
+            banca.push(...destinazione.quiz.domande.map(d => d.q), ...(destinazione.quiz.daRivedere || []).map(x => x.domanda.q));
         const modelli = new Set();
         let buone = [], scartate = 0;
+        const specifica = scheda ? 'Scheda confermata: ' + JSON.stringify(scheda) : '';
+        const applicazioni = destinazione?.applicazione ? [destinazione.applicazione] : scheda ? [scheda.copertura] : [...(destinazione?.quiz.applicazioni || [])];
         const genera = async (nM, nF, feedback = '') => {
             const out = [];
+            const blocco = async (multiple, completamenti) => {
+                const gia = (destinazione?.quiz.domande || []).map(d => d.q).concat(buone.concat(out).map(d => d.q));
+                const r = await chiediMisurato(misure, msgGenera({ ...o, extra: [o.extra, specifica].filter(Boolean).join('\n') }, fonti, multiple, completamenti, gia, applicazioni, feedback), 'genera', { temp: .5 });
+                modelli.add(r.modello);
+                if ((!destinazione || destinazione.lotto) && !applicazioni.length && Array.isArray(r.j?.applicazioni)) {
+                    for (const nome of r.j.applicazioni) {
+                        if (typeof nome === 'string' && nome.trim() && !applicazioni.includes(nome.trim()))
+                            applicazioni.push(nome.trim());
+                    }
+                }
+                for (const d of (r.j?.domande || []).slice(0, multiple + completamenti)) {
+                    const applicazione = typeof d.applicazione === 'string' ? d.applicazione.trim() : '';
+                    if (destinazione?.applicazione && applicazione !== destinazione.applicazione)
+                        continue;
+                    out.push({ ...d, applicazione: applicazioni.includes(applicazione) ? applicazione : undefined,
+                        t: multiple ? 'mcq' : 'fill', lv: multiple ? d.lv : 'Completamento' });
+                }
+            };
             for (let k = 0; k < nM; k += 6) {
                 passo('Scrivo le multiple ' + (k + 1) + '–' + Math.min(nM, k + 6) + '…');
-                const r = await IA.chiedi(msgGenera(o, fonti, Math.min(6, nM - k), 0, banca.concat(buone.concat(out).map(d => d.q)), feedback), 'genera', { temp: .5 });
-                modelli.add(r.modello);
-                out.push(...((r.j && r.j.domande) || []).map((d) => ({ ...d, t: 'mcq' })));
+                await blocco(Math.min(6, nM - k), 0);
             }
             if (nF) {
                 passo('Scrivo i completamenti…');
-                const r = await IA.chiedi(msgGenera(o, fonti, 0, nF, banca.concat(buone.concat(out).map(d => d.q)), feedback), 'genera', { temp: .5 });
-                modelli.add(r.modello);
-                out.push(...((r.j && r.j.domande) || []).map((d) => ({ ...d, t: 'fill', lv: 'Completamento' })));
+                await blocco(0, nF);
             }
             return out;
         };
+        const sospese = new Map();
         let candidate = await genera(o.nMcq, o.nFill), giro = 0;
         while (giro < 3) {
             giro++;
@@ -5895,41 +5971,94 @@ const CreaQuiz = (() => {
                 passo('Revisione indipendente: un altro modello risolve le domande alla cieca e controlla l\'italiano…');
                 const gen = Array.from(modelli).pop() || '';
                 try {
-                    const rv = await revisiona(sane, fonti, gen);
+                    const rv = await revisiona(sane, fonti, gen, specifica, misure);
                     modelli.add(rv.modello);
-                    sane.forEach((d, i) => { const p = rv.esiti.get(i); if (p)
-                        problemi.set(d, p); });
+                    sane.forEach((d, i) => {
+                        const p = rv.esiti.get(i);
+                        if (scheda && d.applicazione !== scheda.copertura)
+                            sospese.set(d, 'Copertura della scheda non confermata.');
+                        else if (!p || p[0] === 'Esito incompleto o duplicato.')
+                            sospese.set(d, p ? p[0] : 'Esito del revisore mancante.');
+                        else if (p.length) {
+                            sospese.set(d, p.join(' · '));
+                            problemi.set(d, p);
+                        }
+                    });
                 }
-                catch (e) {
-                    passo('⚠️ Revisione non riuscita (' + (e.message || e) + '): tengo solo i controlli automatici.');
+                catch {
+                    passo('Revisione interrotta. Salvo le domande da rivedere.');
+                    sane.forEach(d => sospese.set(d, 'Revisione interrotta.'));
                 }
             }
-            buone = buone.concat(candidate.filter(d => !problemi.has(d)));
+            buone = buone.concat(sane.filter(d => !sospese.has(d)));
             problemi.forEach(p => impara(p, o.materia));
             const ko = candidate.filter(d => problemi.has(d));
-            const mancaM = o.nMcq - buone.filter(d => d.t === 'mcq').length, mancaF = o.nFill - buone.filter(d => d.t === 'fill').length;
+            const mancanti = Array.from(sospese.keys()).filter(d => !problemi.has(d));
+            const riservate = buone.concat(mancanti);
+            const mancaM = o.nMcq - riservate.filter(d => d.t === 'mcq').length, mancaF = o.nFill - riservate.filter(d => d.t === 'fill').length;
             if (!ko.length || (mancaM <= 0 && mancaF <= 0)) {
-                scartate += ko.length;
+                scartate += ko.filter(d => !sospese.has(d)).length;
                 break;
             }
             if (giro === 3) {
-                scartate += ko.length;
+                scartate += ko.filter(d => !sospese.has(d)).length;
                 break;
             }
             passo('Rigenero ' + ko.length + ' domande con i problemi trovati…');
             const fb = ko.slice(0, 8).map(d => '- «' + String(d.q).slice(0, 90) + '»: ' + problemi.get(d).join('; ')).join('\n');
-            scartate += ko.length;
+            scartate += ko.filter(d => !sospese.has(d)).length;
             candidate = await genera(Math.max(0, mancaM), Math.max(0, mancaF), fb);
         }
         buone = buone.filter(d => d.t === 'mcq').slice(0, o.nMcq).concat(buone.filter(d => d.t === 'fill').slice(0, o.nFill));
-        if (!buone.length)
+        if (!buone.length && !sospese.size)
             throw new Error('Nessuna domanda ha superato i controlli. Prova con fonti più pertinenti o un argomento più preciso.');
-        const id = 'qc-' + uid();
-        const domande = buone.map((d, i) => ({ id: id + '-' + (i + 1), sk: id, t: d.t, lv: d.lv, q: String(d.q).trim(), o: d.t === 'mcq' ? d.o.map((x) => String(x).trim()) : undefined,
+        const id = destinazione?.quiz.id || 'qc-' + uid();
+        const converti = (d, i) => ({ schedaQuiz: o.scheda, id: id + '-' + (destinazione ? uid() : i + 1), sk: id, applicazione: d.applicazione, t: d.t, lv: d.lv, q: String(d.q).trim(), o: d.t === 'mcq' ? d.o.map((x) => String(x).trim()) : undefined,
             a: d.t === 'fill' ? d.a.map(String) : undefined, show: d.t === 'fill' ? String(d.show || d.a[0]) : undefined, e: d.e.map(String), ew: (d.ew || []).map(String), r: String(d.r || fonti[0].nome),
-            cit: d.cit.map((c) => ({ t: String(c.t).trim(), f: String(c.f || fonti[0].nome), l: linkFonte(fonti, String(c.f || '')) })), gen: true }));
-        const rec = { id, type: 'qcreato', updatedAt: 0, titolo: o.argomento.charAt(0).toUpperCase() + o.argomento.slice(1), materia: o.materia, argomento: o.argomento, cosa: o.cosa,
-            fonti: fonti.map(f => ({ nome: f.nome, id: f.id, pagine: f.pagine })), domande, creato: new Date().toISOString(), modelli: Array.from(modelli), scartate };
+            cit: d.cit.map((c) => {
+                const fonte = fonti.find(f => n2(f.testo).includes(n2(c.t)));
+                const porzione = fonte?.testo.split(/(?=\[\[)/).find(t => n2(t).includes(n2(c.t)));
+                const nome = porzione?.match(/^\[\[([^\]]+)\]\]/)?.[1] || fonte?.nome || '';
+                return { t: c.t.trim(), f: nome, l: linkFonte(fonti, nome) };
+            }), gen: true });
+        const domande = buone.map(converti);
+        const daRivedere = ['mcq', 'fill'].flatMap(tipo => Array.from(sospese).filter(([d]) => d.t === tipo)
+            .slice(0, (tipo === 'mcq' ? o.nMcq : o.nFill) - domande.filter(d => d.t === tipo).length)
+            .map(([d, motivo], i) => ({ domanda: converti(d, domande.length + (tipo === 'fill' ? o.nMcq : 0) + i), motivo })));
+        if (destinazione) {
+            const precedente = destinazione.quiz;
+            const attuale = Stato.prendi(id);
+            if (!attuale || attuale.deleted || attuale.acc !== precedente.acc || attuale.updatedAt !== precedente.updatedAt) {
+                throw new Error('Il quiz è cambiato. Riapri la mappa per aggiornarlo.');
+            }
+            let pendenti = attuale.daRivedere || [];
+            if (destinazione.sostituisci) {
+                if (!domande.length)
+                    throw new Error('Sostituzione non approvata. La domanda originale resta da rivedere. ' + (daRivedere[0]?.motivo || ''));
+                pendenti = pendenti.filter(x => x.domanda.id !== destinazione.sostituisci);
+            }
+            else {
+                pendenti = pendenti.concat(daRivedere);
+            }
+            const posizione = attuale.domande.findIndex(d => d.id === destinazione.sostituisci);
+            const aggiornate = attuale.domande.slice();
+            aggiornate.splice(posizione < 0 ? aggiornate.length : posizione, posizione < 0 ? 0 : 1, ...domande);
+            const aggiornato = { ...attuale, misure: (attuale.misure || []).concat(misure), domande: aggiornate, daRivedere: pendenti,
+                modelli: Array.from(new Set(attuale.modelli.concat(Array.from(modelli)))), scartate: attuale.scartate + scartate };
+            if (destinazione.lotto && attuale.ripresa) {
+                aggiornato.fonti = fonti.map(f => ({ nome: f.nome, id: f.id, pagine: f.pagine, mimeType: o.fonti.find(x => x.id === f.id)?.mimeType }));
+                aggiornato.applicazioni = Array.from(new Set([...(attuale.applicazioni || []), ...applicazioni]));
+                const tutte = aggiornato.domande.concat(pendenti.map(x => x.domanda));
+                const mancanoM = tutte.filter(d => d.t === 'mcq').length < attuale.ripresa.nMcq;
+                const mancanoF = tutte.filter(d => d.t === 'fill').length < attuale.ripresa.nFill;
+                if (!mancanoM && !mancanoF)
+                    delete aggiornato.ripresa;
+            }
+            await Stato.salva(aggiornato);
+            return aggiornato;
+        }
+        const rec = { id, misure, type: 'qcreato', updatedAt: 0, titolo: o.argomento.charAt(0).toUpperCase() + o.argomento.slice(1), materia: o.materia, argomento: o.argomento, cosa: o.cosa,
+            fonti: fonti.map(f => ({ nome: f.nome, id: f.id, pagine: f.pagine, mimeType: o.fonti.find(x => x.id === f.id)?.mimeType })), testoIncollato, applicazioni, domande, daRivedere, creato: new Date().toISOString(), modelli: Array.from(modelli), scartate };
         Stato.salva(rec);
         Trova.ricordaPosto(o.argomento, o.fonti.filter(f => fonti.some(x => x.id === f.id)));
         for (const f of fonti) {
@@ -5946,38 +6075,234 @@ const CreaQuiz = (() => {
         return rec;
     }
     function linkFonte(fonti, f) {
-        const x = fonti.find(y => f && n2(f).includes(n2(y.nome).slice(0, 20))) || fonti[0];
-        if (!x)
+        const x = fonti.find(y => f && n2(f).includes(n2(y.nome)));
+        if (!x || x.id === 'testo-incollato')
             return undefined;
         const p = /p\.\s*(\d+)/.exec(f);
         return 'https://drive.google.com/file/d/' + x.id + '/view' + (p ? '#page=' + p[1] : '');
     }
     function apri(r) {
+        if (r.ripresa) {
+            const v = visore(r.titolo);
+            v.corpo.append(h('p', null, r.domande.length + ' pronte · ' + (r.daRivedere?.length || 0) + ' da rivedere'), h('button.btn', { onclick: () => { v.chiudi(); avvia(r.ripresa, r); } }, 'Riprendi generazione'));
+            return;
+        }
+        if (r.minuti || r.applicazioni?.length || r.daRivedere?.length) {
+            const v = visore(r.titolo);
+            let occupato = false;
+            const stato = h('p.tenue', { role: 'status' });
+            const generaDomanda = async (nome, originale) => {
+                if (occupato)
+                    return;
+                occupato = true;
+                stato.textContent = 'Leggo le fonti…';
+                try {
+                    const fonti = await Promise.all(r.fonti.filter(f => f.id !== 'testo-incollato').map(async (f) => {
+                        const mimeType = f.mimeType || (await Drive.api('files/' + encodeURIComponent(f.id), { query: { fields: 'mimeType' } })).mimeType;
+                        return { id: f.id, name: f.nome, mimeType, modifiedTime: '', punti: 0, perche: [] };
+                    }));
+                    const completamento = originale?.domanda.t === 'fill';
+                    const extra = originale ? [nome, 'Riscrivi questa domanda: ' + originale.domanda.q, 'Problema da correggere: ' + originale.motivo].filter(Boolean).join('\n') : nome || '';
+                    const aggiornato = await crea({ ...r, scheda: originale?.domanda.schedaQuiz ?? (nome && r.pianoSchede ? r.pianoSchede.findIndex(s => s.copertura === nome) : undefined), fonti, extra, nMcq: completamento ? 0 : 1, nFill: completamento ? 1 : 0 }, t => { stato.textContent = t; }, { quiz: r, applicazione: nome, sostituisci: originale?.domanda.id });
+                    if (v.corpo.isConnected) {
+                        v.chiudi();
+                        apri(aggiornato);
+                    }
+                }
+                catch (errore) {
+                    stato.textContent = errore instanceof Error ? errore.message : 'Generazione interrotta. Riprova.';
+                }
+                finally {
+                    occupato = false;
+                }
+            };
+            const modalita = selettore([['neuro', 'Allenamento'], ['esame', 'Simulazione esame']], 'neuro');
+            const sessioni = [['0', 'Quiz intero']];
+            const perSessione = Math.max(1, Math.floor((r.minuti || 10) / 2));
+            if (r.domande.length > perSessione)
+                for (let i = 0; i < r.domande.length; i += perSessione)
+                    sessioni.push([String(i + 1), 'Domande ' + (i + 1) + '–' + Math.min(r.domande.length, i + perSessione)]);
+            const sessione = selettore(sessioni, '0');
+            const modifica = (d) => Editor.apri(d, r.id, nuova => {
+                if (!nuova)
+                    return;
+                if (Stato.prendi(r.id)?.updatedAt !== r.updatedAt) {
+                    avviso('Riapri il quiz aggiornato.');
+                    return;
+                }
+                const aggiornato = { ...r, domande: r.domande.filter(x => x.id !== d.id),
+                    daRivedere: [...(r.daRivedere || []), { domanda: nuova, motivo: 'Contenuto modificato manualmente.' }] };
+                Stato.salva(aggiornato);
+                v.chiudi();
+                apri(aggiornato);
+            }, true);
+            v.corpo.append(h('div.pagina', null, stato, r.misure?.length ? h('details', null, h('summary', null, 'Richieste AI · ' + r.misure.reduce((n, m) => n + m.caratteri, 0) + ' caratteri totali · circa ' + r.misure.reduce((n, m) => n + Math.ceil(m.caratteri / 4), 0) + ' token'), ...r.misure.map((m, i) => h('p', null, (i + 1) + '. ' + m.fase + ' · ' + m.caratteri + ' caratteri · circa ' + Math.ceil(m.caratteri / 4) + ' token'))) : null, r.pianoSchede?.length ? h('section', null, h('h3', null, 'Piano confermato'), ...r.pianoSchede.map((s, i) => h('p', null, s.micro + ' · ' + s.priorita + ' · ' + s.copertura + ' · ' + r.domande.filter(d => d.schedaQuiz === i).length + '/' + (s.multiple + s.completamenti) + ' pronte'))) : null, r.applicazioni?.length ? h('section', null, h('h3', null, 'Mappa delle applicazioni'), ...r.applicazioni.map(nome => {
+                const pronte = r.domande.filter(d => d.applicazione === nome);
+                const sospese = (r.daRivedere || []).filter(x => x.domanda.applicazione === nome);
+                return h('details', null, h('summary', null, nome + ' · ' + (pronte.length ? 'Coperta' : 'Scoperta')), h('p', null, pronte.length + ' pronte · ' + sospese.length + ' da rivedere'), pronte.length ? null : h('button.btn', { onclick: () => generaDomanda(nome) }, 'Aggiungi una domanda su questa applicazione'), ...pronte.map(d => h('p', null, d.q)), ...sospese.map(x => h('p', null, x.domanda.q + ' · ' + x.motivo)));
+            })) : null, r.daRivedere?.length ? h('h3', null, r.daRivedere.length + ' domande da rivedere') : null, ...(r.daRivedere || []).map(x => h('details', null, h('summary', null, x.domanda.q), h('p', null, x.motivo), h('p', null, (x.domanda.o || x.domanda.a || []).join(' · ')), h('p', null, Array.isArray(x.domanda.e) ? x.domanda.e.join(' ') : x.domanda.e), h('p', null, x.domanda.r), h('button.btn', { onclick: () => generaDomanda(x.domanda.applicazione, x) }, 'Rigenera questa domanda'))), r.domande.length ? h('details', null, h('summary', null, 'Anteprima e banca delle domande'), ...r.domande.map(d => h('details', null, h('summary', null, d.q), h('p', null, (d.o || d.a || []).join(' · ')), h('p', null, Array.isArray(d.e) ? d.e.join(' ') : d.e), h('p', null, d.r), h('button.chip', { onclick: () => modifica(d) }, 'Modifica domanda'), h('button.chip', { onclick: () => generaDomanda(d.applicazione, { domanda: d, motivo: 'Genera una variante dello stesso livello.' }) }, 'Rigenera domanda pronta'))), h('button.chip', { onclick: () => QuizApp.esporta(r.domande, 'tutti', r.titolo, Dominio.archetipoMateria(r.materia)) }, 'Esporta quiz')) : null, r.domande.length ? h('label', null, 'Modalità', modalita) : null, sessioni.length > 1 ? h('label', null, 'Sessione', sessione) : null, r.domande.length ? h('button.btn', { onclick: () => {
+                    v.chiudi();
+                    const inizio = Number(sessione.value);
+                    avviaTentativo(r, inizio ? r.domande.slice(inizio - 1, inizio - 1 + perSessione) : r.domande, modalita.value === 'esame' ? 'esame' : 'neuro');
+                } }, 'Inizia con ' + r.domande.length + ' domande pronte') : null));
+            return;
+        }
+        avviaTentativo(r);
+    }
+    function avviaTentativo(r, domande = r.domande, modo) {
         const pk = { tipo: 'step', id: 'qc', step: 0, titolo: '', aggiornato: '', risorse: { libri: {}, quiz: {} }, materie: [] };
         const s = { id: r.id, k: 1, n: 1, titolo: r.titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' };
-        QuizApp.apri(pk, r.materia, r.titolo, s, () => r.domande, { occh: r.materia + ' · ✨ creato in app · ' + new Date(r.creato).toLocaleDateString('it-IT'), titolo: r.titolo, chiudi: () => elenco() });
+        QuizApp.apri(pk, r.materia, r.titolo, s, () => domande, { modo, occh: r.materia + ' · ✨ creato in app · ' + new Date(r.creato).toLocaleDateString('it-IT'), titolo: r.titolo, chiudi: () => elenco() });
     }
     function elenco() {
         const v = visore('✨ Quiz creati in app', () => { });
         const lista = tutti();
-        v.corpo.append(h('div.pagina', null, h('div.tenue.piccolo', null, 'Creati dall\'app con il metodo delle schede di Claude (stesse regole, fonti dal tuo Drive, doppio controllo). Le schede di Claude restano a parte.'), h('div.bottoni', null, h('button.btn', { onclick: () => { v.chiudi(); nuovo(); } }, '＋ Crea un quiz'), h('button.btn.neutro', { onclick: () => { v.chiudi(); leggero(); } }, '⚡ Creaquiz Leggero')), lista.length ? h('div.chips', null, h('span.piccolo', null, 'Esporta:'), ...[['errori', 'Errori'], ['illusione', 'Illusioni'], ['bloom3', 'Bloom ≥ 3']].map(([fx, n]) => h('button.chip', { onclick: () => QuizApp.esporta(lista.flatMap(r => r.domande), fx, 'Quiz creati in app', Dominio.archetipoMateria(lista[0] ? lista[0].materia : '')) }, n))) : null, lista.length ? h('div.lista', null, ...lista.map(r => {
+        v.corpo.append(h('div.pagina', null, h('div.bottoni', null, h('button.btn', { onclick: () => { v.chiudi(); nuovo(); } }, '＋ Crea un quiz')), lista.length ? h('div.chips', null, h('span.piccolo', null, 'Esporta:'), ...[['errori', 'Errori'], ['illusione', 'Illusioni'], ['bloom3', 'Bloom ≥ 3']].map(([fx, n]) => h('button.chip', { onclick: () => QuizApp.esporta(lista.flatMap(r => r.domande), fx, 'Quiz creati in app', Dominio.archetipoMateria(lista[0] ? lista[0].materia : '')) }, n))) : null, lista.length ? h('div.lista', null, ...lista.map(r => {
             const st = QuizApp.stat(r.id);
             const ultima = st.length ? st[0] : null;
-            return h('button.voce-lista', { onclick: () => { v.chiudi(); apri(r); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, '✨ ' + r.titolo), h('span.voce-sotto', null, r.materia + ' · ' + r.domande.length + ' domande · ' + new Date(r.creato).toLocaleDateString('it-IT') + (ultima ? ' · ultima: ' + ultima.ok + '/' + ultima.n : '') + ' · fonti: ' + r.fonti.map(f => f.nome + (f.pagine ? ' p. ' + f.pagine.split(',').slice(0, 4).join(',') + (f.pagine.split(',').length > 4 ? '…' : '') : '')).join('; '))));
+            return h('button.voce-lista', { onclick: () => { v.chiudi(); apri(r); } }, h('span.voce-corpo', null, h('span.voce-titolo', null, '✨ ' + r.titolo), h('span.voce-sotto', null, r.materia + (r.ripresa ? ' · Generazione da riprendere' : '') + ' · ' + r.domande.length + ' domande' + (r.daRivedere?.length ? ' · ' + r.daRivedere.length + ' da rivedere' : '') + ' · ' + new Date(r.creato).toLocaleDateString('it-IT') + (ultima ? ' · ultima: ' + ultima.ok + '/' + ultima.n : '') + ' · fonti: ' + r.fonti.map(f => f.nome + (f.pagine ? ' p. ' + f.pagine.split(',').slice(0, 4).join(',') + (f.pagine.split(',').length > 4 ? '…' : '') : '')).join('; '))));
         })) : vuoto('Nessun quiz creato in app per ora.')));
     }
+    function paginePdf(testo) {
+        const intervalli = h('input.campo', { value: '1', placeholder: '2-4, 8' });
+        const offset = h('input.campo', { type: 'number', value: 0 });
+        const file = h('input', { type: 'file', accept: '.pdf,application/pdf' });
+        const stato = h('p.piccolo', { role: 'status' }), stima = h('p.piccolo');
+        const aggiorna = () => { stima.textContent = testo.value.length + ' caratteri · circa ' + Math.ceil(testo.value.length / 4) + ' token di fonte'; };
+        testo.addEventListener('input', aggiorna);
+        aggiorna();
+        let occupato = false;
+        const estrai = async (nome, apri) => {
+            if (occupato)
+                return false;
+            occupato = true;
+            try {
+                const lib = await caricaPdfJs();
+                const doc = await lib.getDocument({ data: new Uint8Array(await (await apri()).arrayBuffer()), isEvalSupported: false }).promise;
+                try {
+                    const pagine = new Set();
+                    for (const parte of intervalli.value.split(',')) {
+                        const m = /^\s*(\d+)\s*(?:-\s*(\d+))?\s*$/.exec(parte);
+                        const a = Number(m?.[1]), b = Number(m?.[2] || a);
+                        if (!m || a < 1 || b < a || b > doc.numPages)
+                            throw new Error('Scegli pagine PDF tra 1 e ' + doc.numPages + '.');
+                        for (let i = a; i <= b; i++)
+                            pagine.add(i);
+                    }
+                    if (!Number.isSafeInteger(offset.valueAsNumber))
+                        throw new Error('Indica uno scarto intero per le pagine del libro.');
+                    const brani = [], lacune = [];
+                    for (const i of pagine) {
+                        stato.textContent = 'Lettura pagina ' + i;
+                        const pagina = await doc.getPage(i);
+                        const tc = await pagina.getTextContent();
+                        let t = tc.items.map((x) => x.str || '').join(' ').trim();
+                        if (t.replace(/\s/g, '').length < 25) {
+                            const Detector = window.TextDetector;
+                            if (Detector) {
+                                const canvas = document.createElement('canvas');
+                                try {
+                                    const base = pagina.getViewport({ scale: 1 });
+                                    const viewport = pagina.getViewport({ scale: Math.min(2, 2200 / Math.max(base.width, base.height)) });
+                                    canvas.width = Math.ceil(viewport.width);
+                                    canvas.height = Math.ceil(viewport.height);
+                                    await pagina.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                                    const riconosciuto = (await new Detector().detect(canvas)).map(r => r.rawValue).join('\n');
+                                    if (riconosciuto.trim().length > t.length)
+                                        t = riconosciuto.trim();
+                                }
+                                catch {
+                                    stato.textContent = 'OCR locale non disponibile.';
+                                }
+                                finally {
+                                    canvas.width = canvas.height = 0;
+                                }
+                            }
+                            if (t.replace(/\s/g, '').length < 25)
+                                lacune.push(i);
+                        }
+                        brani.push('[[' + nome + ', p. ' + i + (offset.valueAsNumber ? ', libro p. ' + (i + offset.valueAsNumber) : '') + ']]\n' + t);
+                    }
+                    testo.value = [testo.value, ...brani].filter(Boolean).join('\n\n');
+                    aggiorna();
+                    stato.textContent = lacune.length ? 'Testo insufficiente. Trascrivi o correggi le pagine ' + lacune.join(', ') : 'Pagine estratte: ' + Array.from(pagine).join(', ');
+                    return true;
+                }
+                finally {
+                    await doc.destroy();
+                }
+            }
+            catch (e) {
+                stato.textContent = e instanceof Error ? e.message : 'PDF illeggibile.';
+                return false;
+            }
+            finally {
+                occupato = false;
+            }
+        };
+        const drive = (id, nome) => estrai(nome, () => Drive.scaricaBlob(id));
+        const el = h('fieldset', null, h('legend', null, 'Estratti PDF'), h('label', null, 'Pagine PDF da leggere', intervalli), h('label', null, 'Scarto pagina libro meno pagina PDF', offset), h('label', null, 'Aggiungi un PDF locale', file), h('button.chip', { onclick: () => { const f = file.files?.[0]; if (f)
+                void estrai(f.name, async () => f);
+            else
+                avviso('Scegli prima un PDF.'); } }, 'Estrai pagine locali'), h('button.chip', { onclick: async () => { try {
+                const [f] = await scegliFileDrive({ mime: 'application/pdf' });
+                if (f)
+                    await drive(f.id, f.name);
+            }
+            catch {
+                stato.textContent = 'Impossibile aprire Drive.';
+            } } }, 'Estrai pagine da Drive'), stato, stima);
+        return { el, drive, occupato: () => occupato };
+    }
     async function nuovo(pre = {}) {
-        if (!Spiega.attiva && !IA.gemini) {
-            avviso('Serve una chiave AI gratuita: Altro → Spiegazioni AI.', 6000);
-            return;
-        }
         const materie = Array.from(new Set((Drive.eProprietario() ? ['Chimica', 'Biologia', 'Fisica'] : Stato.tutti('materia').map(m => m.nome)).concat(Stato.tutti('pacchetto').flatMap(r => ((r.contenuto && r.contenuto.materie) || []).map((m) => m.nome))).filter(Boolean)));
         const arg = h('input.campo', { type: 'text', value: pre.argomento || '', placeholder: 'Argomento preciso (es. «leve del corpo umano e guadagno meccanico»)' });
+        if (pre.materia && !materie.includes(pre.materia))
+            materie.push(pre.materia);
         const mat = campoMateria(materie.map(m => [m, m]), materie.find(m => pre.materia && n2(pre.materia) === n2(m)) || '', nome => { materiaPerNome(nome); return nome.trim(); });
         let cosa = pre.cosa || 'misto';
         const cose = [['misto', 'Misto (come le schede)'], ['teoria', 'Teoria e definizioni'], ['problemi', 'Problemi con calcoli'], ['trabocchetti', 'Trabocchetti']];
         const chips = h('div.chips', null, ...cose.map(([k, t]) => h('button.chip' + (k === cosa ? '.attivo' : ''), { type: 'button', onclick: (e) => { cosa = k; chips.querySelectorAll('.chip').forEach(c => c.classList.remove('attivo')); e.target.classList.add('attivo'); } }, t)));
         const extra = h('input.campo', { type: 'text', value: pre.extra || '', placeholder: 'Parole chiave in più (sinonimi, capitolo, libro, docente, «slide UD2»)' });
+        const quantita = (n) => h('input.campo', { type: 'number', min: 0, max: 200, value: n });
+        const multiple = quantita(pre.nMcq ?? 12), completamenti = quantita(pre.nFill ?? 6);
+        const piano = h('textarea.campo', { rows: 3, placeholder: 'Una scheda per riga: microstep | prioritaria o raffinamento | applicazione attesa' });
+        const preset = selettore([['libero', 'Quantità libere'], ['claude', 'Modello Claude per step']], 'libero');
+        const campiPiano = h('label', null, 'Schede in ordine di progressione. Le quantità sotto valgono per ogni scheda.', piano);
+        campiPiano.hidden = true;
+        preset.onchange = () => { campiPiano.hidden = preset.value !== 'claude'; if (!campiPiano.hidden) {
+            multiple.value = '12';
+            completamenti.value = '6';
+        } };
+        const minuti = h('input.campo', { type: 'number', min: 1, max: 480, value: pre.minuti || 20 });
+        const riferimento = selettore([['', 'Nessuno'], ...tutti().filter(r => r.domande.length).map(r => [r.id, r.titolo])], '');
+        const difficolta = selettore([['', 'Adatta al materiale'], ['base', 'Base'], ['intermedia', 'Intermedia'], ['avanzata', 'Avanzata']], '');
+        const appunti = selettore([['', 'Scegli un appunto'], ...Appunti.tutti().map(a => [a.id, a.titolo])], '');
+        const libri = new Map();
+        for (const corso of Studio.pkStep())
+            for (const libro of Object.values(corso.risorse?.libri || {})) {
+                for (const [parte, id] of Object.entries(libro.file || {}))
+                    libri.set(id, corso.titolo + ' · ' + libro.nome + ' · ' + parte);
+            }
+        const libroCorso = selettore([['', 'Scegli un file del corso'], ...libri.entries()], '');
+        const domandeFonte = selettore([['', 'Scegli un quiz'], ...tutti().filter(q => q.domande.length).map(q => [q.id, q.titolo])], '');
+        domandeFonte.onchange = () => {
+            const q = Stato.prendi(domandeFonte.value);
+            if (q)
+                testo.value = [testo.value, '[[' + q.titolo + ']]', ...q.domande.map(d => [d.q, d.o?.[0] || d.show || d.a?.join(' / '), Array.isArray(d.e) ? d.e.join(' ') : d.e].filter(Boolean).join('\n'))].filter(Boolean).join('\n\n');
+            domandeFonte.value = '';
+        };
+        appunti.onchange = () => {
+            const a = Stato.prendi(appunti.value);
+            if (a) {
+                testo.value = [testo.value, '[[' + a.titolo + ']]\n' + a.testo].filter(Boolean).join('\n\n');
+                if (!arg.value)
+                    arg.value = a.titolo;
+            }
+            appunti.value = '';
+        };
+        const testo = h('textarea.campo', { rows: 5, value: pre.testoIncollato || '' });
+        const lettore = paginePdf(testo);
         const box = h('div.cq-fonti'), stato = h('div.tenue.piccolo');
         let fonti = [];
         const cercaFonti = async () => {
@@ -5995,31 +6320,101 @@ const CreaQuiz = (() => {
                 return;
             }
             stato.textContent = fonti.length ? 'Fonti trovate (le prime 3 sono già scelte; tocca per cambiare):' : 'Nessuna fonte trovata: prova con altre parole chiave (sinonimi, nome del capitolo o del libro).';
-            box.append(...fonti.map(f => h('label.cq-fonte', null, h('input', { type: 'checkbox', checked: f.usa, onchange: (e) => f.usa = e.target.checked }), h('span', null, h('b', null, f.name), h('span.tenue.piccolo', null, ' · ' + (f.cartella ? '«' + f.cartella + '» · ' : '') + f.perche.slice(0, 3).join(', '))))));
+            box.append(...fonti.map(f => h('label.cq-fonte', null, h('input', { type: 'checkbox', checked: f.usa, onchange: (e) => f.usa = e.target.checked }), h('span', null, h('b', null, f.name), h('span.tenue.piccolo', null, ' · ' + (f.cartella ? '«' + f.cartella + '» · ' : '') + f.perche.slice(0, 3).join(', '))), f.mimeType === 'application/pdf' ? h('button.chip', { type: 'button', onclick: async (e) => { e.preventDefault(); const input = e.currentTarget.closest('label')?.querySelector('input'); if (await lettore.drive(f.id, f.name)) {
+                    f.usa = false;
+                    if (input)
+                        input.checked = false;
+                } } }, 'Estrai pagine') : null)));
         };
-        const fs = foglio({ titolo: '✨ Crea un quiz', etichettaSalva: 'Crea', corpo: h('div.modulo', null, h('label', null, 'Argomento', arg), h('label', null, 'Materia', mat.el), h('div', null, h('div.piccolo', null, 'Cosa vuoi'), chips), h('label', null, 'Aiuta la ricerca (facoltativo)', extra), h('div.tenue.piccolo', null, '💡 Più l\'argomento è preciso, migliori sono le fonti e le domande: nomina il capitolo o la lezione, aggiungi sinonimi e il nome del libro o del docente.'), h('button.btn.neutro', { type: 'button', onclick: cercaFonti }, '🔎 Cerca le fonti nel Drive'), stato, box),
+        const fs = foglio({ titolo: '✨ Crea un quiz', etichettaSalva: 'Crea', corpo: h('div.modulo', null, h('label', null, 'Argomento', arg), h('label', null, 'Materia', mat.el), h('div', null, h('div.piccolo', null, 'Cosa vuoi'), chips), h('label', null, 'Aiuta la ricerca (facoltativo)', extra), h('div.tenue.piccolo', null, '💡 Più l\'argomento è preciso, migliori sono le fonti e le domande: nomina il capitolo o la lezione, aggiungi sinonimi e il nome del libro o del docente.'), h('label', null, 'Modello dello step', preset), campiPiano, h('label', null, 'Risposte multiple', multiple), h('label', null, 'Completamenti', completamenti), h('label', null, 'Difficoltà', difficolta), h('label', null, 'Durata indicativa della sessione (minuti)', minuti), h('label', null, 'Quiz di riferimento per lo stile', riferimento), libri.size ? h('div', null, h('label', null, 'Materiale del corso', libroCorso), h('button.chip', { onclick: async () => { const id = libroCorso.value; if (id && await lettore.drive(id, libri.get(id)))
+                    libroCorso.value = ''; } }, 'Estrai pagine del libro')) : null, domandeFonte.options.length > 1 ? h('label', null, 'Usa domande esistenti come fonte', domandeFonte) : null, h('label', null, 'Aggiungi un appunto', appunti), lettore.el, h('label', null, 'Testo o appunti da usare come fonte', testo), h('button.chip', { onclick: () => { fs.chiudi(); leggero({ titolo: arg.value, materia: mat.value, testo: testo.value, pianoId: pre.pianoId, voceId: pre.voceId }); } }, 'Scrivi o importa domande'), h('button.btn.neutro', { type: 'button', onclick: cercaFonti }, '🔎 Cerca le fonti nel Drive'), stato, box),
             salva: () => {
                 const scelte = fonti.filter(f => f.usa);
-                if (!scelte.length) {
-                    avviso('Prima cerca e scegli almeno una fonte.');
+                if (libroCorso.value || scelte.some(f => f.mimeType === 'application/pdf')) {
+                    avviso('Estrai prima le pagine dei PDF selezionati.');
                     return false;
                 }
-                const nM = cosa === 'problemi' ? 12 : 12, nF = 6;
-                avvia({ argomento: arg.value.trim(), materia: mat.value || 'Studio', cosa: { misto: 'mix di teoria, applicazioni, trabocchetti e problemi come nelle schede', teoria: 'soprattutto teoria e definizioni (Sbarramento), qualche applicativa', problemi: 'soprattutto problemi con calcoli (Problema), con passaggi numerici completi', trabocchetti: 'soprattutto trabocchetti sugli errori tipici' }[cosa], extra: extra.value.trim(), fonti: scelte, nMcq: nM, nFill: nF });
+                if (!arg.value.trim()) {
+                    avviso('Scrivi l’argomento del quiz.');
+                    return false;
+                }
+                if (!scelte.length && !testo.value.trim()) {
+                    avviso('Incolla un testo o scegli una fonte da Drive.');
+                    return false;
+                }
+                const limite = limiteTesto(scelte.length + 1);
+                if (testo.value.trim().length > limite) {
+                    avviso('Riduci il testo a ' + limite + ' caratteri per queste fonti.');
+                    return false;
+                }
+                if (lettore.occupato()) {
+                    avviso('Attendi la lettura del PDF.');
+                    return false;
+                }
+                if ((!Spiega.attiva && !IA.gemini) || Dominio.senzaAI()) {
+                    avviso('Per generare configura un provider AI, oppure scegli Scrivi o importa domande.');
+                    return false;
+                }
+                const nM = multiple.valueAsNumber, nF = completamenti.valueAsNumber;
+                if (![nM, nF].every(n => Number.isInteger(n) && n >= 0) || nM + nF < 1 || nM + nF > 200) {
+                    avviso('Scegli da 1 a 200 domande totali.');
+                    return false;
+                }
+                if (!Number.isInteger(minuti.valueAsNumber) || minuti.valueAsNumber < 1 || minuti.valueAsNumber > 480) {
+                    avviso('Scegli da 1 a 480 minuti.');
+                    return false;
+                }
+                let pianoSchede;
+                if (preset.value === 'claude') {
+                    const righe = piano.value.trim().split(/\r?\n/).map(r => r.split('|').map(s => s.trim()));
+                    if (righe.some(r => r.length !== 3 || !r[0] || !/^(prioritaria|raffinamento)$/i.test(r[1]) || !r[2])) {
+                        avviso('Indica microstep, prioritaria o raffinamento e copertura per ogni scheda.');
+                        return false;
+                    }
+                    if (righe.length * (nM + nF) > 200) {
+                        avviso('Il piano supera 200 domande. Riduci quantità o schede.');
+                        return false;
+                    }
+                    pianoSchede = righe.map(([micro, priorita, copertura]) => ({ micro, priorita, copertura, multiple: nM, completamenti: nF }));
+                    if (!window.confirm('Confermi ' + righe.length + ' schede e ' + righe.length * (nM + nF) + ' domande?\n' + piano.value))
+                        return false;
+                }
+                const modello = Stato.prendi(riferimento.value);
+                const stile = modello?.domande.slice(0, 2).map(d => JSON.stringify({ q: d.q, lv: d.lv, opzioni: d.o, spiegazione: d.e })).join('\n');
+                avvia({ minuti: minuti.valueAsNumber, pianoId: pre.pianoId, voceId: pre.voceId, argomento: arg.value.trim(), materia: mat.value || 'Studio', cosa: { misto: 'mix di teoria, applicazioni, trabocchetti e problemi come nelle schede', teoria: 'soprattutto teoria e definizioni (Sbarramento), qualche applicativa', problemi: 'soprattutto problemi con calcoli (Problema), con passaggi numerici completi', trabocchetti: 'soprattutto trabocchetti sugli errori tipici' }[cosa], extra: [extra.value.trim(), stile && 'Esempi solo di stile, verifica il contenuto sulle fonti: ' + stile.slice(0, 3000), difficolta.value && 'Difficoltà ' + difficolta.value].filter(Boolean).join(' · '), testoIncollato: testo.value.trim(), fonti: scelte, pianoSchede, nMcq: nM * (pianoSchede?.length || 1), nFill: nF * (pianoSchede?.length || 1) });
             } });
         void fs;
-        if (pre.argomento)
-            setTimeout(cercaFonti, 200);
     }
-    async function avvia(o) {
+    const lavori = new Set();
+    async function avvia(o, bozza) {
+        let r = bozza || { id: 'qc-' + uid(), type: 'qcreato', updatedAt: 0, titolo: o.argomento, argomento: o.argomento, materia: o.materia,
+            pianoSchede: o.pianoSchede, applicazioni: o.pianoSchede?.map(s => s.copertura), cosa: o.cosa, creato: new Date().toISOString(), minuti: o.minuti, pianoId: o.pianoId, voceId: o.voceId, ripresa: o, testoIncollato: o.testoIncollato,
+            fonti: [...(o.testoIncollato ? [{ id: 'testo-incollato', nome: 'Testo incollato', pagine: '' }] : []),
+                ...o.fonti.map(f => ({ id: f.id, nome: f.name, mimeType: f.mimeType, pagine: '' }))], domande: [], scartate: 0, modelli: [] };
+        if (lavori.has(r.id)) {
+            avviso('Generazione già in corso.');
+            return;
+        }
+        lavori.add(r.id);
+        if (!bozza)
+            await Stato.salva(r);
         const stato = h('span.audio-stato', null, 'Preparo…'), pill = h('div.audio-pillola.lavora', { role: 'status' }, h('span.audio-giro'), stato);
         document.body.appendChild(pill);
         try {
-            const r = await crea(o, t => { stato.textContent = t; });
+            while (r.ripresa) {
+                const tutte = r.domande.concat((r.daRivedere || []).map(x => x.domanda));
+                const scheda = o.pianoSchede?.findIndex((s, i) => tutte.filter(d => d.schedaQuiz === i).length < s.multiple + s.completamenti);
+                const target = scheda === undefined ? undefined : o.pianoSchede?.[scheda];
+                const presenti = target ? tutte.filter(d => d.schedaQuiz === scheda) : tutte;
+                const nMcq = Math.min(6, Math.max(0, (target?.multiple ?? o.nMcq) - presenti.filter(d => d.t === 'mcq').length));
+                const nFill = Math.min(6 - nMcq, Math.max(0, (target?.completamenti ?? o.nFill) - presenti.filter(d => d.t === 'fill').length));
+                const indice = tutte.length;
+                r = await crea({ ...o, scheda, nMcq, nFill }, t => { stato.textContent = indice + '/' + (o.nMcq + o.nFill) + ' · ' + t; }, { quiz: r, lotto: true });
+            }
             svuota(pill);
             pill.classList.remove('lavora');
             pill.classList.add('pronta');
-            pill.append(h('button.audio-fine', { type: 'button', onclick: () => { pill.remove(); apri(r); } }, '✓ Quiz pronto: ' + r.domande.length + ' domande' + (r.scartate ? ' (' + r.scartate + ' scartate dai controlli)' : '') + ' — Apri'));
+            pill.append(h('button.audio-fine', { type: 'button', onclick: () => { pill.remove(); apri(r); } }, r.domande.length + ' pronte' + (r.daRivedere?.length ? ' · ' + r.daRivedere.length + ' da rivedere' : '') + (r.scartate ? ' (' + r.scartate + ' scartate dai controlli)' : '') + ' — Apri'));
             try {
                 Tocco.clic(1);
             }
@@ -6028,6 +6423,9 @@ const CreaQuiz = (() => {
         catch (e) {
             stato.textContent = '⚠️ ' + (e.message || e);
             pill.append(h('button', { type: 'button', 'aria-label': 'Chiudi', onclick: () => pill.remove() }, '✕'));
+        }
+        finally {
+            lavori.delete(r.id);
         }
     }
     const archivio = () => tutti().flatMap(r => r.domande || []);
@@ -6068,16 +6466,38 @@ const CreaQuiz = (() => {
         const titolo = h('input.campo', { type: 'text', value: pre.titolo || '', placeholder: 'Titolo del quiz (es. «Enzimi — ripasso lampo»)' });
         const materia = h('input.campo', { type: 'text', value: pre.materia || '', placeholder: 'Materia (es. Biologia)' });
         const step = h('input.campo', { type: 'text', value: pre.stepId || '', placeholder: 'Step / micro-argomento (facoltativo, es. B-2.1)' });
-        const testo = h('textarea.campo', { rows: 8, placeholder: 'Incolla qui il JSON delle domande (anche «sporco»: blocchi ```json, virgole finali, chiavi question/options/answer) oppure appunti e testo breve per i completamenti automatici.' });
+        const testo = h('textarea.campo', { rows: 8, value: pre.testo || '', placeholder: 'Incolla qui il JSON delle domande (anche «sporco»: blocchi ```json, virgole finali, chiavi question/options/answer) oppure appunti e testo breve per i completamenti automatici.' });
         const app = Appunti.tutti().slice(0, 60);
         const selApp = h('select.campo', null, h('option', { value: '' }, '— oppure prendi i punti chiave da un appunto —'), ...app.map(a => h('option', { value: a.id }, a.titolo || '(senza titolo)')));
         const badge = h('div.cq-badge'), anteprima = h('div.tenue.piccolo');
+        const elencoDomande = h('div'), escluse = new Set();
+        const estratti = h('textarea.campo', { rows: 4, value: pre.testo || '' });
+        const lettore = paginePdf(estratti);
         const pipe = h('div');
         let pronte = [];
         const idQuiz = 'qc-' + uid();
+        const disegna = () => {
+            svuota(elencoDomande);
+            for (const [i, d] of pronte.entries()) {
+                elencoDomande.append(h('div', null, h('label', null, h('input', { type: 'checkbox', checked: !escluse.has(d.id), onchange: (e) => { if (e.target.checked)
+                        escluse.delete(d.id);
+                    else
+                        escluse.add(d.id); } }), d.q), h('button.chip', { onclick: () => Editor.apri(d, idQuiz, nuova => {
+                        if (!nuova)
+                            return;
+                        if (!Neuro.deduplica([nuova], archivio().concat(pronte.filter(x => x !== d))).nuove.length) {
+                            avviso('Domanda già presente.');
+                            return;
+                        }
+                        pronte[i] = { ...nuova, id: d.id };
+                        disegna();
+                    }, true) }, 'Modifica domanda')));
+            }
+        };
         const mostra = (dom, extra) => {
             const d = Neuro.deduplica(dom, archivio().concat(pronte));
-            pronte = pronte.concat(d.nuove.map(x => ({ ...x, sk: idQuiz, gen: true })));
+            pronte = pronte.concat(d.nuove.map(x => ({ ...x, id: idQuiz + '-' + uid(), sk: idQuiz, gen: true })));
+            disegna();
             badge.textContent = d.badge;
             anteprima.textContent = extra.filter(Boolean).join(' · ') + (pronte.length ? (extra.some(Boolean) ? ' · ' : '') + 'Pronte da salvare: ' + pronte.length : '');
         };
@@ -6111,8 +6531,12 @@ const CreaQuiz = (() => {
             const n = Math.max(1, Math.min(60, parseInt(nAI.value, 10) || 10)), arg = titolo.value.trim() || step.value.trim() || 'il testo incollato';
             const prompt = Neuro.promptGemini({ argomento: arg, materia: materia.value.trim() || undefined, archetipo: Dominio.archetipoMateria(materia.value.trim()), n, testo: testo.value.trim() || undefined, stepId: step.value.trim() || undefined });
             svuota(breaker);
-            if (Neuro.serveBreaker(n) || Dominio.senzaAI() || (!Spiega.attiva && !IA.gemini)) {
-                breaker.append(h('div.qz-neuro', null, h('b', null, Neuro.serveBreaker(n) ? '🛑 Più di ' + Neuro.BREAKER + ' domande: le genera Gemini sul web, non l\'app' : '🛑 AI dell\'app non disponibile: usa Gemini sul web'), h('p.piccolo', null, '1) Copia il prompt · 2) incollalo in Gemini · 3) incolla qui sopra il JSON che ti restituisce e premi «Leggi JSON».'), h('button.btn', { type: 'button', onclick: async () => { try {
+            if (Neuro.serveBreaker(n) && !Dominio.senzaAI() && (Spiega.attiva || IA.gemini)) {
+                nuovo({ argomento: arg, materia: materia.value.trim(), testoIncollato: testo.value.trim(), nMcq: n, nFill: 0 });
+                return;
+            }
+            if (Dominio.senzaAI() || (!Spiega.attiva && !IA.gemini)) {
+                breaker.append(h('div.qz-neuro', null, h('b', null, '🛑 AI dell\'app non disponibile: usa Gemini sul web'), h('p.piccolo', null, '1) Copia il prompt · 2) incollalo in Gemini · 3) incolla qui sopra il JSON che ti restituisce e premi «Leggi JSON».'), h('button.btn', { type: 'button', onclick: async () => { try {
                         await navigator.clipboard.writeText(prompt);
                         avviso('Prompt copiato: incollalo in Gemini.');
                     }
@@ -6134,16 +6558,32 @@ const CreaQuiz = (() => {
                 breaker.append(h('div.tenue.piccolo', null, '⚠️ ' + (e.message || e)));
             }
         };
-        const salva = () => {
-            if (!pronte.length) {
+        let salvataggio = false;
+        const salva = async () => {
+            if (salvataggio)
+                return;
+            if (lettore.occupato()) {
+                avviso('Attendi la lettura delle pagine.');
+                return;
+            }
+            const selezionate = Neuro.deduplica(pronte.filter(d => !escluse.has(d.id)), archivio()).nuove;
+            if (!selezionate.length) {
                 avviso('Nessuna domanda nuova da salvare.');
                 return;
             }
             const t = titolo.value.trim() || 'Quiz leggero ' + new Date().toLocaleDateString('it-IT'), st = step.value.trim();
-            const domande = pronte.map(d => { const x = { ...d, sk: idQuiz }; if (st && !Neuro.stepDi(x))
+            const domande = selezionate.map(d => { const x = { ...d, sk: idQuiz }; if (st)
                 x.stepId = st; return x; });
-            const rec = { id: idQuiz, type: 'qcreato', updatedAt: 0, titolo: t, materia: materia.value.trim() || 'Studio', argomento: st || t, cosa: 'leggero', fonti: [], domande, creato: new Date().toISOString(), modelli: [], scartate: 0 };
-            Stato.salva(rec);
+            const rec = { id: idQuiz, type: 'qcreato', updatedAt: 0, titolo: t, pianoId: pre.pianoId, voceId: pre.voceId, materia: materia.value.trim() || 'Studio', argomento: st || t, cosa: 'leggero', testoIncollato: estratti.value.trim(), fonti: estratti.value.trim() ? [{ id: 'testo-incollato', nome: 'Estratti selezionati', pagine: '' }] : [], domande, creato: new Date().toISOString(), modelli: [], scartate: 0 };
+            salvataggio = true;
+            try {
+                await Stato.salva(rec);
+            }
+            catch {
+                salvataggio = false;
+                avviso('Salvataggio interrotto. Riprova.');
+                return;
+            }
             avviso('✓ Salvato: ' + domande.length + ' domande.');
             v.chiudi();
             apri(rec);
@@ -6151,13 +6591,21 @@ const CreaQuiz = (() => {
         const aggiornaPipe = () => { svuota(pipe); pipe.append(pannelloPipeline(step.value.trim())); };
         step.addEventListener('change', aggiornaPipe);
         v.corpo.append(h('div.pagina.modulo', null, h('div.tenue.piccolo', null, 'Import, riparazione, completamenti e deduplicazione avvengono sul dispositivo, senza AI. Le domande già presenti vengono saltate.'), h('label', null, 'Titolo', titolo), h('label', null, 'Materia', materia), h('label', null, 'Step', step), testo, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => daTesto(testo.value) }, '📥 Leggi JSON'), h('button.chip', { type: 'button', onclick: async () => { const t = await leggiFile('.json,.imcpack,application/json'); if (t != null)
-                daTesto(t); } }, '📂 Carica .json / .imcpack'), h('button.chip', { type: 'button', onclick: () => daCloze(testo.value) }, '✂️ Completamenti dal testo')), h('div.chips', null, selApp, h('button.chip', { type: 'button', onclick: () => { const a = app.find(x => x.id === selApp.value); if (!a) {
+                daTesto(t); } }, '📂 Carica .json / .imcpack'), h('button.chip', { onclick: async () => { try {
+                const [f] = await scegliFileDrive({ titolo: 'Scegli un quiz JSON o .imcpack' });
+                if (f)
+                    daTesto(await Drive.scaricaTesto(f.id));
+            }
+            catch {
+                avviso('Impossibile leggere il quiz da Drive.');
+            } } }, 'Importa quiz da Drive'), h('button.chip', { type: 'button', onclick: () => daCloze(testo.value) }, '✂️ Completamenti dal testo')), h('div.chips', null, selApp, h('button.chip', { type: 'button', onclick: () => { const a = app.find(x => x.id === selApp.value); if (!a) {
                 avviso('Scegli un appunto.');
                 return;
             } if (!step.value.trim() && (a.micro || a.sub)) {
                 step.value = String(a.micro || a.sub);
                 aggiornaPipe();
-            } daCloze(a.testo); } }, '✂️ Dai punti chiave')), badge, anteprima, h('div.chips', null, h('span.piccolo', null, 'Oppure con l\'AI:'), nAI, h('button.chip', { type: 'button', onclick: generaAI }, '✨ Genera domande')), breaker, h('div.bottoni', null, h('button.btn', { type: 'button', onclick: salva }, '💾 Salva e apri il quiz'), h('button.btn.neutro', { type: 'button', onclick: () => { pronte = []; badge.textContent = ''; anteprima.textContent = 'Svuotato.'; } }, 'Svuota')), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Esporta dall\'archivio (appunti + .imcpack)'), h('div.chips', null, ...[['errori', 'Solo errori'], ['illusione', 'Illusioni di competenza'], ['bloom3', 'Bloom ≥ 3']].map(([f, n]) => h('button.chip', { type: 'button', onclick: () => QuizApp.esporta(archivio(), f, 'Quiz creati in app', Dominio.archetipoMateria(materia.value.trim())) }, n)))), pipe));
+            } daCloze(a.testo); } }, '✂️ Dai punti chiave')), h('button.chip', { onclick: () => Editor.apri(null, idQuiz, d => { if (d)
+                mostra([d], ['Domanda scritta a mano']); }, true) }, 'Scrivi una domanda'), h('div.tenue.piccolo', null, 'Import e scrittura manuale: il contenuto richiede un controllo sulle fonti del corso.'), badge, anteprima, elencoDomande, h('label', null, 'Pagine o estratti di riferimento', estratti), lettore.el, h('div.chips', null, h('span.piccolo', null, 'Oppure con l\'AI:'), nAI, h('button.chip', { type: 'button', onclick: generaAI }, '✨ Genera domande')), breaker, h('div.bottoni', null, h('button.btn', { type: 'button', onclick: salva }, '💾 Salva e apri il quiz'), h('button.btn.neutro', { type: 'button', onclick: () => { pronte = []; escluse.clear(); disegna(); badge.textContent = ''; anteprima.textContent = 'Svuotato.'; } }, 'Svuota')), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Esporta dall\'archivio (appunti + .imcpack)'), h('div.chips', null, ...[['errori', 'Solo errori'], ['illusione', 'Illusioni di competenza'], ['bloom3', 'Bloom ≥ 3']].map(([f, n]) => h('button.chip', { type: 'button', onclick: () => QuizApp.esporta(archivio(), f, 'Quiz creati in app', Dominio.archetipoMateria(materia.value.trim())) }, n)))), pipe));
         aggiornaPipe();
         if (pre.appunto) {
             const a = app.find(x => x.id === pre.appunto) || Stato.prendi(pre.appunto);
@@ -6172,7 +6620,14 @@ const CreaQuiz = (() => {
             }
         }
     }
-    return { nuovo, elenco, apri, tutti, controlla, crea, leggero };
+    function dalPiano(p, v) {
+        const esistente = tutti().find(r => r.pianoId === p.id && r.voceId === v.k);
+        if (esistente)
+            apri(esistente);
+        else
+            nuovo({ pianoId: p.id, voceId: v.k, argomento: v.t, materia: nomeMateria(p.vincoliAI?.materiaCodice || materiaDi(v.k)) });
+    }
+    return { dalPiano, nuovo, elenco, apri, tutti, controlla, crea, leggero };
 })();
 
 const Domande = (() => {
@@ -6185,6 +6640,7 @@ const Domande = (() => {
         const oggiK = ymd(new Date()), sb = d.sbagliate || [];
         const mie = tutte().filter(x => x.schedaId === schedaId);
         const prima = mie.map(x => JSON.parse(JSON.stringify(x))), nuove = [];
+        const svolte = d.domandeSvolte && new Set(d.domandeSvolte.map(norm));
         const sbagliateId = new Set();
         for (const [q, giusta, spieg] of sb) {
             if (!q)
@@ -6201,7 +6657,7 @@ const Domande = (() => {
         }
         if (sb.length || d.pct === 100)
             for (const r of mie) {
-                if (sbagliateId.has(r.id) || (d.errori && r.esito !== 'sbagliata'))
+                if ((svolte && !svolte.has(norm(r.q))) || sbagliateId.has(r.id) || (d.errori && r.esito !== 'sbagliata'))
                     continue;
                 Stato.salva(Object.assign(r, { giuste: r.giuste + 1, ultima: oggiK, esito: 'giusta' }), true);
             }
@@ -6306,10 +6762,8 @@ const Dominio = (() => {
         const r = Stato.prendi('mat-' + codice);
         if (r && eArchetipo(r.archetipo))
             return r.archetipo;
-        if (MATERIE_BASE[codice])
-            return risolviArchetipoMateria(codice);
         const ind = indovinaArchetipo(r ? r.nome : nomeMateria(codice));
-        return risolviArchetipoMateria(codice, ind || undefined);
+        return ind || 'scienze_sperimentali';
     }
     function impostaArchetipo(codice, a) {
         const r = Stato.prendi('mat-' + codice), inf = infoMateria(codice);
@@ -6731,7 +7185,7 @@ const Dominio = (() => {
         }
     }
     function codiciMaterie() {
-        const s = new Set([...Object.keys(MATERIE_BASE).filter(() => ruolo() === 'owner'), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
+        const s = new Set([...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
         return Array.from(s).filter(Boolean);
     }
     function sezione() {
@@ -6967,7 +7421,7 @@ function salvaPacchetto(pk) {
     Stato.salva(r);
 }
 function nuovoCodice(nome) {
-    const usati = new Set([...Object.keys(MATERIE_BASE), ...tutteLeSchede().map(x => x.mat.m), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m)), ...Stato.tutti('materia').map(m => m.codice)]);
+    const usati = new Set([...tutteLeSchede().map(x => x.mat.m), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m)), ...Stato.tutti('materia').map(m => m.codice)]);
     const base = norm(nome).replace(/[^a-z]/g, '').toUpperCase() || 'M';
     for (let l = 2; l <= base.length; l++)
         if (!usati.has(base.slice(0, l)))
@@ -12176,7 +12630,7 @@ const PianiAI = (() => {
     const eAI = (p) => !!p && p.origine === 'ai_neuro';
     const pianiAI = () => Studio.pkPiani().filter(eAI);
     function codiciMaterie() {
-        const s = new Set([...Object.keys(MATERIE_BASE).filter(() => Drive.eProprietario()), ...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
+        const s = new Set([...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
         return Array.from(s).filter(Boolean);
     }
     function materiaDiSk(sk) {
@@ -12610,7 +13064,7 @@ const Pianificatore = (() => {
         }
         return { stato, rapporto, oreNecessarie: nec, oreDisponibili: disp, bufferPct: stato === 'serrato' ? 0.08 : stato === 'ottimale' ? 0.10 : 0, extraIper: !!(ctx.segnali && ctx.segnali.attiva), giorni, rimedi };
     }
-    function righeIndice(testo) {
+    function righeIndice(testo, elencoLibero = false) {
         const out = [];
         for (const r0 of String(testo || '').split(/\r?\n/)) {
             const r = r0.replace(/\s+/g, ' ').trim();
@@ -12624,6 +13078,8 @@ const Pianificatore = (() => {
             const p = /^([A-Za-zÀ-ÿ][^\d]{2,}?)(?:\s*\.{2,}\s*|\s+)(\d{1,4})$/.exec(r);
             if (p)
                 out.push({ num: String(out.length + 1), titolo: p[1].replace(/[\s.·…_-]+$/, '').trim(), pagina: parseInt(p[2], 10) });
+            else if (elencoLibero && /[\p{L}]/u.test(r))
+                out.push({ num: String(out.length + 1), titolo: r.replace(/^[-•*]\s+/, '') });
         }
         return out.filter((c, i) => !(out[i + 1] && out[i + 1].num.startsWith(c.num + '.')));
     }
@@ -12633,14 +13089,15 @@ const Pianificatore = (() => {
         for (const f of fonti || []) {
             if (!f)
                 continue;
-            const voci = righeIndice((f.pagine || []).join('\n')), n = Math.max(1, (f.pagine || []).length);
+            const voci = righeIndice((f.pagine || []).join('\n'), f.fileId === 'indice'), n = Math.max(1, (f.pagine || []).length);
             if (!voci.length) {
                 righe.push([pulisci(f.fileId), pulisci(f.nome), '1-' + n, pulisci(f.nome)].join(' | '));
                 continue;
             }
             voci.forEach((c, i) => {
                 const a = c.pagina || 1, succ = voci.slice(i + 1).find(x => x.pagina != null), b = succ && succ.pagina > a ? succ.pagina - 1 : a + 9;
-                righe.push([pulisci(f.fileId), pulisci(f.nome), a + '-' + b, pulisci(c.titolo).slice(0, 80)].join(' | '));
+                const pagine = f.fileId === 'indice' && c.pagina == null ? '—' : a + '-' + b;
+                righe.push([pulisci(f.fileId), pulisci(f.nome), pagine, pulisci(c.titolo).slice(0, 80)].join(' | '));
             });
         }
         let out = '';
@@ -12673,7 +13130,8 @@ const Pianificatore = (() => {
                 continue;
             const m = /^(\d+)-(\d+)$/.exec(p[2]), a = m ? +m[1] : 1, b = m ? Math.max(+m[1], +m[2]) : a;
             const uid = 'U' + (out.length + 1);
-            out.push({ uid, titolo: p[3].slice(0, 60), prereq: out.length ? [out[out.length - 1].uid] : [], densita: 3, minutiBase: clamp((b - a + 1) * 8, 30, 240), fileId: p[0], nomeFile: p[1], pagine: [a, b], concettiChiave: [] });
+            out.push({ uid, titolo: p[3].slice(0, 60), prereq: out.length ? [out[out.length - 1].uid] : [], densita: 3,
+                minutiBase: clamp((b - a + 1) * 8, 30, 240), fileId: p[0], nomeFile: p[1], pagine: m ? [a, b] : undefined, concettiChiave: [] });
         }
         return out;
     }
@@ -12896,14 +13354,17 @@ const Pianificatore = (() => {
             }
             voci.get(leg.data).push({ k: cod + '~' + pidC + '~RIPOSO', t: '🌿 Riposo attivo (Wakeful Rest): niente studio nuovo', speciale: true, d: 'Giorno prima dell\'obiettivo: al massimo 60 minuti di ripasso leggero.' });
         }
-        const avanzi = coda.length;
+        const esclusi = coda.map(c => c.u.titolo + ' · ' + NOMI_LIV[c.liv])
+            .concat(ripassi.filter(r => r.data && r.data < v.dataTarget).map(r => r.voce.t));
+        const avanzi = esclusi.length;
         const gg = giorni.filter(g => voci.get(g.data).length).map((g, i) => ({ data: g.data, n: i + 1, voci: voci.get(g.data) }));
         return {
             formato: 'pacchetto-studio', tipo: 'piano', id: o.pid, titolo: o.titolo || '✨ Piano intelligente ' + v.materiaCodice, aggiornato: new Date().toISOString(),
-            giorniTeoria: gg.length, giorni: gg, origine: 'ai_neuro', proprio: true, vincoliAI: v, statoFattibilita: f.stato,
+            giorniTeoria: gg.length, giorni: gg, origine: 'ai_neuro', proprio: true, vincoliAI: v,
+            statoFattibilita: avanzi && f.stato === 'ottimale' ? 'serrato' : f.stato,
             capienza: Math.max(3, ...gg.map(x => x.voci.length)) + 1, unita, fonteMappa: 'toc', iper: errori || undefined,
             livelloIntensita: bio ? bio.livello : undefined, avvisiBio: bio && bio.avvisi.length ? bio.avvisi : undefined,
-            nota: avanzi ? avanzi + ' attività non sono entrate nel calendario: valuta i rimedi (più minuti o data più lontana).' : undefined,
+            nota: avanzi ? 'Piano parziale. Attività fuori calendario (' + avanzi + '): ' + [...new Set(esclusi)].join(', ') + '.' : undefined,
         };
     }
     const HARD_CAP_ANALITICO = 270;
@@ -13334,6 +13795,8 @@ const Pianificatore = (() => {
         const m = dip.unita ? { unita: dip.unita, fonte: 'toc', chiamate: 0, tokenStimati: 0 } : await mappaCurriculumAI(struttura, v, seg, dip.ia);
         if (m.fonte === 'ai')
             fatt = calcolaFattibilita(v, m.unita, ctx);
+        if (fatt.stato === 'critico')
+            return { piano: null, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura };
         const pid = dip.pid || 'ai-' + Date.now().toString(36);
         const rMin = v.livelloIntensita ? MATRICE_LIVELLI[livelloValido(v.livelloIntensita) - 1].ritenzioneTargetFSRS : 0;
         const piano = compilaTimelineNeuro(m.unita, v, fatt, seg, { oggi: dip.oggi, pid, titolo: dip.titolo, ritenzione: dip.ritenzione ? dip.ritenzione(rMin) : undefined, intervallo: dip.intervallo });
@@ -13599,6 +14062,7 @@ const QuizApp = (() => {
     function registraStat(v) {
         const id = 'sq-' + v.d.id, p = Stato.prendi(id), dev = Privacy.idDispositivo(), giusta = !!v.ok;
         const r = p && !p.deleted ? p : { id, type: 'statq', updatedAt: 0, sk: v.d.sk, n: 0, ok: 0, ultima: '', esito: false, c: {} };
+        const esitoPrima = r.esito, ultimaPrima = r.ultima;
         const x = StatQC.mio(r, dev);
         x.n++;
         if (giusta)
@@ -13663,6 +14127,8 @@ const QuizApp = (() => {
                 else
                     delete q.confidenceLog;
             }
+            q.esito = esitoPrima;
+            q.ultima = ultimaPrima;
             if (autoPrima)
                 q.auto = true;
             else
@@ -13761,7 +14227,7 @@ const QuizApp = (() => {
             v.corpo.appendChild(h('div.qz-testa', null, h('div.qz-occhiello', null, (mat0(pk, m).nome || m) + ' · ' + micro + (gen ? ' · esercizi generati' : ' · scheda ' + s.k + ' di ' + s.n)), h('h1.qz-h1', null, gen ? 'Esercizi nuovi: ' + (Generatori.titoloMicro(pk, m, micro) || s.titolo) : s.titolo)));
         v.corpo.appendChild(app);
         let P = [], cur = 0, ripasso = false, apertaX = false, finito = false;
-        let mq = modo(), storia = [], faticaOn = false, faticaZitta = 0;
+        let mq = info?.modo || modo(), storia = [], faticaOn = false, faticaZitta = 0;
         const archM = Dominio.archetipoMateria(m);
         const NOMI_TIPO = { mcq: 'Risposta multipla', fill: 'A completamento', sequenza: 'Metti in ordine', abbinamento: 'Abbinamento', risposta_aperta_rubrica: 'Risposta aperta' };
         const codice = (d) => d.t === 'risposta_aperta_rubrica' && !!d.linguaCodice;
@@ -13814,8 +14280,12 @@ const QuizApp = (() => {
             }
             return o;
         }
+        const annulli = new Map();
+        let registrato = false;
         const nuovo = (idx, rip) => {
             P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
+            annulli.clear();
+            registrato = false;
             storia = [];
             faticaOn = false;
             faticaZitta = 0;
@@ -14018,6 +14488,8 @@ const QuizApp = (() => {
         }
         function chiudi(x) {
             const annulla = prova ? null : registraStat(x);
+            if (annulla)
+                annulli.set(x, annulla);
             storia.push({ ms: x.ms || 0, ok: !!x.ok });
             if (faticaZitta > 0)
                 faticaZitta--;
@@ -14028,7 +14500,8 @@ const QuizApp = (() => {
             if (toastAnnulla)
                 toastAnnulla.remove();
             if (annulla)
-                avviso('Risposta registrata · tocca per annullare', 8000, () => { annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.daConf = false; x.prop = undefined; x.auto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
+                avviso('Risposta registrata · tocca per annullare', 8000, () => { if (finito || !annulli.delete(x))
+                    return; annulla(); x.picked = null; x.ok = null; x.avv = undefined; x.sel = []; x.voto = undefined; x.daConf = false; x.prop = undefined; x.auto = undefined; x.caso = undefined; x.srs = undefined; x.t0 = Date.now(); storia.pop(); disegnaQ(); avviso('Risposta annullata: puoi rispondere di nuovo.'); });
             toastAnnulla = document.querySelector('#avvisi .avviso:last-child');
             if (!x.ok) {
                 const dk = x.d.dk && typeof x.picked === 'number' && x.ord[x.picked] > 0 ? x.d.dk[x.ord[x.picked] - 1] : null;
@@ -14050,7 +14523,7 @@ const QuizApp = (() => {
             const dd = { q: d.q, opts: mc ? x.ord.map(i => d.o[i]) : [], corretta: mc ? d.o[0] : (d.show || (d.a || [''])[0]),
                 scelta: x.ok ? '' : mc ? (typeof x.picked === 'number' ? d.o[x.ord[x.picked]] : '') : String(x.picked || ''),
                 cit: (d.cit || []).map(c => c.t).join('\n'), passi: (Array.isArray(d.e) ? d.e : [d.e]).join(' '), titolo: (mat0(pk, m).nome || m) + ' — ' + s.titolo,
-                archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: MATERIE_BASE[m] ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
+                archetipo: d.archetipo || Dominio.archetipoMateria(m), nomeMateria: Stato.prendi('mat-' + m) ? undefined : (mat0(pk, m).nome || nomeMateria(m)) };
             const id = Spiega.idDi(dd, l), c = Stato.prendi(id);
             if (l === 'perche' || l === 'breve') {
                 const oi = mc && typeof x.picked === 'number' ? x.ord[x.picked] : null;
@@ -14123,10 +14596,18 @@ const QuizApp = (() => {
                 + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
             app.innerHTML = s2;
             v.corpo.scrollTop = 0;
-            const r = { imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
+            const r = { domandeSvolte: P.map(x => x.d.q), imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
                 sbagliate: sb.map(x => [x.d.q, x.d.t === 'mcq' ? x.d.o[0] : String(x.d.show || ''), (Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e)]) };
+            if (registrato)
+                return;
+            registrato = true;
             if (!gen && !prova)
                 Cattura.salva(s.id, r);
+            if (gen && !prova && Stato.prendi(s.id)?.type === 'qcreato') {
+                toastAnnulla?.remove();
+                const ritira = Array.from(annulli.values()).reverse();
+                Cattura.salva(s.id, r, () => ritira.forEach(fn => fn()));
+            }
         }
         app.addEventListener('click', ev => {
             const b = ev.target.closest('button');
@@ -14333,7 +14814,7 @@ const Editor = (() => {
     const LIV = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
     const area = (v, righe = 2, ph = '') => h('textarea', { rows: righe, value: v, placeholder: ph });
     const pulisci = (d) => { const c = { ...d }; delete c.id; delete c.sk; delete c.mod; delete c.nuova; return c; };
-    function apri(d0, sk, fatto) {
+    function apri(d0, sk, fatto, inBozza = false) {
         const nuova = !d0;
         const d = d0 ? JSON.parse(JSON.stringify(d0)) : { id: 'q-u-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), sk, t: 'mcq', lv: 'Applicativo', q: '', o: ['', '', '', '', ''], ew: ['', '', '', ''], e: '' };
         const recId = 'mq-' + d.id, r0 = Stato.prendi(recId);
@@ -14417,7 +14898,7 @@ const Editor = (() => {
         };
         const f = foglio({
             titolo: nuova ? 'Nuova domanda' : 'Modifica domanda',
-            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Tipo', tipo), riga('Livello', liv)), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Domanda'), testo), blocco, h('div.gruppo', null, h('div.gruppo-titolo', null, 'Correzione passo-passo'), passi), h('div.tenue.piccolo', null, 'Le modifiche si salvano con i tuoi dati su Drive; l\'originale resta e puoi ripristinarlo. Statistiche e spiegazioni AI della domanda restano collegate.'), nuova ? null : h('div.bottoni', null, d0 && d0.mod && !d0.nuova ? h('button.btn.neutro', { onclick: () => { const orig = r0 && r0.originale; if (r0)
+            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Tipo', tipo), riga('Livello', liv)), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Domanda'), testo), blocco, h('div.gruppo', null, h('div.gruppo-titolo', null, 'Correzione passo-passo'), passi), h('div.tenue.piccolo', null, 'Le modifiche si salvano con i tuoi dati su Drive; l\'originale resta e puoi ripristinarlo. Statistiche e spiegazioni AI della domanda restano collegate.'), nuova || inBozza ? null : h('div.bottoni', null, d0 && d0.mod && !d0.nuova ? h('button.btn.neutro', { onclick: () => { const orig = r0 && r0.originale; if (r0)
                     Stato.elimina(recId); f.chiudi(); fatto({ ...(orig || {}), id: d.id, sk }); avviso('Ripristinato l\'originale.'); } }, '↩︎ Ripristina originale') : null, h('button.btn.pericolo', { onclick: async () => {
                     const x = await chiedi('Nascondere questa domanda?', [{ testo: 'Nascondi', valore: 'si', pericolo: true }, { testo: 'Annulla', valore: 'no' }], 'Non comparirà più nel quiz. Puoi ripristinarla dalla schermata del risultato.');
                     if (x !== 'si')
@@ -14432,6 +14913,10 @@ const Editor = (() => {
                 const n = leggi();
                 if (!n)
                     return false;
+                if (inBozza) {
+                    fatto(n);
+                    return;
+                }
                 if (nuova || (d0 && d0.nuova))
                     salvaRec({ nuova: true, campi: pulisci(n), nascosta: false });
                 else
@@ -15610,15 +16095,11 @@ function prossimoEsame() {
     return { nome: e.nome.replace(/ semestre filtro$/i, ''), giorni: giorniA(e.data), stato: r < 0 ? '' : r ? 'indietro di ' + r + ' step' : 'in pari ✓' };
 }
 
-const MATERIE_BASE = {
-    C: { nome: 'Chimica', breve: 'Chi', colore: '#e9a23b' }, B: { nome: 'Biologia', breve: 'Bio', colore: '#2fbf8f' }, F: { nome: 'Fisica', breve: 'Fis', colore: '#6c8cff' },
-};
 const PALETTE_MATERIE = ['#e9a23b', '#2fbf8f', '#6c8cff', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#14b8a6', '#eab308', '#ec4899'];
 function materiaDi(k) { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; }
 function infoMateria(code) {
     const r = Stato.prendi('mat-' + code);
-    const base = MATERIE_BASE[code];
-    let nome = r ? r.nome : base ? base.nome : '', colore = r ? r.colore : base ? base.colore : '';
+    let nome = r ? r.nome : '', colore = r ? r.colore : '';
     if (!nome || !colore)
         for (const pk of Studio.pkStep()) {
             const m = pk.materie.find(x => x.m === code);
@@ -15635,7 +16116,7 @@ function infoMateria(code) {
         colore = PALETTE_MATERIE[hsh % PALETTE_MATERIE.length];
     }
     nome = nome || code;
-    return { nome, breve: (r && r.breve) || (base && base.breve) || nome.slice(0, 3), colore };
+    return { nome, breve: (r && r.breve) || nome.slice(0, 3), colore };
 }
 const nomeMateria = (c) => infoMateria(c).nome;
 const coloreMateria = (c) => infoMateria(c).colore;
@@ -15648,6 +16129,28 @@ function formaMateria(code) { if (FORME_BASE[code])
 const formaChiave = (k) => materiaDi(k) ? formaMateria(materiaDi(k)) : '';
 function segnoMateria(k) { const f = formaChiave(k); return f ? h('span.forma-mat', { style: { color: coloreChiave(k) }, 'aria-hidden': 'true' }, f) : null; }
 const Studio = (() => {
+    function migraMaterieBase() {
+        const email = String(Drive.stato.email || '').trim().toLowerCase();
+        if (!email || !Drive.eProprietario())
+            return 0;
+        const idFlag = 'mig-materie-v0641-' + sha256Hex(email).slice(0, 12);
+        if (Stato.esiste(idFlag))
+            return 0;
+        const iniziali = [
+            { id: 'mat-C', type: 'materia', codice: 'C', nome: 'Chimica', breve: 'Chi', colore: '#e9a23b', archetipo: 'scienze_sperimentali' },
+            { id: 'mat-B', type: 'materia', codice: 'B', nome: 'Biologia', breve: 'Bio', colore: '#2fbf8f', archetipo: 'scienze_sperimentali' },
+            { id: 'mat-F', type: 'materia', codice: 'F', nome: 'Fisica', breve: 'Fis', colore: '#6c8cff', archetipo: 'stem_calcolo' },
+        ];
+        let create = 0;
+        for (const m of iniziali)
+            if (!Stato.esiste(m.id)) {
+                Stato.salva({ ...m, updatedAt: 0 }, true);
+                create++;
+            }
+        Stato.salva({ id: idFlag, type: 'migrazione', updatedAt: 0, versione: '0.64.1', ambito: 'materie-base' }, true);
+        Stato.notifica();
+        return create;
+    }
     function pianiVirtuali() {
         const out = [];
         for (const pk of pkStep().filter(p => p.proprio)) {
@@ -15918,7 +16421,7 @@ const Studio = (() => {
         }
         return { id, pagina: ass - primo + 1, nome: L.nome + ' p. ' + pagLibro };
     }
-    return { togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, trovati, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
+    return { migraMaterieBase, togliSito, pkStep, pkPiano, pkPiani, pianiAttivi, nascosto, nascondiPiano, pianiVirtuali, segnaStepAMano, importa, caricaDalSito, caricaDaDrive, trovati, prog, fatta, segna, pagineSet, intervalli, numeri, schedeDi, trovaSotto, etichetta,
         dataVoce, stepFatto, vociDelGiorno, inRitardo, sposta, idQuiz, pdfPagina };
 })();
 function visore(titolo, alChiudi) {
@@ -15986,7 +16489,8 @@ async function apriQuiz(pk, m, micro, s, cb) {
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 const PdfCache = (() => {
     const NOME = 'imc-pdf', MAX = 10, CH = 'imc-pdf-uso';
-    const url = (id) => location.origin + '/__pdf/' + id;
+    const chiave = (id, versione) => versione ? id + '@' + versione : id;
+    const url = (id) => location.origin + '/__pdf/' + encodeURIComponent(id);
     const uso = () => { try {
         return JSON.parse(localStorage.getItem(CH) || '{}');
     }
@@ -16004,11 +16508,11 @@ const PdfCache = (() => {
         return null;
     } }
     async function presente(id) { const c = await cache(); return !!(c && await c.match(url(id))); }
-    async function prendi(id, avanz) {
-        const c = await cache(), u = uso();
-        const vecchia = c && await c.match(url(id));
+    async function prendi(id, avanz, versione) {
+        const c = await cache(), u = uso(), k = chiave(id, versione);
+        const vecchia = c && await c.match(url(k));
         if (vecchia) {
-            u[id] = Date.now();
+            u[k] = Date.now();
             segna(u);
             return new Uint8Array(await vecchia.arrayBuffer());
         }
@@ -16037,8 +16541,8 @@ const PdfCache = (() => {
         }
         if (c) {
             try {
-                await c.put(url(id), new Response(tutto.slice(0), { headers: { 'content-type': 'application/pdf' } }));
-                u[id] = Date.now();
+                await c.put(url(k), new Response(tutto.slice(0), { headers: { 'content-type': 'application/pdf' } }));
+                u[k] = Date.now();
                 for (const vecchio of Object.keys(u).sort((a, b) => u[b] - u[a]).slice(MAX)) {
                     await c.delete(url(vecchio));
                     delete u[vecchio];
@@ -16163,7 +16667,7 @@ function barra(fatte, tot, colore) {
 function rigaStudio(x) {
     const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k.replace(/^G2-/, ''));
     const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k);
-    return lungo(h('button.voce-lista', { onclick: () => { if (sim) {
+    const riga = lungo(h('button.voce-lista', { onclick: () => { if (sim) {
             apriSimulazioni();
             return;
         } if (t) {
@@ -16177,6 +16681,8 @@ function rigaStudio(x) {
             UI.studioPiano = x.p.id;
             vai('studio');
         } } }, h('span.barra', { style: { background: x.v.speciale ? 'var(--tenue)' : coloreChiave(x.v.k) } }), h('span.voce-corpo', null, h('span.voce-titolo', null, x.v.speciale ? null : segnoMateria(x.v.k), (fatto ? '✓ ' : '') + (raff && !x.v.speciale ? 'Raffina ' : '') + (x.v.speciale ? x.v.t : Studio.etichetta(x.v.k) + ' · ' + x.v.t)), h('span.voce-sotto', null, x.v.speciale ? (x.v.d || '') + (/^G2-/.test(x.v.k) ? testoCarte(x.v.k.slice(3)) : '') : testoAvanzamento(x.v.k, x.p), x.spostata ? ' · spostato' : '', sim ? ' · ▶ tocca per iniziare' : ''))), () => sim ? MenuLungo.esame() : MenuLungo.step(x.v.k), x.v.speciale ? x.v.t : Studio.etichetta(x.v.k));
+    return x.v.speciale ? riga : h('div', { onclick: (e) => { if (e.target === e.currentTarget)
+            riga.click(); } }, riga, h('button.btn-testo', { onclick: () => CreaQuiz.dalPiano(x.p, x.v), 'aria-label': 'Quiz su ' + x.v.t }, 'Quiz'));
 }
 function testoCarte(k) {
     const mz = Carte.mazzi().filter(m => m.sub === k);
@@ -16348,7 +16854,7 @@ function vistaPiano(piano) {
                         Studio.segnaStepAMano(v.k, piano, !fatto); } }, fatto ? '✓' : ''), h('button.voce-corpo', { onclick: () => { if (t) {
                     UI.studioSub = v.k;
                     disegna();
-                } } }, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t), h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? (v.d || '') + (/^G2-/.test(v.k) ? testoCarte(v.k.slice(3)) : '') : testoAvanzamento(v.k, piano), tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')), v.speciale ? null : h('button.btn-testo', { onclick: () => apriSposta(v, go, piano) }, 'Sposta'));
+                } } }, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.speciale ? v.t : Studio.etichetta(v.k) + ' · ' + v.t), h('span.voce-sotto' + (tardi ? '.scaduto' : ''), { style: { whiteSpace: 'normal' } }, v.speciale ? (v.d || '') + (/^G2-/.test(v.k) ? testoCarte(v.k.slice(3)) : '') : testoAvanzamento(v.k, piano), tardi ? ' · in ritardo' : '', go.data !== d ? ' · spostato dal ' + fmt(daYmd(go.data), { day: 'numeric', month: 'short' }) : '')), v.speciale ? null : h('button.btn-testo', { onclick: () => CreaQuiz.dalPiano(piano, v), 'aria-label': 'Quiz su ' + v.t }, 'Quiz'), v.speciale ? null : h('button.btn-testo', { onclick: () => apriSposta(v, go, piano) }, 'Sposta'));
         }), !voci.length ? h('div.tenue.piccolo', { style: { padding: '8px 0' } }, 'Step spostati altrove.') : null, gp && gp.nota ? h('div.tenue.piccolo', { style: { padding: '4px 0' } }, gp.nota) : null)));
     }
     setTimeout(() => { const el = document.getElementById('piano-oggi'); if (el && !UI.pianoScorso) {
@@ -17492,7 +17998,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.64.0';
+const VERSIONE = '0.64.1';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
@@ -17724,9 +18230,12 @@ function controllaAvvisi() {
     }
 }
 function scorciatoiaAvvio() {
-    let az = '';
+    let az = '', condiviso = '';
     try {
-        az = new URLSearchParams(location.search).get('az') || '';
+        const q = new URLSearchParams(location.search);
+        az = q.get('az') || '';
+        if (az === 'condividi')
+            condiviso = q.get('text') || q.get('url') || q.get('title') || '';
     }
     catch (e) {
         console.warn('scorciatoia: indirizzo illeggibile', e);
@@ -17739,7 +18248,9 @@ function scorciatoiaAvvio() {
     catch (e) {
         console.warn('scorciatoia: replaceState', e);
     }
-    if (az === 'studia') {
+    if (az === 'condividi')
+        conStrumentiQuiz(() => CentroUI.apri(condiviso));
+    else if (az === 'studia') {
         if (StudiaOra.leggi()) {
             apriSessione();
             return;
@@ -17770,7 +18281,8 @@ async function avvia() {
     Stato.pulisci();
     Stato.ascolta(() => { Ripassi.inizializza(); });
     Stato.ascolta(Notifiche.programma);
-    Drive.ascolta(() => { if (!document.querySelector('.foglio-sfondo'))
+    Drive.ascolta(() => { if (Drive.stato.sync === 'ok')
+        Studio.migraMaterieBase(); if (!document.querySelector('.foglio-sfondo'))
         disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva)
         Spiega.recuperaDaDrive(); if (Drive.stato.sync === 'ok' && Dominio.serveBenvenuto())
         Dominio.benvenuto(); });
@@ -17789,6 +18301,7 @@ async function avvia() {
     Drive.precarica();
     Timer.parti();
     Studio.caricaDalSito();
+    Studio.migraMaterieBase();
     if (Drive.collegato && navigator.onLine)
         Drive.sincronizza(false);
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applicaTema);
