@@ -422,23 +422,65 @@ const Dominio = (() => {
       } });
   }
 
-  // ---------- §1 Wizard di benvenuto (solo ospiti, una volta) ----------
+  // ---------- §1 Onboarding in 3 domande (solo ospiti, una volta) ----------
   let wizardAperto = false;
+  const CHIAVE_ONBOARDING_SALTATO = 'imc-onboarding-saltato';
+  const onboardingSaltato = (): boolean => { try { return localStorage.getItem(CHIAVE_ONBOARDING_SALTATO) === '1'; } catch (_) { return false; } };
+  const segnaOnboardingSaltato = (v: boolean): void => { try { if (v) localStorage.setItem(CHIAVE_ONBOARDING_SALTATO, '1'); else localStorage.removeItem(CHIAVE_ONBOARDING_SALTATO); } catch (e) { console.warn('Onboarding: preferenza locale non disponibile', e); } };
   function serveBenvenuto(): boolean {
-    if (navigator.webdriver || wizardAperto || ruolo() !== 'ospite' || !Drive.collegato) return false;
-    const r = Stato.prendi<ProfiloRec>(ID_PROFILO); return !(r && r.benvenuto);
+    if (navigator.webdriver || wizardAperto || ruolo() !== 'ospite' || onboardingSaltato()) return false;
+    return !Stato.prendi<ProfiloRec>(ID_PROFILO);
   }
   async function benvenuto(forza = false): Promise<void> {
-    if (!forza && !serveBenvenuto()) return;
+    if (ruolo() !== 'ospite' || (!forza && !serveBenvenuto())) return;
+    if (forza) segnaOnboardingSaltato(false);
     wizardAperto = true;
-    try {
-      const m = await chiedi('👋 Benvenuto!', (Object.keys(NOMI_MODALITA) as ModalitaCognitiva[]).map(k => ({ testo: NOMI_MODALITA[k], valore: k })),
-        'Per chi è l\'app? Adatta ripassi, dimensione dei gruppi di domande e tono delle spiegazioni. Puoi cambiarlo in Altro → Studio.');
-      impostaModalita((m && PRESET_COGNITIVI[m as ModalitaCognitiva] ? m : 'superiori_maturita') as ModalitaCognitiva);
-      const s = await chiedi('La tua prima materia', [{ testo: '🗓 Crea il piano dall\'indice del libro', valore: 'piano' }, { testo: '📦 Importa un pacchetto .imcpack', valore: 'pack' }, { testo: 'Più tardi', valore: 'no' }],
-        'Puoi partire dall\'indice del tuo libro e dalla data dell\'esame, oppure importare un pacchetto pronto (domande e flashcard).');
-      if (s === 'piano') wizardPiano(); else if (s === 'pack') importaDaFile();
-    } finally { wizardAperto = false; }
+    let passo = 0, completato = false, archetipoManuale = false;
+    const modalita = selettore((Object.keys(NOMI_MODALITA) as ModalitaCognitiva[]).map(k => [k, NOMI_MODALITA[k]] as [string, string]), 'superiori_maturita');
+    modalita.setAttribute('aria-label', 'Profilo di studio iniziale');
+    const materia = h('input', { type: 'text', placeholder: 'Es. Diritto privato', autocomplete: 'off', 'aria-label': 'Prima materia' }) as HTMLInputElement;
+    const data = h('input', { type: 'date', 'aria-label': 'Data esame facoltativa' }) as HTMLInputElement;
+    const archetipo = selettore(Object.values(ARCHETIPI_DISCIPLINARI).map(a => [a.id, ICONE_ARCHETIPO[a.id] + ' ' + a.etichetta] as [string, string]), 'scienze_sperimentali');
+    archetipo.setAttribute('aria-label', 'Tipo della materia');
+    archetipo.addEventListener('change', () => { archetipoManuale = true; });
+    materia.addEventListener('input', () => { const a = indovinaArchetipo(materia.value); if (a && !archetipoManuale) archetipo.value = a; });
+    const ai = selettore([['', 'Nessuna per ora'], ['gemini', 'Gemini'], ['chatgpt', 'ChatGPT'], ['claude', 'Claude'], ['copilot', 'Copilot'], ['locale', 'AI locale']], '');
+    ai.setAttribute('aria-label', 'AI usata per creare quiz');
+    const progresso = h('p.piccolo.tenue', { 'aria-live': 'polite' });
+    const zona = h('div.modulo');
+    const indietro = h('button.btn.neutro', { type: 'button' }, 'Indietro') as HTMLButtonElement;
+    const avanti = h('button.btn', { type: 'button' }, 'Avanti') as HTMLButtonElement;
+    const salta = h('button.btn-testo', { type: 'button' }, 'Salta per ora') as HTMLButtonElement;
+    const corpo = h('div', null, progresso, zona, h('div.bottoni', null, indietro, avanti), salta);
+    let pannello: { chiudi: () => void };
+    const mostra = () => {
+      svuota(zona); progresso.textContent = 'Domanda ' + (passo + 1) + ' di 3'; indietro.style.visibility = passo ? 'visible' : 'hidden';
+      if (passo === 0) zona.append(h('h3', null, 'Come studi?'), h('p.piccolo.tenue', null, 'Adatto ripassi, gruppi di domande e tono delle spiegazioni.'), riga('Livello', modalita));
+      else if (passo === 1) zona.append(h('h3', null, 'Cosa studi?'), h('p.piccolo.tenue', null, 'La data è facoltativa. Potrai cambiare tutto in Altro → Studio e AI.'), riga('Materia', materia), riga('Tipo', archetipo), riga('Data esame', data));
+      else zona.append(h('h3', null, 'Quale AI usi?'), h('p.piccolo.tenue', null, 'Serve solo per preparare prompt adatti alla piattaforma. Puoi scegliere “Nessuna”.'), riga('AI', ai));
+      avanti.textContent = passo === 2 ? 'Completa' : 'Avanti';
+      (passo === 0 ? modalita : passo === 1 ? materia : ai).focus();
+    };
+    indietro.onclick = () => { if (passo > 0) { passo--; mostra(); } };
+    avanti.onclick = () => {
+      if (passo === 1 && !materia.value.trim()) { avviso('Scrivi la materia che vuoi studiare.'); materia.focus(); return; }
+      if (passo < 2) { passo++; mostra(); return; }
+      const nome = materia.value.trim(), codice = materiaPerNome(nome), m = Stato.prendi<MateriaRec>('mat-' + codice);
+      impostaModalita(modalita.value as ModalitaCognitiva);
+      Stato.salva({ ...(m || { id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome, colore: coloreMateria(codice) }), nome, archetipo: archetipo.value } as MateriaRec);
+      if (data.value) Stato.salva({ id: 'esame-onboarding-' + codice, type: 'esame', updatedAt: 0, nome: 'Esame di ' + nome, data: data.value, materie: [codice] } as Esame);
+      if (ai.value) {
+        const grandi = ['gemini', 'chatgpt', 'claude'].includes(ai.value), locale = ai.value === 'locale';
+        Stato.salva({ id: 'profiloai', type: 'profiloai', updatedAt: 0, profilo: { id: ai.value, nome: ai.options[ai.selectedIndex].text,
+          contesto: grandi ? 'grande' : locale ? 'piccolo' : 'medio', file: grandi, json: grandi ? 'alta' : locale ? 'bassa' : 'media',
+          perRisposta: grandi ? 18 : locale ? 6 : 10, maxCaratteri: grandi ? 0 : locale ? 12000 : 40000 } } as ProfiloAIRec, true);
+      }
+      completato = true; segnaOnboardingSaltato(false); pannello.chiudi(); avviso('Configurazione completata. Ora puoi creare il primo quiz.');
+      conStrumentiQuiz(() => CentroUI.apri());
+    };
+    salta.onclick = () => { segnaOnboardingSaltato(true); pannello.chiudi(); };
+    pannello = foglio({ titolo: '👋 Configurazione iniziale', corpo, allaChiusura: () => { wizardAperto = false; if (!completato) segnaOnboardingSaltato(true); } });
+    mostra();
   }
 
   // ---------- Impostazioni (Altro → Studio) ----------
@@ -459,7 +501,8 @@ const Dominio = (() => {
       materie.length ? h('div.gruppo', null, h('div.gruppo-titolo', null, 'Tipo di materia (guida AI e controlli senza AI)'), ...materie) : null,
       h('div.bottoni', null,
         h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano'),
-        h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack')),
+        h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack'),
+        p.ruolo === 'ospite' ? h('button.btn.neutro', { onclick: () => benvenuto(true) }, 'Riapri configurazione iniziale') : null),
       propri.length ? h('div.chips', null, ...propri.map(x => h('button.chip', { onclick: () => scaricaPacchetto(x) }, '⬇ ' + x.titolo))) : null,
       senzaAI() ? h('div.tenue.piccolo', null, '🔌 Modalità 100% senza AI: calendario, ripassi FSRS, flashcard, pacchetti e controlli delle risposte funzionano senza chiavi.') : null);
   }

@@ -2,7 +2,7 @@
 // 07-main.ts — Avvio, struttura della pagina, tema, avvisi in-app.
 // ============================================================
 
-const VERSIONE = '0.64.4';
+const VERSIONE = '0.64.5';
 
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
@@ -211,11 +211,12 @@ async function avvia(): Promise<void> {
   Stato.pulisci(); // v0.17: lapidi vecchie del registro notifiche
   Stato.ascolta(() => { Ripassi.inizializza(); }); // v0.7: memoria per le schede fatte (anche da altri dispositivi)
   Stato.ascolta(Notifiche.programma); // v0.7: riallinea le notifiche sul telefono a ogni modifica
-  Drive.ascolta(() => { if (Drive.stato.sync === 'ok') Studio.migraMaterieBase(); if (!document.querySelector('.foglio-sfondo')) disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva) Spiega.recuperaDaDrive(); if (Drive.stato.sync === 'ok' && Dominio.serveBenvenuto()) Dominio.benvenuto(); });   // v0.52: wizard di benvenuto per gli ospiti
+  Drive.ascolta(() => { if (Drive.stato.sync === 'ok') Studio.migraMaterieBase(); if (!document.querySelector('.foglio-sfondo')) disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva) Spiega.recuperaDaDrive(); });
   attivaSimboli();
   Tocco.attiva();
   disegna();
   scorciatoiaAvvio();   // v0.58: scorciatoie PWA (tocco lungo sull'icona)
+  setTimeout(() => { if (!document.querySelector('.foglio-sfondo')) Dominio.benvenuto(); }, 700);   // v0.64.5: onboarding ospite anche senza Drive
   setTimeout(() => { try { Appunti.migraNoteGiorno(); } catch (e) { console.warn('Appunti: migrazione note del giorno rimandata', e); } }, 1200);   // v0.60 (N1)
   setTimeout(() => { Allegati.migra().catch(e => console.warn('Allegati: migrazione rimandata', e)); }, 1500);   // v0.57 (A14)
   avvisoNovita();

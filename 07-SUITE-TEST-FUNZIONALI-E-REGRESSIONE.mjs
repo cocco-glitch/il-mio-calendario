@@ -208,7 +208,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.64.4', () => vero(/const VERSIONE = '0.64.4'/.test(leggi('09-main.ts'))));
+t('versione app 0.64.5', () => vero(/const VERSIONE = '0.64.5'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
@@ -919,6 +919,14 @@ t('v0.64.4 P0-C: valida domanda/pacchetto, corregge solo bocciate per tre tentat
   vero(/DiagnosiQuiz\.applicaPatch/.test(q) && /Restituisci esclusivamente un array JSON di patch/.test(q), 'patch chirurgiche');
   vero(/ImportaDrive\.salva\(t, sc, 'coda:' \+ l\.id, \{ accumula: true/.test(q) && /Innestalo nel piano/.test(ui), 'innesto idempotente esposto');
   vero(!/\bfetch\s*\(|Promise\.(?:all|race|any)\s*\(/.test(r), 'nessun OCR o racing parallelo');
+});
+
+t('v0.64.5 T13: onboarding ospite in tre domande, atomico e riapribile', () => {
+  const d = leggi('07-dominio.ts'), m = leggi('09-main.ts');
+  vero(/Domanda ['"] \+ \(passo \+ 1\) \+ ['"] di 3/.test(d) && /Profilo di studio iniziale/.test(d) && /Prima materia/.test(d) && /AI usata per creare quiz/.test(d), 'tre domande');
+  vero(/Salta per ora/.test(d) && /Riapri configurazione iniziale/.test(d) && /p\.ruolo === 'ospite'/.test(d), 'salta, riapri e solo ospite');
+  vero(/if \(data\.value\) Stato\.salva/.test(d) && /id: 'profiloai'/.test(d) && /CentroUI\.apri/.test(d), 'materia, esame facoltativo, AI e Centro');
+  vero(/Dominio\.benvenuto\(\)/.test(m) && !/Drive\.stato\.sync === 'ok' && Dominio\.serveBenvenuto/.test(m), 'parte senza Drive');
 });
 
 fs.rmSync(TMP, { recursive: true, force: true });
