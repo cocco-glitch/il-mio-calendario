@@ -2638,6 +2638,34 @@ const Privacy = (() => {
         await pulisciCache();
         if (typeof Allegati !== 'undefined')
             await Allegati.svuota();
+        if (typeof CodaQuiz !== 'undefined')
+            await CodaQuiz.svuotaTutto();
+        else
+            await new Promise(ok => {
+                try {
+                    const rq = indexedDB.open('imc-coda-quiz');
+                    rq.onupgradeneeded = () => {
+                        if (!rq.result.objectStoreNames.contains('lavori'))
+                            rq.result.createObjectStore('lavori', { keyPath: ['account', 'id'] });
+                        if (!rq.result.objectStoreNames.contains('lease'))
+                            rq.result.createObjectStore('lease', { keyPath: 'account' });
+                    };
+                    rq.onsuccess = () => {
+                        const d = rq.result, tx = d.transaction(['lavori', 'lease'], 'readwrite');
+                        tx.objectStore('lavori').clear();
+                        tx.objectStore('lease').clear();
+                        const fine = () => { d.close(); ok(); };
+                        tx.oncomplete = fine;
+                        tx.onerror = fine;
+                        tx.onabort = fine;
+                    };
+                    rq.onerror = () => ok();
+                    rq.onblocked = () => ok();
+                }
+                catch (_) {
+                    ok();
+                }
+            });
         if (typeof Drive !== 'undefined' && Drive.dimenticaCartelle)
             Drive.dimenticaCartelle();
     }
@@ -16728,9 +16756,10 @@ function vistaStudio() {
     const gruppi = [['Ripassa', ['carte'], ['Flashcard']], ['Piano', ['piano'], ['Piano']], ['Corsi', ['schede', 'syllabus', 'tabelle', 'esami'], ['Schede', 'Syllabus', 'Tabelle', 'Esami']], ['Progressi', ['statistiche', 'errori'], ['Statistiche', 'Errori']]];
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const gr = gruppi.find(([, vv]) => vv.includes(UI.studioVista)) || gruppi[2];
-    const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, '🏗️ Centro di creazione'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
+    const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, '🏗️ Centro di creazione'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CodaQuizUI.apri()), title: 'Genera quiz in micro-batch persistenti con il router AI' }, '⚙️ Genera quiz in app'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
         { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
         { testo: '🏗️ Centro di creazione', azione: () => conStrumentiQuiz(() => CentroUI.apri()) },
+        { testo: '⚙️ Genera quiz in app', azione: () => conStrumentiQuiz(() => CodaQuizUI.apri()) },
         { testo: '🧠 Prompt quiz per Gemini', azione: () => conStrumentiQuiz(() => StrumentiQuiz.prompt()) }, { testo: '🩺 Diagnostica quiz', azione: () => conStrumentiQuiz(() => StrumentiQuiz.diagnostica()) }], 'Strumenti dei quiz')), gr[1].length > 1 ? h('div.chips.sotto-viste', { role: 'tablist', 'aria-label': 'Viste di ' + gr[0] }, gr[1].map((v, k) => h('button.chip' + (UI.studioVista === v ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(UI.studioVista === v), onclick: () => vai(v) }, gr[2][k]))) : null);
     if (UI.studioVista === 'carte')
         return h('div.pagina', null, seg, vistaCarte());
@@ -17998,7 +18027,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.64.1';
+const VERSIONE = '0.64.4';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)

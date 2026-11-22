@@ -1138,6 +1138,757 @@ const CentroUI = (() => {
     return { apri };
 })();
 
+const CodaQuiz = (() => {
+    const NOME_DB = 'imc-coda-quiz';
+    const STORE_LAVORI = 'lavori', STORE_LEASE = 'lease';
+    const TERMINALI = new Set(['completato', 'annullato']);
+    const PASSI = {
+        in_coda: ['in_esecuzione', 'in_pausa', 'annullato'],
+        in_esecuzione: ['in_coda', 'in_pausa', 'completato', 'annullato'],
+        in_pausa: ['in_coda', 'annullato'],
+        completato: [],
+        annullato: [],
+    };
+    let dbp = null;
+    let tab = '';
+    function canonico(v) {
+        if (v === null || typeof v !== 'object')
+            return JSON.stringify(v);
+        if (Array.isArray(v))
+            return '[' + v.map(canonico).join(',') + ']';
+        const o = v;
+        return '{' + Object.keys(o).sort().map(k => JSON.stringify(k) + ':' + canonico(o[k])).join(',') + '}';
+    }
+    function hash(s) {
+        let a = 0x811c9dc5, b = 0x9e3779b9 ^ s.length;
+        for (let i = 0; i < s.length; i++) {
+            const c = s.charCodeAt(i);
+            a = Math.imul(a ^ c, 0x01000193);
+            b = Math.imul(b ^ c, 0x5bd1e995);
+            b ^= b >>> 13;
+        }
+        return (a >>> 0).toString(36) + (b >>> 0).toString(36);
+    }
+    function accountPulito(account) {
+        const a = String(account || '').trim().toLowerCase();
+        if (!a)
+            throw new Error('account della coda mancante');
+        return a;
+    }
+    function sorgentePulita(s) {
+        if (!s || !['testo', 'pdf'].includes(s.tipo) || !String(s.id || '').trim() || !String(s.versione || '').trim())
+            throw new Error('sorgente della coda non valida');
+        return { tipo: s.tipo, id: String(s.id).trim(), versione: String(s.versione).trim() };
+    }
+    function idDeterministico(account, sorgente, specifica) {
+        return 'cq-' + hash(canonico([accountPulito(account), sorgentePulita(sorgente), specifica || {}]));
+    }
+    function copiaInput(input) {
+        if (!input)
+            return undefined;
+        return { pagine: (input.pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: String(p.testo || '') })),
+            pagineVuote: Math.max(0, Math.floor(Number(input.pagineVuote)) || 0) };
+    }
+    function nuovo(account, sorgente, specifica, ora = Date.now(), input) {
+        const acc = accountPulito(account), src = sorgentePulita(sorgente), spec = specifica || {};
+        return { account: acc, id: idDeterministico(acc, src, spec), stato: 'in_coda', tentativi: 0, sorgente: src, specifica: spec,
+            creatoIl: ora, aggiornatoIl: ora, prossimoTentativoIl: null, ultimoErrore: null, input: copiaInput(input), risultati: [], revisioni: [], checkpoint: [] };
+    }
+    function cambia(l, stato, ora = Date.now()) {
+        if (l.stato === stato)
+            return { ...l };
+        if (!PASSI[l.stato].includes(stato))
+            throw new Error('transizione non valida: ' + l.stato + ' -> ' + stato);
+        return { ...l, stato, aggiornatoIl: ora };
+    }
+    function proprietarioTab() {
+        if (tab)
+            return tab;
+        const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
+        tab = 'tab-' + (c && typeof c.randomUUID === 'function' ? c.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+        return tab;
+    }
+    function accountAttuale() {
+        const drive = typeof Drive !== 'undefined' && Drive.stato && Drive.stato.email ? String(Drive.stato.email) : '';
+        const locale = typeof Privacy !== 'undefined' ? Privacy.accLocale() : '';
+        if (drive || locale)
+            return accountPulito(drive || locale);
+        return 'ospite:' + (typeof Privacy !== 'undefined' ? Privacy.idDispositivo() : 'locale');
+    }
+    function db() {
+        if (!dbp)
+            dbp = new Promise((ok, ko) => {
+                try {
+                    const rq = indexedDB.open(NOME_DB, 1);
+                    rq.onupgradeneeded = () => {
+                        if (!rq.result.objectStoreNames.contains(STORE_LAVORI))
+                            rq.result.createObjectStore(STORE_LAVORI, { keyPath: ['account', 'id'] });
+                        if (!rq.result.objectStoreNames.contains(STORE_LEASE))
+                            rq.result.createObjectStore(STORE_LEASE, { keyPath: 'account' });
+                    };
+                    rq.onsuccess = () => { rq.result.onversionchange = () => { rq.result.close(); dbp = null; }; ok(rq.result); };
+                    rq.onerror = () => ko(rq.error || new Error('IndexedDB della coda non disponibile'));
+                    rq.onblocked = () => ko(new Error('IndexedDB della coda bloccato'));
+                }
+                catch (e) {
+                    ko(e);
+                }
+            }).catch(e => { dbp = null; throw e; });
+        return dbp;
+    }
+    const chiave = (account, id) => [accountPulito(account), id];
+    function tuttiDaStore(st, ok, ko) {
+        const rq = st.getAll();
+        rq.onsuccess = () => ok((rq.result || []));
+        rq.onerror = () => ko(rq.error);
+    }
+    async function aggiungi(account, sorgente, specifica, ora = Date.now(), input) {
+        const d = await db(), l = nuovo(account, sorgente, specifica, ora, input);
+        return new Promise((ok, ko) => {
+            const tx = d.transaction(STORE_LAVORI, 'readwrite'), st = tx.objectStore(STORE_LAVORI), rq = st.get(chiave(l.account, l.id));
+            let out = l;
+            rq.onsuccess = () => {
+                if (rq.result) {
+                    out = rq.result;
+                    if (input && !out.input) {
+                        out = { ...out, input: copiaInput(input) };
+                        st.put(out);
+                    }
+                }
+                else
+                    st.put(l);
+            };
+            tx.oncomplete = () => ok(out);
+            tx.onerror = () => ko(tx.error);
+            tx.onabort = () => ko(tx.error || new Error('salvataggio della coda annullato'));
+        });
+    }
+    async function lista(account) {
+        const acc = accountPulito(account), d = await db();
+        return new Promise((ok, ko) => tuttiDaStore(d.transaction(STORE_LAVORI).objectStore(STORE_LAVORI), xs => ok(xs.filter(x => x.account === acc).sort((a, b) => a.creatoIl - b.creatoIl || a.id.localeCompare(b.id))), ko));
+    }
+    async function aggiorna(account, id, fn) {
+        const d = await db(), key = chiave(account, id);
+        return new Promise((ok, ko) => {
+            const tx = d.transaction(STORE_LAVORI, 'readwrite'), st = tx.objectStore(STORE_LAVORI), rq = st.get(key);
+            let out = null;
+            let causa = null;
+            rq.onsuccess = () => { if (!rq.result) {
+                causa = new Error('lavoro non trovato');
+                tx.abort();
+                return;
+            } try {
+                out = fn(rq.result);
+                st.put(out);
+            }
+            catch (e) {
+                causa = e;
+                tx.abort();
+            } };
+            tx.oncomplete = () => out ? ok(out) : ko(causa || new Error('lavoro non trovato'));
+            tx.onerror = () => ko(causa || tx.error);
+            tx.onabort = () => ko(causa || tx.error || new Error('aggiornamento annullato'));
+        });
+    }
+    const pausa = (account, id, ora = Date.now()) => aggiorna(account, id, l => cambia(l, 'in_pausa', ora));
+    const riprendi = (account, id, ora = Date.now()) => aggiorna(account, id, l => cambia(l, 'in_coda', ora));
+    const annulla = (account, id, ora = Date.now()) => aggiorna(account, id, l => TERMINALI.has(l.stato) ? { ...l } : cambia(l, 'annullato', ora));
+    const completa = (account, id, ora = Date.now()) => aggiorna(account, id, l => cambia(l, 'completato', ora));
+    function rimanda(account, id, errore, prossimoTentativoIl, ora = Date.now()) {
+        return aggiorna(account, id, l => l.stato !== 'in_esecuzione' ? { ...l } : ({ ...cambia(l, 'in_coda', ora), tentativi: l.tentativi + 1,
+            ultimoErrore: String(errore || 'errore sconosciuto'), prossimoTentativoIl }));
+    }
+    function salvaCheckpoint(account, id, cp, domande, totale, ora = Date.now()) {
+        return aggiorna(account, id, l => {
+            if (l.stato !== 'in_esecuzione')
+                return { ...l };
+            const cps = l.checkpoint || [];
+            if (cps.some(x => x.id === cp.id)) {
+                const stato = (l.risultati || []).length >= Math.max(1, totale) ? 'completato' : 'in_coda';
+                return { ...cambia(l, stato, ora) };
+            }
+            const risultati = (l.risultati || []).slice(), pos = new Map(risultati.map((q, i) => [String(q.id || ''), i]));
+            for (const q0 of domande) {
+                const q = { ...q0 }, qid = String(q.id || '');
+                if (!qid || pos.has(qid))
+                    continue;
+                pos.set(qid, risultati.length);
+                risultati.push(q);
+            }
+            if (risultati.length === (l.risultati || []).length)
+                throw new Error('il micro-batch non contiene nuove domande');
+            const fine = risultati.length >= Math.max(1, totale), stato = fine ? 'completato' : 'in_coda';
+            return { ...cambia(l, stato, ora), risultati: risultati.slice(0, totale), checkpoint: [...cps, { ...cp, salvatoIl: ora }],
+                prossimoTentativoIl: null, ultimoErrore: null };
+        });
+    }
+    function salvaQualita(account, id, cp, esiti, totale, sostituisci, ora = Date.now()) {
+        return aggiorna(account, id, l => {
+            if (l.stato !== 'in_esecuzione')
+                return { ...l };
+            const cps = l.checkpoint || [];
+            if (cps.some(x => x.id === cp.id))
+                return { ...cambia(l, 'in_coda', ora) };
+            const risultati = (l.risultati || []).slice(), revisioni = (l.revisioni || []).slice();
+            const ids = new Set(esiti.map(e => e.id));
+            if (sostituisci)
+                for (let i = revisioni.length - 1; i >= 0; i--)
+                    if (ids.has(revisioni[i].id))
+                        revisioni.splice(i, 1);
+            for (const e of esiti) {
+                if (e.stato === 'pronta') {
+                    if (!risultati.some(q => String(q.id || '') === e.id))
+                        risultati.push(e.domanda);
+                }
+                else {
+                    const r = { id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi, motivi: e.motivi.slice(), pagine: e.pagine.slice() };
+                    const i = revisioni.findIndex(x => x.id === e.id);
+                    if (i >= 0)
+                        revisioni[i] = r;
+                    else
+                        revisioni.push(r);
+                }
+            }
+            const rapporto = CodaQuizQualita.rapporto(risultati, revisioni, ora);
+            const fine = risultati.length + rapporto.daRivedere >= Math.max(1, totale) && rapporto.daCorreggere === 0;
+            return { ...cambia(l, fine ? 'completato' : 'in_coda', ora), risultati: risultati.slice(0, totale), revisioni,
+                rapportoQualita: rapporto, checkpoint: [...cps, { ...cp, salvatoIl: ora }], prossimoTentativoIl: null, ultimoErrore: null };
+        });
+    }
+    const salvaBatchQualita = (account, id, cp, esiti, totale, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, false, ora);
+    const salvaCorrezioni = (account, id, cp, esiti, totale, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, true, ora);
+    const segnaInnesto = (account, id, innestoId, ora = Date.now()) => aggiorna(account, id, l => ({ ...l, innestoId, aggiornatoIl: ora }));
+    async function elimina(account, id) {
+        const d = await db(), key = chiave(account, id);
+        return new Promise((ok, ko) => {
+            const tx = d.transaction(STORE_LAVORI, 'readwrite'), st = tx.objectStore(STORE_LAVORI), rq = st.get(key);
+            let tolto = false;
+            let causa = null;
+            rq.onsuccess = () => {
+                const l = rq.result;
+                if (!l)
+                    return;
+                if (!TERMINALI.has(l.stato)) {
+                    causa = new Error('prima annulla o completa il lavoro');
+                    tx.abort();
+                    return;
+                }
+                st.delete(key);
+                tolto = true;
+            };
+            tx.oncomplete = () => ok(tolto);
+            tx.onerror = () => ko(causa || tx.error);
+            tx.onabort = () => ko(causa || tx.error || new Error('cancellazione sicura annullata'));
+        });
+    }
+    async function acquisisciLease(account, proprietario = proprietarioTab(), ora = Date.now(), durataMs = 15000) {
+        const acc = accountPulito(account), d = await db();
+        return new Promise((ok, ko) => {
+            const tx = d.transaction(STORE_LEASE, 'readwrite'), st = tx.objectStore(STORE_LEASE), rq = st.get(acc);
+            let preso = false;
+            rq.onsuccess = () => { const l = rq.result; if (!l || l.scadeIl <= ora || l.proprietario === proprietario) {
+                st.put({ account: acc, proprietario, scadeIl: ora + Math.max(1000, durataMs), aggiornatoIl: ora });
+                preso = true;
+            } };
+            tx.oncomplete = () => ok(preso);
+            tx.onerror = () => ko(tx.error);
+            tx.onabort = () => ko(tx.error || new Error('lease annullato'));
+        });
+    }
+    const rinnovaLease = acquisisciLease;
+    async function rilasciaLease(account, proprietario = proprietarioTab()) {
+        const acc = accountPulito(account), d = await db();
+        return new Promise((ok, ko) => {
+            const tx = d.transaction(STORE_LEASE, 'readwrite'), st = tx.objectStore(STORE_LEASE), rq = st.get(acc);
+            let tolto = false;
+            rq.onsuccess = () => { const l = rq.result; if (l && l.proprietario === proprietario) {
+                st.delete(acc);
+                tolto = true;
+            } };
+            tx.oncomplete = () => ok(tolto);
+            tx.onerror = () => ko(tx.error);
+            tx.onabort = () => ko(tx.error || new Error('rilascio lease annullato'));
+        });
+    }
+    async function prossimo(account, proprietario = proprietarioTab(), ora = Date.now()) {
+        const acc = accountPulito(account), d = await db();
+        return new Promise((ok, ko) => {
+            const tx = d.transaction([STORE_LEASE, STORE_LAVORI], 'readwrite'), sl = tx.objectStore(STORE_LEASE), sj = tx.objectStore(STORE_LAVORI);
+            let out = null;
+            const lr = sl.get(acc);
+            lr.onsuccess = () => {
+                const lease = lr.result;
+                if (!lease || lease.proprietario !== proprietario || lease.scadeIl <= ora)
+                    return;
+                tuttiDaStore(sj, xs => {
+                    const candidati = xs.filter(x => x.account === acc && x.stato === 'in_coda' && (x.prossimoTentativoIl === null || x.prossimoTentativoIl <= ora))
+                        .sort((a, b) => a.creatoIl - b.creatoIl || a.id.localeCompare(b.id));
+                    if (candidati[0]) {
+                        out = cambia(candidati[0], 'in_esecuzione', ora);
+                        sj.put(out);
+                    }
+                }, e => { console.warn('CodaQuiz: lettura prossimo fallita', e); tx.abort(); });
+            };
+            tx.oncomplete = () => ok(out);
+            tx.onerror = () => ko(tx.error);
+            tx.onabort = () => ko(tx.error || new Error('presa del lavoro annullata'));
+        });
+    }
+    async function recuperaInterrotti(account, ora = Date.now()) {
+        const acc = accountPulito(account), d = await db();
+        return new Promise((ok, ko) => {
+            const tx = d.transaction([STORE_LEASE, STORE_LAVORI], 'readwrite'), sl = tx.objectStore(STORE_LEASE), sj = tx.objectStore(STORE_LAVORI);
+            let n = 0;
+            const lr = sl.get(acc);
+            lr.onsuccess = () => {
+                const lease = lr.result;
+                if (lease && lease.scadeIl > ora)
+                    return;
+                if (lease)
+                    sl.delete(acc);
+                tuttiDaStore(sj, xs => { for (const l of xs)
+                    if (l.account === acc && l.stato === 'in_esecuzione') {
+                        sj.put({ ...cambia(l, 'in_coda', ora), ultimoErrore: l.ultimoErrore || 'esecuzione interrotta: ripresa automatica' });
+                        n++;
+                    } }, e => { console.warn('CodaQuiz: recupero fallito', e); tx.abort(); });
+            };
+            tx.oncomplete = () => ok(n);
+            tx.onerror = () => ko(tx.error);
+            tx.onabort = () => ko(tx.error || new Error('recupero della coda annullato'));
+        });
+    }
+    async function svuotaAccount(account) {
+        const acc = accountPulito(account), d = await db();
+        return new Promise((ok, ko) => {
+            const tx = d.transaction([STORE_LAVORI, STORE_LEASE], 'readwrite'), sj = tx.objectStore(STORE_LAVORI), sl = tx.objectStore(STORE_LEASE);
+            let n = 0;
+            tuttiDaStore(sj, xs => { for (const l of xs)
+                if (l.account === acc) {
+                    sj.delete([acc, l.id]);
+                    n++;
+                } sl.delete(acc); }, e => { console.warn('CodaQuiz: svuotamento account fallito', e); tx.abort(); });
+            tx.oncomplete = () => ok(n);
+            tx.onerror = () => ko(tx.error);
+            tx.onabort = () => ko(tx.error || new Error('svuotamento account annullato'));
+        });
+    }
+    async function svuotaTutto() {
+        const d = await db();
+        await new Promise((ok, ko) => {
+            const tx = d.transaction([STORE_LAVORI, STORE_LEASE], 'readwrite');
+            tx.objectStore(STORE_LAVORI).clear();
+            tx.objectStore(STORE_LEASE).clear();
+            tx.oncomplete = () => ok();
+            tx.onerror = () => ko(tx.error);
+            tx.onabort = () => ko(tx.error || new Error('pulizia della coda annullata'));
+        });
+    }
+    if (typeof document !== 'undefined') {
+        const riattiva = () => { if (!document.hidden)
+            recuperaInterrotti(accountAttuale()).catch(e => console.warn('CodaQuiz: ripresa non riuscita', e)); };
+        document.addEventListener('visibilitychange', riattiva);
+        riattiva();
+    }
+    return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, elimina,
+        acquisisciLease, rinnovaLease, rilasciaLease, prossimo, recuperaInterrotti, svuotaAccount, svuotaTutto, proprietarioTab, accountAttuale };
+})();
+
+const CodaQuizQualita = (() => {
+    const STOP = new Set(['alla', 'alle', 'anche', 'come', 'con', 'cosa', 'dalla', 'delle', 'dello', 'dove', 'nella', 'nelle', 'oltre', 'pagina', 'perche', 'quale', 'sono', 'sulla', 'sulle', 'viene']);
+    const testo = (v) => typeof v === 'string' ? v.trim() : '';
+    const nomeNorm = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const parole = (s) => (String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]{4,}/g) || []).filter(x => !STOP.has(x));
+    const firma = (q) => parole(testo(q.domanda)).join(' ');
+    function pagineCitate(q) {
+        const out = new Set(), s = [q.fonte, q.sourceRef, q.spiegazione].map(testo).join(' '), re = /(?:pagina|p\.?)[\s:]*(\d+)/gi;
+        let m;
+        while ((m = re.exec(s)))
+            out.add(Number(m[1]));
+        return [...out].filter(n => n > 0).sort((a, b) => a - b);
+    }
+    function motivi(q, pagine, firme, ids) {
+        const id = testo(q.id) || '(senza id)', out = [], v = Validatore.valida([q]);
+        for (const x of v.bloccanti.get(id) || [])
+            out.push('Formato: ' + x);
+        for (const p of v.qualita.filter(p => p.sev === 'err'))
+            out.push('Didattica: ' + p.msg);
+        const f = firma(q);
+        if (!f || firme.has(f))
+            out.push('Deduplica: domanda uguale o quasi uguale a una già presente');
+        if (ids.has(id))
+            out.push('Deduplica: ID già presente');
+        const cit = pagineCitate(q), disponibili = new Map(pagine.map(p => [p.n, p.testo])), valide = cit.filter(n => disponibili.has(n));
+        if (!valide.length)
+            out.push('Fonte: manca una pagina presente nel micro-batch');
+        else {
+            const base = new Set(valide.flatMap(n => parole(disponibili.get(n) || ''))), qpar = new Set(parole([q.domanda, q.spiegazione, ...(Array.isArray(q.opzioni) ? q.opzioni : [])].map(String).join(' ')));
+            let comuni = 0;
+            qpar.forEach(x => { if (base.has(x))
+                comuni++; });
+            if (comuni < 2)
+                out.push('Fonte: la domanda non ha riscontro testuale sufficiente nelle pagine citate');
+        }
+        return { motivi: [...new Set(out)], pagine: valide };
+    }
+    function validaDomande(qs, pagine, esistenti = [], tentativi = 0) {
+        const firme = new Set(esistenti.map(firma).filter(Boolean)), ids = new Set(esistenti.map(q => testo(q.id)).filter(Boolean)), out = [];
+        for (const q0 of qs) {
+            const base = { sottoStep: '', categoria: 'prioritaria', tipoItem: '', coppiaGemellaId: '', ...q0 };
+            const q = (Validatore.ripara([base]).qs[0] || base), id = testo(q.id) || 'senza-id-' + (out.length + 1), r = motivi(q, pagine, firme, ids);
+            const stato = r.motivi.length ? (tentativi >= 3 ? 'da_rivedere' : 'da_correggere') : 'pronta';
+            out.push({ id, domanda: q, stato, tentativi, motivi: r.motivi, pagine: r.pagine.length ? r.pagine : pagine.map(p => p.n) });
+            firme.add(firma(q));
+            ids.add(id);
+        }
+        return out;
+    }
+    function rapporto(pronte, revisioni, ora = Date.now()) {
+        const tutte = [...pronte, ...revisioni.map(r => r.domanda)], v = Validatore.valida(tutte);
+        return { pronte: pronte.length, daCorreggere: revisioni.filter(r => r.stato === 'da_correggere').length,
+            daRivedere: revisioni.filter(r => r.stato === 'da_rivedere').length,
+            problemiPacchetto: v.insieme.map(p => p.msg), aggiornatoIl: ora };
+    }
+    function promptCorrezione(rs, pagine) {
+        const qs = rs.map(r => r.domanda), v = Validatore.valida(qs), problemi = [...v.qualita.filter(p => p.sev === 'err')];
+        for (const r of rs)
+            for (const m of r.motivi)
+                problemi.push({ sev: 'err', id: r.id, msg: m });
+        const base = Validatore.promptCorrezione(qs, problemi), fonte = pagine.map(p => '\n--- PAGINA ' + p.n + ' ---\n' + p.testo).join('');
+        return [{ role: 'system', content: 'Correggi solo le domande elencate. Restituisci esclusivamente un array JSON di patch con id e soli campi modificati. Non riscrivere domande pronte, non contare e non fare riepiloghi.' },
+            { role: 'user', content: base + '\n\nOgni fonte/sourceRef deve essere "Pagina N" e la spiegazione deve citare [[Fonte, p. N]], usando solo le pagine seguenti.' + fonte }];
+    }
+    function applicaCorrezioni(rs, risposta, pagine, esistenti) {
+        const letto = DiagnosiQuiz.leggiPatch(JSON.stringify(risposta)), patch = 'patch' in letto ? letto.patch : [];
+        const applicate = DiagnosiQuiz.applicaPatch(rs.map(r => r.domanda), patch).qs, idsPatch = new Set(patch.map(p => testo(p.id)).filter(Boolean));
+        const out = [], gia = esistenti.slice();
+        rs.forEach((r, i) => {
+            const tentativi = r.tentativi + 1, e = validaDomande([applicate[i] || r.domanda], pagine, gia, tentativi)[0];
+            if (!idsPatch.has(r.id) && e.stato !== 'pronta')
+                e.motivi = [...new Set(['Correzione: nessuna patch ricevuta per questa domanda', ...e.motivi])];
+            out.push(e);
+            if (e.stato === 'pronta')
+                gia.push(e.domanda);
+        });
+        return out;
+    }
+    function pacchetto(l) {
+        const step0 = testo(l.specifica.step), m = /(\d+(?:\.\d+)*)\s*$/.exec(step0), sotto = m ? m[1] : '';
+        if (!sotto)
+            throw new Error('indica uno step numerico (per esempio 3.3) prima dell’innesto');
+        const materia = testo(l.specifica.materia) || 'Materia';
+        const codiceDato = testo(l.specifica.codiceMateria).toUpperCase().replace(/[^A-Z]/g, '');
+        const materiaCorso = typeof Studio !== 'undefined' ? Studio.pkStep().flatMap(p => p.materie).find(m => nomeNorm(m.nome) === nomeNorm(materia)) : undefined;
+        const codice = codiceDato || (materiaCorso ? materiaCorso.m : typeof materiaPerNome === 'function' ? materiaPerNome(materia) : materia.charAt(0).toUpperCase());
+        const micro = testo(l.specifica.microstep) || sotto + '.1';
+        const stepId = /[a-z]/i.test(step0) ? step0.toLowerCase().replace(/\s+/g, '-') : materia.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + sotto;
+        return { meta: { materia, codiceMateria: codice, stepId, sottoStep: sotto, titolo: testo(l.specifica.argomento) || materia },
+            quiz: (l.risultati || []).map(q => ({ ...q, sottoStep: testo(q.sottoStep) || micro })) };
+    }
+    function innesta(l) {
+        if (l.account !== CodaQuiz.accountAttuale())
+            throw new Error('il lavoro appartiene a un altro account');
+        if (l.stato !== 'completato')
+            throw new Error('completa prima validazione e correzioni');
+        if (!(l.risultati || []).length)
+            throw new Error('non ci sono domande pronte da innestare');
+        const p = pacchetto(l), t = ImportaDrive.traduci(p), d = ImportaDrive.proponi(t), sc = { corso: d.corsi[0].id, piano: d.piani[0].id, data: d.piani[0].data || ymd(oggi()) };
+        return ImportaDrive.salva(t, sc, 'coda:' + l.id, { accumula: true, rapporto: Validatore.rapporto(p, { completo: true }) });
+    }
+    return { firma, pagineCitate, validaDomande, rapporto, promptCorrezione, applicaCorrezioni, pacchetto, innesta };
+})();
+
+const CodaQuizRunner = (() => {
+    const parole = (s) => (String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]{3,}/g) || []);
+    const compatta = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const intero = (v, min, max, ripiego) => Math.max(min, Math.min(max, Math.floor(Number(v)) || ripiego));
+    function specifica(o) {
+        return { quantita: intero(o && o.quantita, 1, 200, 30), materia: compatta(o && o.materia || '') || undefined,
+            argomento: compatta(o && o.argomento || '') || undefined, step: compatta(o && o.step || '') || undefined,
+            microstep: compatta(o && o.microstep || '') || undefined, codiceMateria: compatta(o && o.codiceMateria || '').toUpperCase() || undefined,
+            archetipo: compatta(o && o.archetipo || '') || undefined, maxPerBatch: intero(o && o.maxPerBatch, 1, 8, 5),
+            maxCaratteriFonte: intero(o && o.maxCaratteriFonte, 2000, 24000, 12000) };
+    }
+    function pagineTesto(testo, max = 5000) {
+        const ps = String(testo || '').replace(/\r/g, '').split(/\n\s*\n/).map(compatta).filter(Boolean), out = [];
+        let blocco = '';
+        const salva = () => { if (blocco) {
+            out.push({ n: out.length + 1, testo: blocco });
+            blocco = '';
+        } };
+        for (const p of ps.length ? ps : [compatta(testo)]) {
+            if (p.length > max) {
+                salva();
+                for (let i = 0; i < p.length; i += max)
+                    out.push({ n: out.length + 1, testo: p.slice(i, i + max) });
+            }
+            else if (!blocco || blocco.length + p.length + 2 <= max)
+                blocco += (blocco ? '\n\n' : '') + p;
+            else {
+                salva();
+                blocco = p;
+            }
+        }
+        salva();
+        return out;
+    }
+    async function creaDaTesto(account, testo, o, id) {
+        const pulito = String(testo || '').trim();
+        if (!pulito)
+            throw new Error('incolla del testo prima di creare la coda');
+        const sp = specifica(o), versione = 'sha256:' + sha256Hex(pulito), pagine = pagineTesto(pulito);
+        return CodaQuiz.aggiungi(account, { tipo: 'testo', id: id || 'testo-' + versione.slice(7, 19), versione }, sp, Date.now(), { pagine, pagineVuote: 0 });
+    }
+    async function creaDaPaginePdf(account, id, versione, pagine, o) {
+        const tutte = (pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: compatta(p.testo) })), leggibili = tutte.filter(p => p.testo);
+        if (!leggibili.length)
+            throw new Error('Il PDF non contiene testo leggibile. L’OCR non fa parte di questa versione.');
+        return CodaQuiz.aggiungi(account, { tipo: 'pdf', id: compatta(id) || 'pdf', versione: compatta(versione) || 'sha256:' + sha256Hex(leggibili.map(p => p.testo).join('\n')) }, specifica(o), Date.now(), { pagine: leggibili, pagineVuote: tutte.length - leggibili.length });
+    }
+    async function creaDaPdf(account, file, o) {
+        if (!file || !/\.pdf$/i.test(file.name || ''))
+            throw new Error('scegli un PDF');
+        const L = await caricaPdfJs(), doc = await L.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+        const pagine = [];
+        try {
+            for (let n = 1; n <= doc.numPages; n++) {
+                const tc = await (await doc.getPage(n)).getTextContent();
+                pagine.push({ n, testo: tc.items.map(x => x.str || '').join(' ') });
+            }
+        }
+        finally {
+            if (typeof doc.destroy === 'function')
+                await doc.destroy();
+        }
+        return creaDaPaginePdf(account, file.name, 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine, o);
+    }
+    function selezionaPagine(l, batch) {
+        const input = l.input, max = intero(l.specifica.maxCaratteriFonte, 2000, 24000, 12000);
+        if (!input)
+            return [];
+        const chiavi = [...new Set(parole(String(l.specifica.materia || '') + ' ' + String(l.specifica.argomento || '')))];
+        const righe = input.pagine.map(p => ({ p, punti: chiavi.reduce((n, k) => n + (parole(p.testo).includes(k) ? 1 : 0), 0) }))
+            .sort((a, b) => b.punti - a.punti || a.p.n - b.p.n);
+        if (!righe.length)
+            return [];
+        const ruotate = righe.slice(batch % righe.length).concat(righe.slice(0, batch % righe.length)), out = [];
+        let n = 0;
+        for (const r of ruotate) {
+            if (out.length && n + r.p.testo.length > max)
+                continue;
+            out.push(r.p);
+            n += r.p.testo.length;
+            if (n >= max)
+                break;
+        }
+        return out.sort((a, b) => a.n - b.n);
+    }
+    function grandezzaBatch(l) {
+        const fatti = (l.risultati || []).length + (l.revisioni || []).length, totale = intero(l.specifica.quantita, 1, 200, 30), foglio = 18 - (fatti % 18);
+        return Math.min(totale - fatti, intero(l.specifica.maxPerBatch, 1, 8, 5), foglio);
+    }
+    function prompt(l, n, pagine) {
+        const fonte = pagine.map(p => '\n--- PAGINA ' + p.n + ' ---\n' + p.testo).join('');
+        const target = [l.specifica.materia, l.specifica.argomento].filter(Boolean).join(' · ') || 'contenuto fornito';
+        const regole = 'Genera quiz usando solo la fonte. Rispondi con un solo oggetto JSON {"formato":"quiz-v4","quiz":[...]}. ' +
+            'Ogni domanda deve avere tipo "mcq", livello 1..4, domanda, 4 opzioni con la corretta in posizione 0, spiegazione con citazione [[Fonte, p. N]], ' +
+            '3 spiegazioneDistrattori di almeno 30 caratteri, 3 distractorTypes, erroreTipico e fonte "Pagina N". Non scrivere id, esatta, markdown o testo fuori dal JSON.';
+        return [
+            { role: 'system', content: regole },
+            { role: 'user', content: 'TARGET: ' + target + '\nCrea esattamente ' + n + ' domande nuove, autonome e non ripetitive.' + fonte },
+        ];
+    }
+    function domandeDa(risposta, l, n) {
+        const lettura = Contratto.leggi(JSON.stringify(risposta)), fatti = (l.risultati || []).length + (l.revisioni || []).length, scheda = Math.floor(fatti / 18) + 1;
+        const qs = Contratto.aQuiz(lettura, { step: String(l.specifica.step || l.id.slice(3, 11)), scheda, da: fatti % 18 + 1 });
+        if (!qs.length)
+            throw new Error(lettura.errori[0] || 'la risposta AI non contiene domande leggibili');
+        return qs.slice(0, n);
+    }
+    const ritardo = (errore, tentativi) => /429|limite|quota|pausa/i.test(errore) ? 65e3 : Math.min(15 * 60e3, 30e3 * Math.pow(2, Math.min(5, tentativi)));
+    async function avanza(account, proprietario = CodaQuiz.proprietarioTab(), d = {}) {
+        const ora = d.ora || (() => Date.now()), t0 = ora();
+        if (!await CodaQuiz.acquisisciLease(account, proprietario, t0, 120000))
+            return { esito: 'occupato' };
+        let l = null;
+        try {
+            l = await CodaQuiz.prossimo(account, proprietario, t0);
+            if (!l)
+                return { esito: 'vuoto' };
+            const n = grandezzaBatch(l), totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length;
+            const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, intero(l.specifica.maxPerBatch, 1, 8, 5));
+            const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input ? l.input.pagine.filter(p => numeri.has(p.n)) : selezionaPagine(l, batch);
+            if (pendenti.length) {
+                const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o)), opzioni = { maxOut: Math.min(4096, Math.max(900, pendenti.length * 650)), tronca: false,
+                    archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+                const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
+                let r;
+                try {
+                    r = await chiama(CodaQuizQualita.promptCorrezione(pendenti, pagine), opzioni);
+                }
+                finally {
+                    clearInterval(battito);
+                }
+                const esiti = CodaQuizQualita.applicaCorrezioni(pendenti, r.j, pagine, l.risultati || []), tentativo = Math.max(...esiti.map(e => e.tentativi));
+                const salvato = await CodaQuiz.salvaCorrezioni(account, l.id, { id: 'fix-' + pendenti.map(x => x.id).join('-') + '-' + tentativo,
+                    da: 0, richieste: pendenti.length, ottenute: esiti.filter(e => e.stato === 'pronta').length, provider: r.prov, modello: r.modello, salvatoIl: ora() }, esiti, totale, ora());
+                return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
+            }
+            if (!n || !pagine.length)
+                throw new Error('la sorgente non contiene testo utilizzabile');
+            const opzioni = { maxOut: Math.min(4096, Math.max(900, n * 650)), tronca: false, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+            const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o));
+            const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
+            let r;
+            try {
+                r = await chiama(prompt(l, n, pagine), opzioni);
+            }
+            finally {
+                clearInterval(battito);
+            }
+            const qs = domandeDa(r.j, l, n), da = (l.risultati || []).length + (l.revisioni || []).length + 1;
+            const esiti = CodaQuizQualita.validaDomande(qs, pagine, [...(l.risultati || []), ...(l.revisioni || []).map(x => x.domanda)]);
+            const salvato = await CodaQuiz.salvaBatchQualita(account, l.id, { id: 'mb-' + da + '-' + n, da, richieste: n, ottenute: qs.length,
+                provider: r.prov, modello: r.modello, salvatoIl: ora() }, esiti, totale, ora());
+            if (salvato.stato === 'in_pausa' || salvato.stato === 'annullato')
+                return { esito: 'vuoto', lavoro: salvato };
+            return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
+        }
+        catch (e) {
+            const msg = String(e instanceof Error ? e.message : e), quando = ora() + ritardo(msg, l ? l.tentativi : 0);
+            if (!l)
+                throw e;
+            const salvato = await CodaQuiz.rimanda(account, l.id, msg, quando, ora());
+            return salvato.stato === 'in_coda' ? { esito: 'rimandato', lavoro: salvato, prossimoTentativoIl: quando, errore: msg }
+                : { esito: 'vuoto', lavoro: salvato };
+        }
+        finally {
+            await CodaQuiz.rilasciaLease(account, proprietario).catch(e => console.warn('CodaQuizRunner: rilascio lease fallito', e));
+        }
+    }
+    return { specifica, pagineTesto, creaDaTesto, creaDaPaginePdf, creaDaPdf, selezionaPagine, grandezzaBatch, prompt, domandeDa, avanza };
+})();
+
+const CodaQuizUI = (() => {
+    const etichettaStato = { in_coda: 'In coda', in_esecuzione: 'In esecuzione', in_pausa: 'In pausa', completato: 'Completato', annullato: 'Annullato' };
+    const dataOra = (n) => n ? new Date(n).toLocaleString('it-IT', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+    function scarica(l) {
+        const a = document.createElement('a'), blob = new Blob([JSON.stringify({ formato: 'quiz-v2', quiz: l.risultati || [] }, null, 2)], { type: 'application/json' });
+        a.href = URL.createObjectURL(blob);
+        a.download = 'quiz-generato-' + l.id + '.json';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    function apri() {
+        const account = CodaQuiz.accountAttuale(), materia = h('input', { type: 'text', placeholder: 'Materia', 'aria-label': 'Materia del quiz' });
+        const argomento = h('input', { type: 'text', placeholder: 'Argomento', 'aria-label': 'Argomento del quiz' });
+        const step = h('input', { type: 'text', placeholder: 'Step (es. 3.3)', 'aria-label': 'Step di destinazione del quiz' });
+        const microstep = h('input', { type: 'text', placeholder: 'Microstep (es. 3.3.1)', 'aria-label': 'Microstep di destinazione del quiz' });
+        const quantita = h('input', { type: 'number', min: '1', max: '200', value: '30', inputmode: 'numeric', 'aria-label': 'Numero di domande' });
+        const testo = h('textarea', { rows: '8', placeholder: 'Incolla appunti o testo del libro…', 'aria-label': 'Testo da cui generare il quiz' });
+        const pdf = h('input', { type: 'file', accept: 'application/pdf,.pdf', 'aria-label': 'PDF testuale da cui generare il quiz' });
+        const stato = h('p.piccolo', { role: 'status', 'aria-live': 'polite' }, 'La coda riprende quando riapri l’app. Non lavora a browser o dispositivo chiusi.');
+        const elenco = h('div');
+        let occupato = false;
+        const opzioni = () => ({ quantita: Number(quantita.value), materia: materia.value, argomento: argomento.value, step: step.value, microstep: microstep.value });
+        async function esegui(l) {
+            if (occupato)
+                return;
+            occupato = true;
+            try {
+                if (l.stato === 'completato') {
+                    stato.textContent = 'Questo lavoro è già completo: puoi scaricare il JSON dalla coda.';
+                    return;
+                }
+                if (l.stato === 'annullato') {
+                    stato.textContent = 'Questo lavoro è annullato: eliminalo dalla coda prima di ricrearlo con le stesse opzioni.';
+                    return;
+                }
+                if (l.stato === 'in_pausa')
+                    l = await CodaQuiz.riprendi(account, l.id);
+                stato.textContent = 'Generazione sequenziale in corso · quota gestita dal router AI (misurata dal provider quando disponibile, altrimenti stimata o sconosciuta).';
+                while (elenco.isConnected) {
+                    const r = await CodaQuizRunner.avanza(account);
+                    await disegna();
+                    if (r.esito === 'checkpoint') {
+                        const q = r.lavoro?.rapportoQualita;
+                        stato.textContent = 'Checkpoint salvato: ' + (q ? q.pronte + ' pronte · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : (r.lavoro?.risultati || []).length + ' domande') + '. Continuo…';
+                        continue;
+                    }
+                    if (r.esito === 'completato') {
+                        const q = r.lavoro?.rapportoQualita;
+                        stato.textContent = 'Completato: ' + ((r.lavoro?.risultati || []).length) + ' pronte' + (q && q.daRivedere ? ' · ' + q.daRivedere + ' da rivedere' : '') + '. Solo le pronte contano nella copertura.';
+                    }
+                    else if (r.esito === 'rimandato')
+                        stato.textContent = 'Coda conservata. Riprovo non prima delle ' + dataOra(r.prossimoTentativoIl || null) + ' · ' + (r.errore || 'provider non disponibile');
+                    else if (r.esito === 'occupato')
+                        stato.textContent = 'Un’altra scheda sta eseguendo questa coda.';
+                    break;
+                }
+            }
+            catch (e) {
+                stato.textContent = 'Generazione interrotta: ' + String(e instanceof Error ? e.message : e);
+            }
+            finally {
+                occupato = false;
+                await disegna();
+            }
+        }
+        async function disegna() {
+            const lavori = await CodaQuiz.lista(account);
+            elenco.textContent = '';
+            if (!lavori.length) {
+                elenco.appendChild(h('p.piccolo.tenue', null, 'Nessun lavoro in coda su questo account.'));
+                return;
+            }
+            for (const l of lavori.slice().reverse()) {
+                const n = (l.risultati || []).length, tot = Number(l.specifica.quantita) || 0, q = l.rapportoQualita;
+                const azioni = [];
+                if (l.stato === 'in_coda' || l.stato === 'in_pausa')
+                    azioni.push(h('button.chip', { type: 'button', onclick: () => esegui(l) }, l.stato === 'in_pausa' ? 'Riprendi' : 'Continua'));
+                if (l.stato === 'in_coda' || l.stato === 'in_esecuzione')
+                    azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.pausa(account, l.id); stato.textContent = 'Coda in pausa.'; await disegna(); } }, 'Pausa'));
+                if (!['completato', 'annullato'].includes(l.stato))
+                    azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.annulla(account, l.id); stato.textContent = 'Lavoro annullato; i checkpoint restano visibili finché non lo elimini.'; await disegna(); } }, 'Annulla'));
+                if (l.stato === 'completato')
+                    azioni.push(h('button.chip', { type: 'button', onclick: () => scarica(l) }, 'Scarica JSON'));
+                if (l.stato === 'completato' && !l.innestoId)
+                    azioni.push(h('button.chip', { type: 'button', onclick: async () => {
+                            try {
+                                const inn = CodaQuizQualita.innesta(l);
+                                await CodaQuiz.segnaInnesto(account, l.id, inn.id);
+                                stato.textContent = 'Quiz innestato in modo idempotente nel corso e nel piano: ' + inn.k + '.';
+                                await disegna();
+                            }
+                            catch (e) {
+                                stato.textContent = String(e instanceof Error ? e.message : e);
+                            }
+                        } }, 'Innestalo nel piano'));
+                if (l.stato === 'completato' || l.stato === 'annullato')
+                    azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.elimina(account, l.id); await disegna(); } }, 'Elimina'));
+                elenco.appendChild(h('section.card', null, h('p', null, h('b', null, etichettaStato[l.stato]), ' · ', String(l.specifica.materia || l.specifica.argomento || l.sorgente.id)), h('p.piccolo.tenue', null, n + '/' + tot + ' pronte' + (q ? ' · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : '') + ' · ' + (l.checkpoint || []).length + ' checkpoint' + (l.innestoId ? ' · innestato' : '') + (l.ultimoErrore ? ' · ' + l.ultimoErrore : '') +
+                    (l.prossimoTentativoIl ? ' · non prima delle ' + dataOra(l.prossimoTentativoIl) : '')), h('div.chips', null, ...azioni)));
+            }
+        }
+        const avvia = async () => {
+            if (occupato)
+                return;
+            try {
+                stato.textContent = pdf.files && pdf.files[0] ? 'Estraggo il testo del PDF (senza OCR)…' : 'Preparo il testo…';
+                const l = pdf.files && pdf.files[0] ? await CodaQuizRunner.creaDaPdf(account, pdf.files[0], opzioni()) : await CodaQuizRunner.creaDaTesto(account, testo.value, opzioni());
+                await disegna();
+                await esegui(l);
+            }
+            catch (e) {
+                stato.textContent = String(e instanceof Error ? e.message : e);
+            }
+        };
+        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Genera in micro-batch con il router AI già configurato. Il PDF deve contenere testo: OCR e richieste parallele non sono inclusi.'), h('div.chips', null, materia, argomento, step, microstep, quantita), h('p.piccolo.tenue', null, 'Step e microstep collegano le sole domande pronte al corso e al piano esistente.'), testo, h('p.piccolo', null, 'oppure'), pdf, h('button.btn', { type: 'button', onclick: avvia }, 'Genera nella coda'), stato, h('h3', null, 'Coda locale'), elenco);
+        foglio({ titolo: 'Genera quiz in app', corpo });
+        CodaQuiz.recuperaInterrotti(account).then(disegna).catch(e => { stato.textContent = String(e); });
+    }
+    return { apri };
+})();
+
 const CHIAVI_QUIZ = ['id', 'stepId', 'sottoStep', 'scheda', 'categoria', 'livelloCognitivo', 'livello', 'tipoItem', 'coppiaGemellaId', 'erroreTipico',
     'domanda', 'opzioni', 'esatta', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte', 'sourceRef'];
 const Contratto = (() => {
