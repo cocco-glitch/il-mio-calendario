@@ -7189,28 +7189,101 @@ const Dominio = (() => {
             } });
     }
     let wizardAperto = false;
+    const CHIAVE_ONBOARDING_SALTATO = 'imc-onboarding-saltato';
+    const onboardingSaltato = () => { try {
+        return localStorage.getItem(CHIAVE_ONBOARDING_SALTATO) === '1';
+    }
+    catch (_) {
+        return false;
+    } };
+    const segnaOnboardingSaltato = (v) => { try {
+        if (v)
+            localStorage.setItem(CHIAVE_ONBOARDING_SALTATO, '1');
+        else
+            localStorage.removeItem(CHIAVE_ONBOARDING_SALTATO);
+    }
+    catch (e) {
+        console.warn('Onboarding: preferenza locale non disponibile', e);
+    } };
     function serveBenvenuto() {
-        if (navigator.webdriver || wizardAperto || ruolo() !== 'ospite' || !Drive.collegato)
+        if (navigator.webdriver || wizardAperto || ruolo() !== 'ospite' || onboardingSaltato())
             return false;
-        const r = Stato.prendi(ID_PROFILO);
-        return !(r && r.benvenuto);
+        return !Stato.prendi(ID_PROFILO);
     }
     async function benvenuto(forza = false) {
-        if (!forza && !serveBenvenuto())
+        if (ruolo() !== 'ospite' || (!forza && !serveBenvenuto()))
             return;
+        if (forza)
+            segnaOnboardingSaltato(false);
         wizardAperto = true;
-        try {
-            const m = await chiedi('👋 Benvenuto!', Object.keys(NOMI_MODALITA).map(k => ({ testo: NOMI_MODALITA[k], valore: k })), 'Per chi è l\'app? Adatta ripassi, dimensione dei gruppi di domande e tono delle spiegazioni. Puoi cambiarlo in Altro → Studio.');
-            impostaModalita((m && PRESET_COGNITIVI[m] ? m : 'superiori_maturita'));
-            const s = await chiedi('La tua prima materia', [{ testo: '🗓 Crea il piano dall\'indice del libro', valore: 'piano' }, { testo: '📦 Importa un pacchetto .imcpack', valore: 'pack' }, { testo: 'Più tardi', valore: 'no' }], 'Puoi partire dall\'indice del tuo libro e dalla data dell\'esame, oppure importare un pacchetto pronto (domande e flashcard).');
-            if (s === 'piano')
-                wizardPiano();
-            else if (s === 'pack')
-                importaDaFile();
-        }
-        finally {
-            wizardAperto = false;
-        }
+        let passo = 0, completato = false, archetipoManuale = false;
+        const modalita = selettore(Object.keys(NOMI_MODALITA).map(k => [k, NOMI_MODALITA[k]]), 'superiori_maturita');
+        modalita.setAttribute('aria-label', 'Profilo di studio iniziale');
+        const materia = h('input', { type: 'text', placeholder: 'Es. Diritto privato', autocomplete: 'off', 'aria-label': 'Prima materia' });
+        const data = h('input', { type: 'date', 'aria-label': 'Data esame facoltativa' });
+        const archetipo = selettore(Object.values(ARCHETIPI_DISCIPLINARI).map(a => [a.id, ICONE_ARCHETIPO[a.id] + ' ' + a.etichetta]), 'scienze_sperimentali');
+        archetipo.setAttribute('aria-label', 'Tipo della materia');
+        archetipo.addEventListener('change', () => { archetipoManuale = true; });
+        materia.addEventListener('input', () => { const a = indovinaArchetipo(materia.value); if (a && !archetipoManuale)
+            archetipo.value = a; });
+        const ai = selettore([['', 'Nessuna per ora'], ['gemini', 'Gemini'], ['chatgpt', 'ChatGPT'], ['claude', 'Claude'], ['copilot', 'Copilot'], ['locale', 'AI locale']], '');
+        ai.setAttribute('aria-label', 'AI usata per creare quiz');
+        const progresso = h('p.piccolo.tenue', { 'aria-live': 'polite' });
+        const zona = h('div.modulo');
+        const indietro = h('button.btn.neutro', { type: 'button' }, 'Indietro');
+        const avanti = h('button.btn', { type: 'button' }, 'Avanti');
+        const salta = h('button.btn-testo', { type: 'button' }, 'Salta per ora');
+        const corpo = h('div', null, progresso, zona, h('div.bottoni', null, indietro, avanti), salta);
+        let pannello;
+        const mostra = () => {
+            svuota(zona);
+            progresso.textContent = 'Domanda ' + (passo + 1) + ' di 3';
+            indietro.style.visibility = passo ? 'visible' : 'hidden';
+            if (passo === 0)
+                zona.append(h('h3', null, 'Come studi?'), h('p.piccolo.tenue', null, 'Adatto ripassi, gruppi di domande e tono delle spiegazioni.'), riga('Livello', modalita));
+            else if (passo === 1)
+                zona.append(h('h3', null, 'Cosa studi?'), h('p.piccolo.tenue', null, 'La data è facoltativa. Potrai cambiare tutto in Altro → Studio e AI.'), riga('Materia', materia), riga('Tipo', archetipo), riga('Data esame', data));
+            else
+                zona.append(h('h3', null, 'Quale AI usi?'), h('p.piccolo.tenue', null, 'Serve solo per preparare prompt adatti alla piattaforma. Puoi scegliere “Nessuna”.'), riga('AI', ai));
+            avanti.textContent = passo === 2 ? 'Completa' : 'Avanti';
+            (passo === 0 ? modalita : passo === 1 ? materia : ai).focus();
+        };
+        indietro.onclick = () => { if (passo > 0) {
+            passo--;
+            mostra();
+        } };
+        avanti.onclick = () => {
+            if (passo === 1 && !materia.value.trim()) {
+                avviso('Scrivi la materia che vuoi studiare.');
+                materia.focus();
+                return;
+            }
+            if (passo < 2) {
+                passo++;
+                mostra();
+                return;
+            }
+            const nome = materia.value.trim(), codice = materiaPerNome(nome), m = Stato.prendi('mat-' + codice);
+            impostaModalita(modalita.value);
+            Stato.salva({ ...(m || { id: 'mat-' + codice, type: 'materia', updatedAt: 0, codice, nome, colore: coloreMateria(codice) }), nome, archetipo: archetipo.value });
+            if (data.value)
+                Stato.salva({ id: 'esame-onboarding-' + codice, type: 'esame', updatedAt: 0, nome: 'Esame di ' + nome, data: data.value, materie: [codice] });
+            if (ai.value) {
+                const grandi = ['gemini', 'chatgpt', 'claude'].includes(ai.value), locale = ai.value === 'locale';
+                Stato.salva({ id: 'profiloai', type: 'profiloai', updatedAt: 0, profilo: { id: ai.value, nome: ai.options[ai.selectedIndex].text,
+                        contesto: grandi ? 'grande' : locale ? 'piccolo' : 'medio', file: grandi, json: grandi ? 'alta' : locale ? 'bassa' : 'media',
+                        perRisposta: grandi ? 18 : locale ? 6 : 10, maxCaratteri: grandi ? 0 : locale ? 12000 : 40000 } }, true);
+            }
+            completato = true;
+            segnaOnboardingSaltato(false);
+            pannello.chiudi();
+            avviso('Configurazione completata. Ora puoi creare il primo quiz.');
+            conStrumentiQuiz(() => CentroUI.apri());
+        };
+        salta.onclick = () => { segnaOnboardingSaltato(true); pannello.chiudi(); };
+        pannello = foglio({ titolo: '👋 Configurazione iniziale', corpo, allaChiusura: () => { wizardAperto = false; if (!completato)
+                segnaOnboardingSaltato(true); } });
+        mostra();
     }
     function codiciMaterie() {
         const s = new Set([...Stato.tutti('materia').map(m => m.codice), ...Studio.pkStep().flatMap(p => p.materie.map(m => m.m))]);
@@ -7222,7 +7295,7 @@ const Dominio = (() => {
         const opzArch = Object.values(ARCHETIPI_DISCIPLINARI).map(a => [a.id, ICONE_ARCHETIPO[a.id] + ' ' + a.etichetta]);
         const materie = codiciMaterie().map(c => riga(nomeMateria(c), selettore(opzArch, archetipoMateria(c), function () { impostaArchetipo(c, this.value); })));
         const propri = Studio.pkStep().filter(x => x.proprio);
-        return scheda('Profilo e materie', h('div.tenue.piccolo', null, p.ruolo === 'owner' ? '👑 Account proprietario: programma di Medicina e cartelle Chimica, Biologia, Fisica.' : '👤 Account personale: dati e cartella Drive separati.'), riga('Profilo di studio', mod), h('div.tenue.piccolo', null, 'Ritenzione FSRS ' + Math.round(p.ritenzioneTarget * 100) + '% · gruppi da ' + p.dimensioneMicroLotto + ' domande · spiegazioni ' + p.tonoSpiegazioneAI.replace('_', ' ')), materie.length ? h('div.gruppo', null, h('div.gruppo-titolo', null, 'Tipo di materia (guida AI e controlli senza AI)'), ...materie) : null, h('div.bottoni', null, h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano'), h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack')), propri.length ? h('div.chips', null, ...propri.map(x => h('button.chip', { onclick: () => scaricaPacchetto(x) }, '⬇ ' + x.titolo))) : null, senzaAI() ? h('div.tenue.piccolo', null, '🔌 Modalità 100% senza AI: calendario, ripassi FSRS, flashcard, pacchetti e controlli delle risposte funzionano senza chiavi.') : null);
+        return scheda('Profilo e materie', h('div.tenue.piccolo', null, p.ruolo === 'owner' ? '👑 Account proprietario: programma di Medicina e cartelle Chimica, Biologia, Fisica.' : '👤 Account personale: dati e cartella Drive separati.'), riga('Profilo di studio', mod), h('div.tenue.piccolo', null, 'Ritenzione FSRS ' + Math.round(p.ritenzioneTarget * 100) + '% · gruppi da ' + p.dimensioneMicroLotto + ' domande · spiegazioni ' + p.tonoSpiegazioneAI.replace('_', ' ')), materie.length ? h('div.gruppo', null, h('div.gruppo-titolo', null, 'Tipo di materia (guida AI e controlli senza AI)'), ...materie) : null, h('div.bottoni', null, h('button.btn.neutro', { onclick: () => scegliPiano() }, '＋ Crea piano'), h('button.btn.neutro', { onclick: () => importaDaFile() }, '📦 Importa .imcpack'), p.ruolo === 'ospite' ? h('button.btn.neutro', { onclick: () => benvenuto(true) }, 'Riapri configurazione iniziale') : null), propri.length ? h('div.chips', null, ...propri.map(x => h('button.chip', { onclick: () => scaricaPacchetto(x) }, '⬇ ' + x.titolo))) : null, senzaAI() ? h('div.tenue.piccolo', null, '🔌 Modalità 100% senza AI: calendario, ripassi FSRS, flashcard, pacchetti e controlli delle risposte funzionano senza chiavi.') : null);
     }
     return { ruolo, profilo, impostaModalita, ritenzioneProfilo, indovinaArchetipo, archetipoMateria, impostaArchetipo, catenaPreferita, promptTutor, senzaAI,
         normalizzaDomanda, valida, importa, esporta, universale, domandeDi, haDomande, importaDaFile, scaricaPacchetto,
@@ -18027,7 +18100,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.64.4';
+const VERSIONE = '0.64.5';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
@@ -18313,12 +18386,13 @@ async function avvia() {
     Drive.ascolta(() => { if (Drive.stato.sync === 'ok')
         Studio.migraMaterieBase(); if (!document.querySelector('.foglio-sfondo'))
         disegna(); if (Drive.stato.sync === 'ok' && !Spiega.attiva)
-        Spiega.recuperaDaDrive(); if (Drive.stato.sync === 'ok' && Dominio.serveBenvenuto())
-        Dominio.benvenuto(); });
+        Spiega.recuperaDaDrive(); });
     attivaSimboli();
     Tocco.attiva();
     disegna();
     scorciatoiaAvvio();
+    setTimeout(() => { if (!document.querySelector('.foglio-sfondo'))
+        Dominio.benvenuto(); }, 700);
     setTimeout(() => { try {
         Appunti.migraNoteGiorno();
     }
