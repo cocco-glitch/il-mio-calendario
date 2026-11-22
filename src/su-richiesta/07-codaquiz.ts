@@ -6,6 +6,9 @@
 
 type StatoLavoroQuiz = 'in_coda' | 'in_esecuzione' | 'in_pausa' | 'completato' | 'annullato';
 interface SorgenteLavoroQuiz { tipo: 'testo' | 'pdf'; id: string; versione: string; }
+interface PaginaSorgenteQuiz { n: number; testo: string; }
+interface InputLavoroQuiz { pagine: PaginaSorgenteQuiz[]; pagineVuote: number; }
+interface CheckpointLavoroQuiz { id: string; da: number; richieste: number; ottenute: number; provider: string; modello: string; salvatoIl: number; }
 interface LavoroQuiz {
   account: string;
   id: string;
@@ -17,6 +20,9 @@ interface LavoroQuiz {
   aggiornatoIl: number;
   prossimoTentativoIl: number | null;
   ultimoErrore: string | null;
+  input?: InputLavoroQuiz;
+  risultati?: DomAI[];
+  checkpoint?: CheckpointLavoroQuiz[];
 }
 interface LeaseCodaQuiz { account: string; proprietario: string; scadeIl: number; aggiornatoIl: number; }
 
@@ -60,10 +66,15 @@ const CodaQuiz = (() => {
   function idDeterministico(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>): string {
     return 'cq-' + hash(canonico([accountPulito(account), sorgentePulita(sorgente), specifica || {}]));
   }
-  function nuovo(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>, ora = Date.now()): LavoroQuiz {
+  function copiaInput(input?: InputLavoroQuiz): InputLavoroQuiz | undefined {
+    if (!input) return undefined;
+    return { pagine: (input.pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: String(p.testo || '') })),
+      pagineVuote: Math.max(0, Math.floor(Number(input.pagineVuote)) || 0) };
+  }
+  function nuovo(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>, ora = Date.now(), input?: InputLavoroQuiz): LavoroQuiz {
     const acc = accountPulito(account), src = sorgentePulita(sorgente), spec = specifica || {};
     return { account: acc, id: idDeterministico(acc, src, spec), stato: 'in_coda', tentativi: 0, sorgente: src, specifica: spec,
-      creatoIl: ora, aggiornatoIl: ora, prossimoTentativoIl: null, ultimoErrore: null };
+      creatoIl: ora, aggiornatoIl: ora, prossimoTentativoIl: null, ultimoErrore: null, input: copiaInput(input), risultati: [], checkpoint: [] };
   }
   function cambia(l: LavoroQuiz, stato: StatoLavoroQuiz, ora = Date.now()): LavoroQuiz {
     if (l.stato === stato) return { ...l };
@@ -104,12 +115,17 @@ const CodaQuiz = (() => {
   }
 
   /** Inserimento idempotente: stessa sorgente/versione/specifica nello stesso account = stesso lavoro. */
-  async function aggiungi(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>, ora = Date.now()): Promise<LavoroQuiz> {
-    const d = await db(), l = nuovo(account, sorgente, specifica, ora);
+  async function aggiungi(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>, ora = Date.now(), input?: InputLavoroQuiz): Promise<LavoroQuiz> {
+    const d = await db(), l = nuovo(account, sorgente, specifica, ora, input);
     return new Promise((ok, ko) => {
       const tx = d.transaction(STORE_LAVORI, 'readwrite'), st = tx.objectStore(STORE_LAVORI), rq = st.get(chiave(l.account, l.id));
       let out = l;
-      rq.onsuccess = () => { if (rq.result) out = rq.result as LavoroQuiz; else st.put(l); };
+      rq.onsuccess = () => {
+        if (rq.result) {
+          out = rq.result as LavoroQuiz;
+          if (input && !out.input) { out = { ...out, input: copiaInput(input) }; st.put(out); }
+        } else st.put(l);
+      };
       tx.oncomplete = () => ok(out); tx.onerror = () => ko(tx.error); tx.onabort = () => ko(tx.error || new Error('salvataggio della coda annullato'));
     });
   }
@@ -131,7 +147,29 @@ const CodaQuiz = (() => {
   const annulla = (account: string, id: string, ora = Date.now()) => aggiorna(account, id, l => TERMINALI.has(l.stato) ? { ...l } : cambia(l, 'annullato', ora));
   const completa = (account: string, id: string, ora = Date.now()) => aggiorna(account, id, l => cambia(l, 'completato', ora));
   function rimanda(account: string, id: string, errore: string, prossimoTentativoIl: number, ora = Date.now()): Promise<LavoroQuiz> {
-    return aggiorna(account, id, l => ({ ...cambia(l, 'in_coda', ora), tentativi: l.tentativi + 1, ultimoErrore: String(errore || 'errore sconosciuto'), prossimoTentativoIl }));
+    return aggiorna(account, id, l => l.stato !== 'in_esecuzione' ? { ...l } : ({ ...cambia(l, 'in_coda', ora), tentativi: l.tentativi + 1,
+      ultimoErrore: String(errore || 'errore sconosciuto'), prossimoTentativoIl }));
+  }
+  /** Checkpoint atomico e idempotente: risultati e avanzamento si salvano nella stessa transazione. */
+  function salvaCheckpoint(account: string, id: string, cp: CheckpointLavoroQuiz, domande: DomAI[], totale: number, ora = Date.now()): Promise<LavoroQuiz> {
+    return aggiorna(account, id, l => {
+      if (l.stato !== 'in_esecuzione') return { ...l };   // pausa/annulla durante la richiesta: non reinserire il risultato
+      const cps = l.checkpoint || [];
+      if (cps.some(x => x.id === cp.id)) {
+        const stato: StatoLavoroQuiz = (l.risultati || []).length >= Math.max(1, totale) ? 'completato' : 'in_coda';
+        return { ...cambia(l, stato, ora) };
+      }
+      const risultati = (l.risultati || []).slice(), pos = new Map(risultati.map((q, i) => [String(q.id || ''), i]));
+      for (const q0 of domande) {
+        const q = { ...q0 }, qid = String(q.id || '');
+        if (!qid || pos.has(qid)) continue;
+        pos.set(qid, risultati.length); risultati.push(q);
+      }
+      if (risultati.length === (l.risultati || []).length) throw new Error('il micro-batch non contiene nuove domande');
+      const fine = risultati.length >= Math.max(1, totale), stato: StatoLavoroQuiz = fine ? 'completato' : 'in_coda';
+      return { ...cambia(l, stato, ora), risultati: risultati.slice(0, totale), checkpoint: [...cps, { ...cp, salvatoIl: ora }],
+        prossimoTentativoIl: null, ultimoErrore: null };
+    });
   }
   async function elimina(account: string, id: string): Promise<boolean> {
     const d = await db(), key = chiave(account, id);
@@ -204,10 +242,11 @@ const CodaQuiz = (() => {
     });
   }
   async function svuotaTutto(): Promise<void> {
-    const d = dbp ? await dbp.catch(() => null) : null; if (d) d.close(); dbp = null;
-    await new Promise<void>(ok => {
-      try { const rq = indexedDB.deleteDatabase(NOME_DB); rq.onsuccess = () => ok(); rq.onerror = () => ok(); rq.onblocked = () => ok(); }
-      catch (_) { ok(); }
+    const d = await db();
+    await new Promise<void>((ok, ko) => {
+      const tx = d.transaction([STORE_LAVORI, STORE_LEASE], 'readwrite');
+      tx.objectStore(STORE_LAVORI).clear(); tx.objectStore(STORE_LEASE).clear();
+      tx.oncomplete = () => ok(); tx.onerror = () => ko(tx.error); tx.onabort = () => ko(tx.error || new Error('pulizia della coda annullata'));
     });
   }
 
@@ -217,6 +256,6 @@ const CodaQuiz = (() => {
     riattiva();
   }
 
-  return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, elimina,
+  return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, salvaCheckpoint, elimina,
     acquisisciLease, rinnovaLease, rilasciaLease, prossimo, recuperaInterrotti, svuotaAccount, svuotaTutto, proprietarioTab, accountAttuale };
 })();

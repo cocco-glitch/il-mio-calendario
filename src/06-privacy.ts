@@ -60,7 +60,22 @@ const Privacy = (() => {
     // P0-A: la coda quiz è solo locale. Va eliminata al cambio account anche se il chunk
     // strumenti-quiz non è mai stato caricato in questa sessione.
     if (typeof CodaQuiz !== 'undefined') await CodaQuiz.svuotaTutto();
-    else await new Promise<void>(ok => { try { const rq = indexedDB.deleteDatabase('imc-coda-quiz'); rq.onsuccess = () => ok(); rq.onerror = () => ok(); rq.onblocked = () => ok(); } catch (_) { ok(); } });
+    else await new Promise<void>(ok => {
+      try {
+        // Non usare deleteDatabase: un'altra scheda aperta lo bloccherebbe lasciando i dati intatti.
+        const rq = indexedDB.open('imc-coda-quiz');
+        rq.onupgradeneeded = () => {
+          if (!rq.result.objectStoreNames.contains('lavori')) rq.result.createObjectStore('lavori', { keyPath: ['account', 'id'] });
+          if (!rq.result.objectStoreNames.contains('lease')) rq.result.createObjectStore('lease', { keyPath: 'account' });
+        };
+        rq.onsuccess = () => {
+          const d = rq.result, tx = d.transaction(['lavori', 'lease'], 'readwrite');
+          tx.objectStore('lavori').clear(); tx.objectStore('lease').clear();
+          const fine = () => { d.close(); ok(); }; tx.oncomplete = fine; tx.onerror = fine; tx.onabort = fine;
+        };
+        rq.onerror = () => ok(); rq.onblocked = () => ok();
+      } catch (_) { ok(); }
+    });
     if (typeof Drive !== 'undefined' && Drive.dimenticaCartelle) Drive.dimenticaCartelle();
   }
   /** Chiamata appena si conosce l'account del login, PRIMA di unire i dati remoti. */

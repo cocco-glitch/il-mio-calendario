@@ -26,6 +26,12 @@ with sync_playwright() as p:
     ctx = p.chromium.launch().new_context(viewport={'width': 375, 'height': 800}, locale='it-IT', timezone_id='Europe/Rome')
     a = ctx.new_page(); a.on('pageerror', lambda e: err.append('pageerror A: ' + str(e))); carica(a)
     a.evaluate('CodaQuiz.svuotaTutto()')
+    a.evaluate('CodaQuizUI.apri()')
+    ok(a.locator('textarea[aria-label="Testo da cui generare il quiz"]').count() == 1
+       and a.get_by_role('button', name='Genera nella coda').count() == 1
+       and a.locator('input[aria-label="PDF testuale da cui generare il quiz"]').count() == 1,
+       'P0-B UI: testo, PDF testuale e avvio coda raggiungibili')
+    a.evaluate("document.querySelectorAll('.foglio-sfondo').forEach(x => x.remove())")
 
     # Stesso input due volte: un solo record, persistente dopo reload e invisibile all'altro account.
     r = a.evaluate("""async ([acc, src, spec]) => {
@@ -72,8 +78,7 @@ with sync_playwright() as p:
     ok(b.evaluate("CodaQuiz.rilasciaLease('a@example.test', 'tab-b')") is False, 'una scheda non può rilasciare il lease altrui')
     ok(a.evaluate("CodaQuiz.acquisisciLease('a@example.test', 'tab-a', 16000, 2000)") is True, 'lease riacquisibile dopo la scadenza')
 
-    # Cambio account: la coda locale viene rimossa e non viene mai sincronizzata in Stato/Drive.
-    b.close()
+    # Cambio account con la seconda scheda ancora aperta: la pulizia non resta bloccata da IndexedDB.
     pulizia = a.evaluate("""async () => {
       localStorage.setItem('imc-accLocale', JSON.stringify('a@example.test'));
       const prima = (await CodaQuiz.lista('a@example.test')).length;
@@ -81,7 +86,34 @@ with sync_playwright() as p:
       await caricaStrumentiQuiz();
       return [prima, (await CodaQuiz.lista('a@example.test')).length, Stato.tutti('codaquiz').length];
     }""")
-    ok(pulizia == [1, 0, 0], 'cambio account elimina la coda locale e niente record sincronizzato (%s)' % pulizia)
+    ok(pulizia == [1, 0, 0], 'cambio account multi-tab elimina la coda locale e niente record sincronizzato (%s)' % pulizia)
+
+    # P0-B: testo -> micro-batch -> checkpoint; reload -> ripresa senza duplicati.
+    creato = a.evaluate("""async acc => {
+      const testo = 'La membrana cellulare contiene un doppio strato di fosfolipidi.\\n\\nLa mitosi comprende profase, metafase, anafase e telofase.';
+      const l = await CodaQuizRunner.creaDaTesto(acc, testo, { quantita: 7, materia: 'Biologia', argomento: 'cellula', step: '3.3', maxPerBatch: 4 });
+      window.__chiamaP0B = async (m, o) => { const n = Number(/esattamente (\\d+)/.exec(m[1].content)[1]); return { prov: 'mock-sequenziale', modello: 'mock-1', j: { formato:'quiz-v4', quiz: Array.from({length:n}, (_,i) => ({ tipo:'mcq', livello:2, domanda:'Domanda batch A '+i+' abbastanza lunga?', opzioni:['Corretta','Errata 1','Errata 2','Errata 3'], spiegazione:'Spiegazione con fonte.', erroreTipico:'Confusione', fonte:'Pagina 1' })) } }; };
+      const r = await CodaQuizRunner.avanza(acc, 'runner-a', { chiama: window.__chiamaP0B });
+      return [l.id, r.esito, r.lavoro.risultati.length, r.lavoro.checkpoint.length];
+    }""", ACC_B)
+    ok(creato[1:] == ['checkpoint', 4, 1], 'primo micro-batch salvato subito (%s)' % creato)
+    a.reload(); a.wait_for_selector('.tabbar'); a.evaluate('caricaStrumentiQuiz()')
+    ripresa = a.evaluate("""async acc => {
+      const chiama = async (m, o) => { const n = Number(/esattamente (\\d+)/.exec(m[1].content)[1]); return { prov:'mock-sequenziale', modello:'mock-2', j:{ formato:'quiz-v4', quiz:Array.from({length:n}, (_,i) => ({ tipo:'mcq', livello:3, domanda:'Domanda batch B '+i+' abbastanza lunga?', opzioni:['Corretta','Errata 1','Errata 2','Errata 3'], spiegazione:'Spiegazione con fonte.', erroreTipico:'Confusione', fonte:'Pagina 2' })) } }; };
+      const r = await CodaQuizRunner.avanza(acc, 'runner-a', { chiama });
+      return [r.esito, r.lavoro.risultati.length, new Set(r.lavoro.risultati.map(q => q.id)).size, r.lavoro.checkpoint.length, r.lavoro.stato];
+    }""", ACC_B)
+    ok(ripresa == ['completato', 7, 7, 2, 'completato'], 'reload e ripresa completano senza ID duplicati (%s)' % ripresa)
+
+    # Tutti i provider indisponibili: il lavoro resta in coda con quando riprovare; poi riparte una volta sola.
+    retry_b = a.evaluate("""async acc => {
+      await CodaQuizRunner.creaDaTesto(acc, 'Testo diverso e sufficiente per una domanda.', { quantita:1, argomento:'retry' }, 'retry-429');
+      const ko = await CodaQuizRunner.avanza(acc, 'runner-b', { ora:() => 100000, chiama:async () => { throw new Error('429: tutti i modelli in pausa per quota'); } });
+      const ok = await CodaQuizRunner.avanza(acc, 'runner-b', { ora:() => 165000, chiama:async () => ({ prov:'riserva', modello:'mock-ok', j:{ formato:'quiz-v4', quiz:[{ tipo:'mcq', livello:1, domanda:'Quale risposta e corretta nel retry?', opzioni:['Corretta','B','C','D'], spiegazione:'Spiegazione.', erroreTipico:'Errore', fonte:'Pagina 1' }] } }) });
+      return [ko.esito, ko.prossimoTentativoIl, ko.lavoro.stato, ok.esito, ok.lavoro.tentativi, ok.lavoro.risultati.length];
+    }""", ACC_B)
+    ok(retry_b == ['rimandato', 165000, 'in_coda', 'completato', 1, 1], '429 conserva coda e prossimo retry, poi riparte (%s)' % retry_b)
+    b.close()
     ctx.close()
 
 srv.shutdown()

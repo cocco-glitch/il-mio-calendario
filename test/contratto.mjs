@@ -31,7 +31,7 @@ const js = FILE.map(f => ts.transpileModule(leggi(f), { compilerOptions: { targe
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const sb = { console, ymd, oggi: () => new Date(), materiaDi: k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; } };
 vm.createContext(sb);
-const ESPORTA = ['JsonAI', 'ImportaParti', 'ImportaDrive', 'DiagnosiQuiz', 'MasterPrompt', 'Contratto', 'Validatore', 'MappaPagine', 'CodaQuiz'];
+const ESPORTA = ['JsonAI', 'ImportaParti', 'ImportaDrive', 'DiagnosiQuiz', 'MasterPrompt', 'Contratto', 'Validatore', 'MappaPagine', 'CodaQuiz', 'CodaQuizRunner'];
 vm.runInContext(js + '\n;' + ESPORTA.map(n => 'this.' + n + ' = typeof ' + n + " !== 'undefined' ? " + n + ' : undefined;').join(' '), sb);
 const { Contratto: C, Validatore: V, MappaPagine: M, DiagnosiQuiz: DQ, ImportaParti: IP, ImportaDrive: ID } = sb;
 const serve = (o, n) => { if (!o) throw new Error(n + ' non esiste ancora'); return o; };
@@ -63,6 +63,32 @@ t('macchina a stati: pausa/ripresa/esecuzione/completamento ammessi, terminali b
 t('fondazione P0-A senza rete, router AI, OCR o racing', () => {
   const s = leggi('su-richiesta/07-codaquiz.ts');
   vero(!/\bfetch\s*\(|\bIA\.|OCR|Promise\.race/.test(s), 'dipendenza vietata trovata');
+});
+
+console.log('\n== P0-B runner sequenziale ==');
+const CQR = serve(sb.CodaQuizRunner, 'CodaQuizRunner');
+t('specifica e micro-batch rispettano 1..200, massimo 8 e confine da 18 domande', () => {
+  const sp = CQR.specifica({ quantita: 500, maxPerBatch: 99, maxCaratteriFonte: 1 });
+  eq([sp.quantita, sp.maxPerBatch, sp.maxCaratteriFonte], [200, 8, 2000]);
+  const l = CQ.nuovo('a@example.it', SRC_CQ, sp, 1, { pagine: [{ n: 1, testo: 'membrana cellulare' }], pagineVuote: 0 });
+  l.risultati = Array.from({ length: 17 }, (_, i) => ({ id: 'q' + i }));
+  eq(CQR.grandezzaBatch(l), 1);
+});
+t('testo spezzato e pagine pertinenti scelte entro il budget', () => {
+  const ps = CQR.pagineTesto('Membrana e fosfolipidi.\n\n' + 'x'.repeat(5100));
+  vero(ps.length === 3, 'pagine=' + ps.length);
+  const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 5, argomento: 'mitosi', maxCaratteriFonte: 2000 }, 1,
+    { pagine: [{ n: 1, testo: 'membrana cellulare ' + 'x'.repeat(1980) }, { n: 2, testo: 'mitosi profase metafase' }], pagineVuote: 0 });
+  eq(CQR.selezionaPagine(l, 0).map(x => x.n), [2]);
+});
+t('risposta del router passa dal Contratto e riceve ID deterministici dall’app', () => {
+  const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 2, step: '3.3' }, 1, { pagine: [{ n: 1, testo: 'x' }], pagineVuote: 0 });
+  const qs = CQR.domandeDa({ formato: 'quiz-v4', quiz: [{ tipo: 'mcq', livello: 2, domanda: 'Quale affermazione è corretta?', opzioni: ['A', 'B', 'C', 'D'], spiegazione: 'Spiegazione', erroreTipico: 'Errore', fonte: 'Pagina 1' }] }, l, 1);
+  vero(qs.length === 1 && /^3\.3-S01-01$/.test(qs[0].id) && Number.isInteger(qs[0].esatta), JSON.stringify(qs));
+});
+t('runner usa solo IA.chiedi in sequenza: nessun fetch, Promise.all o racing proprio', () => {
+  const s = leggi('su-richiesta/07-codaquizrunner.ts');
+  vero(/IA\.chiedi\(m as any, 'genera'/.test(s) && !/\bfetch\s*\(|Promise\.(?:all|race|any)\s*\(/.test(s), 'confine del router violato');
 });
 
 // =====================================================================

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const RADICE = path.dirname(fileURLToPath(import.meta.url));
@@ -33,7 +33,8 @@ fs.copyFileSync(path.join(SRC, '01-json.ts'), path.join(TMP, 'json.ts'));   // v
 fs.copyFileSync(path.join(SRC, '07-neuro.ts'), path.join(TMP, 'neuro.ts'));
 fs.copyFileSync(path.join(SRC, '07-pianificatore.ts'), path.join(TMP, 'pianificatore.ts'));
 try {
-  execSync('npx -y -p typescript@5.6.3 tsc --target es2020 --lib es2020 --strict --noEmitOnError false --outDir out stub.d.ts json.ts neuro.ts pianificatore.ts', { cwd: TMP, stdio: 'pipe' });
+  execFileSync(process.execPath, [path.join(RADICE, 'node_modules', 'typescript', 'bin', 'tsc'), '--target', 'es2020', '--lib', 'es2020', '--strict',
+    '--noEmitOnError', 'false', '--outDir', 'out', 'stub.d.ts', 'json.ts', 'neuro.ts', 'pianificatore.ts'], { cwd: TMP, stdio: 'pipe' });
 } catch (e) { console.log('⚠️ tsc sui moduli puri:\n' + String(e.stdout || e.message).slice(0, 2000)); }
 const JS_JSON = fs.readFileSync(path.join(TMP, 'out', 'json.js'), 'utf8');
 const JS = fs.readFileSync(path.join(TMP, 'out', 'neuro.js'), 'utf8');
@@ -207,7 +208,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.64.2', () => vero(/const VERSIONE = '0.64.2'/.test(leggi('09-main.ts'))));
+t('versione app 0.64.3', () => vero(/const VERSIONE = '0.64.3'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
@@ -577,7 +578,8 @@ t('v0.58 Q4: segnaliIper usa materiaQ (quiz creati in app «qc-…» contano per
 await t('v0.58 Q2: QuizRifare.dovute — l\'illusione di oggi torna oggi, in testa', async () => {
   const d = path.join(TMP, 'qr'); fs.mkdirSync(d);
   fs.copyFileSync(path.join(SRC, '07-quizrifare.ts'), path.join(d, 'qr.ts'));
-  try { execSync('npx -y -p typescript@5.6.3 tsc --target es2020 --noEmitOnError false --outDir out qr.ts', { cwd: d, stdio: 'pipe' }); } catch (_) { /* tipi globali dell'app assenti: emette comunque */ }
+  try { execFileSync(process.execPath, [path.join(RADICE, 'node_modules', 'typescript', 'bin', 'tsc'), '--target', 'es2020', '--noEmitOnError', 'false', '--outDir', 'out', 'qr.ts'], { cwd: d, stdio: 'pipe' }); }
+  catch (_) { /* tipi globali dell'app assenti: emette comunque */ }
   const recs = [
     { id: 'sq-1', sk: 'C-1-1', neuro: { due: '2026-11-17', tag: [] } },
     { id: 'sq-2', sk: 'C-1-1', neuro: { due: OGGI, tag: ['illusione_competenza'] } },
@@ -900,6 +902,14 @@ t('v0.64: runner — codice in monospazio, rubrica confermata dall\'utente, ling
   const m = /linguaCodice\)\)\) d\.linguaCodice/.exec(dm); vero(!!m, 'normalizzaDomanda copia linguaCodice');
   const re = new RegExp(/\/(\^[^/]+\$)\/\.test\(str\(x\.linguaCodice\)\)/.exec(dm)[1]);
   vero(['python', 'c++', 'c#', 'en', 'it-IT'].every(x => re.test(x)) && !re.test('<script>'), 'regex: linguaggi e lingue sì, markup no');
+});
+
+t('v0.64.3 P0-B: ingresso UI alla coda, nessun OCR o racing, risultati scaricabili prima di P0-C', () => {
+  const ui = leggi('su-richiesta/07-codaquizui.ts'), runner = leggi('su-richiesta/07-codaquizrunner.ts'), studio = leggi('07-studio.ts');
+  vero(/CodaQuizRunner\.creaDaPdf/.test(ui) && /CodaQuizRunner\.creaDaTesto/.test(ui) && /CodaQuizRunner\.avanza/.test(ui), 'testo/PDF → runner');
+  vero(/Pausa/.test(ui) && /Riprendi/.test(ui) && /Annulla/.test(ui) && /Scarica JSON/.test(ui), 'controlli della coda');
+  vero(/CodaQuizUI\.apri\(\)/.test(studio), 'ingresso da Studio');
+  vero(/IA\.chiedi\(m as any, 'genera'/.test(runner) && !/Promise\.(?:all|race|any)\s*\(/.test(runner), 'router esistente e sequenziale');
 });
 
 fs.rmSync(TMP, { recursive: true, force: true });
