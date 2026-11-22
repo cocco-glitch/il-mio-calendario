@@ -208,7 +208,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.64.3', () => vero(/const VERSIONE = '0.64.3'/.test(leggi('09-main.ts'))));
+t('versione app 0.64.4', () => vero(/const VERSIONE = '0.64.4'/.test(leggi('09-main.ts'))));
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));
@@ -904,12 +904,21 @@ t('v0.64: runner — codice in monospazio, rubrica confermata dall\'utente, ling
   vero(['python', 'c++', 'c#', 'en', 'it-IT'].every(x => re.test(x)) && !re.test('<script>'), 'regex: linguaggi e lingue sì, markup no');
 });
 
-t('v0.64.3 P0-B: ingresso UI alla coda, nessun OCR o racing, risultati scaricabili prima di P0-C', () => {
+t('v0.64.3 P0-B: ingresso UI alla coda, nessun OCR o racing, risultati scaricabili', () => {
   const ui = leggi('su-richiesta/07-codaquizui.ts'), runner = leggi('su-richiesta/07-codaquizrunner.ts'), studio = leggi('07-studio.ts');
   vero(/CodaQuizRunner\.creaDaPdf/.test(ui) && /CodaQuizRunner\.creaDaTesto/.test(ui) && /CodaQuizRunner\.avanza/.test(ui), 'testo/PDF → runner');
   vero(/Pausa/.test(ui) && /Riprendi/.test(ui) && /Annulla/.test(ui) && /Scarica JSON/.test(ui), 'controlli della coda');
   vero(/CodaQuizUI\.apri\(\)/.test(studio), 'ingresso da Studio');
   vero(/IA\.chiedi\(m as any, 'genera'/.test(runner) && !/Promise\.(?:all|race|any)\s*\(/.test(runner), 'router esistente e sequenziale');
+});
+
+t('v0.64.4 P0-C: valida domanda/pacchetto, corregge solo bocciate per tre tentativi e innesta idempotente', () => {
+  const q = leggi('su-richiesta/07-codaquizqualita.ts'), r = leggi('su-richiesta/07-codaquizrunner.ts'), ui = leggi('su-richiesta/07-codaquizui.ts');
+  vero(/Validatore\.valida\(\[q\]\)/.test(q) && /problemiPacchetto: v\.insieme/.test(q), 'domanda e pacchetto separati');
+  vero(/tentativi >= 3 \? 'da_rivedere'/.test(q) && /filter\(x => x\.stato === 'da_correggere'\)/.test(r), 'solo bocciate, massimo tre tentativi');
+  vero(/DiagnosiQuiz\.applicaPatch/.test(q) && /Restituisci esclusivamente un array JSON di patch/.test(q), 'patch chirurgiche');
+  vero(/ImportaDrive\.salva\(t, sc, 'coda:' \+ l\.id, \{ accumula: true/.test(q) && /Innestalo nel piano/.test(ui), 'innesto idempotente esposto');
+  vero(!/\bfetch\s*\(|Promise\.(?:all|race|any)\s*\(/.test(r), 'nessun OCR o racing parallelo');
 });
 
 fs.rmSync(TMP, { recursive: true, force: true });

@@ -31,7 +31,7 @@ const js = FILE.map(f => ts.transpileModule(leggi(f), { compilerOptions: { targe
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const sb = { console, ymd, oggi: () => new Date(), materiaDi: k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; } };
 vm.createContext(sb);
-const ESPORTA = ['JsonAI', 'ImportaParti', 'ImportaDrive', 'DiagnosiQuiz', 'MasterPrompt', 'Contratto', 'Validatore', 'MappaPagine', 'CodaQuiz', 'CodaQuizRunner'];
+const ESPORTA = ['JsonAI', 'ImportaParti', 'ImportaDrive', 'DiagnosiQuiz', 'MasterPrompt', 'Contratto', 'Validatore', 'MappaPagine', 'CodaQuiz', 'CodaQuizQualita', 'CodaQuizRunner'];
 vm.runInContext(js + '\n;' + ESPORTA.map(n => 'this.' + n + ' = typeof ' + n + " !== 'undefined' ? " + n + ' : undefined;').join(' '), sb);
 const { Contratto: C, Validatore: V, MappaPagine: M, DiagnosiQuiz: DQ, ImportaParti: IP, ImportaDrive: ID } = sb;
 const serve = (o, n) => { if (!o) throw new Error(n + ' non esiste ancora'); return o; };
@@ -89,6 +89,33 @@ t('risposta del router passa dal Contratto e riceve ID deterministici dall’app
 t('runner usa solo IA.chiedi in sequenza: nessun fetch, Promise.all o racing proprio', () => {
   const s = leggi('su-richiesta/07-codaquizrunner.ts');
   vero(/IA\.chiedi\(m as any, 'genera'/.test(s) && !/\bfetch\s*\(|Promise\.(?:all|race|any)\s*\(/.test(s), 'confine del router violato');
+});
+
+console.log('\n== P0-C qualità, correzione e innesto ==');
+const CQQ = serve(sb.CodaQuizQualita, 'CodaQuizQualita');
+const PAG_Q = [{ n: 7, testo: 'La membrana cellulare è formata da un doppio strato di fosfolipidi e contiene proteine di trasporto selettivo.' }];
+const prontaQ = (id = 'biologia-3.3-S01-01') => ({ id, stepId: 'biologia-3.3', scheda: 'biologia-3.3-S01', livelloCognitivo: 2, livello: 'L2', tipo: 'mcq',
+  domanda: 'Quale componente forma il doppio strato della membrana cellulare?', opzioni: ['Fosfolipidi', 'Glicogeno', 'DNA', 'Cellulosa'], esatta: 0,
+  spiegazione: 'I fosfolipidi formano il doppio strato della membrana cellulare, mentre le proteine regolano il trasporto. [[Fonte, p. 7]]',
+  spiegazioneDistrattori: ['Il glicogeno è una riserva energetica, non forma la membrana.', 'Il DNA conserva informazione genetica e non forma il doppio strato.', 'La cellulosa appartiene alla parete vegetale, non alla membrana.'],
+  distractorTypes: ['confusione_termine', 'plausibile_generico', 'misconception'], erroreTipico: 'Confondere membrana e parete', fonte: 'Pagina 7', sourceRef: 'Pagina 7' });
+t('validazione per domanda: formato, fonte e didattica producono pronta; il duplicato va solo in correzione', () => {
+  const a = CQQ.validaDomande([prontaQ()], PAG_Q), b = CQQ.validaDomande([{ ...prontaQ('nuova'), domanda: '  QUALE componente forma il doppio strato della membrana cellulare?  ' }], PAG_Q, [prontaQ()]);
+  vero(a[0].stato === 'pronta' && JSON.stringify(a[0].pagine) === '[7]', JSON.stringify(a[0].motivi)); eq(b[0].stato, 'da_correggere'); vero(b[0].motivi.some(x => /Deduplica/.test(x)), b[0].motivi.join('; '));
+});
+t('validazione del pacchetto resta separata e solo le pronte contano nella copertura', () => {
+  const r = CQQ.rapporto([prontaQ()], [{ id: 'x', domanda: { ...prontaQ('x'), fonte: '' }, stato: 'da_rivedere', tentativi: 3, motivi: ['Fonte'], pagine: [] }], 99);
+  eq([r.pronte, r.daCorreggere, r.daRivedere, r.aggiornatoIl], [1, 0, 1, 99]); vero(r.problemiPacchetto.some(x => /domande invece di 18/.test(x)), r.problemiPacchetto.join('; '));
+});
+t('correzione chirurgica contiene solo le bocciate e dopo il terzo esito negativo passa da_rivedere', () => {
+  const rev = { id: 'male', domanda: { ...prontaQ('male'), fonte: '', sourceRef: '' }, stato: 'da_correggere', tentativi: 2, motivi: ['Fonte: manca'], pagine: [] };
+  const p = CQQ.promptCorrezione([rev], PAG_Q).map(x => x.content).join('\n'); vero(/male/.test(p) && !/biologia-3\.3-S01-01/.test(p), p);
+  const e = CQQ.applicaCorrezioni([rev], [], PAG_Q, [prontaQ()]); eq([e[0].tentativi, e[0].stato], [3, 'da_rivedere']);
+});
+t('pacchetto di innesto usa solo risultati pronti e conserva step e microstep scelti', () => {
+  const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 2, materia: 'Biologia', step: '3.3', microstep: '3.3.2', argomento: 'Membrane' }, 1);
+  l.risultati = [prontaQ()]; l.revisioni = [{ id: 'x', domanda: prontaQ('x'), stato: 'da_rivedere', tentativi: 3, motivi: ['fonte'], pagine: [] }];
+  const p = CQQ.pacchetto(l); eq([p.meta.stepId, p.meta.sottoStep, p.quiz.length, p.quiz[0].sottoStep], ['biologia-3.3', '3.3', 1, '3.3.2']);
 });
 
 // =====================================================================

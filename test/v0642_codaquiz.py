@@ -1,4 +1,4 @@
-# Test v0.64.2 P0-A: coda quiz locale persistente, idempotente e con lease multi-tab.
+# Test v0.64.2–0.64.4: coda persistente, runner sequenziale, qualità e innesto.
 import os, http.server, threading, functools
 from playwright.sync_api import sync_playwright
 
@@ -92,14 +92,14 @@ with sync_playwright() as p:
     creato = a.evaluate("""async acc => {
       const testo = 'La membrana cellulare contiene un doppio strato di fosfolipidi.\\n\\nLa mitosi comprende profase, metafase, anafase e telofase.';
       const l = await CodaQuizRunner.creaDaTesto(acc, testo, { quantita: 7, materia: 'Biologia', argomento: 'cellula', step: '3.3', maxPerBatch: 4 });
-      window.__chiamaP0B = async (m, o) => { const n = Number(/esattamente (\\d+)/.exec(m[1].content)[1]); return { prov: 'mock-sequenziale', modello: 'mock-1', j: { formato:'quiz-v4', quiz: Array.from({length:n}, (_,i) => ({ tipo:'mcq', livello:2, domanda:'Domanda batch A '+i+' abbastanza lunga?', opzioni:['Corretta','Errata 1','Errata 2','Errata 3'], spiegazione:'Spiegazione con fonte.', erroreTipico:'Confusione', fonte:'Pagina 1' })) } }; };
+      window.__chiamaP0B = async (m, o) => { const n = Number(/esattamente (\\d+)/.exec(m[1].content)[1]); return { prov: 'mock-sequenziale', modello: 'mock-1', j: { formato:'quiz-v4', quiz: Array.from({length:n}, (_,i) => ({ tipo:'mcq', livello:2, domanda:'Quale ruolo hanno membrana e fosfolipidi nel concettoA'+i+'?', opzioni:['Formano il doppio strato','Producono DNA','Creano cellulosa','Avviano la mitosi'], spiegazione:'Membrana e fosfolipidi formano il doppio strato cellulare. [[Fonte, p. 1]]', spiegazioneDistrattori:['Il DNA non descrive la struttura lipidica della membrana.','La cellulosa appartiene alla parete e non al doppio strato.','La mitosi è divisione cellulare e non struttura di membrana.'], distractorTypes:['confusione_termine','misconception','plausibile_generico'], erroreTipico:'Confondere membrana e altri componenti cellulari', fonte:'Pagina 1' })) } }; };
       const r = await CodaQuizRunner.avanza(acc, 'runner-a', { chiama: window.__chiamaP0B });
       return [l.id, r.esito, r.lavoro.risultati.length, r.lavoro.checkpoint.length];
     }""", ACC_B)
     ok(creato[1:] == ['checkpoint', 4, 1], 'primo micro-batch salvato subito (%s)' % creato)
     a.reload(); a.wait_for_selector('.tabbar'); a.evaluate('caricaStrumentiQuiz()')
     ripresa = a.evaluate("""async acc => {
-      const chiama = async (m, o) => { const n = Number(/esattamente (\\d+)/.exec(m[1].content)[1]); return { prov:'mock-sequenziale', modello:'mock-2', j:{ formato:'quiz-v4', quiz:Array.from({length:n}, (_,i) => ({ tipo:'mcq', livello:3, domanda:'Domanda batch B '+i+' abbastanza lunga?', opzioni:['Corretta','Errata 1','Errata 2','Errata 3'], spiegazione:'Spiegazione con fonte.', erroreTipico:'Confusione', fonte:'Pagina 2' })) } }; };
+      const chiama = async (m, o) => { const n = Number(/esattamente (\\d+)/.exec(m[1].content)[1]); return { prov:'mock-sequenziale', modello:'mock-2', j:{ formato:'quiz-v4', quiz:Array.from({length:n}, (_,i) => ({ tipo:'mcq', livello:3, domanda:'Come interagiscono membrana e fosfolipidi nel concettoB'+i+'?', opzioni:['Formano il doppio strato','Producono glicogeno','Creano il nucleo','Consumano cromosomi'], spiegazione:'La membrana cellulare contiene un doppio strato di fosfolipidi. [[Fonte, p. 1]]', spiegazioneDistrattori:['Il glicogeno è una riserva e non struttura la membrana.','Il nucleo è un organulo distinto dal doppio strato lipidico.','I cromosomi partecipano alla mitosi, non formano la membrana.'], distractorTypes:['confusione_termine','misconception','plausibile_generico'], erroreTipico:'Confondere strutture e processi cellulari', fonte:'Pagina 1' })) } }; };
       const r = await CodaQuizRunner.avanza(acc, 'runner-a', { chiama });
       return [r.esito, r.lavoro.risultati.length, new Set(r.lavoro.risultati.map(q => q.id)).size, r.lavoro.checkpoint.length, r.lavoro.stato];
     }""", ACC_B)
@@ -109,10 +109,34 @@ with sync_playwright() as p:
     retry_b = a.evaluate("""async acc => {
       await CodaQuizRunner.creaDaTesto(acc, 'Testo diverso e sufficiente per una domanda.', { quantita:1, argomento:'retry' }, 'retry-429');
       const ko = await CodaQuizRunner.avanza(acc, 'runner-b', { ora:() => 100000, chiama:async () => { throw new Error('429: tutti i modelli in pausa per quota'); } });
-      const ok = await CodaQuizRunner.avanza(acc, 'runner-b', { ora:() => 165000, chiama:async () => ({ prov:'riserva', modello:'mock-ok', j:{ formato:'quiz-v4', quiz:[{ tipo:'mcq', livello:1, domanda:'Quale risposta e corretta nel retry?', opzioni:['Corretta','B','C','D'], spiegazione:'Spiegazione.', erroreTipico:'Errore', fonte:'Pagina 1' }] } }) });
+      const ok = await CodaQuizRunner.avanza(acc, 'runner-b', { ora:() => 165000, chiama:async () => ({ prov:'riserva', modello:'mock-ok', j:{ formato:'quiz-v4', quiz:[{ tipo:'mcq', livello:1, domanda:'Quale testo diverso è sufficiente per il retry?', opzioni:['Il testo diverso','Una risposta estranea','Un concetto assente','Una fonte inesistente'], spiegazione:'Il testo diverso è sufficiente per creare la domanda. [[Fonte, p. 1]]', spiegazioneDistrattori:['La risposta è estranea al testo fornito e non è sostenuta.','Il concetto non compare nel testo e quindi non è verificabile.','La fonte inesistente non offre alcun riscontro testuale.'], distractorTypes:['plausibile_generico','confusione_termine','misconception'], erroreTipico:'Ignorare il testo fornito come fonte', fonte:'Pagina 1' }] } }) });
       return [ko.esito, ko.prossimoTentativoIl, ko.lavoro.stato, ok.esito, ok.lavoro.tentativi, ok.lavoro.risultati.length];
     }""", ACC_B)
     ok(retry_b == ['rimandato', 165000, 'in_coda', 'completato', 1, 1], '429 conserva coda e prossimo retry, poi riparte (%s)' % retry_b)
+
+    # P0-C: solo la bocciata viene corretta; tre risposte senza patch la marcano da_rivedere senza bloccare il lavoro.
+    qualita = a.evaluate("""async acc => {
+      await CodaQuizRunner.creaDaTesto(acc, 'La membrana contiene fosfolipidi e proteine di trasporto selettivo.', { quantita:1, materia:'Biologia', step:'3.3', microstep:'3.3.1' }, 'p0c-qualita');
+      const genera = async () => ({ prov:'mock', modello:'genera', j:{ formato:'quiz-v4', quiz:[{ tipo:'mcq', livello:2, domanda:'Quale struttura contiene i fosfolipidi?', opzioni:['La membrana','Il DNA','Il glicogeno','Il cromosoma'], spiegazione:'Breve', erroreTipico:'Confusione', fonte:'Pagina 1' }] } });
+      let r = await CodaQuizRunner.avanza(acc, 'runner-c', { chiama:genera });
+      const iniziale = [r.lavoro.risultati.length, r.lavoro.revisioni.length, r.lavoro.revisioni[0].stato];
+      const vuota = async () => ({ prov:'mock', modello:'patch', j:[] });
+      r = await CodaQuizRunner.avanza(acc, 'runner-c', { chiama:vuota });
+      r = await CodaQuizRunner.avanza(acc, 'runner-c', { chiama:vuota });
+      r = await CodaQuizRunner.avanza(acc, 'runner-c', { chiama:vuota });
+      return [iniziale, r.esito, r.lavoro.stato, r.lavoro.revisioni[0].tentativi, r.lavoro.revisioni[0].stato, r.lavoro.rapportoQualita.pronte];
+    }""", ACC_B)
+    ok(qualita == [[0, 1, 'da_correggere'], 'completato', 'completato', 3, 'da_rivedere', 0], 'P0-C: tre correzioni chirurgiche, poi da_rivedere senza blocco (%s)' % qualita)
+
+    # Due innesti dello stesso lavoro danno lo stesso record e la stessa banca, con le sole domande pronte.
+    innesto = a.evaluate("""() => {
+      const q = { id:'biologia-3.3-S01-01', stepId:'biologia-3.3', scheda:'biologia-3.3-S01', sottoStep:'3.3.1', categoria:'prioritaria', livelloCognitivo:2, livello:'L2', tipoItem:'', coppiaGemellaId:'', domanda:'Quale struttura contiene fosfolipidi?', opzioni:['La membrana','Il DNA','Il glicogeno','Il cromosoma'], esatta:0, spiegazione:'La membrana contiene fosfolipidi. [[Fonte, p. 1]]', spiegazioneDistrattori:['Il DNA non è la struttura lipidica della membrana.','Il glicogeno è una riserva e non una membrana.','Il cromosoma non forma il doppio strato lipidico.'], distractorTypes:['misconception','confusione_termine','plausibile_generico'], erroreTipico:'Confondere componenti cellulari', fonte:'Pagina 1', sourceRef:'Pagina 1' };
+      const l = CodaQuiz.nuovo(CodaQuiz.accountAttuale(), {tipo:'testo',id:'innesto-p0c',versione:'v1'}, {quantita:1,materia:'Biologia',step:'3.3',microstep:'3.3.1',argomento:'Membrane'}, 1);
+      l.stato='completato'; l.risultati=[q]; l.revisioni=[];
+      const x = CodaQuizQualita.innesta(l), y = CodaQuizQualita.innesta(l), banca = Stato.prendi('bq-' + x.banche[0]);
+      return [x.id, y.id, Stato.tutti('innesto').filter(z => z.id === x.id).length, banca.domande.length];
+    }""")
+    ok(innesto[0] == innesto[1] and innesto[2:] == [1, 1], 'P0-C: innesto idempotente in step/microstep e piano (%s)' % innesto)
     b.close()
     ctx.close()
 

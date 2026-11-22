@@ -5,10 +5,13 @@
 // ============================================================
 
 type StatoLavoroQuiz = 'in_coda' | 'in_esecuzione' | 'in_pausa' | 'completato' | 'annullato';
+type StatoQualitaDomandaQuiz = 'da_correggere' | 'da_rivedere';
 interface SorgenteLavoroQuiz { tipo: 'testo' | 'pdf'; id: string; versione: string; }
 interface PaginaSorgenteQuiz { n: number; testo: string; }
 interface InputLavoroQuiz { pagine: PaginaSorgenteQuiz[]; pagineVuote: number; }
 interface CheckpointLavoroQuiz { id: string; da: number; richieste: number; ottenute: number; provider: string; modello: string; salvatoIl: number; }
+interface RevisioneDomandaQuiz { id: string; domanda: DomAI; stato: StatoQualitaDomandaQuiz; tentativi: number; motivi: string[]; pagine: number[]; }
+interface RapportoQualitaCodaQuiz { pronte: number; daCorreggere: number; daRivedere: number; problemiPacchetto: string[]; aggiornatoIl: number; }
 interface LavoroQuiz {
   account: string;
   id: string;
@@ -22,6 +25,9 @@ interface LavoroQuiz {
   ultimoErrore: string | null;
   input?: InputLavoroQuiz;
   risultati?: DomAI[];
+  revisioni?: RevisioneDomandaQuiz[];
+  rapportoQualita?: RapportoQualitaCodaQuiz;
+  innestoId?: string;
   checkpoint?: CheckpointLavoroQuiz[];
 }
 interface LeaseCodaQuiz { account: string; proprietario: string; scadeIl: number; aggiornatoIl: number; }
@@ -74,7 +80,7 @@ const CodaQuiz = (() => {
   function nuovo(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>, ora = Date.now(), input?: InputLavoroQuiz): LavoroQuiz {
     const acc = accountPulito(account), src = sorgentePulita(sorgente), spec = specifica || {};
     return { account: acc, id: idDeterministico(acc, src, spec), stato: 'in_coda', tentativi: 0, sorgente: src, specifica: spec,
-      creatoIl: ora, aggiornatoIl: ora, prossimoTentativoIl: null, ultimoErrore: null, input: copiaInput(input), risultati: [], checkpoint: [] };
+      creatoIl: ora, aggiornatoIl: ora, prossimoTentativoIl: null, ultimoErrore: null, input: copiaInput(input), risultati: [], revisioni: [], checkpoint: [] };
   }
   function cambia(l: LavoroQuiz, stato: StatoLavoroQuiz, ora = Date.now()): LavoroQuiz {
     if (l.stato === stato) return { ...l };
@@ -171,6 +177,32 @@ const CodaQuiz = (() => {
         prossimoTentativoIl: null, ultimoErrore: null };
     });
   }
+  /** Salva nello stesso checkpoint domande pronte e sole domande da correggere/rivedere. */
+  function salvaQualita(account: string, id: string, cp: CheckpointLavoroQuiz, esiti: EsitoValidazioneDomandaQuiz[], totale: number, sostituisci: boolean, ora = Date.now()): Promise<LavoroQuiz> {
+    return aggiorna(account, id, l => {
+      if (l.stato !== 'in_esecuzione') return { ...l };
+      const cps = l.checkpoint || [];
+      if (cps.some(x => x.id === cp.id)) return { ...cambia(l, 'in_coda', ora) };
+      const risultati = (l.risultati || []).slice(), revisioni = (l.revisioni || []).slice();
+      const ids = new Set(esiti.map(e => e.id));
+      if (sostituisci) for (let i = revisioni.length - 1; i >= 0; i--) if (ids.has(revisioni[i].id)) revisioni.splice(i, 1);
+      for (const e of esiti) {
+        if (e.stato === 'pronta') {
+          if (!risultati.some(q => String(q.id || '') === e.id)) risultati.push(e.domanda);
+        } else {
+          const r: RevisioneDomandaQuiz = { id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi, motivi: e.motivi.slice(), pagine: e.pagine.slice() };
+          const i = revisioni.findIndex(x => x.id === e.id); if (i >= 0) revisioni[i] = r; else revisioni.push(r);
+        }
+      }
+      const rapporto = CodaQuizQualita.rapporto(risultati, revisioni, ora);
+      const fine = risultati.length + rapporto.daRivedere >= Math.max(1, totale) && rapporto.daCorreggere === 0;
+      return { ...cambia(l, fine ? 'completato' : 'in_coda', ora), risultati: risultati.slice(0, totale), revisioni,
+        rapportoQualita: rapporto, checkpoint: [...cps, { ...cp, salvatoIl: ora }], prossimoTentativoIl: null, ultimoErrore: null };
+    });
+  }
+  const salvaBatchQualita = (account: string, id: string, cp: CheckpointLavoroQuiz, esiti: EsitoValidazioneDomandaQuiz[], totale: number, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, false, ora);
+  const salvaCorrezioni = (account: string, id: string, cp: CheckpointLavoroQuiz, esiti: EsitoValidazioneDomandaQuiz[], totale: number, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, true, ora);
+  const segnaInnesto = (account: string, id: string, innestoId: string, ora = Date.now()) => aggiorna(account, id, l => ({ ...l, innestoId, aggiornatoIl: ora }));
   async function elimina(account: string, id: string): Promise<boolean> {
     const d = await db(), key = chiave(account, id);
     return new Promise((ok, ko) => {
@@ -256,6 +288,6 @@ const CodaQuiz = (() => {
     riattiva();
   }
 
-  return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, salvaCheckpoint, elimina,
+  return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, elimina,
     acquisisciLease, rinnovaLease, rilasciaLease, prossimo, recuperaInterrotti, svuotaAccount, svuotaTutto, proprietarioTab, accountAttuale };
 })();

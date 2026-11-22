@@ -9,6 +9,8 @@ interface SpecificaGenerazioneQuiz {
   materia?: string;
   argomento?: string;
   step?: string;
+  microstep?: string;
+  codiceMateria?: string;
   archetipo?: string;
   maxPerBatch?: number;
   maxCaratteriFonte?: number;
@@ -26,6 +28,7 @@ const CodaQuizRunner = (() => {
   function specifica(o: SpecificaGenerazioneQuiz): SpecificaGenerazioneQuiz {
     return { quantita: intero(o && o.quantita, 1, 200, 30), materia: compatta(o && o.materia || '') || undefined,
       argomento: compatta(o && o.argomento || '') || undefined, step: compatta(o && o.step || '') || undefined,
+      microstep: compatta(o && o.microstep || '') || undefined, codiceMateria: compatta(o && o.codiceMateria || '').toUpperCase() || undefined,
       archetipo: compatta(o && o.archetipo || '') || undefined, maxPerBatch: intero(o && o.maxPerBatch, 1, 8, 5),
       maxCaratteriFonte: intero(o && o.maxCaratteriFonte, 2000, 24000, 12000) };
   }
@@ -76,19 +79,22 @@ const CodaQuizRunner = (() => {
     return out.sort((a, b) => a.n - b.n);
   }
   function grandezzaBatch(l: LavoroQuiz): number {
-    const fatti = (l.risultati || []).length, totale = intero(l.specifica.quantita, 1, 200, 30), foglio = 18 - (fatti % 18);
+    const fatti = (l.risultati || []).length + (l.revisioni || []).length, totale = intero(l.specifica.quantita, 1, 200, 30), foglio = 18 - (fatti % 18);
     return Math.min(totale - fatti, intero(l.specifica.maxPerBatch, 1, 8, 5), foglio);
   }
   function prompt(l: LavoroQuiz, n: number, pagine: PaginaSorgenteQuiz[]): Array<{ role: string; content: string }> {
     const fonte = pagine.map(p => '\n--- PAGINA ' + p.n + ' ---\n' + p.testo).join('');
     const target = [l.specifica.materia, l.specifica.argomento].filter(Boolean).join(' · ') || 'contenuto fornito';
+    const regole = 'Genera quiz usando solo la fonte. Rispondi con un solo oggetto JSON {"formato":"quiz-v4","quiz":[...]}. ' +
+      'Ogni domanda deve avere tipo "mcq", livello 1..4, domanda, 4 opzioni con la corretta in posizione 0, spiegazione con citazione [[Fonte, p. N]], ' +
+      '3 spiegazioneDistrattori di almeno 30 caratteri, 3 distractorTypes, erroreTipico e fonte "Pagina N". Non scrivere id, esatta, markdown o testo fuori dal JSON.';
     return [
-      { role: 'system', content: 'Genera quiz usando solo la fonte. Rispondi con un solo oggetto JSON {"formato":"quiz-v4","quiz":[...]}. Ogni domanda deve avere tipo "mcq", livello 1..4, domanda, opzioni con la corretta in posizione 0, spiegazione, erroreTipico e fonte "Pagina N". Non scrivere id, esatta, markdown o testo fuori dal JSON.' },
+      { role: 'system', content: regole },
       { role: 'user', content: 'TARGET: ' + target + '\nCrea esattamente ' + n + ' domande nuove, autonome e non ripetitive.' + fonte },
     ];
   }
   function domandeDa(risposta: unknown, l: LavoroQuiz, n: number): DomAI[] {
-    const lettura = Contratto.leggi(JSON.stringify(risposta)), fatti = (l.risultati || []).length, scheda = Math.floor(fatti / 18) + 1;
+    const lettura = Contratto.leggi(JSON.stringify(risposta)), fatti = (l.risultati || []).length + (l.revisioni || []).length, scheda = Math.floor(fatti / 18) + 1;
     const qs = Contratto.aQuiz(lettura, { step: String(l.specifica.step || l.id.slice(3, 11)), scheda, da: fatti % 18 + 1 });
     if (!qs.length) throw new Error(lettura.errori[0] || 'la risposta AI non contiene domande leggibili');
     return qs.slice(0, n);
@@ -101,16 +107,30 @@ const CodaQuizRunner = (() => {
     try {
       l = await CodaQuiz.prossimo(account, proprietario, t0);
       if (!l) return { esito: 'vuoto' };
-      const n = grandezzaBatch(l), totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length, pagine = selezionaPagine(l, batch);
+      const n = grandezzaBatch(l), totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length;
+      const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, intero(l.specifica.maxPerBatch, 1, 8, 5));
+      const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input ? l.input.pagine.filter(p => numeri.has(p.n)) : selezionaPagine(l, batch);
+      if (pendenti.length) {
+        const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o)), opzioni = { maxOut: Math.min(4096, Math.max(900, pendenti.length * 650)), tronca: false as const,
+          archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+        const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
+        let r: { j: unknown; prov: string; modello: string };
+        try { r = await chiama(CodaQuizQualita.promptCorrezione(pendenti, pagine), opzioni); } finally { clearInterval(battito); }
+        const esiti = CodaQuizQualita.applicaCorrezioni(pendenti, r.j, pagine, l.risultati || []), tentativo = Math.max(...esiti.map(e => e.tentativi));
+        const salvato = await CodaQuiz.salvaCorrezioni(account, l.id, { id: 'fix-' + pendenti.map(x => x.id).join('-') + '-' + tentativo,
+          da: 0, richieste: pendenti.length, ottenute: esiti.filter(e => e.stato === 'pronta').length, provider: r.prov, modello: r.modello, salvatoIl: ora() }, esiti, totale, ora());
+        return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
+      }
       if (!n || !pagine.length) throw new Error('la sorgente non contiene testo utilizzabile');
       const opzioni = { maxOut: Math.min(4096, Math.max(900, n * 650)), tronca: false as const, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
       const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o));
       const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
       let r: { j: unknown; prov: string; modello: string };
       try { r = await chiama(prompt(l, n, pagine), opzioni); } finally { clearInterval(battito); }
-      const qs = domandeDa(r.j, l, n), da = (l.risultati || []).length + 1;
-      const salvato = await CodaQuiz.salvaCheckpoint(account, l.id, { id: 'mb-' + da + '-' + n, da, richieste: n, ottenute: qs.length,
-        provider: r.prov, modello: r.modello, salvatoIl: ora() }, qs, totale, ora());
+      const qs = domandeDa(r.j, l, n), da = (l.risultati || []).length + (l.revisioni || []).length + 1;
+      const esiti = CodaQuizQualita.validaDomande(qs, pagine, [...(l.risultati || []), ...(l.revisioni || []).map(x => x.domanda)]);
+      const salvato = await CodaQuiz.salvaBatchQualita(account, l.id, { id: 'mb-' + da + '-' + n, da, richieste: n, ottenute: qs.length,
+        provider: r.prov, modello: r.modello, salvatoIl: ora() }, esiti, totale, ora());
       if (salvato.stato === 'in_pausa' || salvato.stato === 'annullato') return { esito: 'vuoto', lavoro: salvato };
       return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
     } catch (e) {
