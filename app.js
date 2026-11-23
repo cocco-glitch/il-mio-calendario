@@ -8559,16 +8559,64 @@ const IA = (() => {
             return c ? c.m : null;
         }
     }
-    async function richiesta(p, perc, k, corpo) {
+    const TEMPI = {
+        groq: { primoByte: 30000, risposta: 90000, totale: 120000 }, gemini: { primoByte: 45000, risposta: 120000, totale: 165000 },
+        xkiro: { primoByte: 45000, risposta: 120000, totale: 165000 }, cohere: { primoByte: 30000, risposta: 90000, totale: 120000 }, requesty: { primoByte: 45000, risposta: 120000, totale: 165000 },
+    };
+    const tempi = Object.fromEntries(PROVS.map(p => [p, { ...TEMPI[p] }]));
+    const metaRisposta = new WeakMap();
+    function impostaTimeout(p, v) {
+        if (!eProv(p))
+            return;
+        const t = tempi[p];
+        for (const n of ['primoByte', 'risposta', 'totale'])
+            if (Number.isFinite(v[n]) && Number(v[n]) > 0)
+                t[n] = Math.max(10, Number(v[n]));
+    }
+    async function fetchTemporizzato(p, m, url, op) {
+        const ac = new AbortController(), t = tempi[p], iniziata = Date.now(), post = op.method === 'POST';
+        let fase = 'timeout_primo_byte';
+        const ms = Math.min(t.primoByte, t.totale), timer = setTimeout(() => { fase = t.totale <= t.primoByte ? 'timeout_totale' : 'timeout_primo_byte'; ac.abort(); }, ms);
+        try {
+            const r = await fetch(url, { ...op, signal: ac.signal });
+            clearTimeout(timer);
+            metaRisposta.set(r, { p, m, iniziata, ac, t: { ...t }, post });
+            return r;
+        }
+        catch (x) {
+            clearTimeout(timer);
+            if (ac.signal.aborted)
+                throw erroreIncerto(p, m, fase, post);
+            throw erroreIncerto(p, m, navigator.onLine === false ? 'offline' : 'cors_rete', post, x);
+        }
+    }
+    async function leggiJson(res) {
+        const x = metaRisposta.get(res);
+        if (!x)
+            return res.json();
+        const rimasto = x.t.totale - (Date.now() - x.iniziata), ms = Math.min(x.t.risposta, rimasto);
+        if (ms <= 0) {
+            x.ac.abort();
+            throw erroreIncerto(x.p, x.m, 'timeout_totale', x.post);
+        }
+        let timer = 0;
+        try {
+            return await Promise.race([res.json(), new Promise((_, no) => { timer = window.setTimeout(() => { x.ac.abort(); no(erroreIncerto(x.p, x.m, x.t.risposta <= rimasto ? 'timeout_risposta' : 'timeout_totale', x.post)); }, ms); })]);
+        }
+        finally {
+            clearTimeout(timer);
+        }
+    }
+    async function richiesta(p, perc, k, corpo, m = '') {
         const gem = p === 'gemini', base = BASE[p], form = typeof FormData !== 'undefined' && corpo instanceof FormData;
         const tipo = corpo && !form ? { 'Content-Type': 'application/json' } : {};
         const op = { method: corpo ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + k, ...tipo }, body: corpo ? (form ? corpo : JSON.stringify(corpo)) : undefined };
-        let r = await fetch(base + perc, op);
+        let r = await fetchTemporizzato(p, m, base + perc, op);
         if (gem && (r.status === 401 || r.status === 403 || r.status === 400)) {
-            const r2 = await fetch(base + perc, { ...op, headers: { 'x-goog-api-key': k, ...tipo } });
+            const r2 = await fetchTemporizzato(p, m, base + perc, { ...op, headers: { 'x-goog-api-key': k, ...tipo } });
             if (r2.ok || r2.status === 429)
                 return r2;
-            const r3 = await fetch(base + perc + (perc.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k), { ...op, headers: tipo });
+            const r3 = await fetchTemporizzato(p, m, base + perc + (perc.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k), { ...op, headers: tipo });
             if (r3.ok || r3.status === 429)
                 return r3;
         }
@@ -8584,11 +8632,11 @@ const IA = (() => {
     async function catena(r, evita, archetipo) {
         const priv = !!opzioni().strictPrivacy;
         const provs = ordinePerArchetipo(CATENA[r], archetipo).filter(p => chiave(p) && !(priv && PROVIDER_FREE_QUOTAS[p].trainsOnFreeTier));
-        const liste = await Promise.all(provs.map(p => disponibili(p)));
         const out = [];
-        provs.forEach((p, i) => { for (const m of scegli(p, r, liste[i]))
-            if (m !== evita)
-                out.push({ nome: NOMI[p] + ' ' + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' }); });
+        for (const p of provs)
+            for (const m of scegli(p, r, await disponibili(p)))
+                if (m !== evita)
+                    out.push({ nome: NOMI[p] + ' ' + m.replace(/^.*\//, ''), prov: p, modello: m, gem: p === 'gemini' });
         return out;
     }
     const parseJsonSicuro = (raw) => JsonAI.parseSicuro(raw);
@@ -8717,6 +8765,34 @@ const IA = (() => {
     let RM = {};
     let RP = {};
     let NO = {};
+    const diag = Object.fromEntries(PROVS.map(p => [p, { modello: null, aggiornatoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null }]));
+    let passaggi = [], providerAttivo = null;
+    const notificaDiag = (p) => { if (p)
+        diag[p].aggiornatoIl = Date.now(); try {
+        window.dispatchEvent(new CustomEvent('imc-ai-diagnostica'));
+    }
+    catch (_) { } };
+    function erroreIncerto(p, m, fase, incerto, causa) {
+        const e = new Error((incerto ? 'Esito incerto: ' : '') + (fase.startsWith('timeout') ? 'timeout della richiesta AI' : fase === 'offline' ? 'dispositivo offline' : fase === 'risposta_malformata' ? 'risposta malformata' : 'errore CORS/rete'));
+        e.fase = fase;
+        e.consumoIncerto = incerto;
+        e.causa = causa;
+        const d = diag[p];
+        d.modello = m || d.modello;
+        d.ultimoErroreRete = fase;
+        notificaDiag(p);
+        return e;
+    }
+    function registraFailover(da, a, motivo) {
+        const x = { quando: Date.now(), da: da.prov + ':' + da.modello, a: a.prov + ':' + a.modello, motivo };
+        passaggi.push(x);
+        if (passaggi.length > 12)
+            passaggi.shift();
+        diag[da.prov].ultimoFailover = motivo;
+        diag[a.prov].ultimoFailover = motivo;
+        notificaDiag(da.prov);
+        notificaDiag(a.prov);
+    }
     const impronta = (k) => k.slice(-6) + k.length;
     function sm(p, m) { const id = p + ':' + m; return RM[id] || (RM[id] = { finoA: 0, k: 0, tpm: LIMITI[p].tpm }); }
     function azzera(p) {
@@ -8724,6 +8800,10 @@ const IA = (() => {
             RM = {};
             RP = {};
             NO = {};
+            passaggi = [];
+            providerAttivo = null;
+            for (const x of PROVS)
+                Object.assign(diag[x], { modello: null, aggiornatoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null });
             lsScrivi(KU, '');
             return;
         }
@@ -8781,6 +8861,13 @@ const IA = (() => {
     }
     async function esito(p, m, res, tok, k) {
         const ri = parseRateLimitInfo(res), s = sm(p, m), ora = Date.now(), { id, q } = quota(p, m);
+        const d = diag[p];
+        d.modello = m;
+        if (ri.remainingRequests !== undefined)
+            d.misurata = ri.remainingRequests;
+        if (!res.ok)
+            d.ultimoErroreHttp = res.status;
+        providerAttivo = p;
         if (ri.limitTokens && ri.limitTokens > 0)
             s.tpm = ri.limitTokens;
         if (ri.remainingTokens !== undefined)
@@ -8791,6 +8878,7 @@ const IA = (() => {
             aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); u.t = (u.t || 0) + tok; });
         if (res.ok) {
             s.k = 0;
+            notificaDiag(p);
             return;
         }
         if (res.status === 429) {
@@ -8803,12 +8891,16 @@ const IA = (() => {
             const fino = att ? ora + Math.min(att, 6 * 36e5) : giornoPieno ? mezzanotte() : ora + 65e3;
             s.finoA = fino;
             s.k++;
+            d.ripristinoIl = fino;
             aggiornaUso(id, u => { u.q = Math.max(u.q || 0, fino); });
+            notificaDiag(p);
             return;
         }
         if (p === 'requesty' && (res.status === 404 || res.status === 410 || (res.status === 400
             && /expired|deprecat|not.?found|no longer|retired/i.test(JSON.stringify(await res.clone().json().catch(() => '')))))) {
             s.finoA = ora + 24 * 36e5;
+            d.ripristinoIl = s.finoA;
+            notificaDiag(p);
             return;
         }
         if (res.status === 413) {
@@ -8817,8 +8909,11 @@ const IA = (() => {
         }
         else if (res.status === 401 || res.status === 403)
             NO[p] = impronta(k);
-        else if (res.status >= 500)
+        else if (res.status >= 500) {
             RP[p] = { finoA: ora + 30e3, motivo: 'non raggiungibile' };
+            d.ripristinoIl = ora + 30e3;
+        }
+        notificaDiag(p);
     }
     const inVolo = {}, attesa = {};
     async function slot(p) {
@@ -8836,10 +8931,13 @@ const IA = (() => {
         await slot(p);
         let res;
         try {
-            res = await richiesta(p, perc, k, corpo);
+            res = await richiesta(p, perc, k, corpo, m);
         }
         catch (e) {
-            RP[p] = { finoA: Date.now() + 30e3, motivo: 'non raggiungibile' };
+            const fino = Date.now() + 30e3;
+            RP[p] = { finoA: fino, motivo: 'non raggiungibile' };
+            diag[p].ripristinoIl = fino;
+            notificaDiag(p);
             throw e;
         }
         finally {
@@ -8883,6 +8981,33 @@ const IA = (() => {
         }
         return out;
     }
+    function snapshotQuote() {
+        const out = {}, ora = Date.now(), base = stato(), usi = tuttoUso();
+        for (const p of PROVS) {
+            const d = diag[p], idUso = Object.keys(usi).find(k => k === p || k.startsWith(p + ':')), m = d.modello || (idUso && idUso.includes(':') ? idUso.slice(p.length + 1) : null);
+            let statoQ = !chiave(p) ? 'senza_chiave' : base[p].ok ? 'pronto' : base[p].motivo === 'limite gratuito' ? 'esaurito' : base[p].motivo === 'non raggiungibile' ? 'cooldown' : 'errore_temporaneo';
+            let stima = null, micro = null;
+            if (m && chiave(p)) {
+                const { id, q } = quota(p, m), c = contatori(id), dati = c.rpm60s + c.rpdToday + c.tpdToday > 0;
+                if (statoQ === 'pronto' && quotaPiena(p, m, 0, 1))
+                    statoQ = 'esaurito';
+                else if (statoQ === 'pronto' && quotaPiena(p, m, 0))
+                    statoQ = 'guardia_85';
+                const rr = [Math.floor(q.rpm * SOGLIA) - c.rpm60s, q.rpd ? Math.floor(q.rpd * SOGLIA) - c.rpdToday : Infinity];
+                const avg = c.rpdToday ? Math.max(1, Math.ceil(c.tpdToday / c.rpdToday)) : 0;
+                if (q.tpd && avg)
+                    rr.push(Math.floor((q.tpd * SOGLIA - c.tpdToday) / avg));
+                if (dati)
+                    stima = micro = Math.max(0, Math.min(...rr));
+                if (d.misurata != null)
+                    micro = Math.max(0, Math.min(d.misurata, micro == null ? d.misurata : micro));
+            }
+            const rip = Math.max(base[p].finoA || 0, d.ripristinoIl || 0);
+            out[p] = { id: p, haChiave: !!chiave(p), modello: m, stato: statoQ, origineQuota: d.misurata == null ? (m ? 'stimata' : 'sconosciuta') : 'misurata', quotaDisponibile: d.misurata, quotaStimata: d.misurata == null ? stima : null,
+                aggiornatoIl: d.aggiornatoIl, ripristinoIl: rip || null, ultimoErroreHttp: d.ultimoErroreHttp, ultimoErroreRete: d.ultimoErroreRete, ultimoFailover: d.ultimoFailover, microBatchResidui: micro };
+        }
+        return { provider: out, attivo: providerAttivo, failover: passaggi.slice() };
+    }
     const errore = (j, stato) => { const e = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + stato); e.stato = stato; return e; };
     const contenuto = (j) => String(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '');
     async function tenta(f, m2, o, comeJson, tok) {
@@ -8897,7 +9022,8 @@ const IA = (() => {
             delete corpo.response_format;
             res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
         }
-        const j = await res.json().catch(() => ({}));
+        const j = await leggiJson(res).catch((e) => { if (e && e.consumoIncerto)
+            throw e; return {}; });
         if (!res.ok)
             throw errore(j, res.status);
         const t = contenuto(j);
@@ -8910,9 +9036,15 @@ const IA = (() => {
         try {
             return { testo: t, j: json(t), prov: f.prov, modello: f.modello };
         }
-        catch (_) { }
+        catch (_) {
+            diag[f.prov].ultimoErroreRete = 'risposta_malformata';
+            notificaDiag(f.prov);
+            if (o.prudente)
+                throw erroreIncerto(f.prov, f.modello, 'risposta_malformata', true);
+        }
         corpo.messages = [...m2, { role: 'assistant', content: String(t).slice(0, 2000) }, { role: 'user', content: 'Rispondi solo con JSON valido, senza testo prima o dopo. Nelle stringhe scrivi i backslash del LaTeX doppi (\\\\frac).' }];
-        const res2 = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok), j2 = await res2.json().catch(() => ({}));
+        const res2 = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok), j2 = await leggiJson(res2).catch((e) => { if (e && e.consumoIncerto)
+            throw e; return {}; });
         if (!res2.ok)
             throw errore(j2, res2.status);
         const t2 = contenuto(j2);
@@ -8926,7 +9058,12 @@ const IA = (() => {
         const out = o.maxOut || USCITA[r], tok = stimaTok(msgs);
         const errori = [], grandi = [], quasiPieni = [], saltati = [];
         let ultimo = null, solo401 = true, provati = 0;
+        let fallito = null;
         const prova = async (f, m2, t) => {
+            if (fallito) {
+                registraFailover(fallito.f, f, fallito.motivo);
+                fallito = null;
+            }
             provati++;
             try {
                 return await tenta(f, m2, o, comeJson, t);
@@ -8935,7 +9072,11 @@ const IA = (() => {
                 ultimo = e;
                 if (e.stato !== 401 && e.stato !== 403)
                     solo401 = false;
-                errori.push(f.nome + ': ' + String(e.message || e).slice(0, 80));
+                const motivo = String(e.message || e).slice(0, 80);
+                errori.push(f.nome + ': ' + motivo);
+                if (o.prudente && e.consumoIncerto)
+                    throw e;
+                fallito = { f, motivo };
                 return null;
             }
         };
@@ -9009,7 +9150,8 @@ const IA = (() => {
         if (o.prompt)
             f.append('prompt', o.prompt.slice(0, 800));
         const r = await manda('groq', mod, '/audio/transcriptions', k, f, 0);
-        const j = await r.json().catch(() => ({}));
+        const j = await leggiJson(r).catch((e) => { if (e && e.consumoIncerto)
+            throw e; return {}; });
         if (r.status === 401)
             throw new Error('Chiave Groq non valida.');
         if (r.status === 429)
@@ -9093,7 +9235,7 @@ const IA = (() => {
         catch (_) { }
     })();
     return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro,
-        chiave, impostaChiave, tutteChiavi, formatoOk, stato, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
+        chiave, impostaChiave, tutteChiavi, formatoOk, stato, snapshotQuote, impostaTimeout, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
         _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, CATENA, get RM() { return RM; } },
         get gemini() { return !!chiave('gemini'); } };
 })();
@@ -12978,12 +13120,13 @@ const PianiAI = (() => {
             salvaPiano(p); };
     }
     function controllaFatica() {
-        const oggi = ymd(new Date());
+        const oggi = ymd(new Date()), prima = new Map();
         let stats = null;
         for (const p0 of pianiAI()) {
             let p = p0;
             const agg = Pianificatore.aggiornaDeload(p, oggi);
             if (agg) {
+                prima.set(p0.id, JSON.parse(JSON.stringify(p0)));
                 salvaPiano(agg);
                 p = agg;
                 if (!agg.deload.attivo)
@@ -12998,9 +13141,12 @@ const PianiAI = (() => {
             const d = Pianificatore.attivaDeload(p, { oggi, motivo: f.condA ? 'errori +' + Math.round((f.tasso2g - f.mediaStorica) * 100) + '% in 2 giorni' : 'ipercorrezioni ×2 in 48 h' });
             if (!d)
                 continue;
+            if (!prima.has(p0.id))
+                prima.set(p0.id, JSON.parse(JSON.stringify(p0)));
             salvaPiano(d);
             avviso('🛌 Circuit breaker: ' + d.deload.motivo + '. Per 48 h livello ' + d.deload.livelloRidotto + ': solo ripasso FSRS leggero + Wakeful Rest.', 9000);
         }
+        return () => { prima.forEach(p => salvaPiano(p)); };
     }
     function bottoni(p) {
         if (!eAI(p))
@@ -14196,7 +14342,7 @@ const QuizApp = (() => {
             r.scelte[o] = (r.scelte[o] || 0) + 1;
         }
         Stato.salva(r, true);
-        let annullaPiani = null, carteNuove = [];
+        let annullaPiani = null, annullaFatica = null, carteNuove = [];
         if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess')
             try {
                 annullaPiani = PianiAI.dopoQuiz(v.d.sk, v.caso);
@@ -14206,7 +14352,7 @@ const QuizApp = (() => {
             }
         if (!giusta)
             try {
-                PianiAI.controllaFatica();
+                annullaFatica = PianiAI.controllaFatica();
             }
             catch (_) { }
         const annulla = () => {
@@ -14249,6 +14395,13 @@ const QuizApp = (() => {
                 }
                 catch (e) {
                     console.warn('annulla piani', e);
+                }
+            if (annullaFatica)
+                try {
+                    annullaFatica();
+                }
+                catch (e) {
+                    console.warn('annulla fatica', e);
                 }
         };
         if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {

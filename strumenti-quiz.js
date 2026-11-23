@@ -1015,12 +1015,13 @@ const CentroUI = (() => {
                     avviso('⛔ ' + lp.errore, 6000);
                     return;
                 }
-                const ap = DiagnosiQuiz.applicaPatch(qs, lp.patch);
+                const ap = DiagnosiQuiz.applicaPatch(qs, lp.patch, corr.autorizzate);
                 salvaDomande(r, ap.qs, daScheda);
                 const dopo = controlla(ap.qs, false, problemiCit(r, ap.qs)), resta = dopo.corr.nDomande;
                 salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere: resta } });
                 const righe = ['🩹 Patch applicate a ' + ap.n + (ap.n === 1 ? ' domanda' : ' domande') + '.',
                     ...(ap.mancanti.length ? ['⚠️ Id non trovati: ' + ap.mancanti.join(', ')] : []),
+                    ...(ap.rifiutate.length ? ['⛔ Patch rifiutate: ' + ap.rifiutate.join('; ')] : []),
                     resta ? '⛔ Restano ' + resta + ' domande da correggere: ecco il nuovo prompt.' : '✅ Ricontrollo superato: nessuna domanda da correggere.'];
                 nota = notaDi(righe);
                 vai(resta ? 5 : 6);
@@ -1127,7 +1128,7 @@ const CentroUI = (() => {
             const stato = h('p.piccolo.tenue', { role: 'status' });
             const carica = () => { ta.value = StrumentiQuiz.esclusi().join('\n'); };
             carica();
-            return h('details.centro-impostazioni', null, h('summary.piccolo', null, '⚙️ Impostazioni del Centro'), h('p.piccolo.tenue', null, 'Fonti escluse (eserciziari commerciali): l\'AI non deve usarle e i file con questi nomi non entrano tra le fonti. Una per riga.'), ta, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(ta.value.split('\n')); carica(); stato.textContent = '✓ Lista salvata (' + StrumentiQuiz.esclusi().length + ').'; } }, '💾 Salva lista'), h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(null); carica(); stato.textContent = 'Ripristinata la lista predefinita.'; } }, '↺ Predefiniti')), stato);
+            return h('div', null, QuoteUI.pannello(), h('details.centro-impostazioni', null, h('summary.piccolo', null, '⚙️ Impostazioni del Centro'), h('p.piccolo.tenue', null, 'Fonti escluse (eserciziari commerciali): l\'AI non deve usarle e i file con questi nomi non entrano tra le fonti. Una per riga.'), ta, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(ta.value.split('\n')); carica(); stato.textContent = '✓ Lista salvata (' + StrumentiQuiz.esclusi().length + ').'; } }, '💾 Salva lista'), h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(null); carica(); stato.textContent = 'Ripristinata la lista predefinita.'; } }, '↺ Predefiniti')), stato));
         }
         const corpo = h('div.centro', null, h('div.riga-tra', null, indicatore, indietro), zona, impostazioni());
         let fg = { chiudi: () => undefined };
@@ -1298,6 +1299,8 @@ const CodaQuiz = (() => {
         return aggiorna(account, id, l => l.stato !== 'in_esecuzione' ? { ...l } : ({ ...cambia(l, 'in_coda', ora), tentativi: l.tentativi + 1,
             ultimoErrore: String(errore || 'errore sconosciuto'), prossimoTentativoIl }));
     }
+    const fermaIncerto = (account, id, errore, ora = Date.now()) => aggiorna(account, id, l => l.stato !== 'in_esecuzione' ? { ...l }
+        : ({ ...cambia(l, 'in_pausa', ora), tentativi: l.tentativi + 1, ultimoErrore: String(errore), prossimoTentativoIl: null }));
     function salvaCheckpoint(account, id, cp, domande, totale, ora = Date.now()) {
         return aggiorna(account, id, l => {
             if (l.stato !== 'in_esecuzione')
@@ -1341,7 +1344,7 @@ const CodaQuiz = (() => {
                         risultati.push(e.domanda);
                 }
                 else {
-                    const r = { id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi, motivi: e.motivi.slice(), pagine: e.pagine.slice() };
+                    const r = { id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi, motivi: e.motivi.slice(), pagine: e.pagine.slice(), cronologia: e.cronologia?.slice() };
                     const i = revisioni.findIndex(x => x.id === e.id);
                     if (i >= 0)
                         revisioni[i] = r;
@@ -1358,6 +1361,15 @@ const CodaQuiz = (() => {
     const salvaBatchQualita = (account, id, cp, esiti, totale, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, false, ora);
     const salvaCorrezioni = (account, id, cp, esiti, totale, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, true, ora);
     const segnaInnesto = (account, id, innestoId, ora = Date.now()) => aggiorna(account, id, l => ({ ...l, innestoId, aggiornatoIl: ora }));
+    function rigeneraDomanda(account, id, domandaId, ora = Date.now()) {
+        return aggiorna(account, id, l => {
+            const revisioni = (l.revisioni || []).slice(), i = revisioni.findIndex(x => x.id === domandaId && x.stato === 'da_rivedere');
+            if (i < 0)
+                throw new Error('domanda da rivedere non trovata');
+            const [vecchia] = revisioni.splice(i, 1), storiche = [...(l.revisioniStoriche || []), vecchia];
+            return { ...l, stato: 'in_coda', aggiornatoIl: ora, revisioni, revisioniStoriche: storiche, rigenerazioni: (l.rigenerazioni || 0) + 1, prossimoTentativoIl: null, ultimoErrore: null };
+        });
+    }
     async function elimina(account, id) {
         const d = await db(), key = chiave(account, id);
         return new Promise((ok, ko) => {
@@ -1489,7 +1501,7 @@ const CodaQuiz = (() => {
         document.addEventListener('visibilitychange', riattiva);
         riattiva();
     }
-    return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, elimina,
+    return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, fermaIncerto, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, rigeneraDomanda, elimina,
         acquisisciLease, rinnovaLease, rilasciaLease, prossimo, recuperaInterrotti, svuotaAccount, svuotaTutto, proprietarioTab, accountAttuale };
 })();
 
@@ -1558,13 +1570,19 @@ const CodaQuizQualita = (() => {
             { role: 'user', content: base + '\n\nOgni fonte/sourceRef deve essere "Pagina N" e la spiegazione deve citare [[Fonte, p. N]], usando solo le pagine seguenti.' + fonte }];
     }
     function applicaCorrezioni(rs, risposta, pagine, esistenti) {
-        const letto = DiagnosiQuiz.leggiPatch(JSON.stringify(risposta)), patch = 'patch' in letto ? letto.patch : [];
-        const applicate = DiagnosiQuiz.applicaPatch(rs.map(r => r.domanda), patch).qs, idsPatch = new Set(patch.map(p => testo(p.id)).filter(Boolean));
+        const qs = rs.map(r => r.domanda), v = Validatore.valida(qs), problemi = [...v.qualita.filter(p => p.sev === 'err')];
+        for (const r of rs)
+            for (const m of r.motivi)
+                problemi.push({ sev: 'err', id: r.id, msg: m });
+        const piano = DiagnosiQuiz.pianoPatch(qs, problemi), letto = DiagnosiQuiz.leggiPatch(JSON.stringify(risposta)), patch = 'patch' in letto ? letto.patch : [];
+        const ap = DiagnosiQuiz.applicaPatch(qs, patch, piano), applicate = ap.qs, idsPatch = new Set(patch.map(p => testo(p.id)).filter(Boolean));
         const out = [], gia = esistenti.slice();
         rs.forEach((r, i) => {
             const tentativi = r.tentativi + 1, e = validaDomande([applicate[i] || r.domanda], pagine, gia, tentativi)[0];
-            if (!idsPatch.has(r.id) && e.stato !== 'pronta')
-                e.motivi = [...new Set(['Correzione: nessuna patch ricevuta per questa domanda', ...e.motivi])];
+            const rifiuto = ap.rifiutate.find(x => x.startsWith(r.id + ':'));
+            if ((!idsPatch.has(r.id) || rifiuto) && e.stato !== 'pronta')
+                e.motivi = [...new Set([rifiuto ? 'Correzione: ' + rifiuto : 'Correzione: nessuna patch ricevuta per questa domanda', ...e.motivi])];
+            e.cronologia = [...(r.cronologia || []), { tentativo: tentativi, motivi: e.motivi.slice(), campi: piano[r.id] || [], esito: e.stato }];
             out.push(e);
             if (e.stato === 'pronta')
                 gia.push(e.domanda);
@@ -1718,7 +1736,7 @@ const CodaQuizRunner = (() => {
             const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, intero(l.specifica.maxPerBatch, 1, 8, 5));
             const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input ? l.input.pagine.filter(p => numeri.has(p.n)) : selezionaPagine(l, batch);
             if (pendenti.length) {
-                const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o)), opzioni = { maxOut: Math.min(4096, Math.max(900, pendenti.length * 650)), tronca: false,
+                const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o)), opzioni = { maxOut: Math.min(4096, Math.max(900, pendenti.length * 650)), tronca: false, prudente: true,
                     archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
                 const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
                 let r;
@@ -1735,7 +1753,7 @@ const CodaQuizRunner = (() => {
             }
             if (!n || !pagine.length)
                 throw new Error('la sorgente non contiene testo utilizzabile');
-            const opzioni = { maxOut: Math.min(4096, Math.max(900, n * 650)), tronca: false, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+            const opzioni = { maxOut: Math.min(4096, Math.max(900, n * 650)), tronca: false, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
             const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o));
             const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
             let r;
@@ -1746,8 +1764,8 @@ const CodaQuizRunner = (() => {
                 clearInterval(battito);
             }
             const qs = domandeDa(r.j, l, n), da = (l.risultati || []).length + (l.revisioni || []).length + 1;
-            const esiti = CodaQuizQualita.validaDomande(qs, pagine, [...(l.risultati || []), ...(l.revisioni || []).map(x => x.domanda)]);
-            const salvato = await CodaQuiz.salvaBatchQualita(account, l.id, { id: 'mb-' + da + '-' + n, da, richieste: n, ottenute: qs.length,
+            const esiti = CodaQuizQualita.validaDomande(qs, pagine, [...(l.risultati || []), ...(l.revisioni || []).map(x => x.domanda), ...(l.revisioniStoriche || []).map(x => x.domanda)]);
+            const salvato = await CodaQuiz.salvaBatchQualita(account, l.id, { id: 'mb-' + da + '-' + n + '-r' + (l.rigenerazioni || 0), da, richieste: n, ottenute: qs.length,
                 provider: r.prov, modello: r.modello, salvatoIl: ora() }, esiti, totale, ora());
             if (salvato.stato === 'in_pausa' || salvato.stato === 'annullato')
                 return { esito: 'vuoto', lavoro: salvato };
@@ -1757,6 +1775,10 @@ const CodaQuizRunner = (() => {
             const msg = String(e instanceof Error ? e.message : e), quando = ora() + ritardo(msg, l ? l.tentativi : 0);
             if (!l)
                 throw e;
+            if (e?.consumoIncerto) {
+                const salvato = await CodaQuiz.fermaIncerto(account, l.id, msg, ora());
+                return { esito: 'pausa_incerta', lavoro: salvato, errore: msg };
+            }
             const salvato = await CodaQuiz.rimanda(account, l.id, msg, quando, ora());
             return salvato.stato === 'in_coda' ? { esito: 'rimandato', lavoro: salvato, prossimoTentativoIl: quando, errore: msg }
                 : { esito: 'vuoto', lavoro: salvato };
@@ -1787,14 +1809,22 @@ const CodaQuizUI = (() => {
         const testo = h('textarea', { rows: '8', placeholder: 'Incolla appunti o testo del libro…', 'aria-label': 'Testo da cui generare il quiz' });
         const pdf = h('input', { type: 'file', accept: 'application/pdf,.pdf', 'aria-label': 'PDF testuale da cui generare il quiz' });
         const stato = h('p.piccolo', { role: 'status', 'aria-live': 'polite' }, 'La coda riprende quando riapri l’app. Non lavora a browser o dispositivo chiusi.');
-        const elenco = h('div');
+        const elenco = h('div'), quote = QuoteUI.pannello();
         let occupato = false;
         const opzioni = () => ({ quantita: Number(quantita.value), materia: materia.value, argomento: argomento.value, step: step.value, microstep: microstep.value });
+        function dettagliQualita(l) {
+            const q = l.rapportoQualita, revisioni = l.revisioni || [];
+            if (!q && !revisioni.length)
+                return null;
+            const problemi = q?.problemiPacchetto || [];
+            return h('details', null, h('summary.piccolo', null, 'Dettagli qualità · ' + (q ? q.pronte + ' pronte · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : revisioni.length + ' da controllare')), problemi.length ? h('div', null, h('p.piccolo', null, h('b', null, 'Controlli del pacchetto')), h('ul.piccolo', null, ...problemi.map(x => h('li', null, x)))) : h('p.piccolo.tenue', null, 'Nessun problema complessivo rilevato.'), revisioni.length ? h('div', null, h('p.piccolo', null, h('b', null, 'Domande non pronte')), ...revisioni.map(r => h('details', null, h('summary.piccolo', null, (r.stato === 'da_rivedere' ? 'Da rivedere' : 'Da correggere') + ' · ' + String(r.domanda.domanda || r.id).slice(0, 120)), h('p.piccolo.tenue', null, 'Tentativi: ' + r.tentativi + (r.pagine.length ? ' · pagine: ' + r.pagine.join(', ') : '')), h('ul.piccolo', null, ...r.motivi.map(x => h('li', null, x))), r.cronologia?.length ? h('details', null, h('summary.piccolo', null, 'Cronologia'), h('ul.piccolo', null, ...r.cronologia.map(x => h('li', null, 'Tentativo ' + x.tentativo + ' · ' + x.esito + ' · ' + x.campi.join(', '))))) : null, r.stato === 'da_rivedere' ? h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.rigeneraDomanda(account, l.id, r.id); stato.textContent = 'Rigenerazione individuale accodata: la domanda precedente resta nella cronologia e non conta nella copertura.'; await disegna(); } }, 'Rigenera questa domanda') : null))) : null);
+        }
         async function esegui(l) {
             if (occupato)
                 return;
             occupato = true;
             try {
+                QuoteUI.aggiorna(quote.querySelector('[data-quote-ai]'));
                 if (l.stato === 'completato') {
                     stato.textContent = 'Questo lavoro è già completo: puoi scaricare il JSON dalla coda.';
                     return;
@@ -1803,8 +1833,10 @@ const CodaQuizUI = (() => {
                     stato.textContent = 'Questo lavoro è annullato: eliminalo dalla coda prima di ricrearlo con le stesse opzioni.';
                     return;
                 }
-                if (l.stato === 'in_pausa')
+                if (l.stato === 'in_pausa') {
                     l = await CodaQuiz.riprendi(account, l.id);
+                    QuoteUI.aggiorna(quote.querySelector('[data-quote-ai]'));
+                }
                 stato.textContent = 'Generazione sequenziale in corso · quota gestita dal router AI (misurata dal provider quando disponibile, altrimenti stimata o sconosciuta).';
                 while (elenco.isConnected) {
                     const r = await CodaQuizRunner.avanza(account);
@@ -1820,6 +1852,8 @@ const CodaQuizUI = (() => {
                     }
                     else if (r.esito === 'rimandato')
                         stato.textContent = 'Coda conservata. Riprovo non prima delle ' + dataOra(r.prossimoTentativoIl || null) + ' · ' + (r.errore || 'provider non disponibile');
+                    else if (r.esito === 'pausa_incerta')
+                        stato.textContent = 'Coda in pausa: il provider potrebbe avere elaborato la richiesta. Controlla la diagnostica prima di riprendere, per evitare doppio consumo. · ' + (r.errore || 'esito incerto');
                     else if (r.esito === 'occupato')
                         stato.textContent = 'Un’altra scheda sta eseguendo questa coda.';
                     break;
@@ -1846,7 +1880,7 @@ const CodaQuizUI = (() => {
                 if (l.stato === 'in_coda' || l.stato === 'in_pausa')
                     azioni.push(h('button.chip', { type: 'button', onclick: () => esegui(l) }, l.stato === 'in_pausa' ? 'Riprendi' : 'Continua'));
                 if (l.stato === 'in_coda' || l.stato === 'in_esecuzione')
-                    azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.pausa(account, l.id); stato.textContent = 'Coda in pausa.'; await disegna(); } }, 'Pausa'));
+                    azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.pausa(account, l.id); stato.textContent = 'Coda in pausa.'; QuoteUI.aggiorna(quote.querySelector('[data-quote-ai]')); await disegna(); } }, 'Pausa'));
                 if (!['completato', 'annullato'].includes(l.stato))
                     azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.annulla(account, l.id); stato.textContent = 'Lavoro annullato; i checkpoint restano visibili finché non lo elimini.'; await disegna(); } }, 'Annulla'));
                 if (l.stato === 'completato')
@@ -1866,7 +1900,7 @@ const CodaQuizUI = (() => {
                 if (l.stato === 'completato' || l.stato === 'annullato')
                     azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.elimina(account, l.id); await disegna(); } }, 'Elimina'));
                 elenco.appendChild(h('section.card', null, h('p', null, h('b', null, etichettaStato[l.stato]), ' · ', String(l.specifica.materia || l.specifica.argomento || l.sorgente.id)), h('p.piccolo.tenue', null, n + '/' + tot + ' pronte' + (q ? ' · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : '') + ' · ' + (l.checkpoint || []).length + ' checkpoint' + (l.innestoId ? ' · innestato' : '') + (l.ultimoErrore ? ' · ' + l.ultimoErrore : '') +
-                    (l.prossimoTentativoIl ? ' · non prima delle ' + dataOra(l.prossimoTentativoIl) : '')), h('div.chips', null, ...azioni)));
+                    (l.prossimoTentativoIl ? ' · non prima delle ' + dataOra(l.prossimoTentativoIl) : '')), dettagliQualita(l), h('div.chips', null, ...azioni)));
             }
         }
         const avvia = async () => {
@@ -1882,7 +1916,7 @@ const CodaQuizUI = (() => {
                 stato.textContent = String(e instanceof Error ? e.message : e);
             }
         };
-        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Genera in micro-batch con il router AI già configurato. Il PDF deve contenere testo: OCR e richieste parallele non sono inclusi.'), h('div.chips', null, materia, argomento, step, microstep, quantita), h('p.piccolo.tenue', null, 'Step e microstep collegano le sole domande pronte al corso e al piano esistente.'), testo, h('p.piccolo', null, 'oppure'), pdf, h('button.btn', { type: 'button', onclick: avvia }, 'Genera nella coda'), stato, h('h3', null, 'Coda locale'), elenco);
+        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Genera in micro-batch con il router AI già configurato. Il PDF deve contenere testo: OCR e richieste parallele non sono inclusi.'), h('div.chips', null, materia, argomento, step, microstep, quantita), h('p.piccolo.tenue', null, 'Step e microstep collegano le sole domande pronte al corso e al piano esistente.'), testo, h('p.piccolo', null, 'oppure'), pdf, h('button.btn', { type: 'button', onclick: avvia }, 'Genera nella coda'), quote, stato, h('h3', null, 'Coda locale'), elenco);
         foglio({ titolo: 'Genera quiz in app', corpo });
         CodaQuiz.recuperaInterrotti(account).then(disegna).catch(e => { stato.textContent = String(e); });
     }
@@ -2467,8 +2501,13 @@ const DiagnosiQuiz = (() => {
             return { errore: 'Non trovo un elenco di patch (serve un array di oggetti con «id»).' };
         return { patch: d.filter(oggetto) };
     }
-    function applicaPatch(qs, patch) {
-        const out = qs.map(q => oggetto(q) ? { ...q } : q), log = [], mancanti = [];
+    const valoreValido = (k, v) => k === 'opzioni' ? Array.isArray(v) && v.length === 4 && v.every(x => typeof x === 'string' && x.trim())
+        : k === 'spiegazioneDistrattori' || k === 'distractorTypes' ? Array.isArray(v) && v.length === 3 && v.every(x => typeof x === 'string' && x.trim())
+            : k === 'esatta' ? Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 3
+                : k === 'livelloCognitivo' ? Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 4
+                    : ['domanda', 'spiegazione', 'fonte', 'sourceRef', 'erroreTipico', 'livello'].includes(k) ? typeof v === 'string' && !!v.trim() : true;
+    function applicaPatch(qs, patch, autorizzate) {
+        const out = qs.map(q => oggetto(q) ? { ...q } : q), log = [], mancanti = [], rifiutate = [];
         let n = 0;
         for (const p of patch) {
             if (p.id === undefined) {
@@ -2480,17 +2519,16 @@ const DiagnosiQuiz = (() => {
                 mancanti.push(String(p.id));
                 continue;
             }
-            const ch = [];
-            for (const k of Object.keys(p)) {
-                if (k === 'id')
-                    continue;
-                if (!CHIAVI.includes(k)) {
-                    log.push(p.id + ': campo sconosciuto ignorato «' + k + '»');
-                    continue;
-                }
-                q[k] = p[k];
-                ch.push(k);
+            const ch = Object.keys(p).filter(k => k !== 'id'), permessi = autorizzate && autorizzate[String(p.id)];
+            const vietati = ch.filter(k => !CHIAVI.includes(k) || (permessi && !permessi.includes(k)) || !valoreValido(k, p[k]));
+            if (!ch.length || vietati.length) {
+                const msg = p.id + ': patch rifiutata' + (vietati.length ? ', campi non autorizzati o malformati: ' + vietati.join(', ') : ', nessun campo');
+                rifiutate.push(msg);
+                log.push(msg);
+                continue;
             }
+            for (const k of ch)
+                q[k] = p[k];
             if (ch.length) {
                 n++;
                 log.push(p.id + ': aggiornati ' + ch.join(', '));
@@ -2498,7 +2536,7 @@ const DiagnosiQuiz = (() => {
             else
                 log.push(p.id + ': nessun campo da aggiornare');
         }
-        return { qs: out, log, mancanti, n };
+        return { qs: out, log, mancanti, rifiutate, n };
     }
     function jsonFinale(qs, parte) {
         const ord = (q) => { if (!oggetto(q))
@@ -2515,10 +2553,10 @@ const DiagnosiQuiz = (() => {
         [/livelloCognitivo deve essere/, () => ({ f: ['livelloCognitivo', 'livello'], c: ['domanda'] })],
         [/domanda mancante/, () => ({ f: ['domanda'], c: ['opzioni', 'esatta'] })],
         [/tutte\/nessuna delle precedenti/, () => ({ f: ['domanda', 'opzioni', 'esatta', 'spiegazioneDistrattori', 'distractorTypes'], c: ['domanda', 'opzioni', 'esatta', 'spiegazioneDistrattori'] })],
-        [/4 opzioni testuali|opzioni duplicate/, () => ({ f: ['opzioni', 'esatta', 'spiegazioneDistrattori', 'distractorTypes'], c: ['domanda', 'opzioni', 'esatta'] })],
+        [/4 opzioni testuali|opzioni (?:semanticamente )?duplicate/, () => ({ f: ['opzioni', 'esatta', 'spiegazioneDistrattori', 'distractorTypes'], c: ['domanda', 'opzioni', 'esatta'] })],
         [/esatta deve essere/, () => ({ f: ['esatta'], c: ['domanda', 'opzioni'] })],
         [/RISPOSTA ESATTA: /, () => ({ f: ['esatta', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'spiegazione'] })],
-        [/la più lunga|contenuto in un distrattore|molto più corta/, () => ({ f: ['opzioni'], c: ['domanda', 'opzioni', 'esatta'] })],
+        [/più lunga|contenuto in un distrattore|molto più corta/, () => ({ f: ['opzioni'], c: ['domanda', 'opzioni', 'esatta'] })],
         [/spiegazioneDistrattori/, () => ({ f: ['spiegazioneDistrattori'], c: ['domanda', 'opzioni', 'esatta', 'spiegazioneDistrattori'] })],
         [/distractorTypes/, () => ({ f: ['distractorTypes'], c: ['opzioni', 'esatta', 'spiegazioneDistrattori'] })],
         [/erroreTipico/, () => ({ f: ['erroreTipico'], c: ['domanda', 'opzioni', 'esatta'] })],
@@ -2526,13 +2564,25 @@ const DiagnosiQuiz = (() => {
         [/fonte mancante/, () => ({ f: ['fonte', 'sourceRef'], c: ['domanda', 'citazione'] })],
         [/da verificare/, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'fonte', 'spiegazione'] })],
         [/sourceRef diverso/, () => ({ f: ['sourceRef'], c: ['fonte'] })],
+        [/Bloom L[1-4] dichiarato/, () => ({ f: ['domanda'], c: ['domanda', 'opzioni', 'esatta'] })],
         [/^citazione p\. /, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
     ];
-    const specDi = (msg) => { for (const [re, fn] of SPEC) {
+    const specDi = (msg) => { msg = msg.replace(/^(?:Formato|Didattica|Fonte|Correzione):\s*/, ''); for (const [re, fn] of SPEC) {
         const m = msg.match(re);
         if (m)
             return fn(m);
     } return { f: [], c: ['domanda'] }; };
+    function pianoPatch(qs, problemi) {
+        const ids = new Set(qs.filter(oggetto).map(q => String(q.id || ''))), out = {};
+        for (const p of problemi.filter(x => x.sev === 'err' && ids.has(x.id))) {
+            const a = out[p.id] || [];
+            for (const f of specDi(p.msg).f)
+                if (CHIAVI.includes(f) && !a.includes(f))
+                    a.push(f);
+            out[p.id] = a;
+        }
+        return out;
+    }
     function riga(q, k) {
         const o = Array.isArray(q.opzioni) ? q.opzioni : null, e = q.esatta;
         if (k === 'domanda')
@@ -2591,7 +2641,7 @@ const DiagnosiQuiz = (() => {
                 ordine.filter(k => a.c.has(k)).forEach(k => out.push(riga(a.q, k)));
             });
         }
-        return { testo: out.join('\n'), nDomande: perQ.size, manuali, globali };
+        return { testo: out.join('\n'), nDomande: perQ.size, manuali, globali, autorizzate: pianoPatch(qs, sel) };
     }
     function avvisiUso(o) {
         const n = [], m = o.manuali || [], g = o.globali || [];
@@ -2654,7 +2704,7 @@ const DiagnosiQuiz = (() => {
         '- spiegazioneDistrattori e distractorTypes: 3 elementi, nell\'ordine delle opzioni saltando la corretta.',
         '- Non eseguire controlli o conteggi finali estesi: la verifica la fa l\'app.',
         '- Se ricevi una CORREZIONE CHIRURGICA, restituisci solo patch: un oggetto per domanda con «id» e i soli campi dopo RESTITUISCI, mai la scheda intera.'].join('\n');
-    return { CHIAVI, PER_SCHEDA, LETTERE, riparaVirgole, leggi, sezioni, letteraDichiarata, analizza, consiglio, autoFix, leggiPatch, applicaPatch, jsonFinale,
+    return { CHIAVI, PER_SCHEDA, LETTERE, riparaVirgole, leggi, sezioni, letteraDichiarata, analizza, consiglio, autoFix, leggiPatch, applicaPatch, pianoPatch, jsonFinale,
         promptCorrezione, avvisiUso, pianoConteggi, piano, tabella, REGOLE_GEM };
 })();
 
@@ -3443,6 +3493,39 @@ const ProfiliAI = (() => {
     return { PRESET, preset, parti, mix, tetto, pagine, sequenza };
 })();
 
+const QuoteUI = (() => {
+    const nomi = { groq: 'Groq', gemini: 'Gemini', xkiro: 'xkiro', cohere: 'Cohere', requesty: 'Requesty' };
+    const ora = (n) => n ? new Date(n).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    function aggiorna(el) {
+        const s = IA.snapshotQuote(), ps = Object.values(s.provider);
+        el.textContent = '';
+        const disponibili = ps.filter(x => x.stato === 'pronto' || x.stato === 'guardia_85');
+        el.append(h('p.piccolo', null, h('b', null, 'Provider in uso: '), s.attivo ? nomi[s.attivo] || s.attivo : 'nessuno'));
+        if (!disponibili.length) {
+            const prossimi = ps.map(x => x.ripristinoIl).filter(Boolean), quando = prossimi.length ? Math.min(...prossimi) : null;
+            el.append(h('p.piccolo', { role: 'status' }, '⛔ Nessun provider disponibile' + (quando ? ' · prossimo tentativo utile ' + ora(quando) : ' · configura almeno una chiave valida.')));
+        }
+        el.append(h('ul.piccolo', null, ...ps.map(x => {
+            const q = x.origineQuota === 'misurata' ? x.quotaDisponibile + ' richieste (misurata)' : x.origineQuota === 'stimata' ? (x.quotaStimata == null ? 'stima insufficiente' : 'circa ' + x.quotaStimata + ' richieste, stima locale') : 'quota sconosciuta';
+            const motivo = x.stato === 'pronto' ? '' : x.stato === 'senza_chiave' ? ' · chiave assente' : x.stato === 'guardia_85' ? ' · soglia prudenziale 85%' : ' · ' + x.stato;
+            return h('li', null, (s.attivo === x.id ? '▶ ' : '') + nomi[x.id] + ': ' + x.stato + motivo + ' · ' + q + (x.microBatchResidui == null ? '' : ' · ≤' + x.microBatchResidui + ' micro-batch') + (x.ripristinoIl ? ' · riprova ' + ora(x.ripristinoIl) : '') + (x.ultimoErroreHttp ? ' · HTTP ' + x.ultimoErroreHttp : '') + (x.ultimoErroreRete ? ' · ' + x.ultimoErroreRete : ''));
+        })));
+        if (s.failover.length)
+            el.append(h('details', null, h('summary.piccolo', null, 'Failover recenti · ' + s.failover.length), h('ul.piccolo', null, ...s.failover.slice(-5).reverse().map(x => h('li', null, ora(x.quando) + ' · ' + x.da + ' → ' + x.a + ' · ' + x.motivo)))));
+    }
+    function pannello() {
+        const corpo = h('div', { 'data-quote-ai': '1' }), box = h('details.card', { open: true }, h('summary', null, 'Quote Free LLM API'), corpo);
+        const ascolta = () => { if (box.isConnected)
+            aggiorna(corpo);
+        else
+            window.removeEventListener('imc-ai-diagnostica', ascolta); };
+        window.addEventListener('imc-ai-diagnostica', ascolta);
+        aggiorna(corpo);
+        return box;
+    }
+    return { pannello, aggiorna };
+})();
+
 const StrumentiQuiz = (() => {
     const K_CENTRO_ESCLUSI = 'imc-centro-esclusi', ESCLUSI_BASE = ['Testbusters', 'Alpha Test', 'Editest'];
     function esclusi() {
@@ -4163,7 +4246,7 @@ const StrumentiQuiz = (() => {
 })();
 
 const PROFILO_STANDARD = { perScheda: 18, opzioni: 4, quoteLivello: [25, 35, 25, 15], rangeScheda: [[4, 5], [6, 7], [4, 5], [2, 3]], spiegazioneMin: 600, confutazioneMin: 30,
-    tolLivello: 3, tolPosizione: 10, lungaMax: 25, schedeStep: [18, 25], brac: [45, 50] };
+    tolLivello: 3, tolPosizione: 10, lungaMax: 25, schedeStep: [18, 25], brac: [45, 50], biasRapporto: 1.65, biasDifferenza: 22 };
 const Validatore = (() => {
     const LETTERE = 'ABCD';
     const oggetto = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -4175,6 +4258,11 @@ const Validatore = (() => {
     }
     const citazioni = (x) => (String(x || '').match(/\[\[[^\]]+\]\]/g) || []);
     const numeriPagina = (x) => new Set((String(x).match(/\d+/g) || []).map(Number));
+    const normSem = (x) => s(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\b(il|lo|la|i|gli|le|un|uno|una)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const doppioniSem = (a) => a.some((x, i) => a.some((y, j) => { if (j >= i)
+        return false; const nx = normSem(x), ny = normSem(y), corta = nx.length < ny.length ? nx : ny, lunga = nx.length < ny.length ? ny : nx; return corta !== lunga && corta.split(' ').length >= 3 && (' ' + lunga + ' ').includes(' ' + corta + ' '); }));
+    const fonteNorm = (x) => { const v = s(x), m = /^\s*(?:pagina|pag\.?|p\.?)\s*[:#-]?\s*(\d+)\s*$/i.exec(v); return m ? 'Pagina ' + Number(m[1]) : v; };
+    const rispostaEsplicita = (sp) => { const m = /RISPOSTA ESATTA\s*:\s*([A-D])\s*[)\].:-]\s*([^\n.]{3,240})/i.exec(sp); return m ? { lettera: LETTERE.indexOf(m[1].toUpperCase()), testo: normSem(m[2]) } : null; };
     function bloccanti(q, P = PROFILO_STANDARD) {
         const b = [], o = Array.isArray(q.opzioni) ? q.opzioni : [];
         if (!s(q.domanda))
@@ -4346,16 +4434,17 @@ const Validatore = (() => {
                 add('err', id, 'servono esattamente ' + P.opzioni + ' opzioni testuali');
             else {
                 const op = o;
-                if (new Set(op.map(x => x.trim().toLowerCase())).size < P.opzioni)
-                    add('err', id, 'opzioni duplicate');
+                if (new Set(op.map(normSem)).size < P.opzioni || doppioniSem(op))
+                    add('err', id, new Set(op.map(x => x.trim().toLowerCase())).size < P.opzioni ? 'opzioni duplicate' : 'opzioni semanticamente duplicate');
                 if (!esOk)
                     add('err', id, 'esatta deve essere un intero da 0 a ' + (P.opzioni - 1));
                 else {
                     const e = q.esatta, c = op[e], altre = op.filter((_, j) => j !== e);
                     es[e]++;
+                    const med = altre.map(x => x.length).sort((a, b) => a - b)[1] || 1, rapporto = c.length / Math.max(1, med);
                     if (c.length >= Math.max(...altre.map(x => x.length))) {
                         lunga++;
-                        add('info', id, 'la risposta corretta è la più lunga');
+                        add(rapporto >= (P.biasRapporto || 1.65) && c.length - med >= (P.biasDifferenza || 22) ? 'err' : 'info', id, rapporto >= (P.biasRapporto || 1.65) && c.length - med >= (P.biasDifferenza || 22) ? 'la risposta corretta è marcatamente più lunga dei distrattori' : 'la risposta corretta è la più lunga');
                     }
                     if (altre.some(x => x.toLowerCase().includes(c.toLowerCase())))
                         add('err', id, 'il testo della corretta è contenuto in un distrattore');
@@ -4371,8 +4460,12 @@ const Validatore = (() => {
             const sd = q.spiegazioneDistrattori;
             if (!Array.isArray(sd) || sd.length !== P.opzioni - 1 || sd.some(x => typeof x !== 'string' || x.trim().length < P.confutazioneMin))
                 add('err', id, 'spiegazioneDistrattori: servono ' + (P.opzioni - 1) + ' confutazioni (almeno ' + P.confutazioneMin + ' caratteri ciascuna)');
-            else if (new Set(sd.map(x => String(x).trim().toLowerCase())).size < P.opzioni - 1)
-                add('warn', id, 'spiegazioneDistrattori: confutazioni duplicate');
+            else {
+                if (new Set(sd.map(normSem)).size < P.opzioni - 1)
+                    add('err', id, 'spiegazioneDistrattori: confutazioni duplicate o semanticamente uguali');
+                if (sd.some(x => /(?:questa|tale) (?:opzione|risposta).{0,25}(?:sbagliat|non (?:è|e) corrett)|non pertinente senza|semplicemente errat/i.test(String(x))))
+                    add('err', id, 'spiegazioneDistrattori: confutazioni generiche, serve il motivo specifico');
+            }
             if (!Array.isArray(q.distractorTypes) || q.distractorTypes.length !== P.opzioni - 1)
                 add('err', id, 'distractorTypes: servono ' + (P.opzioni - 1) + ' stringhe');
             if (!testo(q.erroreTipico).trim())
@@ -4398,6 +4491,13 @@ const Validatore = (() => {
                     add('err', id, 'pagina «da verificare»: vietata');
                 if (q.sourceRef !== q.fonte)
                     add('warn', id, 'sourceRef diverso da fonte');
+            }
+            if (lOk) {
+                const d = normSem(q.domanda), recupero = /^(qual e|quale e|come si definisce|indica|riconosci|che cosa e)\b/.test(d), alto = /(caso|scenario|situazione|dati|risultati|confront|analizz|valut|relazione|conseguenza|applic)/.test(d);
+                if (L === 4 && recupero && !alto)
+                    add('err', id, 'Bloom L4 dichiarato ma la richiesta effettiva è di riconoscimento/recupero');
+                if (L === 1 && alto && d.split(' ').length > 8)
+                    add('err', id, 'Bloom L1 dichiarato ma la richiesta effettiva richiede applicazione o analisi');
             }
             const gid = testo(q.coppiaGemellaId);
             if (gid) {
@@ -4513,15 +4613,40 @@ const Validatore = (() => {
                 log.push(id + ': esatta da testo a numero');
                 q.esatta = Number(q.esatta.trim());
             }
+            if (Array.isArray(q.opzioni) && typeof q.spiegazione === 'string') {
+                const r = rispostaEsplicita(q.spiegazione), op = q.opzioni.map(normSem);
+                if (r && r.testo) {
+                    const candidati = op.map((x, i) => ({ x, i })).filter(x => x.x && (r.testo === x.x || r.testo.includes(x.x) || x.x.includes(r.testo)));
+                    if (candidati.length === 1) {
+                        const e = candidati[0].i, prima = Number(q.esatta);
+                        if (prima !== e) {
+                            q.esatta = e;
+                            log.push(id + ': esatta riallineata al testo della risposta (' + prima + ' → ' + e + ')');
+                        }
+                        if (r.lettera !== e) {
+                            q.spiegazione = q.spiegazione.replace(/(RISPOSTA ESATTA\s*:\s*)[A-D]/i, '$1' + LETTERE[e]).replace(/\b(risposta|opzione)\s+(?:corretta\s+)?[A-D]\b/gi, (_m, a) => a + ' ' + LETTERE[e]);
+                            log.push(id + ': lettera della risposta aggiornata a ' + LETTERE[e]);
+                        }
+                    }
+                }
+            }
             const lc = q.livelloCognitivo;
             if (typeof lc === 'number' && [1, 2, 3, 4].includes(lc) && q.livello !== 'L' + lc) {
                 log.push(id + ': livello allineato a livelloCognitivo (' + (q.livello === undefined ? 'mancante' : String(q.livello)) + ' → L' + lc + ')');
                 q.livello = 'L' + lc;
             }
-            const f = testo(q.fonte).trim();
-            if (f && q.sourceRef !== f) {
+            const f = fonteNorm(q.fonte), sr = fonteNorm(q.sourceRef);
+            if (f && q.fonte !== f) {
+                q.fonte = f;
+                log.push(id + ': formato fonte normalizzato');
+            }
+            if (f && sr !== f) {
                 log.push(id + ': sourceRef reso uguale a fonte');
                 q.sourceRef = f;
+            }
+            else if (f && q.sourceRef !== f) {
+                q.sourceRef = f;
+                log.push(id + ': formato sourceRef normalizzato');
             }
             return q;
         });
