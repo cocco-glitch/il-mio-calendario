@@ -121,8 +121,7 @@ with sync_playwright() as p:
     zona().locator('button', has_text='Correggi').first.click(); pg.wait_for_timeout(300)
     ok('Passo 5 di 7' in passo(), 'Correggi apre il passo 5 con il prompt di correzione')
     rotta = pg.evaluate("Stato.prendi('prq-biologia-3.3-s1').quiz.find(q => q.opzioni.length !== 4).id")
-    patch = [{'id': rotta, 'opzioni': ['Giusta 5', 'Falsa a 5', 'Falsa b 5', 'Falsa c 5'], 'esatta': 0,
-              'spiegazione': 'RISPOSTA ESATTA: A) Giusta. PERCHÉ GLI ALTRI NO: B) no. C) no. D) no.'}]
+    patch = [{'id': rotta, 'opzioni': ['Falsa a 5', 'Giusta 5', 'Falsa b 5', 'Falsa c 5'], 'esatta': 1}]
     pg.locator('textarea[aria-label^="Patch JSON"]').fill('```json\n' + json.dumps(patch, ensure_ascii=False) + '\n```')
     zona().get_by_role('button', name='Applica le patch').click(); pg.wait_for_timeout(300)
     ok('nessuna domanda da correggere' in zona().inner_text(), 'patch applicata → ricontrollo superato')

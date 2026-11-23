@@ -138,19 +138,26 @@ const DiagnosiQuiz = (() => {
     if (!Array.isArray(d)) return { errore: 'Non trovo un elenco di patch (serve un array di oggetti con «id»).' };
     return { patch: d.filter(oggetto) };
   }
-  /** Applica le patch per id, solo sulle chiavi del formato. Non modifica l'input. */
-  function applicaPatch(qs: unknown[], patch: DomQ[]): { qs: unknown[]; log: string[]; mancanti: string[]; n: number } {
-    const out = qs.map(q => oggetto(q) ? { ...q } : q), log: string[] = [], mancanti: string[] = [];
+  const valoreValido = (k: string, v: unknown) => k === 'opzioni' ? Array.isArray(v) && v.length === 4 && v.every(x => typeof x === 'string' && x.trim())
+    : k === 'spiegazioneDistrattori' || k === 'distractorTypes' ? Array.isArray(v) && v.length === 3 && v.every(x => typeof x === 'string' && x.trim())
+    : k === 'esatta' ? Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 3
+    : k === 'livelloCognitivo' ? Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 4
+    : ['domanda', 'spiegazione', 'fonte', 'sourceRef', 'erroreTipico', 'livello'].includes(k) ? typeof v === 'string' && !!v.trim() : true;
+  /** Applica per id soltanto i campi autorizzati dal piano; una violazione rifiuta l'intera patch. */
+  function applicaPatch(qs: unknown[], patch: DomQ[], autorizzate?: Record<string, string[]>): { qs: unknown[]; log: string[]; mancanti: string[]; rifiutate: string[]; n: number } {
+    const out = qs.map(q => oggetto(q) ? { ...q } : q), log: string[] = [], mancanti: string[] = [], rifiutate: string[] = [];
     let n = 0;
     for (const p of patch) {
       if (p.id === undefined) { mancanti.push('elemento senza id'); continue; }
       const q = out.find(x => oggetto(x) && x.id === p.id) as DomQ | undefined;
       if (!q) { mancanti.push(String(p.id)); continue; }
-      const ch: string[] = [];
-      for (const k of Object.keys(p)) { if (k === 'id') continue; if (!CHIAVI.includes(k)) { log.push(p.id + ': campo sconosciuto ignorato «' + k + '»'); continue; } q[k] = p[k]; ch.push(k); }
+      const ch = Object.keys(p).filter(k => k !== 'id'), permessi = autorizzate && autorizzate[String(p.id)];
+      const vietati = ch.filter(k => !CHIAVI.includes(k) || (permessi && !permessi.includes(k)) || !valoreValido(k, p[k]));
+      if (!ch.length || vietati.length) { const msg = p.id + ': patch rifiutata' + (vietati.length ? ', campi non autorizzati o malformati: ' + vietati.join(', ') : ', nessun campo'); rifiutate.push(msg); log.push(msg); continue; }
+      for (const k of ch) q[k] = p[k];
       if (ch.length) { n++; log.push(p.id + ': aggiornati ' + ch.join(', ')); } else log.push(p.id + ': nessun campo da aggiornare');
     }
-    return { qs: out, log, mancanti, n };
+    return { qs: out, log, mancanti, rifiutate, n };
   }
   /** JSON finale nel formato di consegna, con le chiavi nell'ordine canonico (una domanda per riga). */
   function jsonFinale(qs: unknown[], parte: string): string {
@@ -165,10 +172,10 @@ const DiagnosiQuiz = (() => {
     [/livelloCognitivo deve essere/, () => ({ f: ['livelloCognitivo', 'livello'], c: ['domanda'] })],
     [/domanda mancante/, () => ({ f: ['domanda'], c: ['opzioni', 'esatta'] })],
     [/tutte\/nessuna delle precedenti/, () => ({ f: ['domanda', 'opzioni', 'esatta', 'spiegazioneDistrattori', 'distractorTypes'], c: ['domanda', 'opzioni', 'esatta', 'spiegazioneDistrattori'] })],
-    [/4 opzioni testuali|opzioni duplicate/, () => ({ f: ['opzioni', 'esatta', 'spiegazioneDistrattori', 'distractorTypes'], c: ['domanda', 'opzioni', 'esatta'] })],
+    [/4 opzioni testuali|opzioni (?:semanticamente )?duplicate/, () => ({ f: ['opzioni', 'esatta', 'spiegazioneDistrattori', 'distractorTypes'], c: ['domanda', 'opzioni', 'esatta'] })],
     [/esatta deve essere/, () => ({ f: ['esatta'], c: ['domanda', 'opzioni'] })],
     [/RISPOSTA ESATTA: /, () => ({ f: ['esatta', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'spiegazione'] })],
-    [/la più lunga|contenuto in un distrattore|molto più corta/, () => ({ f: ['opzioni'], c: ['domanda', 'opzioni', 'esatta'] })],
+    [/più lunga|contenuto in un distrattore|molto più corta/, () => ({ f: ['opzioni'], c: ['domanda', 'opzioni', 'esatta'] })],
     [/spiegazioneDistrattori/, () => ({ f: ['spiegazioneDistrattori'], c: ['domanda', 'opzioni', 'esatta', 'spiegazioneDistrattori'] })],
     [/distractorTypes/, () => ({ f: ['distractorTypes'], c: ['opzioni', 'esatta', 'spiegazioneDistrattori'] })],
     [/erroreTipico/, () => ({ f: ['erroreTipico'], c: ['domanda', 'opzioni', 'esatta'] })],
@@ -176,9 +183,15 @@ const DiagnosiQuiz = (() => {
     [/fonte mancante/, () => ({ f: ['fonte', 'sourceRef'], c: ['domanda', 'citazione'] })],
     [/da verificare/, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'fonte', 'spiegazione'] })],
     [/sourceRef diverso/, () => ({ f: ['sourceRef'], c: ['fonte'] })],
+    [/Bloom L[1-4] dichiarato/, () => ({ f: ['domanda'], c: ['domanda', 'opzioni', 'esatta'] })],
     [/^citazione p\. /, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
   ];
-  const specDi = (msg: string) => { for (const [re, fn] of SPEC) { const m = msg.match(re); if (m) return fn(m); } return { f: [] as string[], c: ['domanda'] }; };
+  const specDi = (msg: string) => { msg = msg.replace(/^(?:Formato|Didattica|Fonte|Correzione):\s*/, ''); for (const [re, fn] of SPEC) { const m = msg.match(re); if (m) return fn(m); } return { f: [] as string[], c: ['domanda'] }; };
+  function pianoPatch(qs: unknown[], problemi: ProblemaQ[]): Record<string, string[]> {
+    const ids = new Set(qs.filter(oggetto).map(q => String(q.id || ''))), out: Record<string, string[]> = {};
+    for (const p of problemi.filter(x => x.sev === 'err' && ids.has(x.id))) { const a = out[p.id] || []; for (const f of specDi(p.msg).f) if (CHIAVI.includes(f) && !a.includes(f)) a.push(f); out[p.id] = a; }
+    return out;
+  }
   function riga(q: DomQ, k: string): string {
     const o = Array.isArray(q.opzioni) ? q.opzioni as unknown[] : null, e = q.esatta;
     if (k === 'domanda') return 'Domanda: ' + testo(q.domanda);
@@ -191,7 +204,7 @@ const DiagnosiQuiz = (() => {
     return k + ': ' + JSON.stringify(q[k]);
   }
   interface OpzCorr { gem?: boolean; perche?: boolean; avvisi?: boolean; }
-  function promptCorrezione(qs: unknown[], problemi: ProblemaQ[], o: OpzCorr = {}): { testo: string; nDomande: number; manuali: ProblemaQ[]; globali: ProblemaQ[] } {
+  function promptCorrezione(qs: unknown[], problemi: ProblemaQ[], o: OpzCorr = {}): { testo: string; nDomande: number; manuali: ProblemaQ[]; globali: ProblemaQ[]; autorizzate: Record<string, string[]> } {
     const sel = problemi.filter(p => p.sev === 'err' || (o.avvisi && p.sev === 'warn'));
     const perQ = new Map<string, { q: DomQ; f: Set<string>; c: Set<string>; righe: string[] }>(), manuali: ProblemaQ[] = [], globali: ProblemaQ[] = [];
     for (const p of sel) {
@@ -224,7 +237,7 @@ const DiagnosiQuiz = (() => {
         ordine.filter(k => a.c.has(k)).forEach(k => out.push(riga(a.q, k)));
       });
     }
-    return { testo: out.join('\n'), nDomande: perQ.size, manuali, globali };
+    return { testo: out.join('\n'), nDomande: perQ.size, manuali, globali, autorizzate: pianoPatch(qs, sel) };
   }
   /** Avvisi d'uso per non sprecare quota. */
   function avvisiUso(o: { gem?: boolean; autoInSospeso?: number; manuali?: ProblemaQ[]; globali?: ProblemaQ[] }): Array<{ sev: SevQ; t: string; x: string }> {
@@ -276,6 +289,6 @@ const DiagnosiQuiz = (() => {
     '- Non eseguire controlli o conteggi finali estesi: la verifica la fa l\'app.',
     '- Se ricevi una CORREZIONE CHIRURGICA, restituisci solo patch: un oggetto per domanda con «id» e i soli campi dopo RESTITUISCI, mai la scheda intera.'].join('\n');
 
-  return { CHIAVI, PER_SCHEDA, LETTERE, riparaVirgole, leggi, sezioni, letteraDichiarata, analizza, consiglio, autoFix, leggiPatch, applicaPatch, jsonFinale,
+  return { CHIAVI, PER_SCHEDA, LETTERE, riparaVirgole, leggi, sezioni, letteraDichiarata, analizza, consiglio, autoFix, leggiPatch, applicaPatch, pianoPatch, jsonFinale,
     promptCorrezione, avvisiUso, pianoConteggi, piano, tabella, REGOLE_GEM };
 })();

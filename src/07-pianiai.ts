@@ -216,21 +216,22 @@ const PianiAI = (() => {
 
   // ---------- v0.56 (BP5 §4.2): Burnout Circuit Breaker, 0 token ----------
   /** Dopo un errore nel quiz (e all'apertura dei piani): chiude i de-load scaduti e, se la fatica scatta, attiva il de-load 48 h. */
-  function controllaFatica(): void {
-    const oggi = ymd(new Date()); let stats: any[] | null = null;
+  function controllaFatica(): () => void {
+    const oggi = ymd(new Date()), prima = new Map<string, PkPianoAI>(); let stats: any[] | null = null;
     for (const p0 of pianiAI()) {
       let p: PkPianoAI = p0;
       const agg = Pianificatore.aggiornaDeload(p, oggi);
-      if (agg) { salvaPiano(agg); p = agg; if (!agg.deload!.attivo) avviso('🌱 De-load finito: torno al livello ' + agg.livelloIntensita + '.', 5000); }
+      if (agg) { prima.set(p0.id, JSON.parse(JSON.stringify(p0))); salvaPiano(agg); p = agg; if (!agg.deload!.attivo) avviso('🌱 De-load finito: torno al livello ' + agg.livelloIntensita + '.', 5000); }
       if (!p.livelloIntensita || Studio.nascosto(p.id) || (p.deload && p.deload.attivo)) continue;
       stats = stats || statqConMateria();
       const f = Pianificatore.monitoraAffaticamento(stats, { oggi, materia: p.vincoliAI.materiaCodice });
       if (!f.trigger) continue;
       const d = Pianificatore.attivaDeload(p, { oggi, motivo: f.condA ? 'errori +' + Math.round((f.tasso2g - f.mediaStorica) * 100) + '% in 2 giorni' : 'ipercorrezioni ×2 in 48 h' });
       if (!d) continue;
-      salvaPiano(d);
+      if (!prima.has(p0.id)) prima.set(p0.id, JSON.parse(JSON.stringify(p0))); salvaPiano(d);
       avviso('🛌 Circuit breaker: ' + d.deload!.motivo + '. Per 48 h livello ' + d.deload!.livelloRidotto + ': solo ripasso FSRS leggero + Wakeful Rest.', 9000);
     }
+    return () => { prima.forEach(p => salvaPiano(p)); };
   }
 
   // ---------- azioni sul piano ----------

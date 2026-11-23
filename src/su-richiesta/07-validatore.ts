@@ -10,11 +10,11 @@
 // ImportaParti e DiagnosiQuiz ne restano adapter sottili (stessa API di v0.60).
 // =====================================================================
 interface ProfiloQuiz { perScheda: number; opzioni: number; quoteLivello: number[]; rangeScheda: Array<[number, number]>; spiegazioneMin: number; confutazioneMin: number;
-  tolLivello: number; tolPosizione: number; lungaMax: number; schedeStep: [number, number]; brac: [number, number]; }
+  tolLivello: number; tolPosizione: number; lungaMax: number; schedeStep: [number, number]; brac: [number, number]; biasRapporto?: number; biasDifferenza?: number; }
 interface ValidazioneQ { bloccanti: Map<string, string[]>; qualita: ProblemaQ[]; insieme: ProblemaQ[]; pronte: number; analisi: AnalisiQ; }
 
 const PROFILO_STANDARD: ProfiloQuiz = { perScheda: 18, opzioni: 4, quoteLivello: [25, 35, 25, 15], rangeScheda: [[4, 5], [6, 7], [4, 5], [2, 3]], spiegazioneMin: 600, confutazioneMin: 30,
-  tolLivello: 3, tolPosizione: 10, lungaMax: 25, schedeStep: [18, 25], brac: [45, 50] };
+  tolLivello: 3, tolPosizione: 10, lungaMax: 25, schedeStep: [18, 25], brac: [45, 50], biasRapporto: 1.65, biasDifferenza: 22 };
 
 const Validatore = (() => {
   const LETTERE = 'ABCD';
@@ -28,6 +28,10 @@ const Validatore = (() => {
   }
   const citazioni = (x: string) => (String(x || '').match(/\[\[[^\]]+\]\]/g) || []);
   const numeriPagina = (x: string) => new Set((String(x).match(/\d+/g) || []).map(Number));
+  const normSem = (x: unknown) => s(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\b(il|lo|la|i|gli|le|un|uno|una)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const doppioniSem = (a: string[]) => a.some((x, i) => a.some((y, j) => { if (j >= i) return false; const nx = normSem(x), ny = normSem(y), corta = nx.length < ny.length ? nx : ny, lunga = nx.length < ny.length ? ny : nx; return corta !== lunga && corta.split(' ').length >= 3 && (' ' + lunga + ' ').includes(' ' + corta + ' '); }));
+  const fonteNorm = (x: unknown) => { const v = s(x), m = /^\s*(?:pagina|pag\.?|p\.?)\s*[:#-]?\s*(\d+)\s*$/i.exec(v); return m ? 'Pagina ' + Number(m[1]) : v; };
+  const rispostaEsplicita = (sp: string) => { const m = /RISPOSTA ESATTA\s*:\s*([A-D])\s*[)\].:-]\s*([^\n.]{3,240})/i.exec(sp); return m ? { lettera: LETTERE.indexOf(m[1].toUpperCase()), testo: normSem(m[2]) } : null; };
 
   /** Blocchi per una singola domanda (vuoto = importabile). */
   function bloccanti(q: QuizDrive, P: ProfiloQuiz = PROFILO_STANDARD): string[] {
@@ -138,12 +142,13 @@ const Validatore = (() => {
       if (!Array.isArray(o) || o.length !== P.opzioni || o.some(x => typeof x !== 'string' || !x.trim())) add('err', id, 'servono esattamente ' + P.opzioni + ' opzioni testuali');
       else {
         const op = o as string[];
-        if (new Set(op.map(x => x.trim().toLowerCase())).size < P.opzioni) add('err', id, 'opzioni duplicate');
+        if (new Set(op.map(normSem)).size < P.opzioni || doppioniSem(op)) add('err', id, new Set(op.map(x => x.trim().toLowerCase())).size < P.opzioni ? 'opzioni duplicate' : 'opzioni semanticamente duplicate');
         if (!esOk) add('err', id, 'esatta deve essere un intero da 0 a ' + (P.opzioni - 1));
         else {
           const e = q.esatta as number, c = op[e], altre = op.filter((_, j) => j !== e);
           es[e]++;
-          if (c.length >= Math.max(...altre.map(x => x.length))) { lunga++; add('info', id, 'la risposta corretta è la più lunga'); }
+          const med = altre.map(x => x.length).sort((a, b) => a - b)[1] || 1, rapporto = c.length / Math.max(1, med);
+          if (c.length >= Math.max(...altre.map(x => x.length))) { lunga++; add(rapporto >= (P.biasRapporto || 1.65) && c.length - med >= (P.biasDifferenza || 22) ? 'err' : 'info', id, rapporto >= (P.biasRapporto || 1.65) && c.length - med >= (P.biasDifferenza || 22) ? 'la risposta corretta è marcatamente più lunga dei distrattori' : 'la risposta corretta è la più lunga'); }
           if (altre.some(x => x.toLowerCase().includes(c.toLowerCase()))) add('err', id, 'il testo della corretta è contenuto in un distrattore');
           if (c.length < 0.45 * Math.min(...altre.map(x => x.length))) add('warn', id, 'la corretta è molto più corta delle altre: si nota');
           const dich = letteraDichiarata(testo(q.spiegazione));
@@ -153,7 +158,10 @@ const Validatore = (() => {
       if (!esOk && !(Array.isArray(o) && o.length === P.opzioni) && 'esatta' in q && !Number.isInteger(q.esatta)) add('err', id, 'esatta deve essere un intero da 0 a ' + (P.opzioni - 1));
       const sd = q.spiegazioneDistrattori;
       if (!Array.isArray(sd) || sd.length !== P.opzioni - 1 || sd.some(x => typeof x !== 'string' || x.trim().length < P.confutazioneMin)) add('err', id, 'spiegazioneDistrattori: servono ' + (P.opzioni - 1) + ' confutazioni (almeno ' + P.confutazioneMin + ' caratteri ciascuna)');
-      else if (new Set(sd.map(x => String(x).trim().toLowerCase())).size < P.opzioni - 1) add('warn', id, 'spiegazioneDistrattori: confutazioni duplicate');
+      else {
+        if (new Set(sd.map(normSem)).size < P.opzioni - 1) add('err', id, 'spiegazioneDistrattori: confutazioni duplicate o semanticamente uguali');
+        if (sd.some(x => /(?:questa|tale) (?:opzione|risposta).{0,25}(?:sbagliat|non (?:è|e) corrett)|non pertinente senza|semplicemente errat/i.test(String(x)))) add('err', id, 'spiegazioneDistrattori: confutazioni generiche, serve il motivo specifico');
+      }
       if (!Array.isArray(q.distractorTypes) || q.distractorTypes.length !== P.opzioni - 1) add('err', id, 'distractorTypes: servono ' + (P.opzioni - 1) + ' stringhe');
       if (!testo(q.erroreTipico).trim()) add('err', id, 'erroreTipico vuoto o null');
       const sp = testo(q.spiegazione), fonte = testo(q.fonte).trim();
@@ -170,6 +178,11 @@ const Validatore = (() => {
       else {
         if (/verificar/i.test(fonte + ' ' + sp)) add('err', id, 'pagina «da verificare»: vietata');
         if (q.sourceRef !== q.fonte) add('warn', id, 'sourceRef diverso da fonte');
+      }
+      if (lOk) {
+        const d = normSem(q.domanda), recupero = /^(qual e|quale e|come si definisce|indica|riconosci|che cosa e)\b/.test(d), alto = /(caso|scenario|situazione|dati|risultati|confront|analizz|valut|relazione|conseguenza|applic)/.test(d);
+        if (L === 4 && recupero && !alto) add('err', id, 'Bloom L4 dichiarato ma la richiesta effettiva è di riconoscimento/recupero');
+        if (L === 1 && alto && d.split(' ').length > 8) add('err', id, 'Bloom L1 dichiarato ma la richiesta effettiva richiede applicazione o analisi');
       }
       const gid = testo(q.coppiaGemellaId);
       if (gid) { const a = gemelle.get(gid) || []; a.push({ id, scheda: testo(q.scheda) }); gemelle.set(gid, a); }
@@ -241,10 +254,21 @@ const Validatore = (() => {
       if (Array.isArray(q.opzioni) && q.opzioni.some(o => typeof o === 'string' && o !== o.trim())) { log.push(id + ': tolti spazi superflui nelle opzioni'); q.opzioni = q.opzioni.map(o => typeof o === 'string' ? o.trim() : o); }
       if (typeof q.livelloCognitivo === 'string' && /^L?[1-4]$/i.test(q.livelloCognitivo.trim())) { log.push(id + ': livelloCognitivo da testo a numero'); q.livelloCognitivo = Number(q.livelloCognitivo.trim().replace(/^L/i, '')); }
       if (typeof q.esatta === 'string' && /^[0-3]$/.test(q.esatta.trim())) { log.push(id + ': esatta da testo a numero'); q.esatta = Number(q.esatta.trim()); }
+      if (Array.isArray(q.opzioni) && typeof q.spiegazione === 'string') {
+        const r = rispostaEsplicita(q.spiegazione), op = q.opzioni.map(normSem);
+        if (r && r.testo) {
+          const candidati = op.map((x, i) => ({ x, i })).filter(x => x.x && (r.testo === x.x || r.testo.includes(x.x) || x.x.includes(r.testo)));
+          if (candidati.length === 1) {
+            const e = candidati[0].i, prima = Number(q.esatta); if (prima !== e) { q.esatta = e; log.push(id + ': esatta riallineata al testo della risposta (' + prima + ' → ' + e + ')'); }
+            if (r.lettera !== e) { q.spiegazione = q.spiegazione.replace(/(RISPOSTA ESATTA\s*:\s*)[A-D]/i, '$1' + LETTERE[e]).replace(/\b(risposta|opzione)\s+(?:corretta\s+)?[A-D]\b/gi, (_m, a) => a + ' ' + LETTERE[e]); log.push(id + ': lettera della risposta aggiornata a ' + LETTERE[e]); }
+          }
+        }
+      }
       const lc = q.livelloCognitivo;
       if (typeof lc === 'number' && [1, 2, 3, 4].includes(lc) && q.livello !== 'L' + lc) { log.push(id + ': livello allineato a livelloCognitivo (' + (q.livello === undefined ? 'mancante' : String(q.livello)) + ' → L' + lc + ')'); q.livello = 'L' + lc; }
-      const f = testo(q.fonte).trim();
-      if (f && q.sourceRef !== f) { log.push(id + ': sourceRef reso uguale a fonte'); q.sourceRef = f; }
+      const f = fonteNorm(q.fonte), sr = fonteNorm(q.sourceRef);
+      if (f && q.fonte !== f) { q.fonte = f; log.push(id + ': formato fonte normalizzato'); }
+      if (f && sr !== f) { log.push(id + ': sourceRef reso uguale a fonte'); q.sourceRef = f; } else if (f && q.sourceRef !== f) { q.sourceRef = f; log.push(id + ': formato sourceRef normalizzato'); }
       return q;
     });
     return { qs: out, log };

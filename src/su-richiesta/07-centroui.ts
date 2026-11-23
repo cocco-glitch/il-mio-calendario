@@ -646,12 +646,13 @@ const CentroUI = (() => {
       function applica(t: string): void {
         const lp = DiagnosiQuiz.leggiPatch(t);
         if ('errore' in lp) { avviso('⛔ ' + lp.errore, 6000); return; }
-        const ap = DiagnosiQuiz.applicaPatch(qs, lp.patch);
+        const ap = DiagnosiQuiz.applicaPatch(qs, lp.patch, corr.autorizzate);
         salvaDomande(r, ap.qs, daScheda);
         const dopo = controlla(ap.qs as DomAI[], false, problemiCit(r, ap.qs as DomAI[])), resta = dopo.corr.nDomande;
         salva({ ...r, esiti: { ...(r.esiti || {}), controllato: true, daCorreggere: resta } });
         const righe = ['🩹 Patch applicate a ' + ap.n + (ap.n === 1 ? ' domanda' : ' domande') + '.',
           ...(ap.mancanti.length ? ['⚠️ Id non trovati: ' + ap.mancanti.join(', ')] : []),
+          ...(ap.rifiutate.length ? ['⛔ Patch rifiutate: ' + ap.rifiutate.join('; ')] : []),
           resta ? '⛔ Restano ' + resta + ' domande da correggere: ecco il nuovo prompt.' : '✅ Ricontrollo superato: nessuna domanda da correggere.'];
         nota = notaDi(righe);
         vai(resta ? 5 : 6);
@@ -775,12 +776,12 @@ const CentroUI = (() => {
       const stato = h('p.piccolo.tenue', { role: 'status' });
       const carica = () => { ta.value = StrumentiQuiz.esclusi().join('\n'); };
       carica();
-      return h('details.centro-impostazioni', null, h('summary.piccolo', null, '⚙️ Impostazioni del Centro'),
+      return h('div', null, QuoteUI.pannello(), h('details.centro-impostazioni', null, h('summary.piccolo', null, '⚙️ Impostazioni del Centro'),
         h('p.piccolo.tenue', null, 'Fonti escluse (eserciziari commerciali): l\'AI non deve usarle e i file con questi nomi non entrano tra le fonti. Una per riga.'),
         ta, h('div.chips', null,
           h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(ta.value.split('\n')); carica(); stato.textContent = '✓ Lista salvata (' + StrumentiQuiz.esclusi().length + ').'; } }, '💾 Salva lista'),
           h('button.chip', { type: 'button', onclick: () => { StrumentiQuiz.salvaEsclusi(null); carica(); stato.textContent = 'Ripristinata la lista predefinita.'; } }, '↺ Predefiniti')),
-        stato);
+        stato));
     }
 
     const corpo = h('div.centro', null, h('div.riga-tra', null, indicatore, indietro), zona, impostazioni());

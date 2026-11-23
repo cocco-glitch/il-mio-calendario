@@ -15,7 +15,7 @@ interface SpecificaGenerazioneQuiz {
   maxPerBatch?: number;
   maxCaratteriFonte?: number;
 }
-interface EsitoPassoCodaQuiz { esito: 'occupato' | 'vuoto' | 'checkpoint' | 'completato' | 'rimandato'; lavoro?: LavoroQuiz; prossimoTentativoIl?: number; errore?: string; }
+interface EsitoPassoCodaQuiz { esito: 'occupato' | 'vuoto' | 'checkpoint' | 'completato' | 'rimandato' | 'pausa_incerta'; lavoro?: LavoroQuiz; prossimoTentativoIl?: number; errore?: string; }
 interface DipendenzeRunnerQuiz {
   chiama?: (messaggi: Array<{ role: string; content: string }>, opzioni: { maxOut: number; tronca: false; archetipo?: string }) => Promise<{ j: unknown; prov: string; modello: string }>;
   ora?: () => number;
@@ -111,7 +111,7 @@ const CodaQuizRunner = (() => {
       const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, intero(l.specifica.maxPerBatch, 1, 8, 5));
       const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input ? l.input.pagine.filter(p => numeri.has(p.n)) : selezionaPagine(l, batch);
       if (pendenti.length) {
-        const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o)), opzioni = { maxOut: Math.min(4096, Math.max(900, pendenti.length * 650)), tronca: false as const,
+        const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o)), opzioni = { maxOut: Math.min(4096, Math.max(900, pendenti.length * 650)), tronca: false as const, prudente: true,
           archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
         const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
         let r: { j: unknown; prov: string; modello: string };
@@ -122,20 +122,21 @@ const CodaQuizRunner = (() => {
         return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
       }
       if (!n || !pagine.length) throw new Error('la sorgente non contiene testo utilizzabile');
-      const opzioni = { maxOut: Math.min(4096, Math.max(900, n * 650)), tronca: false as const, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+      const opzioni = { maxOut: Math.min(4096, Math.max(900, n * 650)), tronca: false as const, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
       const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o));
       const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
       let r: { j: unknown; prov: string; modello: string };
       try { r = await chiama(prompt(l, n, pagine), opzioni); } finally { clearInterval(battito); }
       const qs = domandeDa(r.j, l, n), da = (l.risultati || []).length + (l.revisioni || []).length + 1;
-      const esiti = CodaQuizQualita.validaDomande(qs, pagine, [...(l.risultati || []), ...(l.revisioni || []).map(x => x.domanda)]);
-      const salvato = await CodaQuiz.salvaBatchQualita(account, l.id, { id: 'mb-' + da + '-' + n, da, richieste: n, ottenute: qs.length,
+      const esiti = CodaQuizQualita.validaDomande(qs, pagine, [...(l.risultati || []), ...(l.revisioni || []).map(x => x.domanda), ...(l.revisioniStoriche || []).map(x => x.domanda)]);
+      const salvato = await CodaQuiz.salvaBatchQualita(account, l.id, { id: 'mb-' + da + '-' + n + '-r' + (l.rigenerazioni || 0), da, richieste: n, ottenute: qs.length,
         provider: r.prov, modello: r.modello, salvatoIl: ora() }, esiti, totale, ora());
       if (salvato.stato === 'in_pausa' || salvato.stato === 'annullato') return { esito: 'vuoto', lavoro: salvato };
       return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e), quando = ora() + ritardo(msg, l ? l.tentativi : 0);
       if (!l) throw e;
+      if ((e as any)?.consumoIncerto) { const salvato = await CodaQuiz.fermaIncerto(account, l.id, msg, ora()); return { esito: 'pausa_incerta', lavoro: salvato, errore: msg }; }
       const salvato = await CodaQuiz.rimanda(account, l.id, msg, quando, ora());
       return salvato.stato === 'in_coda' ? { esito: 'rimandato', lavoro: salvato, prossimoTentativoIl: quando, errore: msg }
         : { esito: 'vuoto', lavoro: salvato };

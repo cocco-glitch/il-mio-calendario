@@ -10,7 +10,8 @@ interface SorgenteLavoroQuiz { tipo: 'testo' | 'pdf'; id: string; versione: stri
 interface PaginaSorgenteQuiz { n: number; testo: string; }
 interface InputLavoroQuiz { pagine: PaginaSorgenteQuiz[]; pagineVuote: number; }
 interface CheckpointLavoroQuiz { id: string; da: number; richieste: number; ottenute: number; provider: string; modello: string; salvatoIl: number; }
-interface RevisioneDomandaQuiz { id: string; domanda: DomAI; stato: StatoQualitaDomandaQuiz; tentativi: number; motivi: string[]; pagine: number[]; }
+interface TentativoRevisioneQuiz { tentativo: number; motivi: string[]; campi: string[]; esito: string; }
+interface RevisioneDomandaQuiz { id: string; domanda: DomAI; stato: StatoQualitaDomandaQuiz; tentativi: number; motivi: string[]; pagine: number[]; cronologia?: TentativoRevisioneQuiz[]; }
 interface RapportoQualitaCodaQuiz { pronte: number; daCorreggere: number; daRivedere: number; problemiPacchetto: string[]; aggiornatoIl: number; }
 interface LavoroQuiz {
   account: string;
@@ -26,6 +27,8 @@ interface LavoroQuiz {
   input?: InputLavoroQuiz;
   risultati?: DomAI[];
   revisioni?: RevisioneDomandaQuiz[];
+  revisioniStoriche?: RevisioneDomandaQuiz[];
+  rigenerazioni?: number;
   rapportoQualita?: RapportoQualitaCodaQuiz;
   innestoId?: string;
   checkpoint?: CheckpointLavoroQuiz[];
@@ -156,6 +159,8 @@ const CodaQuiz = (() => {
     return aggiorna(account, id, l => l.stato !== 'in_esecuzione' ? { ...l } : ({ ...cambia(l, 'in_coda', ora), tentativi: l.tentativi + 1,
       ultimoErrore: String(errore || 'errore sconosciuto'), prossimoTentativoIl }));
   }
+  const fermaIncerto = (account: string, id: string, errore: string, ora = Date.now()) => aggiorna(account, id, l => l.stato !== 'in_esecuzione' ? { ...l }
+    : ({ ...cambia(l, 'in_pausa', ora), tentativi: l.tentativi + 1, ultimoErrore: String(errore), prossimoTentativoIl: null }));
   /** Checkpoint atomico e idempotente: risultati e avanzamento si salvano nella stessa transazione. */
   function salvaCheckpoint(account: string, id: string, cp: CheckpointLavoroQuiz, domande: DomAI[], totale: number, ora = Date.now()): Promise<LavoroQuiz> {
     return aggiorna(account, id, l => {
@@ -190,7 +195,7 @@ const CodaQuiz = (() => {
         if (e.stato === 'pronta') {
           if (!risultati.some(q => String(q.id || '') === e.id)) risultati.push(e.domanda);
         } else {
-          const r: RevisioneDomandaQuiz = { id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi, motivi: e.motivi.slice(), pagine: e.pagine.slice() };
+          const r: RevisioneDomandaQuiz = { id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi, motivi: e.motivi.slice(), pagine: e.pagine.slice(), cronologia: e.cronologia?.slice() };
           const i = revisioni.findIndex(x => x.id === e.id); if (i >= 0) revisioni[i] = r; else revisioni.push(r);
         }
       }
@@ -203,6 +208,15 @@ const CodaQuiz = (() => {
   const salvaBatchQualita = (account: string, id: string, cp: CheckpointLavoroQuiz, esiti: EsitoValidazioneDomandaQuiz[], totale: number, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, false, ora);
   const salvaCorrezioni = (account: string, id: string, cp: CheckpointLavoroQuiz, esiti: EsitoValidazioneDomandaQuiz[], totale: number, ora = Date.now()) => salvaQualita(account, id, cp, esiti, totale, true, ora);
   const segnaInnesto = (account: string, id: string, innestoId: string, ora = Date.now()) => aggiorna(account, id, l => ({ ...l, innestoId, aggiornatoIl: ora }));
+  /** Rigenerazione esplicita di una sola domanda: archivia il fallimento e riapre un solo posto nel totale. */
+  function rigeneraDomanda(account: string, id: string, domandaId: string, ora = Date.now()): Promise<LavoroQuiz> {
+    return aggiorna(account, id, l => {
+      const revisioni = (l.revisioni || []).slice(), i = revisioni.findIndex(x => x.id === domandaId && x.stato === 'da_rivedere');
+      if (i < 0) throw new Error('domanda da rivedere non trovata');
+      const [vecchia] = revisioni.splice(i, 1), storiche = [...(l.revisioniStoriche || []), vecchia];
+      return { ...l, stato: 'in_coda', aggiornatoIl: ora, revisioni, revisioniStoriche: storiche, rigenerazioni: (l.rigenerazioni || 0) + 1, prossimoTentativoIl: null, ultimoErrore: null };
+    });
+  }
   async function elimina(account: string, id: string): Promise<boolean> {
     const d = await db(), key = chiave(account, id);
     return new Promise((ok, ko) => {
@@ -288,6 +302,6 @@ const CodaQuiz = (() => {
     riattiva();
   }
 
-  return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, elimina,
+  return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, fermaIncerto, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, rigeneraDomanda, elimina,
     acquisisciLease, rinnovaLease, rilasciaLease, prossimo, recuperaInterrotti, svuotaAccount, svuotaTutto, proprietarioTab, accountAttuale };
 })();

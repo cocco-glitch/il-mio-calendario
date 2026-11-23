@@ -170,10 +170,10 @@ const QuizApp = (() => {
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number') { const oi = v.ord[v.picked], o = v.d.dk ? v.d.dk[oi - 1] : v.d.o![oi]; scelta = o; r.scelte = Object.assign({}, r.scelte); r.scelte[o] = (r.scelte[o] || 0) + 1; }
     Stato.salva(r, true);
     // v0.55 (BP4 Stadio 5): illusione di competenza / risposta fortunata → anticipo L3/L4 nei piani ai_neuro (0 token)
-    let annullaPiani: (() => void) | null = null, carteNuove: string[] = [];
+    let annullaPiani: (() => void) | null = null, annullaFatica: (() => void) | null = null, carteNuove: string[] = [];
     if (v.caso === 'illusione_competenza' || v.caso === 'lucky_guess') try { annullaPiani = PianiAI.dopoQuiz(v.d.sk, v.caso); } catch (e) { console.warn('dopoQuiz', e); }
     // v0.56 (BP5 §4.2): dopo un errore, Burnout Circuit Breaker sui piani con intensità (0 token)
-    if (!giusta) try { PianiAI.controllaFatica(); } catch (_) { /* il quiz non si blocca */ }
+    if (!giusta) try { annullaFatica = PianiAI.controllaFatica(); } catch (_) { /* il quiz non si blocca */ }
     const annulla = () => {
       const q = Stato.prendi<StatQ>(id); if (!q) return;
       const y = StatQC.mio(q, dev); y.xn++; if (giusta) y.xok++; StatQC.ricalcola(q);
@@ -185,6 +185,7 @@ const QuizApp = (() => {
       // v0.57.1 (Q3): annulla anche la carta «trappola» appena creata e l'anticipo nei piani ai_neuro
       for (const c of carteNuove) Stato.elimina(c);
       if (annullaPiani) try { annullaPiani(); } catch (e) { console.warn('annulla piani', e); }
+      if (annullaFatica) try { annullaFatica(); } catch (e) { console.warn('annulla fatica', e); }
     };
     // v0.37: un distrattore scelto 2 volte diventa una flashcard «trappola» (domanda → giusta + perché quella sbagliata non va)
     if (!v.ok && v.d.t === 'mcq' && typeof v.picked === 'number' && !v.d.gen) {

@@ -10,6 +10,7 @@ interface EsitoValidazioneDomandaQuiz {
   tentativi: number;
   motivi: string[];
   pagine: number[];
+  cronologia?: TentativoRevisioneQuiz[];
 }
 
 const CodaQuizQualita = (() => {
@@ -64,12 +65,16 @@ const CodaQuizQualita = (() => {
       { role: 'user', content: base + '\n\nOgni fonte/sourceRef deve essere "Pagina N" e la spiegazione deve citare [[Fonte, p. N]], usando solo le pagine seguenti.' + fonte }];
   }
   function applicaCorrezioni(rs: RevisioneDomandaQuiz[], risposta: unknown, pagine: PaginaSorgenteQuiz[], esistenti: DomAI[]): EsitoValidazioneDomandaQuiz[] {
-    const letto = DiagnosiQuiz.leggiPatch(JSON.stringify(risposta)), patch = 'patch' in letto ? letto.patch : [];
-    const applicate = DiagnosiQuiz.applicaPatch(rs.map(r => r.domanda), patch).qs as DomAI[], idsPatch = new Set(patch.map(p => testo(p.id)).filter(Boolean));
+    const qs = rs.map(r => r.domanda), v = Validatore.valida(qs), problemi = [...v.qualita.filter(p => p.sev === 'err')];
+    for (const r of rs) for (const m of r.motivi) problemi.push({ sev: 'err', id: r.id, msg: m } as ProblemaQ);
+    const piano = DiagnosiQuiz.pianoPatch(qs, problemi), letto = DiagnosiQuiz.leggiPatch(JSON.stringify(risposta)), patch = 'patch' in letto ? letto.patch : [];
+    const ap = DiagnosiQuiz.applicaPatch(qs, patch, piano), applicate = ap.qs as DomAI[], idsPatch = new Set(patch.map(p => testo(p.id)).filter(Boolean));
     const out: EsitoValidazioneDomandaQuiz[] = [], gia = esistenti.slice();
     rs.forEach((r, i) => {
       const tentativi = r.tentativi + 1, e = validaDomande([applicate[i] || r.domanda], pagine, gia, tentativi)[0];
-      if (!idsPatch.has(r.id) && e.stato !== 'pronta') e.motivi = [...new Set(['Correzione: nessuna patch ricevuta per questa domanda', ...e.motivi])];
+      const rifiuto = ap.rifiutate.find(x => x.startsWith(r.id + ':'));
+      if ((!idsPatch.has(r.id) || rifiuto) && e.stato !== 'pronta') e.motivi = [...new Set([rifiuto ? 'Correzione: ' + rifiuto : 'Correzione: nessuna patch ricevuta per questa domanda', ...e.motivi])];
+      e.cronologia = [...(r.cronologia || []), { tentativo: tentativi, motivi: e.motivi.slice(), campi: piano[r.id] || [], esito: e.stato }];
       out.push(e); if (e.stato === 'pronta') gia.push(e.domanda);
     });
     return out;

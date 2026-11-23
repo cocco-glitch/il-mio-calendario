@@ -33,8 +33,11 @@ with sync_playwright() as p:
         ms = pg.evaluate(PRIMO % js); ok(ms < 200, 'primo disegno %s < 200 ms (%d)' % (nome, ms))
     BUDGET = {'oggi': 130, 'agenda': 230, 'mese': 350, 'errori': 450, 'statistiche': 350}
     for nome,js in [('oggi',"vai('oggi')"),('agenda',"vai('cal','agenda')"),('mese',"vai('cal','mese')"),('errori',"UI.studioVista='errori';vai('studio')"),('statistiche',"UI.studioVista='statistiche';vai('studio')"),('esami',"UI.studioVista='esami';vai('studio')"),('altro',"vai('altro')")]:
-        ms = pg.evaluate("(()=>{const t=performance.now();%s;disegna();return Math.round(performance.now()-t)})()"%js)
-        print('%-12s %4d ms'%(nome,ms))
+        # Un singolo campione sotto throttling 4× oscillava 59–140 ms per il solo scheduling di Chromium.
+        # La mediana conserva gli stessi floor e boccia una lentezza sostenuta, non un picco isolato.
+        campioni = pg.evaluate("(()=>{const r=[];for(let i=0;i<3;i++){const t=performance.now();%s;disegna();r.push(Math.round(performance.now()-t))}return r})()"%js)
+        ms = sorted(campioni)[1]
+        print('%-12s %4d ms  campioni=%s'%(nome,ms,campioni))
         if nome in BUDGET: ok(ms < BUDGET[nome], '%s < %d ms (%d)' % (nome, BUDGET[nome], ms))
     pg.evaluate("vai('oggi')")
     ms = pg.evaluate("(()=>{const t=performance.now();Stato.salva({id:'task-prova-tempi',type:'task',updatedAt:0,titolo:'Prova tempi',fatto:false});disegna();return Math.round(performance.now()-t)})()")
