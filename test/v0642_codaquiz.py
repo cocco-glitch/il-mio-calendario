@@ -105,6 +105,56 @@ with sync_playwright() as p:
     }""", ACC_B)
     ok(ripresa == ['completato', 7, 7, 2, 'completato'], 'reload e ripresa completano senza ID duplicati (%s)' % ripresa)
 
+    # P0.65: una singola pagina PDF enorme non deve oltrepassare il budget del prompt Groq.
+    pagina_lunga = a.evaluate("""async acc => {
+      const testo = ('La membrana regola il trasporto selettivo di soluti e acqua. ').repeat(900);
+      await CodaQuizRunner.creaDaPaginePdf(acc, 'pagina-lunga.pdf', 'sha256:pagina-lunga', [{ n:1, testo }],
+        { quantita:5, materia:'Biologia', argomento:'membrana', maxPerBatch:5, maxCaratteriFonte:12000 });
+      let caratteri = 0, limite = 0;
+      const chiama = async m => {
+        caratteri = m[0].content.length + m[1].content.length;
+        limite = Math.floor(IA._r.budget('groq', 'contesto-ristretto', 3250) * 3.5);
+        if (caratteri > limite) throw new Error('Il testo è troppo lungo per i modelli disponibili: accorcialo, oppure aggiungi la chiave Gemini.');
+        return { prov:'groq-mock', modello:'contesto-ristretto', j:{ formato:'quiz-v4', quiz:[{ tipo:'mcq', livello:2,
+          domanda:'Quale funzione svolge la membrana nel trasporto dei soluti?', opzioni:['Regola il trasporto selettivo','Duplica il DNA','Produce cellulosa','Forma i cromosomi'],
+          spiegazione:'La membrana regola il trasporto selettivo di soluti e acqua. [[Fonte, p. 1]]',
+          spiegazioneDistrattori:['La duplicazione del DNA non descrive il trasporto di membrana.','La cellulosa appartiene alla parete e non regola i soluti.','I cromosomi custodiscono informazione e non trasportano soluti.'],
+          distractorTypes:['confusione_termine','misconception','plausibile_generico'], erroreTipico:'Confondere membrana e materiale genetico', fonte:'Pagina 1' }] } };
+      };
+      const r = await CodaQuizRunner.avanza(acc, 'runner-pagina-lunga', { chiama });
+      const esito = [r.esito, caratteri, limite, r.lavoro.risultati.length, r.errore || ''];
+      await CodaQuiz.annulla(acc, r.lavoro.id); await CodaQuiz.elimina(acc, r.lavoro.id);
+      return esito;
+    }""", ACC_B)
+    ok(pagina_lunga[0] == 'checkpoint' and pagina_lunga[1] <= pagina_lunga[2] and pagina_lunga[3] == 1,
+       'pagina PDF lunga rispetta il budget Groq e completa il batch (%s)' % pagina_lunga)
+
+    # P0.65: le riparazioni Groq restano chirurgiche; cinque domande bocciate non viaggiano nello stesso prompt.
+    correzione_lunga = a.evaluate("""async acc => {
+      const fonte = ('Il trasporto di membrana dipende da gradienti e proteine selettive. ').repeat(500);
+      await CodaQuizRunner.creaDaPaginePdf(acc, 'correzioni-lunghe.pdf', 'sha256:correzioni-lunghe', [{ n:1, testo:fonte }],
+        { quantita:5, materia:'Biologia', argomento:'trasporto', maxPerBatch:5, maxCaratteriFonte:12000 });
+      const genera = async () => ({ prov:'groq-mock', modello:'genera', j:{ formato:'quiz-v4', quiz:Array.from({length:5}, (_,i) => ({
+        tipo:'mcq', livello:2, domanda:'Come funziona il trasporto di membrana nel caso '+i+'? '+('Dettaglio contestuale. '.repeat(45)),
+        opzioni:['Attraverso gradienti e proteine','Duplicando il DNA','Sintetizzando cellulosa','Formando cromosomi'],
+        spiegazione:'Breve', erroreTipico:'Confusione', fonte:'Pagina 1' })) } });
+      const primo = await CodaQuizRunner.avanza(acc, 'runner-correzioni-lunghe', { chiama:genera });
+      let caratteri=0, limite=0, maxOut=0;
+      const correggi = async (m,o) => {
+        maxOut=o.maxOut; caratteri=m.reduce((n,x)=>n+x.content.length,0);
+        limite=Math.floor(IA._r.budget('groq','contesto-ristretto',maxOut)*3.5);
+        if (caratteri > limite) throw new Error('Il testo è troppo lungo per i modelli disponibili: accorcialo, oppure aggiungi la chiave Gemini.');
+        return { prov:'groq-mock', modello:'corregge', j:[] };
+      };
+      const secondo = await CodaQuizRunner.avanza(acc, 'runner-correzioni-lunghe', { chiama:correggi });
+      const tentativi=secondo.lavoro.revisioni.map(x=>x.tentativi), esito=[primo.lavoro.revisioni.length,secondo.esito,caratteri,limite,maxOut,tentativi.filter(x=>x===1).length,secondo.errore||''];
+      await CodaQuiz.annulla(acc, secondo.lavoro.id); await CodaQuiz.elimina(acc, secondo.lavoro.id);
+      return esito;
+    }""", ACC_B)
+    ok(correzione_lunga[0] == 5 and correzione_lunga[1] == 'checkpoint' and correzione_lunga[2] <= correzione_lunga[3]
+       and correzione_lunga[4] == 900 and correzione_lunga[5] == 1,
+       'correzione Groq singola rispetta il budget e non blocca le altre (%s)' % correzione_lunga)
+
     # Tutti i provider indisponibili: il lavoro resta in coda con quando riprovare; poi riparte una volta sola.
     retry_b = a.evaluate("""async acc => {
       await CodaQuizRunner.creaDaTesto(acc, 'Testo diverso e sufficiente per una domanda.', { quantita:1, argomento:'retry' }, 'retry-429');

@@ -42,6 +42,14 @@ with sync_playwright() as p:
       return {n:s&&s.n,ok:s&&s.ok,neuro:s&&s.neuro,prog:Studio.prog('qc-v065-rollback')||null,errori:Domande.aperte().length,carte:Carte.carte().length,nota:p.nota||null,dovuti:CodaRipasso.dovuti().length,undoFatica:window.__undoFatica}; }""")
     ok(dopo['n']==0 and dopo['ok']==0 and not dopo['neuro'],'annulla ritira contatori e stato FSRS della carta quiz')
     ok(dopo['prog'] is None and dopo['errori']==0 and dopo['carte']==0 and dopo['nota'] is None,'annulla ritira progresso, Errori, carte e de-load derivato %s' % dopo)
+    pg.evaluate('Stato.scritto()'); pg.reload(); pg.wait_for_selector('.tabbar')
+    ricaricato=pg.evaluate("""() => { const s=Stato.tutti('statq')[0],p=Studio.pkPiani().find(x=>x.id==='ai-rollback');
+      return {n:s&&s.n,ok:s&&s.ok,neuro:s&&s.neuro,prog:Studio.prog('qc-v065-rollback')||null,errori:Domande.aperte().length,
+        carte:Carte.carte().length,nota:p&&p.nota||null,dovuti:CodaRipasso.dovuti().length}; }""")
+    ok(ricaricato['n']==0 and ricaricato['ok']==0 and not ricaricato['neuro'] and ricaricato['prog'] is None,
+       'rollback di contatori, FSRS e progresso persiste dopo reload %s' % ricaricato)
+    ok(ricaricato['errori']==0 and ricaricato['carte']==0 and ricaricato['nota'] is None,
+       'rollback di Errori, Ripassa e piano persiste dopo reload')
 
 print('\n'+('TUTTO OK' if not err else '%d ERRORI'%len(err)),*err,sep='\n')
 raise SystemExit(1 if err else 0)

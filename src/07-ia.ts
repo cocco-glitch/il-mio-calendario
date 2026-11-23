@@ -318,6 +318,8 @@ const IA = (() => {
   const stimaTok = (msgs: Msg[]) => Math.ceil(msgs.reduce((s, x) => s + (typeof x.content === 'string' ? x.content.length
     : Array.isArray(x.content) ? x.content.reduce((a: number, c: any) => a + (c && typeof c.text === 'string' ? c.text.length : 0), 0) : 0), 0) / 3.5);
   const budget = (p: Prov, m: string, out: number) => Math.min(LIMITI[p].ctx, Math.floor(0.7 * sm(p, m).tpm)) - out;
+  /** Budget d'ingresso che resta valido anche sul provider gratuito piu' stretto; include solo i messaggi, non l'output. */
+  const budgetCaratteriPrudente = (out: number) => Math.max(0, Math.floor(Math.min(...PROVS.map(p => Math.min(LIMITI[p].ctx, Math.floor(0.7 * LIMITI[p].tpm)) - out)) * 3.5));
   /** Motivo per cui il modello va saltato ora ('' = utilizzabile). */
   function bloccato(p: Prov, m: string, serve: number, k: string): string {
     const ora = Date.now(), P = RP[p], s = sm(p, m);
@@ -437,6 +439,7 @@ const IA = (() => {
     const k = chiave(f.prov);
     const corpo: any = { model: f.modello, temperature: o.temp == null ? .3 : o.temp, messages: m2 };
     if (o.maxOut) corpo[f.prov === 'groq' ? 'max_completion_tokens' : 'max_tokens'] = o.maxOut;
+    if (f.prov === 'groq' && /gpt-oss/i.test(f.modello)) { corpo.reasoning_effort = 'low'; corpo.include_reasoning = false; }
     if (comeJson) corpo.response_format = { type: 'json_object' };
     let res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
     if (res.status === 400 && corpo.response_format && !(f.prov === 'requesty' && sm(f.prov, f.modello).finoA > Date.now())) { delete corpo.response_format; res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok); }   // modello senza modalità JSON
@@ -572,7 +575,7 @@ const IA = (() => {
       via.forEach(k => localStorage.removeItem(k));
     } catch (_) { /* localStorage non disponibile: nulla da pulire */ }
   })();
-  return { chiedi, testo, json: (msgs: Msg[], r: Ruolo, o?: Opz) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro,
+  return { chiedi, testo, json: (msgs: Msg[], r: Ruolo, o?: Opz) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro, budgetCaratteriPrudente,
     chiave, impostaChiave, tutteChiavi, formatoOk, stato, snapshotQuote, impostaTimeout, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
     _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, CATENA, get RM() { return RM; } },
     get gemini() { return !!chiave('gemini'); } };

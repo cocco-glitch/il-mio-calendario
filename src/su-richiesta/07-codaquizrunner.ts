@@ -68,15 +68,35 @@ const CodaQuizRunner = (() => {
     return creaDaPaginePdf(account, file.name, 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine, o);
   }
 
-  function selezionaPagine(l: LavoroQuiz, batch: number): PaginaSorgenteQuiz[] {
-    const input = l.input, max = intero(l.specifica.maxCaratteriFonte, 2000, 24000, 12000); if (!input) return [];
+  const maxOutPer = (n: number) => Math.min(4096, Math.max(900, n * 650));
+  function limiteDaMessaggi(l: LavoroQuiz, maxOut: number, messaggi: Array<{ content: string }>): number {
+    const configurato = intero(l.specifica.maxCaratteriFonte, 2000, 24000, 12000);
+    const istruzioni = messaggi.reduce((tot, m) => tot + m.content.length, 0) + 80;
+    const budget = typeof IA === 'undefined' ? configurato + istruzioni : IA.budgetCaratteriPrudente(maxOut);
+    return Math.max(0, Math.min(configurato, budget - istruzioni));
+  }
+  const limiteFonte = (l: LavoroQuiz, n: number) => limiteDaMessaggi(l, maxOutPer(n), prompt(l, n, []));
+  const limiteCorrezione = (l: LavoroQuiz, revisioni: RevisioneDomandaQuiz[]) =>
+    limiteDaMessaggi(l, maxOutPer(revisioni.length), CodaQuizQualita.promptCorrezione(revisioni, []));
+  function ritagliaPagine(pagine: PaginaSorgenteQuiz[], batch: number, max: number): PaginaSorgenteQuiz[] {
+    if (max <= 0) return [];
+    const finestra = (p: PaginaSorgenteQuiz): PaginaSorgenteQuiz => {
+      if (p.testo.length <= max) return p;
+      const blocchi = Math.ceil(p.testo.length / max), da = (batch % blocchi) * max;
+      return { n: p.n, testo: p.testo.slice(da, da + max).trim() };
+    };
+    const out: PaginaSorgenteQuiz[] = []; let caratteri = 0;
+    for (const originale of pagine) { const p = finestra(originale); if (out.length && caratteri + p.testo.length > max) continue; out.push(p); caratteri += p.testo.length; if (caratteri >= max) break; }
+    return out;
+  }
+  function selezionaPagine(l: LavoroQuiz, batch: number, n = grandezzaBatch(l)): PaginaSorgenteQuiz[] {
+    const input = l.input, max = limiteFonte(l, n); if (!input) return [];
     const chiavi = [...new Set<string>(parole(String(l.specifica.materia || '') + ' ' + String(l.specifica.argomento || '')))];
     const righe = input.pagine.map(p => ({ p, punti: chiavi.reduce((n, k) => n + (parole(p.testo).includes(k) ? 1 : 0), 0) }))
       .sort((a, b) => b.punti - a.punti || a.p.n - b.p.n);
     if (!righe.length) return [];
-    const ruotate = righe.slice(batch % righe.length).concat(righe.slice(0, batch % righe.length)), out: PaginaSorgenteQuiz[] = []; let n = 0;
-    for (const r of ruotate) { if (out.length && n + r.p.testo.length > max) continue; out.push(r.p); n += r.p.testo.length; if (n >= max) break; }
-    return out.sort((a, b) => a.n - b.n);
+    const ruotate = righe.slice(batch % righe.length).concat(righe.slice(0, batch % righe.length));
+    return ritagliaPagine(ruotate.map(r => r.p), batch, max).sort((a, b) => a.n - b.n);
   }
   function grandezzaBatch(l: LavoroQuiz): number {
     const fatti = (l.risultati || []).length + (l.revisioni || []).length, totale = intero(l.specifica.quantita, 1, 200, 30), foglio = 18 - (fatti % 18);
@@ -108,10 +128,11 @@ const CodaQuizRunner = (() => {
       l = await CodaQuiz.prossimo(account, proprietario, t0);
       if (!l) return { esito: 'vuoto' };
       const n = grandezzaBatch(l), totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length;
-      const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, intero(l.specifica.maxPerBatch, 1, 8, 5));
-      const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input ? l.input.pagine.filter(p => numeri.has(p.n)) : selezionaPagine(l, batch);
+      const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, 1);
+      const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input
+        ? ritagliaPagine(l.input.pagine.filter(p => numeri.has(p.n)), batch, limiteCorrezione(l, pendenti)) : selezionaPagine(l, batch, n);
       if (pendenti.length) {
-        const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o)), opzioni = { maxOut: Math.min(4096, Math.max(900, pendenti.length * 650)), tronca: false as const, prudente: true,
+        const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o)), opzioni = { maxOut: maxOutPer(pendenti.length), tronca: false as const, prudente: true,
           archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
         const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
         let r: { j: unknown; prov: string; modello: string };
@@ -122,7 +143,7 @@ const CodaQuizRunner = (() => {
         return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
       }
       if (!n || !pagine.length) throw new Error('la sorgente non contiene testo utilizzabile');
-      const opzioni = { maxOut: Math.min(4096, Math.max(900, n * 650)), tronca: false as const, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+      const opzioni = { maxOut: maxOutPer(n), tronca: false as const, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
       const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o));
       const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
       let r: { j: unknown; prov: string; modello: string };

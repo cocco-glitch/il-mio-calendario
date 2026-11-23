@@ -61,6 +61,12 @@ with sync_playwright() as p:
     ok(r['g']['origineQuota'] == 'misurata' and r['g']['quotaDisponibile'] == 7 and r['g']['microBatchResidui'] <= 7 and r['g']['ultimoErroreHttp'] == 429 and r['g']['ripristinoIl'] > 0, 'header quota misurato, stima prudenziale e 429 diagnosticato')
     ok(len(r['h']) == 1 and r['h'][0]['da'].startswith('groq:') and r['h'][0]['a'].startswith('groq:'), 'storico sintetico del failover registrato')
 
+    # GPT-OSS: il ragionamento resta basso e fuori dalla risposta, per lasciare spazio al JSON del quiz.
+    r = E("""async () => { let corpo=null; prepara65({groq:'gsk_prova'}, async (p,c) => { corpo=c; return new Response(JSON.stringify({choices:[{message:{content:'{\"ok\":true}'}}]})); });
+      await IA.chiedi([{role:'user',content:'Rispondi in JSON'}], 'genera', {prudente:true,maxOut:900});
+      return {effort:corpo.reasoning_effort,include:corpo.include_reasoning,formato:corpo.response_format&&corpo.response_format.type}; }""")
+    ok(r == {'effort':'low','include':False,'formato':'json_object'}, 'Groq GPT-OSS riserva il completamento al JSON (%s)' % r)
+
     # Timeout al primo byte su POST: consumo incerto, nessun secondo provider/modello automatico.
     r = E("""async () => { prepara65({ groq:'gsk_prova' }, async (p, c, o) => await new Promise((resolve, reject) => {
         const t = setTimeout(() => resolve(new Response(JSON.stringify({choices:[{message:{content:'tardi'}}]}))), 200);
