@@ -54,6 +54,14 @@ t('nuovo lavoro contiene stato, tentativi, sorgente/versione, prossimo tentativo
   const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 30 }, 1000);
   eq([l.stato, l.tentativi, l.sorgente.versione, l.prossimoTentativoIl, l.ultimoErrore, l.creatoIl, l.aggiornatoIl], ['in_coda', 0, 'sha256:abc', null, null, 1000, 1000]);
 });
+t('piano quantità → un lavoro esatto per microstep, totale invariato e batch separato', () => {
+  const piano = { totale: 12, perMicrostep: [
+    { id: '3.3.1', quantita: 7, motivi: ['Ampiezza.'] }, { id: '3.3.2', quantita: 5, motivi: ['Applicazioni.'] },
+  ], avvisi: [] };
+  const lavori = CQ.lavoriDaPiano('a@example.it', SRC_CQ, { quantita: 99, materia: 'Biologia', step: '3.3', maxPerBatch: 4 }, piano, 2000);
+  eq(lavori.map(l => [l.specifica.microstep, l.specifica.quantita, l.specifica.maxPerBatch]), [['3.3.1', 7, 4], ['3.3.2', 5, 4]]);
+  eq([new Set(lavori.map(l => l.id)).size, lavori.reduce((n, l) => n + Number(l.specifica.quantita), 0)], [2, 12]);
+});
 t('macchina a stati: pausa/ripresa/esecuzione/completamento ammessi, terminali bloccati', () => {
   const l = CQ.nuovo('a@example.it', SRC_CQ, {}, 1), p = CQ.cambia(l, 'in_pausa', 2), q = CQ.cambia(p, 'in_coda', 3), e = CQ.cambia(q, 'in_esecuzione', 4), f = CQ.cambia(e, 'completato', 5);
   eq([p.stato, q.stato, e.stato, f.stato], ['in_pausa', 'in_coda', 'in_esecuzione', 'completato']);
@@ -67,12 +75,12 @@ t('fondazione P0-A senza rete, router AI, OCR o racing', () => {
 
 console.log('\n== P0-B runner sequenziale ==');
 const CQR = serve(sb.CodaQuizRunner, 'CodaQuizRunner');
-t('specifica e micro-batch rispettano 1..200, massimo 8 e confine da 18 domande', () => {
+t('specifica e micro-batch rispettano 1..200 e massimo provider 8, senza confine storico da 18', () => {
   const sp = CQR.specifica({ quantita: 500, maxPerBatch: 99, maxCaratteriFonte: 1 });
   eq([sp.quantita, sp.maxPerBatch, sp.maxCaratteriFonte], [200, 8, 2000]);
   const l = CQ.nuovo('a@example.it', SRC_CQ, sp, 1, { pagine: [{ n: 1, testo: 'membrana cellulare' }], pagineVuote: 0 });
   l.risultati = Array.from({ length: 17 }, (_, i) => ({ id: 'q' + i }));
-  eq(CQR.grandezzaBatch(l), 1);
+  eq(CQR.grandezzaBatch(l), 8);
 });
 t('testo spezzato e pagine pertinenti scelte entro il budget', () => {
   const ps = CQR.pagineTesto('Membrana e fosfolipidi.\n\n' + 'x'.repeat(5100));
@@ -85,6 +93,12 @@ t('risposta del router passa dal Contratto e riceve ID deterministici dall’app
   const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 2, step: '3.3' }, 1, { pagine: [{ n: 1, testo: 'x' }], pagineVuote: 0 });
   const qs = CQR.domandeDa({ formato: 'quiz-v4', quiz: [{ tipo: 'mcq', livello: 2, domanda: 'Quale affermazione è corretta?', opzioni: ['A', 'B', 'C', 'D'], spiegazione: 'Spiegazione', erroreTipico: 'Errore', fonte: 'Pagina 1' }] }, l, 1);
   vero(qs.length === 1 && /^3\.3-S01-01$/.test(qs[0].id) && Number.isInteger(qs[0].esatta), JSON.stringify(qs));
+});
+t('gli ID della coda avanzano oltre 18 senza creare una nuova scheda storica', () => {
+  const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 30, step: '3.3', microstep: '3.3.1' }, 1, { pagine: [{ n: 1, testo: 'x' }], pagineVuote: 0 });
+  l.risultati = Array.from({ length: 19 }, (_, i) => ({ id: 'esistente-' + (i + 1) }));
+  const qs = CQR.domandeDa({ formato: 'quiz-v4', quiz: [{ tipo: 'mcq', livello: 2, domanda: 'Quale affermazione è corretta?', opzioni: ['A', 'B', 'C', 'D'], spiegazione: 'Spiegazione', erroreTipico: 'Errore', fonte: 'Pagina 1' }] }, l, 1);
+  eq([qs[0].id, qs[0].sottoStep], ['3.3-S01-20', '3.3.1']);
 });
 t('runner usa solo IA.chiedi in sequenza: nessun fetch, Promise.all o racing proprio', () => {
   const s = leggi('su-richiesta/07-codaquizrunner.ts');
@@ -105,7 +119,22 @@ t('validazione per domanda: formato, fonte e didattica producono pronta; il dupl
 });
 t('validazione del pacchetto resta separata e solo le pronte contano nella copertura', () => {
   const r = CQQ.rapporto([prontaQ()], [{ id: 'x', domanda: { ...prontaQ('x'), fonte: '' }, stato: 'da_rivedere', tentativi: 3, motivi: ['Fonte'], pagine: [] }], 99);
-  eq([r.pronte, r.daCorreggere, r.daRivedere, r.aggiornatoIl], [1, 0, 1, 99]); vero(r.problemiPacchetto.some(x => /domande invece di 18/.test(x)), r.problemiPacchetto.join('; '));
+  eq([r.pronte, r.daCorreggere, r.daRivedere, r.aggiornatoIl], [1, 0, 1, 99]); vero(!r.problemiPacchetto.some(x => /domande invece di 18/.test(x)), r.problemiPacchetto.join('; '));
+});
+t('correzione fonte reale: alias explanation e solo sourceRef aggiornano la coppia fonte/sourceRef', () => {
+  const q = { ...prontaQ('fonte-reale'), fonte: 'Pagina 99', sourceRef: 'Pagina 99', spiegazione: 'Testo non verificato. [[Fonte, p. 99]]' };
+  const rev = { id: q.id, domanda: q, stato: 'da_correggere', tentativi: 0, motivi: ['Fonte: manca una pagina presente nel micro-batch'], pagine: [7] };
+  const risposta = [{ id: q.id, sourceRef: 'Pagina 7', explanation: prontaQ().spiegazione }];
+  const e = CQQ.applicaCorrezioni([rev], risposta, PAG_Q, []);
+  eq([e[0].domanda.fonte, e[0].domanda.sourceRef, e[0].stato], ['Pagina 7', 'Pagina 7', 'pronta']);
+});
+t('fonte locale: pagina inesistente riallineata dal testo e bias singolo non consuma correzioni AI', () => {
+  const q = { ...prontaQ('fonte-locale'), fonte: 'Pagina 999', sourceRef: 'Pagina 999',
+    opzioni: ['I fosfolipidi formano il doppio strato della membrana', 'DNA', 'ATP', 'RNA'],
+    spiegazione: 'I fosfolipidi e le proteine caratterizzano la membrana cellulare. [[Fonte, p. 999]]' };
+  const e = CQQ.validaDomande([q], PAG_Q)[0];
+  eq([e.stato, e.domanda.fonte, e.domanda.sourceRef, e.pagine.join(',')], ['pronta', 'Pagina 7', 'Pagina 7', '7']);
+  vero(/\[\[Fonte, p\. 7\]\]/.test(e.domanda.spiegazione), e.domanda.spiegazione);
 });
 t('correzione chirurgica contiene solo le bocciate e dopo il terzo esito negativo passa da_rivedere', () => {
   const rev = { id: 'male', domanda: { ...prontaQ('male'), fonte: '', sourceRef: '' }, stato: 'da_correggere', tentativi: 2, motivi: ['Fonte: manca'], pagine: [] };
@@ -116,6 +145,12 @@ t('pacchetto di innesto usa solo risultati pronti e conserva step e microstep sc
   const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 2, materia: 'Biologia', step: '3.3', microstep: '3.3.2', argomento: 'Membrane' }, 1);
   l.risultati = [prontaQ()]; l.revisioni = [{ id: 'x', domanda: prontaQ('x'), stato: 'da_rivedere', tentativi: 3, motivi: ['fonte'], pagine: [] }];
   const p = CQQ.pacchetto(l); eq([p.meta.stepId, p.meta.sottoStep, p.quiz.length, p.quiz[0].sottoStep], ['biologia-3.3', '3.3', 1, '3.3.2']);
+});
+t('prova immediata traduce solo le domande pronte senza richiedere innesto o step numerico', () => {
+  const l = CQ.nuovo('a@example.it', SRC_CQ, { quantita: 2, materia: 'Biologia', argomento: 'Membrane' }, 1);
+  l.risultati = [prontaQ()]; l.revisioni = [{ id: 'x', domanda: prontaQ('x'), stato: 'da_rivedere', tentativi: 3, motivi: ['fonte'], pagine: [] }];
+  const qs = CQQ.domandeProva(l);
+  eq([qs.length, qs[0].q, qs[0].sk], [1, prontaQ().domanda, 'prova-coda-' + l.id]);
 });
 
 // =====================================================================

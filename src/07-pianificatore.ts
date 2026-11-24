@@ -29,6 +29,8 @@ interface ConfigLivelloIntensita {
   abilitaCornellAuto: boolean; abilitaTrabocchetti: boolean; abilitaMiniCasiCatena: boolean;
   gradoInterleaving: 'nessuno' | 'intra_materia' | 'multi_materia'; pauseWakefulRestMin: number; moltiplicatoreResaEquivalente: number;
 }
+interface BancaMicroQuiz<T extends { id: string }> { microstep: string; domande: T[]; }
+interface SessioneMicroQuiz<T extends { id: string }> { microstep: string; richieste: number; disponibili: number; domande: T[]; }
 interface ProfiloBiopsicologico {
   fasciaEta: '<16' | '16-19' | '20-26' | '27-40' | '40+';
   cronotipo: 'allodola_mattina' | 'intermedio' | 'pomeridiano' | 'gufo_sera';
@@ -481,6 +483,16 @@ const Pianificatore = (() => {
   /** v0.60 «Taglio»: 3 livelli invece di 5. I piani salvati con 4 o 5 vengono portati a 3 (il più vicino) alla lettura. */
   const livelloValido = (x: any): IntensitaPiano => clamp(Math.round(+x) || 2, 1, 3) as IntensitaPiano;
   const configLivello = (l: number) => MATRICE_LIVELLI[livelloValido(l) - 1];
+  /** Seleziona una sessione breve dalla banca pronta. Non cambia la copertura totale e conserva il microstep. */
+  function sessioniQuiz<T extends { id: string }>(banche: BancaMicroQuiz<T>[], livello: number): SessioneMicroQuiz<T>[] {
+    const richieste = configLivello(livello).itemPerMicroQuiz;
+    return (banche || []).map(b => {
+      const viste = new Set<string>(), pronte = (b.domande || []).filter(d => {
+        const id = String(d && d.id || '').trim(); if (!id || viste.has(id)) return false; viste.add(id); return true;
+      });
+      return { microstep: String(b.microstep || '').trim(), richieste, disponibili: pronte.length, domande: pronte.slice(0, richieste) };
+    }).filter(x => !!x.microstep);
+  }
   const PROFILO_BASE: ProfiloBiopsicologico = { fasciaEta: '20-26', cronotipo: 'intermedio', autonomiaBRACMin: 55, oreSonnoMedie: '7-8', reazioneErrore: 'sfida_attiva', canalePreferito: 'quiz_immediati' };
 
   /** Blocco A del questionario: 6 domande universali, 0 token, linguaggio semplice. */
@@ -800,7 +812,7 @@ const Pianificatore = (() => {
     unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
     compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
     // v0.56 (BP5)
-    MATRICE_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
+    MATRICE_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, sessioniQuiz, normalizzaProfilo, applicaGuardRailBiologici,
     picchiCircadiani, modalitaOffloading, allocaGiornata, pesiIniziali, applicaRisposte, paroleChiaveBM25, domandeCalibrazioneDefault, promptCalibrazione,
     leggiDomandeCalibrazione, generaDomandeCalibrazione, monitoraAffaticamento, attivaDeload, livelloEffettivo, aggiornaDeload };
 })();

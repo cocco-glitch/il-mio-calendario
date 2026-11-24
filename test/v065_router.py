@@ -41,8 +41,19 @@ with sync_playwright() as p:
     r = E("""() => { IA.azzera(); const s = IA.snapshotQuote(); return { keys: Object.keys(s.provider), one: s.provider.groq, history: s.failover }; }""")
     ok(r['keys'] == ['groq', 'gemini', 'xkiro', 'cohere', 'requesty'], 'snapshot contiene tutti e soli i provider noti')
     one = r['one']
-    campi = ['id', 'haChiave', 'modello', 'stato', 'origineQuota', 'quotaDisponibile', 'quotaStimata', 'aggiornatoIl', 'ripristinoIl', 'ultimoErroreHttp', 'ultimoErroreRete', 'ultimoFailover', 'microBatchResidui']
+    campi = ['id', 'haChiave', 'modello', 'stato', 'origineQuota', 'quotaDisponibile', 'quotaStimata', 'aggiornatoIl', 'ultimoSuccessoIl', 'ripristinoIl', 'ultimoErroreHttp', 'ultimoErroreRete', 'ultimoFailover', 'microBatchResidui']
     ok(all(k in one for k in campi) and one['stato'] == 'senza_chiave' and one['haChiave'] is False and r['history'] == [], 'snapshot stabile e nessun valore della chiave esposto')
+
+    # Una chiave configura il provider ma non garantisce risposta/quota; solo un successo osservato lo rende disponibile.
+    r = E("""async () => { prepara65({groq:'gsk_prova'}, async () => new Response(JSON.stringify({choices:[{message:{content:'ok'}}]})));
+      const prima=IA.snapshotQuote().provider.groq; await IA.testo([{role:'user',content:'ciao'}], 'genera'); const dopo=IA.snapshotQuote().provider.groq;
+      return {prima:prima.stato,dopo:dopo.stato,successo:dopo.ultimoSuccessoIl}; }""")
+    ok(r['prima'] == 'configurato' and r['dopo'] == 'disponibile' and r['successo'], 'configurato non equivale a disponibile; il successo osservato aggiorna lo stato')
+
+    # Il budget segue il provider/modello candidato: Gemini non eredita il limite TPM piu' stretto di Groq.
+    r = E("""async () => { prepara65({groq:'gsk_prova',gemini:'AIza-prova'}, async () => new Response('{}'));
+      const piano=await IA.pianificaBudgetCaratteri('genera',3250); return {piano,groq:IA.budgetCaratteriPrudente(3250,'groq'),gemini:IA.budgetCaratteriPrudente(3250,'gemini')}; }""")
+    ok(r['piano']['prov'] == 'gemini' and r['piano']['caratteri'] > r['groq'] and r['gemini'] > r['groq'], 'budget calcolato sul provider/modello candidato (%s)' % r)
 
     # Quota locale: è una stima, non una misura del provider; guardia 85% esplicita.
     r = E("""() => { prepara65({ groq: 'gsk_prova' }, async () => new Response('{}'));
@@ -85,6 +96,19 @@ with sync_playwright() as p:
       let e=''; try { await IA.chiedi([{role:'user',content:'json'}], 'genera', {prudente:true}); } catch(x) {e=x.message;}
       return {e,n:LOG65.length,rete:IA.snapshotQuote().provider.groq.ultimoErroreRete}; }""")
     ok(r['n'] == 1 and r['rete'] == 'timeout_risposta' and 'incerto' in r['e'].lower(), 'timeout del corpo classificato e non duplicato %s' % r)
+
+    # HTTP 500/503 dopo un POST possono avere consumato la richiesta: in prudente si ferma senza failover cieco.
+    for stato in (500, 503):
+      r = E("""async stato => { prepara65({groq:'gsk_prova'}, async () => new Response(JSON.stringify({error:{message:'server'}}),{status:stato}));
+        let e=''; try { await IA.chiedi([{role:'user',content:'json'}], 'genera', {prudente:true}); } catch(x) {e=x.message;}
+        const s=IA.snapshotQuote(); return {e,n:LOG65.length,http:s.provider.groq.ultimoErroreHttp,h:s.failover}; }""", stato)
+      ok(r['n'] == 1 and r['http'] == stato and not r['h'] and 'incerto' in r['e'].lower(), 'HTTP %d prudente: stop senza doppio consumo (%s)' % (stato, r))
+
+    # Un TypeError di fetch non dimostra CORS: resta un errore di rete a origine non determinabile.
+    r = E("""async () => { prepara65({groq:'gsk_prova'}, async () => { throw new TypeError('Failed to fetch'); });
+      let e=''; try { await IA.chiedi([{role:'user',content:'json'}], 'genera', {prudente:true}); } catch(x) {e=x.message;}
+      const s=IA.snapshotQuote(); return {e,n:LOG65.length,rete:s.provider.groq.ultimoErroreRete,h:s.failover}; }""")
+    ok(r['n'] == 1 and r['rete'] == 'errore_rete' and not r['h'] and 'cors' not in r['e'].lower(), 'errore fetch classificato come rete non determinabile, senza falso CORS (%s)' % r)
 
     # Risposta malformata in modalità prudente: niente correzione/failover che consumi una seconda richiesta.
     r = E("""async () => { prepara65({groq:'gsk_prova'}, async () => new Response(JSON.stringify({choices:[{message:{content:'non json'}}]})));

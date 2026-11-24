@@ -1,5 +1,5 @@
 # P0.65: collaudo deterministico di scala quando una prova con provider reale non e' disponibile.
-# Verifica 30 domande con pausa/ripresa/reload e uno stress da 120 senza simulare quote reali.
+# Verifica fixture da 5/50/200 domande, con pausa/ripresa/reload e senza provider reali.
 import os, http.server, threading, functools, time
 from playwright.sync_api import sync_playwright
 
@@ -61,61 +61,73 @@ with sync_playwright() as p:
     account = page.evaluate('CodaQuiz.accountAttuale()')
     page.evaluate('CodaQuiz.svuotaTutto()')
 
-    # Percorso principale da 30: fonte -> selezione pagine -> prompt -> checkpoint.
+    # Fixture minima da 5: il totale coincide col micro-batch, senza eredita' del formato da 18.
+    minimo = page.evaluate("""async ([acc, fonte]) => {
+      const l=await CodaQuizRunner.creaDaTesto(acc,fonte,{quantita:5,materia:'Biologia',argomento:'membrana cellulare',maxPerBatch:8,maxCaratteriFonte:3000},'collaudo-5');
+      const chiama=__mockCollaudo(0,'fixture-minima','fixture-v1');
+      const r=await CodaQuizRunner.avanza(acc,'runner-5',{chiama}), x=r.lavoro;
+      return {esito:r.esito,pronte:x.risultati.length,checkpoint:x.checkpoint.length,richieste:x.checkpoint.reduce((n,c)=>n+c.richieste,0),ids:new Set(x.risultati.map(q=>q.id)).size};
+    }""", [account, FONTE])
+    ok(minimo == {'esito':'completato','pronte':5,'checkpoint':1,'richieste':5,'ids':5},
+       '5: totale, micro-batch e deduplica restano indipendenti dal formato storico da 18 (%s)' % minimo)
+
+    page.evaluate('CodaQuiz.svuotaTutto()')
+
+    # Percorso principale da 50: fonte -> selezione pagine -> prompt -> checkpoint.
     creato = page.evaluate("""async ([acc, fonte]) => {
-      const l=await CodaQuizRunner.creaDaTesto(acc,fonte,{quantita:30,materia:'Biologia',argomento:'membrana cellulare',step:'1.1',microstep:'1.1.1',maxPerBatch:5,maxCaratteriFonte:3000},'collaudo-30');
-      const pagine=CodaQuizRunner.selezionaPagine(l,0), prompt=CodaQuizRunner.prompt(l,5,pagine);
+      const l=await CodaQuizRunner.creaDaTesto(acc,fonte,{quantita:50,materia:'Biologia',argomento:'membrana cellulare',step:'1.1',microstep:'1.1.1',maxPerBatch:8,maxCaratteriFonte:3000},'collaudo-50');
+      const pagine=CodaQuizRunner.selezionaPagine(l,0), prompt=CodaQuizRunner.prompt(l,8,pagine);
       return {id:l.id,pagine:pagine.map(x=>x.n),testo:prompt[1].content};
     }""", [account, FONTE])
-    ok(len(creato['pagine']) >= 1 and 'Crea esattamente 5 domande' in creato['testo'] and '--- PAGINA' in creato['testo'],
-       '30: selezione della fonte e prompt del micro-batch verificati')
+    ok(len(creato['pagine']) >= 1 and 'Crea esattamente 8 domande' in creato['testo'] and '--- PAGINA' in creato['testo'],
+       '50: selezione della fonte e prompt del micro-batch verificati')
 
     t0 = time.perf_counter()
     primi = page.evaluate("""async acc => {
       const chiama=__mockCollaudo(0,'fixture-controllata','fixture-v1');
-      const a=await CodaQuizRunner.avanza(acc,'runner-30',{chiama});
-      const b=await CodaQuizRunner.avanza(acc,'runner-30',{chiama});
+      const a=await CodaQuizRunner.avanza(acc,'runner-50',{chiama});
+      const b=await CodaQuizRunner.avanza(acc,'runner-50',{chiama});
       const pausa=await CodaQuiz.pausa(acc,b.lavoro.id);
-      const fermo=await CodaQuizRunner.avanza(acc,'runner-30',{chiama});
+      const fermo=await CodaQuizRunner.avanza(acc,'runner-50',{chiama});
       return [a.esito,b.esito,b.lavoro.risultati.length,b.lavoro.checkpoint.length,pausa.stato,fermo.esito];
     }""", account)
-    ok(primi == ['checkpoint','checkpoint',10,2,'in_pausa','vuoto'], '30: due checkpoint, pausa effettiva e nessun batch aggiuntivo (%s)' % primi)
+    ok(primi == ['checkpoint','checkpoint',16,2,'in_pausa','vuoto'], '50: due checkpoint, pausa effettiva e nessun batch aggiuntivo (%s)' % primi)
 
     page.reload(); page.wait_for_selector('.tabbar'); page.evaluate('caricaStrumentiQuiz()'); page.evaluate(PREPARA)
     finale = page.evaluate("""async acc => {
       let l=(await CodaQuiz.lista(acc))[0]; await CodaQuiz.riprendi(acc,l.id);
       const chiama=__mockCollaudo((l.risultati||[]).length,'fixture-controllata','fixture-v1');
       let r=null, guardia=0;
-      do { r=await CodaQuizRunner.avanza(acc,'runner-30b',{chiama}); if(++guardia>10) throw new Error('coda 30 non termina'); }
+      do { r=await CodaQuizRunner.avanza(acc,'runner-50b',{chiama}); if(++guardia>12) throw new Error('coda 50 non termina'); }
       while(r.esito==='checkpoint');
       l=r.lavoro; return {esito:r.esito,stato:l.stato,pronte:l.risultati.length,correggere:l.rapportoQualita.daCorreggere,
         rivedere:l.rapportoQualita.daRivedere,checkpoint:l.checkpoint.length,ids:new Set(l.risultati.map(q=>q.id)).size,
         richieste:l.checkpoint.reduce((n,x)=>n+x.richieste,0),ottenute:l.checkpoint.reduce((n,x)=>n+x.ottenute,0),
         provider:[...new Set(l.checkpoint.map(x=>x.provider))],modelli:[...new Set(l.checkpoint.map(x=>x.modello))]};
     }""", account)
-    durata30 = time.perf_counter() - t0
-    ok(finale['esito']=='completato' and finale['stato']=='completato' and finale['pronte']==30 and finale['ids']==30,
-       '30: ripresa dopo reload completa 30 pronte senza duplicati (%s)' % finale)
-    ok(finale['correggere']==0 and finale['rivedere']==0 and finale['checkpoint']==7 and finale['richieste']==30 and finale['ottenute']==30,
-       '30: classificazione, confini da 18 e contatori dei checkpoint coerenti')
+    durata50 = time.perf_counter() - t0
+    ok(finale['esito']=='completato' and finale['stato']=='completato' and finale['pronte']==50 and finale['ids']==50,
+       '50: ripresa dopo reload completa 50 pronte senza duplicati (%s)' % finale)
+    ok(finale['correggere']==0 and finale['rivedere']==0 and finale['checkpoint']==7 and finale['richieste']==50 and finale['ottenute']==50,
+       '50: totale e contatori dei micro-batch coerenti, senza confini storici da 18')
     ok(finale['provider']==['fixture-controllata'] and finale['modelli']==['fixture-v1'],
-       '30: provider e modello dei checkpoint registrati distintamente')
+       '50: provider e modello dei checkpoint registrati distintamente')
 
-    # Stress deterministico 120: stessa architettura, 15 micro-batch sequenziali da 8.
+    # Stress deterministico 200: stessa architettura, 25 micro-batch sequenziali da 8.
     page.evaluate('CodaQuiz.svuotaTutto()')
     t1 = time.perf_counter()
     stress = page.evaluate("""async ([acc, fonte]) => {
-      await CodaQuizRunner.creaDaTesto(acc,fonte,{quantita:120,materia:'Biologia',argomento:'trasporto di membrana',maxPerBatch:8,maxCaratteriFonte:3000},'collaudo-120');
+      await CodaQuizRunner.creaDaTesto(acc,fonte,{quantita:200,materia:'Biologia',argomento:'trasporto di membrana',maxPerBatch:8,maxCaratteriFonte:3000},'collaudo-200');
       const chiama=__mockCollaudo(1000,'fixture-stress','fixture-v1'); let r=null,guardia=0;
-      do { r=await CodaQuizRunner.avanza(acc,'runner-120',{chiama}); if(++guardia>20) throw new Error('coda 120 non termina'); }
+      do { r=await CodaQuizRunner.avanza(acc,'runner-200',{chiama}); if(++guardia>30) throw new Error('coda 200 non termina'); }
       while(r.esito==='checkpoint');
       const l=r.lavoro; return {esito:r.esito,pronte:l.risultati.length,revisioni:l.revisioni.length,checkpoint:l.checkpoint.length,
         ids:new Set(l.risultati.map(q=>q.id)).size,richieste:l.checkpoint.reduce((n,x)=>n+x.richieste,0)};
     }""", [account, FONTE])
-    durata120 = time.perf_counter() - t1
-    ok(stress == {'esito':'completato','pronte':120,'revisioni':0,'checkpoint':20,'ids':120,'richieste':120},
-       '120: micro-batch, confini da 18, checkpoint, integrita e idempotenza (%s)' % stress)
-    ok(durata30 < 30 and durata120 < 60, 'collaudi deterministici completati in %.2fs e %.2fs' % (durata30, durata120))
+    durata200 = time.perf_counter() - t1
+    ok(stress == {'esito':'completato','pronte':200,'revisioni':0,'checkpoint':25,'ids':200,'richieste':200},
+       '200: micro-batch provider indipendenti dal formato storico da 18, integrita e idempotenza (%s)' % stress)
+    ok(durata50 < 30 and durata200 < 60, 'collaudi deterministici completati in %.2fs e %.2fs' % (durata50, durata200))
     browser.close()
 
 srv.shutdown()

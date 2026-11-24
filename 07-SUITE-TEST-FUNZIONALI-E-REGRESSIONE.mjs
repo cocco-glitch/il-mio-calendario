@@ -363,6 +363,14 @@ await t('testGuardRailBP4: prereq in ciclo sanificati prima di Kahn, data obiett
 });
 // ---------- BP5: 5 livelli, questionario 6+3, guard-rail biologici, Burnout Circuit Breaker ----------
 const minDi = (o) => +o.slice(0, 2) * 60 + +o.slice(3, 5);
+t('P0.67-D: le sessioni quiz usano 5/6/8 pronte e conservano il microstep', () => {
+  const q = (micro, n) => Array.from({ length: n }, (_, i) => ({ id: micro + '-' + (i + 1) }));
+  const banche = [{ microstep: '3.3.1', domande: [...q('3.3.1', 7), { id: '3.3.1-1' }] }, { microstep: '3.3.2', domande: q('3.3.2', 4) }];
+  eq(P.sessioniQuiz(banche, 1).map(x => [x.microstep, x.richieste, x.disponibili, x.domande.length]),
+    [['3.3.1', 5, 7, 5], ['3.3.2', 5, 4, 4]], 'livello leggero');
+  eq(P.sessioniQuiz(banche, 2)[0].domande.length, 6, 'livello standard');
+  eq(P.sessioniQuiz(banche, 3)[0].domande.length, 7, 'livello intenso limitato alle pronte');
+});
 t('testHardCapEricssonL5 (v0.60: L5 → L3): 9,5 h → analitico ≤ 270 min, il resto offloading attivo', () => {
   const rete0 = chiamateRete;
   eq(P.MATRICE_LIVELLI.length, 3); vero(P.MATRICE_LIVELLI.every(c => c.capSforzoAnaliticoMin <= 270), 'cap ≤ 270 in matrice');
@@ -906,7 +914,7 @@ t('v0.64: runner — codice in monospazio, rubrica confermata dall\'utente, ling
 
 t('v0.64.3 P0-B: ingresso UI alla coda, nessun OCR o racing, risultati scaricabili', () => {
   const ui = leggi('su-richiesta/07-codaquizui.ts'), runner = leggi('su-richiesta/07-codaquizrunner.ts'), studio = leggi('07-studio.ts');
-  vero(/CodaQuizRunner\.creaDaPdf/.test(ui) && /CodaQuizRunner\.creaDaTesto/.test(ui) && /CodaQuizRunner\.avanza/.test(ui), 'testo/PDF → runner');
+  vero(/CodaQuizRunner\.creaPianoDaPdf/.test(ui) && /CodaQuizRunner\.creaPianoDaTesto/.test(ui) && /CodaQuizRunner\.avanza/.test(ui), 'testo/PDF → piano quantità → runner');
   vero(/Pausa/.test(ui) && /Riprendi/.test(ui) && /Annulla/.test(ui) && /Scarica JSON/.test(ui), 'controlli della coda');
   vero(/CodaQuizUI\.apri\(\)/.test(studio), 'ingresso da Studio');
   vero(/IA\.chiedi\(m as any, 'genera'/.test(runner) && !/Promise\.(?:all|race|any)\s*\(/.test(runner), 'router esistente e sequenziale');

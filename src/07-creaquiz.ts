@@ -763,10 +763,35 @@ const CreaQuiz = (() => {
     }
   }
 
+  function sessioniDalPiano(p: PkPiano, v: VocePiano): SessioneMicroQuiz<DomB>[] {
+    const t = Studio.trovaSotto(v.k.replace(/^G2-/, '')); if (!t) return [];
+    const banche = t.sub.microstep.map(micro => ({ microstep: micro.n, domande: micro.schede.flatMap(s => Dominio.domandeDi(s.id) || []) }));
+    const livello = Number((p as PkPianoAI).livelloIntensita) || 2;
+    return Pianificatore.sessioniQuiz(banche, livello);
+  }
+  function apriSessioneDalPiano(p: PkPiano, v: VocePiano, sessione: SessioneMicroQuiz<DomB>): void {
+    const t = Studio.trovaSotto(v.k.replace(/^G2-/, '')); if (!t || !sessione.domande.length) return;
+    const titolo = v.t + ' · ' + sessione.microstep;
+    const s = { id: sessione.domande[0].sk, k: 1, n: 1, titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' } as SchedaS;
+    void QuizApp.apri(t.pk, t.mat.m, sessione.microstep, s, () => sessione.domande.map(d => ({ ...d })), {
+      occh: 'Sessione breve · ' + sessione.domande.length + '/' + sessione.richieste + ' pronte · banca ' + sessione.disponibili, titolo, modo: 'neuro',
+    });
+  }
   function dalPiano(p: PkPiano, v: VocePiano): void {
+    const sessioni = sessioniDalPiano(p, v).filter(x => x.domande.length);
+    if (sessioni.length === 1) { apriSessioneDalPiano(p, v, sessioni[0]); return; }
+    if (sessioni.length > 1) {
+      let f: { chiudi: () => void };
+      const corpo = h('div.modulo', null,
+        h('p.piccolo.tenue', null, 'Scegli il microstep. La sessione usa solo domande già pronte e non cambia la copertura totale della banca.'),
+        ...sessioni.map(x => h('button.btn.neutro', { type: 'button', 'aria-label': 'Avvia sessione ' + x.microstep + ' con ' + x.domande.length + ' di ' + x.richieste + ' domande pronte; banca ' + x.disponibili, onclick: () => { f.chiudi(); apriSessioneDalPiano(p, v, x); } },
+          x.microstep + ' · ' + x.domande.length + '/' + x.richieste + ' pronte · banca ' + x.disponibili)));
+      f = foglio({ titolo: 'Sessione quiz breve', corpo });
+      return;
+    }
     const esistente = tutti().find(r => r.pianoId === p.id && r.voceId === v.k);
     if (esistente) apri(esistente);
     else nuovo({ pianoId: p.id, voceId: v.k, argomento: v.t, materia: nomeMateria(p.vincoliAI?.materiaCodice || materiaDi(v.k)) });
   }
-  return { dalPiano, nuovo, elenco, apri, tutti, controlla, crea, leggero };
+  return { sessioniDalPiano, dalPiano, nuovo, elenco, apri, tutti, controlla, crea, leggero };
 })();

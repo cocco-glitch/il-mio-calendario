@@ -29,9 +29,32 @@ with sync_playwright() as p:
     a.evaluate('CodaQuizUI.apri()')
     ok(a.locator('textarea[aria-label="Testo da cui generare il quiz"]').count() == 1
        and a.get_by_role('button', name='Genera nella coda').count() == 1
-       and a.locator('input[aria-label="PDF testuale da cui generare il quiz"]').count() == 1,
-       'P0-B UI: testo, PDF testuale e avvio coda raggiungibili')
+       and a.locator('input[aria-label="Uno o più PDF testuali da cui generare il quiz"][multiple]').count() == 1,
+       'P0-B UI: testo, libro PDF multi-file e avvio coda raggiungibili')
+    a.locator('input[aria-label="Microstep di destinazione del quiz"]').fill('3.3.1, 3.3.2')
+    a.locator('select[aria-label="Modalità quantità quiz"]').select_option('manuale')
+    a.locator('input[aria-label="Numero di domande"]').fill('12')
+    a.get_by_role('button', name='Calcola proposta quantità').click()
+    proposta = a.locator('[data-piano-quantita]').inner_text()
+    ok('12 domande totali' in proposta and '3.3.1: 6' in proposta and '3.3.2: 6' in proposta,
+       'P0.67-C UI: proposta manuale visibile e ripartita per microstep (%s)' % proposta)
+    a.evaluate("CodaQuizRunner.avanza=async()=>({esito:'vuoto'})")
+    a.locator('textarea[aria-label="Testo da cui generare il quiz"]').fill('Membrane, fosfolipidi e trasporto selettivo.')
+    a.get_by_role('button', name='Genera nella coda').click()
+    a.locator('section.card[data-coda-id]').first.wait_for()
+    cards_piano = a.locator('section.card[data-coda-id]').all_inner_texts()
+    ok(len(cards_piano) == 2 and all('0/6 pronte' in x for x in cards_piano),
+       'P0.67-C UI: Genera crea una card pronte/richieste per ciascun microstep (%s)' % cards_piano)
+    a.evaluate('CodaQuiz.svuotaTutto()')
     a.evaluate("document.querySelectorAll('.foglio-sfondo').forEach(x => x.remove())")
+    lavori_piano = a.evaluate("""async () => {
+      const acc=CodaQuiz.accountAttuale(), piano=PianificazioneQuiz.calcola({modalita:'manuale',totaleManuale:12,massimoTotale:200,intensita:2,microstep:[{id:'3.3.1'},{id:'3.3.2'}]});
+      piano.perMicrostep[0].quantita=7; piano.perMicrostep[1].quantita=5;
+      const ls=await CodaQuizRunner.creaPianoDaTesto(acc,'Membrane e trasporto selettivo.',{materia:'Biologia',step:'3.3',maxPerBatch:4},piano,'piano-p067');
+      return ls.map(l=>[l.specifica.microstep,l.specifica.quantita,l.specifica.maxPerBatch,(l.risultati||[]).length]);
+    }""")
+    ok(lavori_piano == [['3.3.1', 7, 4, 0], ['3.3.2', 5, 4, 0]],
+       'P0.67-C coda: un lavoro persistente per microstep con rapporto iniziale pronte/richieste (%s)' % lavori_piano)
 
     # Stesso input due volte: un solo record, persistente dopo reload e invisibile all'altro account.
     r = a.evaluate("""async ([acc, src, spec]) => {
@@ -178,6 +201,32 @@ with sync_playwright() as p:
     }""", ACC_B)
     ok(qualita == [[0, 1, 'da_correggere'], 'completato', 'completato', 3, 'da_rivedere', 0], 'P0-C: tre correzioni chirurgiche, poi da_rivedere senza blocco (%s)' % qualita)
 
+    riaperta = a.evaluate("""async acc => {
+      const l=(await CodaQuiz.lista(acc)).find(x=>x.sorgente.id==='p0c-qualita'), id=l.revisioni[0].id;
+      const r=await CodaQuiz.riprovaCorrezione(acc,l.id,id,200000);
+      const out=[r.stato,r.revisioni[0].stato,r.revisioni[0].tentativi,r.revisioni[0].cronologia.length,r.rapportoQualita.daCorreggere,r.ultimoErrore];
+      await CodaQuiz.annulla(acc,l.id,200001); return out;
+    }""", ACC_B)
+    ok(riaperta == ['in_coda','da_correggere',0,3,1,None],
+       'P0-C: riprova correzione conserva domanda e cronologia senza rigenerare (%s)' % riaperta)
+
+    gratis = a.evaluate("""async acc => {
+      const l=await CodaQuizRunner.creaDaTesto(acc,'La membrana cellulare contiene fosfolipidi e proteine di trasporto selettivo.',
+        {quantita:1,materia:'Biologia'},'rivalida-gratis');
+      const owner='runner-gratis'; await CodaQuiz.acquisisciLease(acc,owner,300000,120000); await CodaQuiz.prossimo(acc,owner,300000);
+      const q={id:'gratis-S01-01',stepId:'gratis',scheda:'gratis-S01',sottoStep:'',categoria:'prioritaria',livelloCognitivo:2,livello:'L2',tipo:'mcq',tipoItem:'',coppiaGemellaId:'',
+        domanda:'Quale componente caratterizza la membrana cellulare?',opzioni:['I fosfolipidi formano il doppio strato della membrana','DNA','ATP','RNA'],esatta:0,
+        spiegazione:'Fosfolipidi e proteine regolano il trasporto selettivo. [[Fonte, p. 999]]',
+        spiegazioneDistrattori:['Il DNA conserva informazione e non forma la membrana.','ATP trasferisce energia e non forma la membrana.','RNA partecipa alla sintesi e non forma la membrana.'],
+        distractorTypes:['confusione_termine','plausibile_generico','misconception'],erroreTipico:'Confondere componenti cellulari',fonte:'Pagina 999',sourceRef:'Pagina 999'};
+      await CodaQuiz.salvaBatchQualita(acc,l.id,{id:'vecchio',da:1,richieste:1,ottenute:1,provider:'mock',modello:'vecchio',salvatoIl:300001},
+        [{id:q.id,domanda:q,stato:'da_correggere',tentativi:0,motivi:['Fonte: manca una pagina presente nel micro-batch'],pagine:[1]}],1,300001);
+      await CodaQuiz.rilasciaLease(acc,owner); const r=await CodaQuiz.rivalidaLocale(acc,l.id,300002);
+      return [r.stato,r.risultati.length,r.revisioni.length,r.risultati[0].fonte,r.checkpoint.length];
+    }""", ACC_B)
+    ok(gratis == ['completato',1,0,'Pagina 1',1],
+       'P0-C: rivalidazione locale recupera la coda senza richieste o checkpoint aggiuntivi (%s)' % gratis)
+
     # Due innesti dello stesso lavoro danno lo stesso record e la stessa banca, con le sole domande pronte.
     innesto = a.evaluate("""() => {
       const q = { id:'biologia-3.3-S01-01', stepId:'biologia-3.3', scheda:'biologia-3.3-S01', sottoStep:'3.3.1', categoria:'prioritaria', livelloCognitivo:2, livello:'L2', tipoItem:'', coppiaGemellaId:'', domanda:'Quale struttura contiene fosfolipidi?', opzioni:['La membrana','Il DNA','Il glicogeno','Il cromosoma'], esatta:0, spiegazione:'La membrana contiene fosfolipidi. [[Fonte, p. 1]]', spiegazioneDistrattori:['Il DNA non è la struttura lipidica della membrana.','Il glicogeno è una riserva e non una membrana.','Il cromosoma non forma il doppio strato lipidico.'], distractorTypes:['misconception','confusione_termine','plausibile_generico'], erroreTipico:'Confondere componenti cellulari', fonte:'Pagina 1', sourceRef:'Pagina 1' };
@@ -187,6 +236,36 @@ with sync_playwright() as p:
       return [x.id, y.id, Stato.tutti('innesto').filter(z => z.id === x.id).length, banca.domande.length];
     }""")
     ok(innesto[0] == innesto[1] and innesto[2:] == [1, 1], 'P0-C: innesto idempotente in step/microstep e piano (%s)' % innesto)
+
+    # Quiz P1: appena esiste una domanda pronta la coda mostra il rapporto e la apre in prova senza statistiche/innesto.
+    prova = a.evaluate("""async () => {
+      const acc = CodaQuiz.accountAttuale();
+      const l = await CodaQuizRunner.creaDaTesto(acc, 'La membrana cellulare contiene un doppio strato di fosfolipidi e proteine di trasporto selettivo.',
+        { quantita:1, materia:'Biologia', argomento:'Membrane', maxPerBatch:1 }, 'prova-immediata');
+      const chiama = async () => ({ prov:'mock', modello:'prova', j:{ formato:'quiz-v4', quiz:[{ tipo:'mcq', livello:2,
+        domanda:'Quale componente forma il doppio strato della membrana cellulare?', opzioni:['I fosfolipidi','Il glicogeno','Il DNA','La cellulosa'],
+        spiegazione:'I fosfolipidi formano il doppio strato della membrana cellulare. [[Fonte, p. 1]]',
+        spiegazioneDistrattori:['Il glicogeno è una riserva e non forma la membrana.','Il DNA conserva informazione e non forma il doppio strato.','La cellulosa appartiene alla parete e non alla membrana.'],
+        distractorTypes:['confusione_termine','plausibile_generico','misconception'], erroreTipico:'Confondere membrana e parete', fonte:'Pagina 1' }] } });
+      const r = await CodaQuizRunner.avanza(acc, 'runner-prova', { chiama });
+      return [r.esito, r.lavoro.risultati.length, l.id];
+    }""")
+    ok(prova[:2] == ['completato', 1], 'quiz pronto per la prova immediata (%s)' % prova)
+    a.evaluate('CodaQuizUI.apri()')
+    scheda_prova = a.locator('section.card[data-coda-id="%s"]' % prova[2])
+    bottone_prova = scheda_prova.get_by_role('button', name='Prova 1 domanda pronta')
+    rapporto_ui = scheda_prova.locator('summary').filter(has_text='Dettagli qualità · 1 pronte')
+    rapporto_ui.wait_for()
+    ok(bottone_prova.count() == 1 and rapporto_ui.count() >= 1,
+       'coda mostra prova immediata e rapporto qualità')
+    stat_prima = a.evaluate("Stato.tutti('statq').length")
+    bottone_prova.click()
+    a.wait_for_selector('.qz-h1')
+    a.locator('.qz-opz-b').first.click()
+    stat_dopo = a.evaluate("Stato.tutti('statq').length")
+    occhiello = a.locator('.qz-occhiello').inner_text().lower()
+    ok(a.locator('.qz-h1').inner_text() == 'Membrane' and 'senza statistiche' in occhiello and stat_prima == stat_dopo,
+       'la prova apre le sole domande pronte nel quiz in app senza statistiche (%s a %s)' % (stat_prima, stat_dopo))
     b.close()
     ctx.close()
 

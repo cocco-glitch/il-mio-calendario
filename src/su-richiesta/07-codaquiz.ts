@@ -6,9 +6,19 @@
 
 type StatoLavoroQuiz = 'in_coda' | 'in_esecuzione' | 'in_pausa' | 'completato' | 'annullato';
 type StatoQualitaDomandaQuiz = 'da_correggere' | 'da_rivedere';
-interface SorgenteLavoroQuiz { tipo: 'testo' | 'pdf'; id: string; versione: string; }
-interface PaginaSorgenteQuiz { n: number; testo: string; }
-interface InputLavoroQuiz { pagine: PaginaSorgenteQuiz[]; pagineVuote: number; }
+type TipoSorgenteLavoroQuiz = 'testo' | 'pdf' | 'libro_pdf';
+interface SorgenteLavoroQuiz { tipo: TipoSorgenteLavoroQuiz; id: string; versione: string; }
+interface PaginaSorgenteQuiz { n: number; testo: string; fileId?: string; fileNome?: string; paginaFile?: number; }
+interface FonteLibroQuiz {
+  id: string;
+  nome: string;
+  versione: string;
+  pagine: number;
+  pagineVuote: number;
+  primaPagina: number;
+  ultimaPagina: number;
+}
+interface InputLavoroQuiz { pagine: PaginaSorgenteQuiz[]; pagineVuote: number; fonti?: FonteLibroQuiz[]; }
 interface CheckpointLavoroQuiz { id: string; da: number; richieste: number; ottenute: number; provider: string; modello: string; salvatoIl: number; }
 interface TentativoRevisioneQuiz { tentativo: number; motivi: string[]; campi: string[]; esito: string; }
 interface RevisioneDomandaQuiz { id: string; domanda: DomAI; stato: StatoQualitaDomandaQuiz; tentativi: number; motivi: string[]; pagine: number[]; cronologia?: TentativoRevisioneQuiz[]; }
@@ -69,7 +79,7 @@ const CodaQuiz = (() => {
     return a;
   }
   function sorgentePulita(s: SorgenteLavoroQuiz): SorgenteLavoroQuiz {
-    if (!s || !['testo', 'pdf'].includes(s.tipo) || !String(s.id || '').trim() || !String(s.versione || '').trim()) throw new Error('sorgente della coda non valida');
+    if (!s || !['testo', 'pdf', 'libro_pdf'].includes(s.tipo) || !String(s.id || '').trim() || !String(s.versione || '').trim()) throw new Error('sorgente della coda non valida');
     return { tipo: s.tipo, id: String(s.id).trim(), versione: String(s.versione).trim() };
   }
   function idDeterministico(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>): string {
@@ -77,13 +87,33 @@ const CodaQuiz = (() => {
   }
   function copiaInput(input?: InputLavoroQuiz): InputLavoroQuiz | undefined {
     if (!input) return undefined;
-    return { pagine: (input.pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: String(p.testo || '') })),
-      pagineVuote: Math.max(0, Math.floor(Number(input.pagineVuote)) || 0) };
+    return {
+      pagine: (input.pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: String(p.testo || ''),
+        fileId: p.fileId ? String(p.fileId) : undefined, fileNome: p.fileNome ? String(p.fileNome) : undefined,
+        paginaFile: p.paginaFile ? Math.max(1, Math.floor(Number(p.paginaFile)) || 1) : undefined })),
+      pagineVuote: Math.max(0, Math.floor(Number(input.pagineVuote)) || 0),
+      fonti: input.fonti?.map(f => ({ id: String(f.id), nome: String(f.nome), versione: String(f.versione),
+        pagine: Math.max(0, Math.floor(Number(f.pagine)) || 0), pagineVuote: Math.max(0, Math.floor(Number(f.pagineVuote)) || 0),
+        primaPagina: Math.max(0, Math.floor(Number(f.primaPagina)) || 0), ultimaPagina: Math.max(0, Math.floor(Number(f.ultimaPagina)) || 0) })),
+    };
   }
   function nuovo(account: string, sorgente: SorgenteLavoroQuiz, specifica: Record<string, unknown>, ora = Date.now(), input?: InputLavoroQuiz): LavoroQuiz {
     const acc = accountPulito(account), src = sorgentePulita(sorgente), spec = specifica || {};
     return { account: acc, id: idDeterministico(acc, src, spec), stato: 'in_coda', tentativi: 0, sorgente: src, specifica: spec,
       creatoIl: ora, aggiornatoIl: ora, prossimoTentativoIl: null, ultimoErrore: null, input: copiaInput(input), risultati: [], revisioni: [], checkpoint: [] };
+  }
+  /** Piano complessivo → un lavoro indipendente per microstep. La capacità del provider resta nella specifica, non cambia le quantità. */
+  function lavoriDaPiano(account: string, sorgente: SorgenteLavoroQuiz, base: Record<string, unknown>, piano: PianoQuantitaQuiz,
+    ora = Date.now(), input?: InputLavoroQuiz): LavoroQuiz[] {
+    const quote = piano && Array.isArray(piano.perMicrostep) ? piano.perMicrostep : [], visti = new Set<string>();
+    const totale = quote.reduce((n, q) => n + Math.floor(Number(q.quantita) || 0), 0);
+    if (!quote.length || totale !== Math.floor(Number(piano.totale) || 0) || totale < 1 || totale > 200) throw new Error('piano quantità della coda non valido');
+    return quote.map(q => {
+      const id = String(q.id || '').trim(), quantita = Math.floor(Number(q.quantita) || 0);
+      if (!id || visti.has(id) || quantita < 1 || quantita > 200) throw new Error('quota microstep della coda non valida');
+      visti.add(id);
+      return nuovo(account, sorgente, { ...(base || {}), microstep: id, quantita }, ora, input);
+    });
   }
   function cambia(l: LavoroQuiz, stato: StatoLavoroQuiz, ora = Date.now()): LavoroQuiz {
     if (l.stato === stato) return { ...l };
@@ -137,6 +167,13 @@ const CodaQuiz = (() => {
       };
       tx.oncomplete = () => ok(out); tx.onerror = () => ko(tx.error); tx.onabort = () => ko(tx.error || new Error('salvataggio della coda annullato'));
     });
+  }
+  /** Persistenza idempotente del piano: ogni microstep conserva il proprio checkpoint e può riprendere da solo. */
+  async function aggiungiPiano(account: string, sorgente: SorgenteLavoroQuiz, base: Record<string, unknown>, piano: PianoQuantitaQuiz,
+    ora = Date.now(), input?: InputLavoroQuiz): Promise<LavoroQuiz[]> {
+    const lavori = lavoriDaPiano(account, sorgente, base, piano, ora, input), out: LavoroQuiz[] = [];
+    for (const l of lavori) out.push(await aggiungi(l.account, l.sorgente, l.specifica, ora, input));
+    return out;
   }
   async function lista(account: string): Promise<LavoroQuiz[]> {
     const acc = accountPulito(account), d = await db();
@@ -215,6 +252,33 @@ const CodaQuiz = (() => {
       if (i < 0) throw new Error('domanda da rivedere non trovata');
       const [vecchia] = revisioni.splice(i, 1), storiche = [...(l.revisioniStoriche || []), vecchia];
       return { ...l, stato: 'in_coda', aggiornatoIl: ora, revisioni, revisioniStoriche: storiche, rigenerazioni: (l.rigenerazioni || 0) + 1, prossimoTentativoIl: null, ultimoErrore: null };
+    });
+  }
+  /** Riapre soltanto la correzione dopo un fix della pipeline: conserva domanda e cronologia, senza nuova generazione. */
+  function riprovaCorrezione(account: string, id: string, domandaId: string, ora = Date.now()): Promise<LavoroQuiz> {
+    return aggiorna(account, id, l => {
+      const revisioni = (l.revisioni || []).map(r => r.id === domandaId && r.stato === 'da_rivedere'
+        ? { ...r, stato: 'da_correggere' as const, tentativi: 0, motivi: r.motivi.filter(m => !/^Correzione:/.test(m)) } : r);
+      if (!revisioni.some(r => r.id === domandaId && r.stato === 'da_correggere')) throw new Error('domanda da rivedere non trovata');
+      return { ...l, stato: 'in_coda', aggiornatoIl: ora, revisioni,
+        rapportoQualita: CodaQuizQualita.rapporto(l.risultati || [], revisioni, ora), prossimoTentativoIl: null, ultimoErrore: null };
+    });
+  }
+  /** Rivalida tutte le revisioni usando solo testo e pagine già in IndexedDB: zero richieste e zero crediti. */
+  function rivalidaLocale(account: string, id: string, ora = Date.now()): Promise<LavoroQuiz> {
+    return aggiorna(account, id, l => {
+      if (!l.input) throw new Error('testo delle pagine non disponibile nella coda');
+      const risultati = (l.risultati || []).slice(), revisioni: RevisioneDomandaQuiz[] = [], gia = risultati.slice();
+      for (const r of l.revisioni || []) {
+        const e = CodaQuizQualita.validaDomande([r.domanda], l.input.pagine, gia, r.tentativi)[0];
+        if (e.stato === 'pronta') { if (!risultati.some(q => String(q.id || '') === e.id)) risultati.push(e.domanda); gia.push(e.domanda); }
+        else revisioni.push({ id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi,
+          motivi: e.motivi, pagine: e.pagine, cronologia: r.cronologia?.slice() });
+      }
+      const rapporto = CodaQuizQualita.rapporto(risultati, revisioni, ora), totale = Math.max(1, Number(l.specifica.quantita) || 1);
+      const fine = risultati.length + rapporto.daRivedere >= totale && rapporto.daCorreggere === 0;
+      return { ...l, stato: fine ? 'completato' : 'in_coda', aggiornatoIl: ora, risultati: risultati.slice(0, totale), revisioni,
+        rapportoQualita: rapporto, prossimoTentativoIl: null, ultimoErrore: null };
     });
   }
   async function elimina(account: string, id: string): Promise<boolean> {
@@ -302,6 +366,6 @@ const CodaQuiz = (() => {
     riattiva();
   }
 
-  return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, fermaIncerto, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, rigeneraDomanda, elimina,
+  return { NOME_DB, nuovo, lavoriDaPiano, idDeterministico, cambia, aggiungi, aggiungiPiano, lista, pausa, riprendi, annulla, completa, rimanda, fermaIncerto, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, rigeneraDomanda, riprovaCorrezione, rivalidaLocale, elimina,
     acquisisciLease, rinnovaLease, rilasciaLease, prossimo, recuperaInterrotti, svuotaAccount, svuotaTutto, proprietarioTab, accountAttuale };
 })();

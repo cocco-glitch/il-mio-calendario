@@ -126,7 +126,7 @@ const IA = (() => {
     try {
       const r = await richiesta(p, '/models', k, undefined);
       if (!r.ok) return c ? c.m : null;   // anche scaduto: meglio di niente
-      const j = await r.json(); const m = ((j.data || j.models || []) as any[]).map(x => String(x.id || x.name || '').replace(/^models\//, '')).filter(Boolean);
+      const j = await leggiJson(r); const m = ((j.data || j.models || []) as any[]).map(x => String(x.id || x.name || '').replace(/^models\//, '')).filter(Boolean);
       const v = { t: Date.now(), m }; disp[ch] = v; try { localStorage.setItem('imc-modelli-' + cl, JSON.stringify(v)); } catch (_) { /* */ }
       return m;
     } catch (_) { return c ? c.m : null; }
@@ -150,7 +150,7 @@ const IA = (() => {
       const r = await fetch(url, { ...op, signal: ac.signal }); clearTimeout(timer); metaRisposta.set(r, { p, m, iniziata, ac, t: { ...t }, post }); return r;
     } catch (x) {
       clearTimeout(timer); if (ac.signal.aborted) throw erroreIncerto(p, m, fase, post);
-      throw erroreIncerto(p, m, navigator.onLine === false ? 'offline' : 'cors_rete', post, x);
+      throw erroreIncerto(p, m, navigator.onLine === false ? 'offline' : 'errore_rete', post, x);
     }
   }
   async function leggiJson(res: Response): Promise<any> {
@@ -168,7 +168,7 @@ const IA = (() => {
     const tipo: Record<string, string> = corpo && !form ? { 'Content-Type': 'application/json' } : {};
     const op: RequestInit = { method: corpo ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + k, ...tipo }, body: corpo ? (form ? corpo : JSON.stringify(corpo)) : undefined };
     let r = await fetchTemporizzato(p, m, base + perc, op);
-    if (gem && (r.status === 401 || r.status === 403 || r.status === 400)) {
+    if (gem && (r.status === 401 || r.status === 403)) {
       const r2 = await fetchTemporizzato(p, m, base + perc, { ...op, headers: { 'x-goog-api-key': k, ...tipo } });
       if (r2.ok || r2.status === 429) return r2;
       const r3 = await fetchTemporizzato(p, m, base + perc + (perc.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k), { ...op, headers: tipo });
@@ -292,13 +292,13 @@ const IA = (() => {
   let RM: Record<string, StatoM> = {};                                  // per «fornitore:modello»
   let RP: Partial<Record<Prov, { finoA: number; motivo: string }>> = {};   // pausa dell'intero fornitore
   let NO: Partial<Record<Prov, string>> = {};                            // impronta della chiave rifiutata
-  type Diag = { modello: string | null; aggiornatoIl: number | null; ripristinoIl: number | null; ultimoErroreHttp: number | null; ultimoErroreRete: string | null; ultimoFailover: string | null; misurata: number | null };
-  const diag = Object.fromEntries(PROVS.map(p => [p, { modello: null, aggiornatoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null }])) as Record<Prov, Diag>;
+  type Diag = { modello: string | null; aggiornatoIl: number | null; ultimoSuccessoIl: number | null; ripristinoIl: number | null; ultimoErroreHttp: number | null; ultimoErroreRete: string | null; ultimoFailover: string | null; misurata: number | null };
+  const diag = Object.fromEntries(PROVS.map(p => [p, { modello: null, aggiornatoIl: null, ultimoSuccessoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null }])) as Record<Prov, Diag>;
   type Passaggio = { quando: number; da: string; a: string; motivo: string };
   let passaggi: Passaggio[] = [], providerAttivo: Prov | null = null;
   const notificaDiag = (p?: Prov) => { if (p) diag[p].aggiornatoIl = Date.now(); try { window.dispatchEvent(new CustomEvent('imc-ai-diagnostica')); } catch (_) { /* */ } };
   function erroreIncerto(p: Prov, m: string, fase: string, incerto: boolean, causa?: unknown): Error {
-    const e: any = new Error((incerto ? 'Esito incerto: ' : '') + (fase.startsWith('timeout') ? 'timeout della richiesta AI' : fase === 'offline' ? 'dispositivo offline' : fase === 'risposta_malformata' ? 'risposta malformata' : 'errore CORS/rete'));
+    const e: any = new Error((incerto ? 'Esito incerto: ' : '') + (fase.startsWith('timeout') ? 'timeout della richiesta AI' : fase === 'offline' ? 'dispositivo offline' : fase === 'risposta_malformata' ? 'risposta malformata' : 'errore di rete (causa non determinata)'));
     e.fase = fase; e.consumoIncerto = incerto; e.causa = causa; const d = diag[p]; d.modello = m || d.modello; d.ultimoErroreRete = fase; notificaDiag(p); return e;
   }
   function registraFailover(da: Fornitore, a: Fornitore, motivo: string): void {
@@ -308,7 +308,7 @@ const IA = (() => {
   const impronta = (k: string) => k.slice(-6) + k.length;
   function sm(p: Prov, m: string): StatoM { const id = p + ':' + m; return RM[id] || (RM[id] = { finoA: 0, k: 0, tpm: LIMITI[p].tpm }); }
   function azzera(p?: Prov): void {
-    if (!p) { RM = {}; RP = {}; NO = {}; passaggi = []; providerAttivo = null; for (const x of PROVS) Object.assign(diag[x], { modello: null, aggiornatoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null }); lsScrivi(KU, ''); return; }   // azzeramento completo: anche i contatori
+    if (!p) { RM = {}; RP = {}; NO = {}; passaggi = []; providerAttivo = null; for (const x of PROVS) Object.assign(diag[x], { modello: null, aggiornatoIl: null, ultimoSuccessoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null }); lsScrivi(KU, ''); return; }   // azzeramento completo: anche i contatori
     delete RP[p]; delete NO[p]; for (const k of Object.keys(RM)) if (k.startsWith(p + ':')) delete RM[k];
     const t = tuttoUso(); let c = false;   // chiave nuova: via le pause salvate (i conteggi restano)
     for (const k of Object.keys(t)) if ((k === p || k.startsWith(p + ':')) && t[k].q) { delete t[k].q; c = true; }
@@ -318,8 +318,28 @@ const IA = (() => {
   const stimaTok = (msgs: Msg[]) => Math.ceil(msgs.reduce((s, x) => s + (typeof x.content === 'string' ? x.content.length
     : Array.isArray(x.content) ? x.content.reduce((a: number, c: any) => a + (c && typeof c.text === 'string' ? c.text.length : 0), 0) : 0), 0) / 3.5);
   const budget = (p: Prov, m: string, out: number) => Math.min(LIMITI[p].ctx, Math.floor(0.7 * sm(p, m).tpm)) - out;
-  /** Budget d'ingresso che resta valido anche sul provider gratuito piu' stretto; include solo i messaggi, non l'output. */
-  const budgetCaratteriPrudente = (out: number) => Math.max(0, Math.floor(Math.min(...PROVS.map(p => Math.min(LIMITI[p].ctx, Math.floor(0.7 * LIMITI[p].tpm)) - out)) * 3.5));
+  /** Budget d'ingresso del provider/modello indicato; include solo i messaggi, non l'output. */
+  const budgetCaratteriPrudente = (out: number, p: Prov, m = '') => Math.max(0, Math.floor((Math.min(LIMITI[p].ctx, Math.floor(0.7 * (m ? sm(p, m).tpm : LIMITI[p].tpm))) - out) * 3.5));
+  function budgetIngressoDisponibile(p: Prov, m: string, out: number, lim = SOGLIA): number {
+    const { id, q } = quota(p, m), c = contatori(id), s = sm(p, m); let n = budget(p, m, out);
+    if (q.tpm) n = Math.min(n, Math.floor(q.tpm * lim) - c.tpm60s - out);
+    if (q.tpd) n = Math.min(n, Math.floor(q.tpd * lim) - c.tpdToday - out);
+    if (s.rest && s.rest.finoA > Date.now()) n = Math.min(n, s.rest.tok - out);
+    return Math.max(0, n);
+  }
+  /** Pianifica sul primo provider/modello che il router tenterebbe davvero, senza imporre a tutti il limite del piu' stretto. */
+  async function pianificaBudgetCaratteri(r: Ruolo, out: number, o: { evita?: string; archetipo?: string } = {}): Promise<{ caratteri: number; prov: Prov; modello: string; guardia: boolean } | null> {
+    const forn = await catena(r, o.evita, o.archetipo), prova = (lim: number, guardia: boolean) => {
+      for (const f of forn) {
+        const b = bloccato(f.prov, f.modello, out, chiave(f.prov));
+        if (b && !(guardia && b === 'quota' && !quotaPiena(f.prov, f.modello, out, 1))) continue;
+        const tok = budgetIngressoDisponibile(f.prov, f.modello, out, lim);
+        if (tok > 0) return { caratteri: Math.floor(tok * 3.5), prov: f.prov, modello: f.modello, guardia };
+      }
+      return null;
+    };
+    return prova(SOGLIA, false) || prova(1, true);
+  }
   /** Motivo per cui il modello va saltato ora ('' = utilizzabile). */
   function bloccato(p: Prov, m: string, serve: number, k: string): string {
     const ora = Date.now(), P = RP[p], s = sm(p, m);
@@ -349,7 +369,7 @@ const IA = (() => {
     if (ri.remainingTokens !== undefined) s.rest = { tok: ri.remainingTokens, finoA: ora + (ri.resetTokens || 6e4) };
     if (ri.remainingRequests === 0) s.finoA = Math.max(s.finoA, ora + Math.min(ri.resetRequests || 6e4, 6 * 36e5));
     if (res.status !== 429) aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); u.t = (u.t || 0) + tok; });   // il 429 non consuma quota
-    if (res.ok) { s.k = 0; notificaDiag(p); return; }
+    if (res.ok) { s.k = 0; d.ultimoSuccessoIl = ora; notificaDiag(p); return; }
     if (res.status === 429) {
       // retry-after → retryDelay nel corpo (Gemini) → reset delle intestazioni → 65 s, o fino a mezzanotte se la quota del giorno è quasi finita
       let att = ri.retryAfter || 0;
@@ -412,11 +432,14 @@ const IA = (() => {
     const out = {} as Record<Prov, any>, ora = Date.now(), base = stato(), usi = tuttoUso();
     for (const p of PROVS) {
       const d = diag[p], idUso = Object.keys(usi).find(k => k === p || k.startsWith(p + ':')), m = d.modello || (idUso && idUso.includes(':') ? idUso.slice(p.length + 1) : null);
-      let statoQ: 'pronto' | 'guardia_85' | 'cooldown' | 'esaurito' | 'senza_chiave' | 'errore_temporaneo' = !chiave(p) ? 'senza_chiave' : base[p].ok ? 'pronto' : base[p].motivo === 'limite gratuito' ? 'esaurito' : base[p].motivo === 'non raggiungibile' ? 'cooldown' : 'errore_temporaneo';
+      let statoQ: 'configurato' | 'disponibile' | 'guardia_85' | 'cooldown' | 'non_raggiungibile' | 'esaurito' | 'senza_chiave' | 'autenticazione_fallita' | 'errore_temporaneo' = !chiave(p) ? 'senza_chiave'
+        : base[p].motivo === 'chiave non valida' ? 'autenticazione_fallita' : base[p].motivo === 'limite gratuito' ? 'esaurito'
+          : base[p].motivo === 'non raggiungibile' ? 'non_raggiungibile' : !base[p].ok ? 'errore_temporaneo' : d.ultimoSuccessoIl ? 'disponibile' : 'configurato';
       let stima: number | null = null, micro: number | null = null;
       if (m && chiave(p)) {
         const { id, q } = quota(p, m), c = contatori(id), dati = c.rpm60s + c.rpdToday + c.tpdToday > 0;
-        if (statoQ === 'pronto' && quotaPiena(p, m, 0, 1)) statoQ = 'esaurito'; else if (statoQ === 'pronto' && quotaPiena(p, m, 0)) statoQ = 'guardia_85';
+        if ((statoQ === 'configurato' || statoQ === 'disponibile') && quotaPiena(p, m, 0, 1)) statoQ = 'esaurito';
+        else if ((statoQ === 'configurato' || statoQ === 'disponibile') && quotaPiena(p, m, 0)) statoQ = 'guardia_85';
         const rr = [Math.floor(q.rpm * SOGLIA) - c.rpm60s, q.rpd ? Math.floor(q.rpd * SOGLIA) - c.rpdToday : Infinity];
         const avg = c.rpdToday ? Math.max(1, Math.ceil(c.tpdToday / c.rpdToday)) : 0;
         if (q.tpd && avg) rr.push(Math.floor((q.tpd * SOGLIA - c.tpdToday) / avg));
@@ -425,12 +448,17 @@ const IA = (() => {
       }
       const rip = Math.max(base[p].finoA || 0, d.ripristinoIl || 0);
       out[p] = { id: p, haChiave: !!chiave(p), modello: m, stato: statoQ, origineQuota: d.misurata == null ? (m ? 'stimata' : 'sconosciuta') : 'misurata', quotaDisponibile: d.misurata, quotaStimata: d.misurata == null ? stima : null,
-        aggiornatoIl: d.aggiornatoIl, ripristinoIl: rip || null, ultimoErroreHttp: d.ultimoErroreHttp, ultimoErroreRete: d.ultimoErroreRete, ultimoFailover: d.ultimoFailover, microBatchResidui: micro };
+        aggiornatoIl: d.aggiornatoIl, ultimoSuccessoIl: d.ultimoSuccessoIl, ripristinoIl: rip || null, ultimoErroreHttp: d.ultimoErroreHttp, ultimoErroreRete: d.ultimoErroreRete, ultimoFailover: d.ultimoFailover, microBatchResidui: micro };
     }
     return { provider: out, attivo: providerAttivo, failover: passaggi.slice() };
   }
 
   const errore = (j: any, stato: number) => { const e: any = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + stato); e.stato = stato; return e; };
+  function erroreRisposta(j: any, stato: number, prudente?: boolean): Error {
+    const e: any = errore(j, stato);
+    if (prudente && stato >= 500) { e.consumoIncerto = true; e.fase = 'http_' + stato + '_incerto'; e.message = 'Esito incerto: HTTP ' + stato + ' dopo l\'invio'; }
+    return e;
+  }
   const contenuto = (j: any) => String(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '');
   /** `tronca: false` = non accorciare il testo per farlo stare in un modello piccolo (salta e basta). */
   type Opz = { temp?: number; evita?: string; maxOut?: number; tronca?: boolean; archetipo?: string; prudente?: boolean };   // `prudente`: niente seconda generazione dopo un esito incerto/malformato
@@ -444,7 +472,7 @@ const IA = (() => {
     let res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok);
     if (res.status === 400 && corpo.response_format && !(f.prov === 'requesty' && sm(f.prov, f.modello).finoA > Date.now())) { delete corpo.response_format; res = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok); }   // modello senza modalità JSON
     const j = await leggiJson(res).catch((e: any) => { if (e && e.consumoIncerto) throw e; return {}; });
-    if (!res.ok) throw errore(j, res.status);
+    if (!res.ok) throw erroreRisposta(j, res.status, o.prudente);
     const t = contenuto(j);
     if (!comeJson) { const s = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').trim(); if (!s) throw new Error('risposta vuota'); return { testo: s, prov: f.prov, modello: f.modello }; }
     try { return { testo: t, j: json(t), prov: f.prov, modello: f.modello }; } catch (_) {
@@ -454,7 +482,7 @@ const IA = (() => {
     // v0.45: JSON illeggibile → una riprova con lo stesso modello chiedendo solo JSON valido
     corpo.messages = [...m2, { role: 'assistant', content: String(t).slice(0, 2000) }, { role: 'user', content: 'Rispondi solo con JSON valido, senza testo prima o dopo. Nelle stringhe scrivi i backslash del LaTeX doppi (\\\\frac).' }];
     const res2 = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok), j2 = await leggiJson(res2).catch((e: any) => { if (e && e.consumoIncerto) throw e; return {}; });
-    if (!res2.ok) throw errore(j2, res2.status);
+    if (!res2.ok) throw erroreRisposta(j2, res2.status, o.prudente);
     const t2 = contenuto(j2);
     return { testo: t2, j: json(t2), prov: f.prov, modello: f.modello };
   }
@@ -538,7 +566,7 @@ const IA = (() => {
       const st = stato(); elenco.textContent = '';
       for (const p of PROVS) {
         const x = st[p];
-        const d = x.ok ? '✅ pronto' : x.motivo === 'senza chiave' ? '—' : x.motivo === 'chiave non valida' ? '❌ chiave non valida'
+        const d = x.ok ? '✅ pronto localmente (quota non verificata)' : x.motivo === 'senza chiave' ? '—' : x.motivo === 'chiave non valida' ? '❌ chiave non valida'
           : x.motivo === 'privacy' ? '🔒 escluso (Strict Privacy)'
           : '⏳ in pausa fino alle ' + ora2(x.finoA || Date.now()) + (x.motivo === 'non raggiungibile' ? ' (non raggiungibile)' : '');
         elenco.appendChild(h('div', null, NOMI[p] + ': ' + d));
@@ -575,7 +603,7 @@ const IA = (() => {
       via.forEach(k => localStorage.removeItem(k));
     } catch (_) { /* localStorage non disponibile: nulla da pulire */ }
   })();
-  return { chiedi, testo, json: (msgs: Msg[], r: Ruolo, o?: Opz) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro, budgetCaratteriPrudente,
+  return { chiedi, testo, json: (msgs: Msg[], r: Ruolo, o?: Opz) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro, budgetCaratteriPrudente, pianificaBudgetCaratteri,
     chiave, impostaChiave, tutteChiavi, formatoOk, stato, snapshotQuote, impostaTimeout, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
     _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, CATENA, get RM() { return RM; } },
     get gemini() { return !!chiave('gemini'); } };

@@ -31,10 +31,11 @@ const js = FILE.map(f => ts.transpileModule(leggi(f), { compilerOptions: { targe
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const sb = { console, ymd, oggi: () => new Date(), materiaDi: k => { const m = /^([A-Z]+)/.exec(k || ''); return m ? m[1] : ''; } };
 vm.createContext(sb);
-const ESPORTA = ['ImportaParti', 'ImportaDrive', 'Contratto', 'Centro', 'DiagnosiQuiz', 'MasterPrompt', 'ProfiliAI'];
+const ESPORTA = ['ImportaParti', 'ImportaDrive', 'Contratto', 'Centro', 'DiagnosiQuiz', 'MasterPrompt', 'ProfiliAI', 'PianificazioneQuiz'];
 vm.runInContext(js + '\n;' + ESPORTA.map(n => 'this.' + n + ' = typeof ' + n + " !== 'undefined' ? " + n + ' : undefined;').join(' '), sb);
 const { Contratto: C, ImportaParti: IP, ImportaDrive: ID } = sb;
 const CE = sb.Centro || new Proxy({}, { get: (_, k) => () => { throw new Error('Centro.' + String(k) + ' non esiste ancora'); } });
+const PQ = sb.PianificazioneQuiz || new Proxy({}, { get: (_, k) => () => { throw new Error('PianificazioneQuiz.' + String(k) + ' non esiste ancora'); } });
 
 // ---------- fixture ----------
 const OPZ = { materia: 'Biologia', codice: 'B', step: '3.3', titolo: 'Membrane e trasporto', unita: 'UD3', archetipo: 'scienze_sperimentali' };
@@ -47,6 +48,77 @@ const parte = (nome, schede, per = 18, data = '2026-11-20T10:00:00Z') => {
   const quiz = schede.flatMap(n => Array.from({ length: per }, (_, i) => dom(n, i)));
   return { id: nome, name: nome + '.json', cartella: 'Biologia quiz', modificato: data, tipo: 'parte', step: 'biologia-3.3', json: { formato: 'quiz-v3', parte: nome, quiz } };
 };
+
+console.log('\n== P0.67 quantità quiz per microstep ==');
+t('manuale: due microstep equivalenti dividono esattamente il totale senza mutare la richiesta', () => {
+  const richiesta = { modalita: 'manuale', totaleManuale: 10, massimoTotale: 200, intensita: 2,
+    microstep: [{ id: '3.3.1' }, { id: '3.3.2' }] };
+  const prima = JSON.stringify(richiesta), r = PQ.calcola(richiesta);
+  eq([r.totale, r.perMicrostep.map(x => [x.id, x.quantita])], [10, [['3.3.1', 5], ['3.3.2', 5]]]);
+  eq(JSON.stringify(richiesta), prima, 'input immutato');
+});
+t('auto: ampiezza, complessità, applicazioni, livelli e priorità aumentano la copertura in modo spiegabile', () => {
+  const r = PQ.calcola({ modalita: 'auto', massimoTotale: 200, intensita: 2, microstep: [
+    { id: 'base' },
+    { id: 'ricco', pagine: 20, concetti: 8, applicazioni: 4, densita: 4, livelliRichiesti: 4, minutiDisponibili: 90, priorita: true },
+  ] });
+  const base = r.perMicrostep.find(x => x.id === 'base'), ricco = r.perMicrostep.find(x => x.id === 'ricco');
+  vero(base && ricco && ricco.quantita > base.quantita, JSON.stringify(r));
+  eq(r.totale, r.perMicrostep.reduce((n, x) => n + x.quantita, 0), 'totale esatto');
+  vero(/pagine|concetti|applicazioni|densità|livelli|priorità/i.test(ricco.motivi.join(' ')), ricco.motivi.join('; '));
+});
+t('manuale: tetto 200 esplicito e arrotondamento stabile per ID, non per posizione', () => {
+  const esegui = microstep => PQ.calcola({ modalita: 'manuale', totaleManuale: 500, massimoTotale: 200, intensita: 2, microstep });
+  const ids = [{ id: '3.3.1' }, { id: '3.3.2' }, { id: '3.3.3' }], a = esegui(ids), b = esegui([...ids].reverse());
+  const mappa = r => r.perMicrostep.map(x => [x.id, x.quantita]).sort((x, y) => x[0].localeCompare(y[0]));
+  eq([a.totale, a.perMicrostep.reduce((n, x) => n + x.quantita, 0)], [200, 200]);
+  eq(mappa(a), mappa(b), 'stessa quota per ID anche cambiando ordine');
+  vero(a.perMicrostep.every(x => x.quantita >= 1) && /200|massimo/i.test(a.avvisi.join(' ')), JSON.stringify(a));
+});
+t('auto: il tempo insufficiente riduce la copertura e lo dichiara', () => {
+  const r = PQ.calcola({ modalita: 'auto', massimoTotale: 200, intensita: 3, microstep: [
+    { id: '3.3.1', pagine: 30, concetti: 12, applicazioni: 5, densita: 5, livelliRichiesti: 4, minutiDisponibili: 6, priorita: true },
+  ] });
+  eq([r.totale, r.perMicrostep[0].quantita], [3, 3]);
+  vero(/tempo|minuti|copertura ridotta/i.test(r.avvisi.concat(r.perMicrostep[0].motivi).join(' ')), JSON.stringify(r));
+});
+t('auto: il massimo globale ridistribuisce senza azzerare microstep e con avviso', () => {
+  const r = PQ.calcola({ modalita: 'auto', massimoTotale: 20, intensita: 3, microstep: [
+    { id: 'a', pagine: 40, concetti: 12, applicazioni: 6, densita: 5, livelliRichiesti: 4, priorita: true },
+    { id: 'b', pagine: 20, concetti: 8, applicazioni: 3, densita: 4, livelliRichiesti: 4 },
+    { id: 'c' },
+  ] });
+  eq([r.totale, r.perMicrostep.reduce((n, x) => n + x.quantita, 0)], [20, 20]);
+  vero(r.perMicrostep.every(x => x.quantita >= 1) && r.perMicrostep[0].quantita > r.perMicrostep[2].quantita, JSON.stringify(r));
+  vero(/massimo|20|ridott/i.test(r.avvisi.join(' ')), r.avvisi.join('; '));
+});
+t('adapter UnitaAI: traduce solo segnali di copertura e lascia il tempo disponibile esplicito', () => {
+  const unita = [{ uid: '3.3.1', titolo: 'Membrane', prereq: [], densita: 3, minutiBase: 120,
+    pagine: [41, 44], concettiChiave: ['diffusione', 'osmosi', 'canali', 'pompe'], priorita: true }];
+  const prima = JSON.stringify(unita);
+  const micro = PQ.daUnitaAI(unita, { applicazioni: { '3.3.1': 2 }, livelliRichiesti: { '3.3.1': 4 }, minutiDisponibili: { '3.3.1': 20 } });
+  eq(micro, [{ id: '3.3.1', pagine: 4, concetti: 4, applicazioni: 2, densita: 3, livelliRichiesti: 4, minutiDisponibili: 20, priorita: true }]);
+  eq(JSON.stringify(unita), prima, 'UnitaAI immutate');
+  const r = PQ.calcola({ modalita: 'auto', massimoTotale: 200, intensita: 2, microstep: micro });
+  eq(r.perMicrostep[0].quantita, 10, '20 minuti disponibili limitano a 10, non minutiBase=120');
+  vero(/pagine|concetti|applicazioni|densit|livelli|priorit/i.test(r.perMicrostep[0].motivi.join(' ')), JSON.stringify(r));
+});
+t('adapter PianoV1: deduplica i microstep e non trasforma le schede storiche in quantità', () => {
+  const unita = [{ uid: '3.3.1', titolo: 'Membrane', prereq: [], densita: 4, minutiBase: 60, pagine: [10, 12], concettiChiave: ['a', 'b'], priorita: false }];
+  const piano = schede => ({ avvisi: [], blocchi: [{ codice: '3.3', titolo: 'Membrane', copre: [
+    { schede, micro: ['3.3.1', '3.3.2'] }, { schede: [99], micro: ['3.3.1'] },
+  ] }] });
+  const a = PQ.daPianoV1(piano([1]), unita, { applicazioni: { '3.3.2': 1 } });
+  const b = PQ.daPianoV1(piano(Array.from({ length: 18 }, (_, i) => i + 1)), unita, { applicazioni: { '3.3.2': 1 } });
+  eq(a, [{ id: '3.3.1', pagine: 3, concetti: 2, densita: 4, priorita: false }, { id: '3.3.2', applicazioni: 1 }]);
+  eq(b, a, '1 o 18 schede storiche non cambiano la copertura richiesta');
+  const calcola = microstep => PQ.calcola({ modalita: 'auto', massimoTotale: 200, intensita: 2, microstep });
+  eq(calcola(a), calcola(b), 'stesso PianoV1 logico → stessa quantità totale');
+});
+const sorgentePQ = leggi('su-richiesta/07-pianificazionequiz.ts');
+t('adapter quantità: nessuna dipendenza da batch provider, micro-quiz o formato storico da 18', () => {
+  vero(!/perRisposta|itemPerMicroQuiz|PROFILO_STANDARD|perScheda/.test(sorgentePQ), 'concetti numerici mescolati nel modulo');
+});
 const comeFile = (j, data = '2026-11-20T11:00:00Z') => ({ id: 'chiusura', name: 'chiusura.json', cartella: 'Biologia quiz', modificato: data, tipo: IP.classifica(j), step: IP.stepDi(j), json: j });
 
 // =====================================================================

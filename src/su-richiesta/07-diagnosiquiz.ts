@@ -136,7 +136,14 @@ const DiagnosiQuiz = (() => {
     if (oggetto(d) && Array.isArray(d.patch)) d = d.patch;
     if (oggetto(d)) { const o = d; d = o.id !== undefined ? [o] : Object.keys(o).map(k => ({ id: k, ...(oggetto(o[k]) ? o[k] as DomQ : {}) })); }
     if (!Array.isArray(d)) return { errore: 'Non trovo un elenco di patch (serve un array di oggetti con «id»).' };
-    return { patch: d.filter(oggetto) };
+    const patch = d.filter(oggetto).map(o => {
+      const p: DomQ = { ...o };
+      // Alias frequenti dei provider OpenAI-compatible: il contratto interno resta in italiano.
+      if (p.spiegazione === undefined && p.explanation !== undefined) p.spiegazione = p.explanation;
+      delete p.explanation;
+      return p;
+    });
+    return { patch };
   }
   const valoreValido = (k: string, v: unknown) => k === 'opzioni' ? Array.isArray(v) && v.length === 4 && v.every(x => typeof x === 'string' && x.trim())
     : k === 'spiegazioneDistrattori' || k === 'distractorTypes' ? Array.isArray(v) && v.length === 3 && v.every(x => typeof x === 'string' && x.trim())
@@ -147,11 +154,18 @@ const DiagnosiQuiz = (() => {
   function applicaPatch(qs: unknown[], patch: DomQ[], autorizzate?: Record<string, string[]>): { qs: unknown[]; log: string[]; mancanti: string[]; rifiutate: string[]; n: number } {
     const out = qs.map(q => oggetto(q) ? { ...q } : q), log: string[] = [], mancanti: string[] = [], rifiutate: string[] = [];
     let n = 0;
-    for (const p of patch) {
-      if (p.id === undefined) { mancanti.push('elemento senza id'); continue; }
-      const q = out.find(x => oggetto(x) && x.id === p.id) as DomQ | undefined;
+    for (const originale of patch) {
+      if (originale.id === undefined) { mancanti.push('elemento senza id'); continue; }
+      const p: DomQ = { ...originale }, q = out.find(x => oggetto(x) && x.id === p.id) as DomQ | undefined;
       if (!q) { mancanti.push(String(p.id)); continue; }
-      const ch = Object.keys(p).filter(k => k !== 'id'), permessi = autorizzate && autorizzate[String(p.id)];
+      const permessi = autorizzate && autorizzate[String(p.id)];
+      // Fonte e sourceRef sono la stessa evidenza nel modello interno: se entrambe sono richieste,
+      // accetta che il provider ne restituisca una sola e mantienile atomiche.
+      if (permessi && permessi.includes('fonte') && permessi.includes('sourceRef')) {
+        if (p.fonte === undefined && typeof p.sourceRef === 'string') p.fonte = p.sourceRef;
+        if (p.sourceRef === undefined && typeof p.fonte === 'string') p.sourceRef = p.fonte;
+      }
+      const ch = Object.keys(p).filter(k => k !== 'id');
       const vietati = ch.filter(k => !CHIAVI.includes(k) || (permessi && !permessi.includes(k)) || !valoreValido(k, p[k]));
       if (!ch.length || vietati.length) { const msg = p.id + ': patch rifiutata' + (vietati.length ? ', campi non autorizzati o malformati: ' + vietati.join(', ') : ', nessun campo'); rifiutate.push(msg); log.push(msg); continue; }
       for (const k of ch) q[k] = p[k];
@@ -185,6 +199,7 @@ const DiagnosiQuiz = (() => {
     [/sourceRef diverso/, () => ({ f: ['sourceRef'], c: ['fonte'] })],
     [/Bloom L[1-4] dichiarato/, () => ({ f: ['domanda'], c: ['domanda', 'opzioni', 'esatta'] })],
     [/^citazione p\. /, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
+    [/manca una pagina presente nel micro-batch|non ha riscontro testuale sufficiente/, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
   ];
   const specDi = (msg: string) => { msg = msg.replace(/^(?:Formato|Didattica|Fonte|Correzione):\s*/, ''); for (const [re, fn] of SPEC) { const m = msg.match(re); if (m) return fn(m); } return { f: [] as string[], c: ['domanda'] }; };
   function pianoPatch(qs: unknown[], problemi: ProblemaQ[]): Record<string, string[]> {

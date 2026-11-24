@@ -15,6 +15,7 @@ interface SpecificaGenerazioneQuiz {
   maxPerBatch?: number;
   maxCaratteriFonte?: number;
 }
+interface DocumentoPdfQuiz { id: string; nome?: string; versione: string; pagine: PaginaSorgenteQuiz[]; }
 interface EsitoPassoCodaQuiz { esito: 'occupato' | 'vuoto' | 'checkpoint' | 'completato' | 'rimandato' | 'pausa_incerta'; lavoro?: LavoroQuiz; prossimoTentativoIl?: number; errore?: string; }
 interface DipendenzeRunnerQuiz {
   chiama?: (messaggi: Array<{ role: string; content: string }>, opzioni: { maxOut: number; tronca: false; archetipo?: string }) => Promise<{ j: unknown; prov: string; modello: string }>;
@@ -49,13 +50,52 @@ const CodaQuizRunner = (() => {
     const sp = specifica(o), versione = 'sha256:' + sha256Hex(pulito), pagine = pagineTesto(pulito);
     return CodaQuiz.aggiungi(account, { tipo: 'testo', id: id || 'testo-' + versione.slice(7, 19), versione }, sp as unknown as Record<string, unknown>, Date.now(), { pagine, pagineVuote: 0 });
   }
+  async function creaPianoDaTesto(account: string, testo: string, o: SpecificaGenerazioneQuiz, piano: PianoQuantitaQuiz, id?: string): Promise<LavoroQuiz[]> {
+    const pulito = String(testo || '').trim(); if (!pulito) throw new Error('incolla del testo prima di creare la coda');
+    const sp = specifica(o), versione = 'sha256:' + sha256Hex(pulito), pagine = pagineTesto(pulito);
+    return CodaQuiz.aggiungiPiano(account, { tipo: 'testo', id: id || 'testo-' + versione.slice(7, 19), versione },
+      sp as unknown as Record<string, unknown>, piano, Date.now(), { pagine, pagineVuote: 0 });
+  }
   async function creaDaPaginePdf(account: string, id: string, versione: string, pagine: PaginaSorgenteQuiz[], o: SpecificaGenerazioneQuiz): Promise<LavoroQuiz> {
     const tutte = (pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: compatta(p.testo) })), leggibili = tutte.filter(p => p.testo);
     if (!leggibili.length) throw new Error('Il PDF non contiene testo leggibile. L’OCR non fa parte di questa versione.');
     return CodaQuiz.aggiungi(account, { tipo: 'pdf', id: compatta(id) || 'pdf', versione: compatta(versione) || 'sha256:' + sha256Hex(leggibili.map(p => p.testo).join('\n')) },
       specifica(o) as unknown as Record<string, unknown>, Date.now(), { pagine: leggibili, pagineVuote: tutte.length - leggibili.length });
   }
-  async function creaDaPdf(account: string, file: File, o: SpecificaGenerazioneQuiz): Promise<LavoroQuiz> {
+  async function creaPianoDaPaginePdf(account: string, id: string, versione: string, pagine: PaginaSorgenteQuiz[], o: SpecificaGenerazioneQuiz, piano: PianoQuantitaQuiz): Promise<LavoroQuiz[]> {
+    const tutte = (pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: compatta(p.testo) })), leggibili = tutte.filter(p => p.testo);
+    if (!leggibili.length) throw new Error('Il PDF non contiene testo leggibile. L’OCR non fa parte di questa versione.');
+    return CodaQuiz.aggiungiPiano(account, { tipo: 'pdf', id: compatta(id) || 'pdf', versione: compatta(versione) || 'sha256:' + sha256Hex(leggibili.map(p => p.testo).join('\n')) },
+      specifica(o) as unknown as Record<string, unknown>, piano, Date.now(), { pagine: leggibili, pagineVuote: tutte.length - leggibili.length });
+  }
+  /** Unisce piu' PDF in un solo libro virtuale. I numeri virtuali sono stabili e conservano il rimando a file e pagina originali. */
+  async function creaDaLibroPdf(account: string, documenti: DocumentoPdfQuiz[], o: SpecificaGenerazioneQuiz): Promise<LavoroQuiz> {
+    const pronto = preparaLibroPdf(documenti);
+    return CodaQuiz.aggiungi(account, pronto.sorgente, specifica(o) as unknown as Record<string, unknown>, Date.now(), pronto.input);
+  }
+  function preparaLibroPdf(documenti: DocumentoPdfQuiz[]): { sorgente: SorgenteLavoroQuiz; input: InputLavoroQuiz } {
+    if (!documenti || documenti.length < 2) throw new Error('scegli almeno due PDF per creare un libro virtuale');
+    const pagine: PaginaSorgenteQuiz[] = [], fonti: FonteLibroQuiz[] = []; let vuote = 0;
+    documenti.forEach((d, indice) => {
+      const nome = compatta(d.nome || d.id) || 'PDF ' + (indice + 1), id = compatta(d.id) || 'pdf-' + (indice + 1);
+      const versione = compatta(d.versione) || 'sha256:' + sha256Hex((d.pagine || []).map(p => p.testo).join('\n'));
+      const prima = pagine.length + 1, tutte = d.pagine || [], leggibili = tutte.filter(p => compatta(p.testo));
+      leggibili.forEach(p => pagine.push({ n: pagine.length + 1, testo: compatta(p.testo), fileId: id, fileNome: nome,
+        paginaFile: Math.max(1, Math.floor(Number(p.n)) || 1) }));
+      const nVuote = tutte.length - leggibili.length; vuote += nVuote;
+      fonti.push({ id, nome, versione, pagine: leggibili.length, pagineVuote: nVuote,
+        primaPagina: leggibili.length ? prima : 0, ultimaPagina: leggibili.length ? pagine.length : 0 });
+    });
+    if (!pagine.length) throw new Error('I PDF non contengono testo leggibile. L’OCR non fa parte di questa versione.');
+    const impronta = JSON.stringify(fonti.map(f => [f.id, f.versione, f.pagine, f.pagineVuote]));
+    const versione = 'sha256:' + sha256Hex(impronta), id = 'libro-' + versione.slice(7, 19);
+    return { sorgente: { tipo: 'libro_pdf', id, versione }, input: { pagine, pagineVuote: vuote, fonti } };
+  }
+  async function creaPianoDaLibroPdf(account: string, documenti: DocumentoPdfQuiz[], o: SpecificaGenerazioneQuiz, piano: PianoQuantitaQuiz): Promise<LavoroQuiz[]> {
+    const pronto = preparaLibroPdf(documenti);
+    return CodaQuiz.aggiungiPiano(account, pronto.sorgente, specifica(o) as unknown as Record<string, unknown>, piano, Date.now(), pronto.input);
+  }
+  async function estraiPdf(file: File): Promise<DocumentoPdfQuiz> {
     if (!file || !/\.pdf$/i.test(file.name || '')) throw new Error('scegli un PDF');
     const L = await caricaPdfJs(), doc = await L.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
     const pagine: PaginaSorgenteQuiz[] = [];
@@ -65,32 +105,52 @@ const CodaQuizRunner = (() => {
         pagine.push({ n, testo: tc.items.map(x => x.str || '').join(' ') });
       }
     } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
-    return creaDaPaginePdf(account, file.name, 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine, o);
+    return { id: file.name, nome: file.name, versione: 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine };
+  }
+  async function creaDaPdf(account: string, file: File, o: SpecificaGenerazioneQuiz): Promise<LavoroQuiz> {
+    const d = await estraiPdf(file);
+    return creaDaPaginePdf(account, d.id, d.versione, d.pagine, o);
+  }
+  async function creaPianoDaPdf(account: string, file: File, o: SpecificaGenerazioneQuiz, piano: PianoQuantitaQuiz): Promise<LavoroQuiz[]> {
+    const d = await estraiPdf(file);
+    return creaPianoDaPaginePdf(account, d.id, d.versione, d.pagine, o, piano);
+  }
+  async function creaDaPdfs(account: string, files: File[], o: SpecificaGenerazioneQuiz): Promise<LavoroQuiz> {
+    if (!files || files.length < 2) throw new Error('scegli almeno due PDF per creare un libro virtuale');
+    const documenti: DocumentoPdfQuiz[] = [];
+    for (const file of files) documenti.push(await estraiPdf(file));
+    return creaDaLibroPdf(account, documenti, o);
+  }
+  async function creaPianoDaPdfs(account: string, files: File[], o: SpecificaGenerazioneQuiz, piano: PianoQuantitaQuiz): Promise<LavoroQuiz[]> {
+    if (!files || files.length < 2) throw new Error('scegli almeno due PDF per creare un libro virtuale');
+    const documenti: DocumentoPdfQuiz[] = [];
+    for (const file of files) documenti.push(await estraiPdf(file));
+    return creaPianoDaLibroPdf(account, documenti, o, piano);
   }
 
   const maxOutPer = (n: number) => Math.min(4096, Math.max(900, n * 650));
-  function limiteDaMessaggi(l: LavoroQuiz, maxOut: number, messaggi: Array<{ content: string }>): number {
+  function limiteDaMessaggi(l: LavoroQuiz, messaggi: Array<{ content: string }>, budgetCaratteri?: number): number {
     const configurato = intero(l.specifica.maxCaratteriFonte, 2000, 24000, 12000);
     const istruzioni = messaggi.reduce((tot, m) => tot + m.content.length, 0) + 80;
-    const budget = typeof IA === 'undefined' ? configurato + istruzioni : IA.budgetCaratteriPrudente(maxOut);
+    const budget = budgetCaratteri == null ? configurato + istruzioni : budgetCaratteri;
     return Math.max(0, Math.min(configurato, budget - istruzioni));
   }
-  const limiteFonte = (l: LavoroQuiz, n: number) => limiteDaMessaggi(l, maxOutPer(n), prompt(l, n, []));
-  const limiteCorrezione = (l: LavoroQuiz, revisioni: RevisioneDomandaQuiz[]) =>
-    limiteDaMessaggi(l, maxOutPer(revisioni.length), CodaQuizQualita.promptCorrezione(revisioni, []));
+  const limiteFonte = (l: LavoroQuiz, n: number, budgetCaratteri?: number) => limiteDaMessaggi(l, prompt(l, n, []), budgetCaratteri);
+  const limiteCorrezione = (l: LavoroQuiz, revisioni: RevisioneDomandaQuiz[], budgetCaratteri?: number) =>
+    limiteDaMessaggi(l, CodaQuizQualita.promptCorrezione(revisioni, []), budgetCaratteri);
   function ritagliaPagine(pagine: PaginaSorgenteQuiz[], batch: number, max: number): PaginaSorgenteQuiz[] {
     if (max <= 0) return [];
     const finestra = (p: PaginaSorgenteQuiz): PaginaSorgenteQuiz => {
       if (p.testo.length <= max) return p;
       const blocchi = Math.ceil(p.testo.length / max), da = (batch % blocchi) * max;
-      return { n: p.n, testo: p.testo.slice(da, da + max).trim() };
+      return { ...p, testo: p.testo.slice(da, da + max).trim() };
     };
     const out: PaginaSorgenteQuiz[] = []; let caratteri = 0;
     for (const originale of pagine) { const p = finestra(originale); if (out.length && caratteri + p.testo.length > max) continue; out.push(p); caratteri += p.testo.length; if (caratteri >= max) break; }
     return out;
   }
-  function selezionaPagine(l: LavoroQuiz, batch: number, n = grandezzaBatch(l)): PaginaSorgenteQuiz[] {
-    const input = l.input, max = limiteFonte(l, n); if (!input) return [];
+  function selezionaPagine(l: LavoroQuiz, batch: number, n = grandezzaBatch(l), budgetCaratteri?: number): PaginaSorgenteQuiz[] {
+    const input = l.input, max = limiteFonte(l, n, budgetCaratteri); if (!input) return [];
     const chiavi = [...new Set<string>(parole(String(l.specifica.materia || '') + ' ' + String(l.specifica.argomento || '')))];
     const righe = input.pagine.map(p => ({ p, punti: chiavi.reduce((n, k) => n + (parole(p.testo).includes(k) ? 1 : 0), 0) }))
       .sort((a, b) => b.punti - a.punti || a.p.n - b.p.n);
@@ -99,11 +159,11 @@ const CodaQuizRunner = (() => {
     return ritagliaPagine(ruotate.map(r => r.p), batch, max).sort((a, b) => a.n - b.n);
   }
   function grandezzaBatch(l: LavoroQuiz): number {
-    const fatti = (l.risultati || []).length + (l.revisioni || []).length, totale = intero(l.specifica.quantita, 1, 200, 30), foglio = 18 - (fatti % 18);
-    return Math.min(totale - fatti, intero(l.specifica.maxPerBatch, 1, 8, 5), foglio);
+    const fatti = (l.risultati || []).length + (l.revisioni || []).length, totale = intero(l.specifica.quantita, 1, 200, 30);
+    return Math.min(totale - fatti, intero(l.specifica.maxPerBatch, 1, 8, 5));
   }
   function prompt(l: LavoroQuiz, n: number, pagine: PaginaSorgenteQuiz[]): Array<{ role: string; content: string }> {
-    const fonte = pagine.map(p => '\n--- PAGINA ' + p.n + ' ---\n' + p.testo).join('');
+    const fonte = pagine.map(p => '\n--- PAGINA ' + p.n + (p.fileNome ? ' · ' + p.fileNome + ' · pagina originale ' + p.paginaFile : '') + ' ---\n' + p.testo).join('');
     const target = [l.specifica.materia, l.specifica.argomento].filter(Boolean).join(' · ') || 'contenuto fornito';
     const regole = 'Genera quiz usando solo la fonte. Rispondi con un solo oggetto JSON {"formato":"quiz-v4","quiz":[...]}. ' +
       'Ogni domanda deve avere tipo "mcq", livello 1..4, domanda, 4 opzioni con la corretta in posizione 0, spiegazione con citazione [[Fonte, p. N]], ' +
@@ -113,9 +173,25 @@ const CodaQuizRunner = (() => {
       { role: 'user', content: 'TARGET: ' + target + '\nCrea esattamente ' + n + ' domande nuove, autonome e non ripetitive.' + fonte },
     ];
   }
+  /** Rifila sul prompt realmente inviato: oltre al testo conta intestazioni di pagina, file e citazioni. */
+  function adattaPagineAlBudget(pagine: PaginaSorgenteQuiz[], budgetCaratteri: number | undefined,
+    creaMessaggi: (pagine: PaginaSorgenteQuiz[]) => Array<{ content: string }>): PaginaSorgenteQuiz[] {
+    if (budgetCaratteri == null) return pagine;
+    const out = pagine.map(p => ({ ...p }));
+    const lunghezza = () => creaMessaggi(out).reduce((tot, m) => tot + m.content.length, 0);
+    while (out.length) {
+      const eccedenza = lunghezza() - budgetCaratteri;
+      if (eccedenza <= 0) break;
+      const ultima = out[out.length - 1];
+      if (ultima.testo.length <= eccedenza + 80) out.pop();
+      else ultima.testo = ultima.testo.slice(0, Math.max(0, ultima.testo.length - eccedenza - 16)).trim();
+    }
+    return out;
+  }
   function domandeDa(risposta: unknown, l: LavoroQuiz, n: number): DomAI[] {
-    const lettura = Contratto.leggi(JSON.stringify(risposta)), fatti = (l.risultati || []).length + (l.revisioni || []).length, scheda = Math.floor(fatti / 18) + 1;
-    const qs = Contratto.aQuiz(lettura, { step: String(l.specifica.step || l.id.slice(3, 11)), scheda, da: fatti % 18 + 1 });
+    const lettura = Contratto.leggi(JSON.stringify(risposta)), fatti = (l.risultati || []).length + (l.revisioni || []).length;
+    const qs = Contratto.aQuiz(lettura, { step: String(l.specifica.step || l.id.slice(3, 11)), scheda: 1, da: fatti + 1,
+      sottoStep: l.specifica.microstep ? String(l.specifica.microstep) : undefined });
     if (!qs.length) throw new Error(lettura.errori[0] || 'la risposta AI non contiene domande leggibili');
     return qs.slice(0, n);
   }
@@ -127,12 +203,25 @@ const CodaQuizRunner = (() => {
     try {
       l = await CodaQuiz.prossimo(account, proprietario, t0);
       if (!l) return { esito: 'vuoto' };
-      const n = grandezzaBatch(l), totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length;
+      let n = grandezzaBatch(l); const totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length;
       const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, 1);
-      const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input
-        ? ritagliaPagine(l.input.pagine.filter(p => numeri.has(p.n)), batch, limiteCorrezione(l, pendenti)) : selezionaPagine(l, batch, n);
+      // I test/iniettori non dichiarano un provider: per loro resta il profilo Groq conservativo; il percorso reale pianifica sul candidato effettivo.
+      let maxOut = maxOutPer(pendenti.length || n), piano: { caratteri: number } | null = null;
+      if (d.chiama) piano = { caratteri: IA.budgetCaratteriPrudente(maxOut, 'groq') };
+      else {
+        const archetipo = l.specifica.archetipo ? String(l.specifica.archetipo) : undefined, minimo = pendenti.length ? 1 : n;
+        for (let candidato = minimo; candidato >= 1; candidato--) {
+          const uscita = maxOutPer(pendenti.length || candidato), p = await IA.pianificaBudgetCaratteri('genera', uscita, { archetipo });
+          if (p) { n = pendenti.length ? n : candidato; maxOut = uscita; piano = p; break; }
+        }
+        if (!piano) throw new Error('Nessun provider disponibile ha budget sufficiente per una domanda: controlla chiavi e quota oppure aggiungi Gemini.');
+      }
+      const numeri = new Set(pendenti.flatMap(x => x.pagine)); let pagine = pendenti.length && l.input
+        ? ritagliaPagine(l.input.pagine.filter(p => numeri.has(p.n)), batch, limiteCorrezione(l, pendenti, piano?.caratteri)) : selezionaPagine(l, batch, n, piano?.caratteri);
+      pagine = adattaPagineAlBudget(pagine, piano?.caratteri, ps => pendenti.length
+        ? CodaQuizQualita.promptCorrezione(pendenti, ps) : prompt(l as LavoroQuiz, n, ps));
       if (pendenti.length) {
-        const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o)), opzioni = { maxOut: maxOutPer(pendenti.length), tronca: false as const, prudente: true,
+        const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o)), opzioni = { maxOut, tronca: false as const, prudente: true,
           archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
         const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
         let r: { j: unknown; prov: string; modello: string };
@@ -143,7 +232,7 @@ const CodaQuizRunner = (() => {
         return { esito: salvato.stato === 'completato' ? 'completato' : 'checkpoint', lavoro: salvato };
       }
       if (!n || !pagine.length) throw new Error('la sorgente non contiene testo utilizzabile');
-      const opzioni = { maxOut: maxOutPer(n), tronca: false as const, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+      const opzioni = { maxOut, tronca: false as const, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
       const chiama = d.chiama || ((m, o) => IA.chiedi(m as any, 'genera', o));
       const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
       let r: { j: unknown; prov: string; modello: string };
@@ -164,5 +253,6 @@ const CodaQuizRunner = (() => {
     } finally { await CodaQuiz.rilasciaLease(account, proprietario).catch(e => console.warn('CodaQuizRunner: rilascio lease fallito', e)); }
   }
 
-  return { specifica, pagineTesto, creaDaTesto, creaDaPaginePdf, creaDaPdf, selezionaPagine, grandezzaBatch, prompt, domandeDa, avanza };
+  return { specifica, pagineTesto, creaDaTesto, creaPianoDaTesto, creaDaPaginePdf, creaPianoDaPaginePdf, creaDaLibroPdf, creaPianoDaLibroPdf,
+    creaDaPdf, creaPianoDaPdf, creaDaPdfs, creaPianoDaPdfs, selezionaPagine, grandezzaBatch, prompt, domandeDa, avanza };
 })();

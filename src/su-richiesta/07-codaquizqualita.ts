@@ -24,10 +24,28 @@ const CodaQuizQualita = (() => {
     let m: RegExpExecArray | null; while ((m = re.exec(s))) out.add(Number(m[1]));
     return [...out].filter(n => n > 0).sort((a, b) => a - b);
   }
+  /** Se il provider cita una pagina inesistente, usa il riscontro nel micro-batch senza spendere un'altra richiesta. */
+  function allineaFonteLocale(q0: DomAI, pagine: PaginaSorgenteQuiz[]): DomAI {
+    const citate = new Set(pagineCitate(q0));
+    if (pagine.some(p => citate.has(p.n))) return q0;
+    const esatta = Number(q0.esatta), opzioni = Array.isArray(q0.opzioni) ? q0.opzioni : [];
+    const chiavi = new Set(parole([q0.domanda, Number.isInteger(esatta) ? opzioni[esatta] : '', q0.spiegazione].map(String).join(' ')));
+    let migliore: PaginaSorgenteQuiz | null = null, punti = 0;
+    for (const p of pagine) {
+      const pp = new Set(parole(p.testo)); let n = 0; chiavi.forEach(k => { if (pp.has(k)) n++; });
+      if (n > punti) { punti = n; migliore = p; }
+    }
+    if (!migliore || punti < 2) return q0;
+    const fonte = 'Pagina ' + migliore.n, citazione = '[[Fonte, p. ' + migliore.n + ']]', q: DomAI = { ...q0, fonte, sourceRef: fonte };
+    const sp = testo(q.spiegazione);
+    q.spiegazione = sp ? (sp.includes('[[') ? sp.replace(/\[\[[^\]]+\]\]/g, citazione) : sp + ' ' + citazione) : citazione;
+    return q;
+  }
   function motivi(q: DomAI, pagine: PaginaSorgenteQuiz[], firme: Set<string>, ids: Set<string>): { motivi: string[]; pagine: number[] } {
     const id = testo(q.id) || '(senza id)', out: string[] = [], v = Validatore.valida([q]);
     for (const x of v.bloccanti.get(id) || []) out.push('Formato: ' + x);
-    for (const p of v.qualita.filter(p => p.sev === 'err')) out.push('Didattica: ' + p.msg);
+    // Nella coda a quantità libera il bias di lunghezza si decide sull'insieme, non boccia da solo una domanda.
+    for (const p of v.qualita.filter(p => p.sev === 'err' && p.msg !== 'la risposta corretta è marcatamente più lunga dei distrattori')) out.push('Didattica: ' + p.msg);
     const f = firma(q);
     if (!f || firme.has(f)) out.push('Deduplica: domanda uguale o quasi uguale a una già presente');
     if (ids.has(id)) out.push('Deduplica: ID già presente');
@@ -44,7 +62,8 @@ const CodaQuizQualita = (() => {
     const firme = new Set(esistenti.map(firma).filter(Boolean)), ids = new Set(esistenti.map(q => testo(q.id)).filter(Boolean)), out: EsitoValidazioneDomandaQuiz[] = [];
     for (const q0 of qs) {
       const base: DomAI = { sottoStep: '', categoria: 'prioritaria', tipoItem: '', coppiaGemellaId: '', ...q0 };
-      const q = (Validatore.ripara([base]).qs[0] || base) as DomAI, id = testo(q.id) || 'senza-id-' + (out.length + 1), r = motivi(q, pagine, firme, ids);
+      const riparata = (Validatore.ripara([base]).qs[0] || base) as DomAI, q = allineaFonteLocale(riparata, pagine);
+      const id = testo(q.id) || 'senza-id-' + (out.length + 1), r = motivi(q, pagine, firme, ids);
       const stato: EsitoValidazioneDomandaQuiz['stato'] = r.motivi.length ? (tentativi >= 3 ? 'da_rivedere' : 'da_correggere') : 'pronta';
       out.push({ id, domanda: q, stato, tentativi, motivi: r.motivi, pagine: r.pagine.length ? r.pagine : pagine.map(p => p.n) });
       firme.add(firma(q)); ids.add(id);
@@ -55,7 +74,9 @@ const CodaQuizQualita = (() => {
     const tutte = [...pronte, ...revisioni.map(r => r.domanda)], v = Validatore.valida(tutte);
     return { pronte: pronte.length, daCorreggere: revisioni.filter(r => r.stato === 'da_correggere').length,
       daRivedere: revisioni.filter(r => r.stato === 'da_rivedere').length,
-      problemiPacchetto: v.insieme.map(p => p.msg), aggiornatoIl: ora };
+      // La coda genera una quantita scelta (1..200): il vincolo storico di 18 vale per gli import a schede,
+      // non per questo rapporto. Gli altri controlli globali restano visibili.
+      problemiPacchetto: v.insieme.filter(p => !/ha \d+ domande invece di \d+/.test(p.msg)).map(p => p.msg), aggiornatoIl: ora };
   }
   function promptCorrezione(rs: RevisioneDomandaQuiz[], pagine: PaginaSorgenteQuiz[]): Array<{ role: string; content: string }> {
     const qs = rs.map(r => r.domanda), v = Validatore.valida(qs), problemi = [...v.qualita.filter(p => p.sev === 'err')];
@@ -91,6 +112,11 @@ const CodaQuizQualita = (() => {
     return { meta: { materia, codiceMateria: codice, stepId, sottoStep: sotto, titolo: testo(l.specifica.argomento) || materia },
       quiz: (l.risultati || []).map(q => ({ ...q, sottoStep: testo(q.sottoStep) || micro })) as QuizDrive[] };
   }
+  /** Le sole domande gia' pronte, tradotte per una prova locale senza statistiche e senza innesto. */
+  function domandeProva(l: LavoroQuiz): DomB[] {
+    const sk = 'prova-coda-' + l.id, step = testo(l.specifica.step) || 'coda-' + l.id;
+    return (l.risultati || []).map(q => ImportaDrive.domanda(q as QuizDrive, sk, step)).filter((q): q is DomB => !!q);
+  }
   function innesta(l: LavoroQuiz): InnestoRec {
     if (l.account !== CodaQuiz.accountAttuale()) throw new Error('il lavoro appartiene a un altro account');
     if (l.stato !== 'completato') throw new Error('completa prima validazione e correzioni');
@@ -98,5 +124,5 @@ const CodaQuizQualita = (() => {
     const p = pacchetto(l), t = ImportaDrive.traduci(p), d = ImportaDrive.proponi(t), sc = { corso: d.corsi[0].id, piano: d.piani[0].id, data: d.piani[0].data || ymd(oggi()) };
     return ImportaDrive.salva(t, sc, 'coda:' + l.id, { accumula: true, rapporto: Validatore.rapporto(p, { completo: true }) });
   }
-  return { firma, pagineCitate, validaDomande, rapporto, promptCorrezione, applicaCorrezioni, pacchetto, innesta };
+  return { firma, pagineCitate, allineaFonteLocale, validaDomande, rapporto, promptCorrezione, applicaCorrezioni, pacchetto, domandeProva, innesta };
 })();
