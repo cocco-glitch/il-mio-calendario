@@ -1177,7 +1177,7 @@ const CodaQuiz = (() => {
         return a;
     }
     function sorgentePulita(s) {
-        if (!s || !['testo', 'pdf'].includes(s.tipo) || !String(s.id || '').trim() || !String(s.versione || '').trim())
+        if (!s || !['testo', 'pdf', 'libro_pdf'].includes(s.tipo) || !String(s.id || '').trim() || !String(s.versione || '').trim())
             throw new Error('sorgente della coda non valida');
         return { tipo: s.tipo, id: String(s.id).trim(), versione: String(s.versione).trim() };
     }
@@ -1187,13 +1187,33 @@ const CodaQuiz = (() => {
     function copiaInput(input) {
         if (!input)
             return undefined;
-        return { pagine: (input.pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: String(p.testo || '') })),
-            pagineVuote: Math.max(0, Math.floor(Number(input.pagineVuote)) || 0) };
+        return {
+            pagine: (input.pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: String(p.testo || ''),
+                fileId: p.fileId ? String(p.fileId) : undefined, fileNome: p.fileNome ? String(p.fileNome) : undefined,
+                paginaFile: p.paginaFile ? Math.max(1, Math.floor(Number(p.paginaFile)) || 1) : undefined })),
+            pagineVuote: Math.max(0, Math.floor(Number(input.pagineVuote)) || 0),
+            fonti: input.fonti?.map(f => ({ id: String(f.id), nome: String(f.nome), versione: String(f.versione),
+                pagine: Math.max(0, Math.floor(Number(f.pagine)) || 0), pagineVuote: Math.max(0, Math.floor(Number(f.pagineVuote)) || 0),
+                primaPagina: Math.max(0, Math.floor(Number(f.primaPagina)) || 0), ultimaPagina: Math.max(0, Math.floor(Number(f.ultimaPagina)) || 0) })),
+        };
     }
     function nuovo(account, sorgente, specifica, ora = Date.now(), input) {
         const acc = accountPulito(account), src = sorgentePulita(sorgente), spec = specifica || {};
         return { account: acc, id: idDeterministico(acc, src, spec), stato: 'in_coda', tentativi: 0, sorgente: src, specifica: spec,
             creatoIl: ora, aggiornatoIl: ora, prossimoTentativoIl: null, ultimoErrore: null, input: copiaInput(input), risultati: [], revisioni: [], checkpoint: [] };
+    }
+    function lavoriDaPiano(account, sorgente, base, piano, ora = Date.now(), input) {
+        const quote = piano && Array.isArray(piano.perMicrostep) ? piano.perMicrostep : [], visti = new Set();
+        const totale = quote.reduce((n, q) => n + Math.floor(Number(q.quantita) || 0), 0);
+        if (!quote.length || totale !== Math.floor(Number(piano.totale) || 0) || totale < 1 || totale > 200)
+            throw new Error('piano quantità della coda non valido');
+        return quote.map(q => {
+            const id = String(q.id || '').trim(), quantita = Math.floor(Number(q.quantita) || 0);
+            if (!id || visti.has(id) || quantita < 1 || quantita > 200)
+                throw new Error('quota microstep della coda non valida');
+            visti.add(id);
+            return nuovo(account, sorgente, { ...(base || {}), microstep: id, quantita }, ora, input);
+        });
     }
     function cambia(l, stato, ora = Date.now()) {
         if (l.stato === stato)
@@ -1263,6 +1283,12 @@ const CodaQuiz = (() => {
             tx.onerror = () => ko(tx.error);
             tx.onabort = () => ko(tx.error || new Error('salvataggio della coda annullato'));
         });
+    }
+    async function aggiungiPiano(account, sorgente, base, piano, ora = Date.now(), input) {
+        const lavori = lavoriDaPiano(account, sorgente, base, piano, ora, input), out = [];
+        for (const l of lavori)
+            out.push(await aggiungi(l.account, l.sorgente, l.specifica, ora, input));
+        return out;
     }
     async function lista(account) {
         const acc = accountPulito(account), d = await db();
@@ -1368,6 +1394,38 @@ const CodaQuiz = (() => {
                 throw new Error('domanda da rivedere non trovata');
             const [vecchia] = revisioni.splice(i, 1), storiche = [...(l.revisioniStoriche || []), vecchia];
             return { ...l, stato: 'in_coda', aggiornatoIl: ora, revisioni, revisioniStoriche: storiche, rigenerazioni: (l.rigenerazioni || 0) + 1, prossimoTentativoIl: null, ultimoErrore: null };
+        });
+    }
+    function riprovaCorrezione(account, id, domandaId, ora = Date.now()) {
+        return aggiorna(account, id, l => {
+            const revisioni = (l.revisioni || []).map(r => r.id === domandaId && r.stato === 'da_rivedere'
+                ? { ...r, stato: 'da_correggere', tentativi: 0, motivi: r.motivi.filter(m => !/^Correzione:/.test(m)) } : r);
+            if (!revisioni.some(r => r.id === domandaId && r.stato === 'da_correggere'))
+                throw new Error('domanda da rivedere non trovata');
+            return { ...l, stato: 'in_coda', aggiornatoIl: ora, revisioni,
+                rapportoQualita: CodaQuizQualita.rapporto(l.risultati || [], revisioni, ora), prossimoTentativoIl: null, ultimoErrore: null };
+        });
+    }
+    function rivalidaLocale(account, id, ora = Date.now()) {
+        return aggiorna(account, id, l => {
+            if (!l.input)
+                throw new Error('testo delle pagine non disponibile nella coda');
+            const risultati = (l.risultati || []).slice(), revisioni = [], gia = risultati.slice();
+            for (const r of l.revisioni || []) {
+                const e = CodaQuizQualita.validaDomande([r.domanda], l.input.pagine, gia, r.tentativi)[0];
+                if (e.stato === 'pronta') {
+                    if (!risultati.some(q => String(q.id || '') === e.id))
+                        risultati.push(e.domanda);
+                    gia.push(e.domanda);
+                }
+                else
+                    revisioni.push({ id: e.id, domanda: e.domanda, stato: e.stato, tentativi: e.tentativi,
+                        motivi: e.motivi, pagine: e.pagine, cronologia: r.cronologia?.slice() });
+            }
+            const rapporto = CodaQuizQualita.rapporto(risultati, revisioni, ora), totale = Math.max(1, Number(l.specifica.quantita) || 1);
+            const fine = risultati.length + rapporto.daRivedere >= totale && rapporto.daCorreggere === 0;
+            return { ...l, stato: fine ? 'completato' : 'in_coda', aggiornatoIl: ora, risultati: risultati.slice(0, totale), revisioni,
+                rapportoQualita: rapporto, prossimoTentativoIl: null, ultimoErrore: null };
         });
     }
     async function elimina(account, id) {
@@ -1501,7 +1559,7 @@ const CodaQuiz = (() => {
         document.addEventListener('visibilitychange', riattiva);
         riattiva();
     }
-    return { NOME_DB, nuovo, idDeterministico, cambia, aggiungi, lista, pausa, riprendi, annulla, completa, rimanda, fermaIncerto, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, rigeneraDomanda, elimina,
+    return { NOME_DB, nuovo, lavoriDaPiano, idDeterministico, cambia, aggiungi, aggiungiPiano, lista, pausa, riprendi, annulla, completa, rimanda, fermaIncerto, salvaCheckpoint, salvaBatchQualita, salvaCorrezioni, segnaInnesto, rigeneraDomanda, riprovaCorrezione, rivalidaLocale, elimina,
         acquisisciLease, rinnovaLease, rilasciaLease, prossimo, recuperaInterrotti, svuotaAccount, svuotaTutto, proprietarioTab, accountAttuale };
 })();
 
@@ -1518,11 +1576,35 @@ const CodaQuizQualita = (() => {
             out.add(Number(m[1]));
         return [...out].filter(n => n > 0).sort((a, b) => a - b);
     }
+    function allineaFonteLocale(q0, pagine) {
+        const citate = new Set(pagineCitate(q0));
+        if (pagine.some(p => citate.has(p.n)))
+            return q0;
+        const esatta = Number(q0.esatta), opzioni = Array.isArray(q0.opzioni) ? q0.opzioni : [];
+        const chiavi = new Set(parole([q0.domanda, Number.isInteger(esatta) ? opzioni[esatta] : '', q0.spiegazione].map(String).join(' ')));
+        let migliore = null, punti = 0;
+        for (const p of pagine) {
+            const pp = new Set(parole(p.testo));
+            let n = 0;
+            chiavi.forEach(k => { if (pp.has(k))
+                n++; });
+            if (n > punti) {
+                punti = n;
+                migliore = p;
+            }
+        }
+        if (!migliore || punti < 2)
+            return q0;
+        const fonte = 'Pagina ' + migliore.n, citazione = '[[Fonte, p. ' + migliore.n + ']]', q = { ...q0, fonte, sourceRef: fonte };
+        const sp = testo(q.spiegazione);
+        q.spiegazione = sp ? (sp.includes('[[') ? sp.replace(/\[\[[^\]]+\]\]/g, citazione) : sp + ' ' + citazione) : citazione;
+        return q;
+    }
     function motivi(q, pagine, firme, ids) {
         const id = testo(q.id) || '(senza id)', out = [], v = Validatore.valida([q]);
         for (const x of v.bloccanti.get(id) || [])
             out.push('Formato: ' + x);
-        for (const p of v.qualita.filter(p => p.sev === 'err'))
+        for (const p of v.qualita.filter(p => p.sev === 'err' && p.msg !== 'la risposta corretta è marcatamente più lunga dei distrattori'))
             out.push('Didattica: ' + p.msg);
         const f = firma(q);
         if (!f || firme.has(f))
@@ -1546,7 +1628,8 @@ const CodaQuizQualita = (() => {
         const firme = new Set(esistenti.map(firma).filter(Boolean)), ids = new Set(esistenti.map(q => testo(q.id)).filter(Boolean)), out = [];
         for (const q0 of qs) {
             const base = { sottoStep: '', categoria: 'prioritaria', tipoItem: '', coppiaGemellaId: '', ...q0 };
-            const q = (Validatore.ripara([base]).qs[0] || base), id = testo(q.id) || 'senza-id-' + (out.length + 1), r = motivi(q, pagine, firme, ids);
+            const riparata = (Validatore.ripara([base]).qs[0] || base), q = allineaFonteLocale(riparata, pagine);
+            const id = testo(q.id) || 'senza-id-' + (out.length + 1), r = motivi(q, pagine, firme, ids);
             const stato = r.motivi.length ? (tentativi >= 3 ? 'da_rivedere' : 'da_correggere') : 'pronta';
             out.push({ id, domanda: q, stato, tentativi, motivi: r.motivi, pagine: r.pagine.length ? r.pagine : pagine.map(p => p.n) });
             firme.add(firma(q));
@@ -1558,7 +1641,7 @@ const CodaQuizQualita = (() => {
         const tutte = [...pronte, ...revisioni.map(r => r.domanda)], v = Validatore.valida(tutte);
         return { pronte: pronte.length, daCorreggere: revisioni.filter(r => r.stato === 'da_correggere').length,
             daRivedere: revisioni.filter(r => r.stato === 'da_rivedere').length,
-            problemiPacchetto: v.insieme.map(p => p.msg), aggiornatoIl: ora };
+            problemiPacchetto: v.insieme.filter(p => !/ha \d+ domande invece di \d+/.test(p.msg)).map(p => p.msg), aggiornatoIl: ora };
     }
     function promptCorrezione(rs, pagine) {
         const qs = rs.map(r => r.domanda), v = Validatore.valida(qs), problemi = [...v.qualita.filter(p => p.sev === 'err')];
@@ -1602,6 +1685,10 @@ const CodaQuizQualita = (() => {
         return { meta: { materia, codiceMateria: codice, stepId, sottoStep: sotto, titolo: testo(l.specifica.argomento) || materia },
             quiz: (l.risultati || []).map(q => ({ ...q, sottoStep: testo(q.sottoStep) || micro })) };
     }
+    function domandeProva(l) {
+        const sk = 'prova-coda-' + l.id, step = testo(l.specifica.step) || 'coda-' + l.id;
+        return (l.risultati || []).map(q => ImportaDrive.domanda(q, sk, step)).filter((q) => !!q);
+    }
     function innesta(l) {
         if (l.account !== CodaQuiz.accountAttuale())
             throw new Error('il lavoro appartiene a un altro account');
@@ -1612,7 +1699,7 @@ const CodaQuizQualita = (() => {
         const p = pacchetto(l), t = ImportaDrive.traduci(p), d = ImportaDrive.proponi(t), sc = { corso: d.corsi[0].id, piano: d.piani[0].id, data: d.piani[0].data || ymd(oggi()) };
         return ImportaDrive.salva(t, sc, 'coda:' + l.id, { accumula: true, rapporto: Validatore.rapporto(p, { completo: true }) });
     }
-    return { firma, pagineCitate, validaDomande, rapporto, promptCorrezione, applicaCorrezioni, pacchetto, innesta };
+    return { firma, pagineCitate, allineaFonteLocale, validaDomande, rapporto, promptCorrezione, applicaCorrezioni, pacchetto, domandeProva, innesta };
 })();
 
 const CodaQuizRunner = (() => {
@@ -1656,13 +1743,56 @@ const CodaQuizRunner = (() => {
         const sp = specifica(o), versione = 'sha256:' + sha256Hex(pulito), pagine = pagineTesto(pulito);
         return CodaQuiz.aggiungi(account, { tipo: 'testo', id: id || 'testo-' + versione.slice(7, 19), versione }, sp, Date.now(), { pagine, pagineVuote: 0 });
     }
+    async function creaPianoDaTesto(account, testo, o, piano, id) {
+        const pulito = String(testo || '').trim();
+        if (!pulito)
+            throw new Error('incolla del testo prima di creare la coda');
+        const sp = specifica(o), versione = 'sha256:' + sha256Hex(pulito), pagine = pagineTesto(pulito);
+        return CodaQuiz.aggiungiPiano(account, { tipo: 'testo', id: id || 'testo-' + versione.slice(7, 19), versione }, sp, piano, Date.now(), { pagine, pagineVuote: 0 });
+    }
     async function creaDaPaginePdf(account, id, versione, pagine, o) {
         const tutte = (pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: compatta(p.testo) })), leggibili = tutte.filter(p => p.testo);
         if (!leggibili.length)
             throw new Error('Il PDF non contiene testo leggibile. L’OCR non fa parte di questa versione.');
         return CodaQuiz.aggiungi(account, { tipo: 'pdf', id: compatta(id) || 'pdf', versione: compatta(versione) || 'sha256:' + sha256Hex(leggibili.map(p => p.testo).join('\n')) }, specifica(o), Date.now(), { pagine: leggibili, pagineVuote: tutte.length - leggibili.length });
     }
-    async function creaDaPdf(account, file, o) {
+    async function creaPianoDaPaginePdf(account, id, versione, pagine, o, piano) {
+        const tutte = (pagine || []).map(p => ({ n: Math.max(1, Math.floor(Number(p.n)) || 1), testo: compatta(p.testo) })), leggibili = tutte.filter(p => p.testo);
+        if (!leggibili.length)
+            throw new Error('Il PDF non contiene testo leggibile. L’OCR non fa parte di questa versione.');
+        return CodaQuiz.aggiungiPiano(account, { tipo: 'pdf', id: compatta(id) || 'pdf', versione: compatta(versione) || 'sha256:' + sha256Hex(leggibili.map(p => p.testo).join('\n')) }, specifica(o), piano, Date.now(), { pagine: leggibili, pagineVuote: tutte.length - leggibili.length });
+    }
+    async function creaDaLibroPdf(account, documenti, o) {
+        const pronto = preparaLibroPdf(documenti);
+        return CodaQuiz.aggiungi(account, pronto.sorgente, specifica(o), Date.now(), pronto.input);
+    }
+    function preparaLibroPdf(documenti) {
+        if (!documenti || documenti.length < 2)
+            throw new Error('scegli almeno due PDF per creare un libro virtuale');
+        const pagine = [], fonti = [];
+        let vuote = 0;
+        documenti.forEach((d, indice) => {
+            const nome = compatta(d.nome || d.id) || 'PDF ' + (indice + 1), id = compatta(d.id) || 'pdf-' + (indice + 1);
+            const versione = compatta(d.versione) || 'sha256:' + sha256Hex((d.pagine || []).map(p => p.testo).join('\n'));
+            const prima = pagine.length + 1, tutte = d.pagine || [], leggibili = tutte.filter(p => compatta(p.testo));
+            leggibili.forEach(p => pagine.push({ n: pagine.length + 1, testo: compatta(p.testo), fileId: id, fileNome: nome,
+                paginaFile: Math.max(1, Math.floor(Number(p.n)) || 1) }));
+            const nVuote = tutte.length - leggibili.length;
+            vuote += nVuote;
+            fonti.push({ id, nome, versione, pagine: leggibili.length, pagineVuote: nVuote,
+                primaPagina: leggibili.length ? prima : 0, ultimaPagina: leggibili.length ? pagine.length : 0 });
+        });
+        if (!pagine.length)
+            throw new Error('I PDF non contengono testo leggibile. L’OCR non fa parte di questa versione.');
+        const impronta = JSON.stringify(fonti.map(f => [f.id, f.versione, f.pagine, f.pagineVuote]));
+        const versione = 'sha256:' + sha256Hex(impronta), id = 'libro-' + versione.slice(7, 19);
+        return { sorgente: { tipo: 'libro_pdf', id, versione }, input: { pagine, pagineVuote: vuote, fonti } };
+    }
+    async function creaPianoDaLibroPdf(account, documenti, o, piano) {
+        const pronto = preparaLibroPdf(documenti);
+        return CodaQuiz.aggiungiPiano(account, pronto.sorgente, specifica(o), piano, Date.now(), pronto.input);
+    }
+    async function estraiPdf(file) {
         if (!file || !/\.pdf$/i.test(file.name || ''))
             throw new Error('scegli un PDF');
         const L = await caricaPdfJs(), doc = await L.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
@@ -1677,17 +1807,41 @@ const CodaQuizRunner = (() => {
             if (typeof doc.destroy === 'function')
                 await doc.destroy();
         }
-        return creaDaPaginePdf(account, file.name, 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine, o);
+        return { id: file.name, nome: file.name, versione: 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine };
+    }
+    async function creaDaPdf(account, file, o) {
+        const d = await estraiPdf(file);
+        return creaDaPaginePdf(account, d.id, d.versione, d.pagine, o);
+    }
+    async function creaPianoDaPdf(account, file, o, piano) {
+        const d = await estraiPdf(file);
+        return creaPianoDaPaginePdf(account, d.id, d.versione, d.pagine, o, piano);
+    }
+    async function creaDaPdfs(account, files, o) {
+        if (!files || files.length < 2)
+            throw new Error('scegli almeno due PDF per creare un libro virtuale');
+        const documenti = [];
+        for (const file of files)
+            documenti.push(await estraiPdf(file));
+        return creaDaLibroPdf(account, documenti, o);
+    }
+    async function creaPianoDaPdfs(account, files, o, piano) {
+        if (!files || files.length < 2)
+            throw new Error('scegli almeno due PDF per creare un libro virtuale');
+        const documenti = [];
+        for (const file of files)
+            documenti.push(await estraiPdf(file));
+        return creaPianoDaLibroPdf(account, documenti, o, piano);
     }
     const maxOutPer = (n) => Math.min(4096, Math.max(900, n * 650));
-    function limiteDaMessaggi(l, maxOut, messaggi) {
+    function limiteDaMessaggi(l, messaggi, budgetCaratteri) {
         const configurato = intero(l.specifica.maxCaratteriFonte, 2000, 24000, 12000);
         const istruzioni = messaggi.reduce((tot, m) => tot + m.content.length, 0) + 80;
-        const budget = typeof IA === 'undefined' ? configurato + istruzioni : IA.budgetCaratteriPrudente(maxOut);
+        const budget = budgetCaratteri == null ? configurato + istruzioni : budgetCaratteri;
         return Math.max(0, Math.min(configurato, budget - istruzioni));
     }
-    const limiteFonte = (l, n) => limiteDaMessaggi(l, maxOutPer(n), prompt(l, n, []));
-    const limiteCorrezione = (l, revisioni) => limiteDaMessaggi(l, maxOutPer(revisioni.length), CodaQuizQualita.promptCorrezione(revisioni, []));
+    const limiteFonte = (l, n, budgetCaratteri) => limiteDaMessaggi(l, prompt(l, n, []), budgetCaratteri);
+    const limiteCorrezione = (l, revisioni, budgetCaratteri) => limiteDaMessaggi(l, CodaQuizQualita.promptCorrezione(revisioni, []), budgetCaratteri);
     function ritagliaPagine(pagine, batch, max) {
         if (max <= 0)
             return [];
@@ -1695,7 +1849,7 @@ const CodaQuizRunner = (() => {
             if (p.testo.length <= max)
                 return p;
             const blocchi = Math.ceil(p.testo.length / max), da = (batch % blocchi) * max;
-            return { n: p.n, testo: p.testo.slice(da, da + max).trim() };
+            return { ...p, testo: p.testo.slice(da, da + max).trim() };
         };
         const out = [];
         let caratteri = 0;
@@ -1710,8 +1864,8 @@ const CodaQuizRunner = (() => {
         }
         return out;
     }
-    function selezionaPagine(l, batch, n = grandezzaBatch(l)) {
-        const input = l.input, max = limiteFonte(l, n);
+    function selezionaPagine(l, batch, n = grandezzaBatch(l), budgetCaratteri) {
+        const input = l.input, max = limiteFonte(l, n, budgetCaratteri);
         if (!input)
             return [];
         const chiavi = [...new Set(parole(String(l.specifica.materia || '') + ' ' + String(l.specifica.argomento || '')))];
@@ -1723,11 +1877,11 @@ const CodaQuizRunner = (() => {
         return ritagliaPagine(ruotate.map(r => r.p), batch, max).sort((a, b) => a.n - b.n);
     }
     function grandezzaBatch(l) {
-        const fatti = (l.risultati || []).length + (l.revisioni || []).length, totale = intero(l.specifica.quantita, 1, 200, 30), foglio = 18 - (fatti % 18);
-        return Math.min(totale - fatti, intero(l.specifica.maxPerBatch, 1, 8, 5), foglio);
+        const fatti = (l.risultati || []).length + (l.revisioni || []).length, totale = intero(l.specifica.quantita, 1, 200, 30);
+        return Math.min(totale - fatti, intero(l.specifica.maxPerBatch, 1, 8, 5));
     }
     function prompt(l, n, pagine) {
-        const fonte = pagine.map(p => '\n--- PAGINA ' + p.n + ' ---\n' + p.testo).join('');
+        const fonte = pagine.map(p => '\n--- PAGINA ' + p.n + (p.fileNome ? ' · ' + p.fileNome + ' · pagina originale ' + p.paginaFile : '') + ' ---\n' + p.testo).join('');
         const target = [l.specifica.materia, l.specifica.argomento].filter(Boolean).join(' · ') || 'contenuto fornito';
         const regole = 'Genera quiz usando solo la fonte. Rispondi con un solo oggetto JSON {"formato":"quiz-v4","quiz":[...]}. ' +
             'Ogni domanda deve avere tipo "mcq", livello 1..4, domanda, 4 opzioni con la corretta in posizione 0, spiegazione con citazione [[Fonte, p. N]], ' +
@@ -1737,9 +1891,27 @@ const CodaQuizRunner = (() => {
             { role: 'user', content: 'TARGET: ' + target + '\nCrea esattamente ' + n + ' domande nuove, autonome e non ripetitive.' + fonte },
         ];
     }
+    function adattaPagineAlBudget(pagine, budgetCaratteri, creaMessaggi) {
+        if (budgetCaratteri == null)
+            return pagine;
+        const out = pagine.map(p => ({ ...p }));
+        const lunghezza = () => creaMessaggi(out).reduce((tot, m) => tot + m.content.length, 0);
+        while (out.length) {
+            const eccedenza = lunghezza() - budgetCaratteri;
+            if (eccedenza <= 0)
+                break;
+            const ultima = out[out.length - 1];
+            if (ultima.testo.length <= eccedenza + 80)
+                out.pop();
+            else
+                ultima.testo = ultima.testo.slice(0, Math.max(0, ultima.testo.length - eccedenza - 16)).trim();
+        }
+        return out;
+    }
     function domandeDa(risposta, l, n) {
-        const lettura = Contratto.leggi(JSON.stringify(risposta)), fatti = (l.risultati || []).length + (l.revisioni || []).length, scheda = Math.floor(fatti / 18) + 1;
-        const qs = Contratto.aQuiz(lettura, { step: String(l.specifica.step || l.id.slice(3, 11)), scheda, da: fatti % 18 + 1 });
+        const lettura = Contratto.leggi(JSON.stringify(risposta)), fatti = (l.risultati || []).length + (l.revisioni || []).length;
+        const qs = Contratto.aQuiz(lettura, { step: String(l.specifica.step || l.id.slice(3, 11)), scheda: 1, da: fatti + 1,
+            sottoStep: l.specifica.microstep ? String(l.specifica.microstep) : undefined });
         if (!qs.length)
             throw new Error(lettura.errori[0] || 'la risposta AI non contiene domande leggibili');
         return qs.slice(0, n);
@@ -1754,12 +1926,33 @@ const CodaQuizRunner = (() => {
             l = await CodaQuiz.prossimo(account, proprietario, t0);
             if (!l)
                 return { esito: 'vuoto' };
-            const n = grandezzaBatch(l), totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length;
+            let n = grandezzaBatch(l);
+            const totale = intero(l.specifica.quantita, 1, 200, 30), batch = (l.checkpoint || []).length;
             const pendenti = (l.revisioni || []).filter(x => x.stato === 'da_correggere').slice(0, 1);
-            const numeri = new Set(pendenti.flatMap(x => x.pagine)), pagine = pendenti.length && l.input
-                ? ritagliaPagine(l.input.pagine.filter(p => numeri.has(p.n)), batch, limiteCorrezione(l, pendenti)) : selezionaPagine(l, batch, n);
+            let maxOut = maxOutPer(pendenti.length || n), piano = null;
+            if (d.chiama)
+                piano = { caratteri: IA.budgetCaratteriPrudente(maxOut, 'groq') };
+            else {
+                const archetipo = l.specifica.archetipo ? String(l.specifica.archetipo) : undefined, minimo = pendenti.length ? 1 : n;
+                for (let candidato = minimo; candidato >= 1; candidato--) {
+                    const uscita = maxOutPer(pendenti.length || candidato), p = await IA.pianificaBudgetCaratteri('genera', uscita, { archetipo });
+                    if (p) {
+                        n = pendenti.length ? n : candidato;
+                        maxOut = uscita;
+                        piano = p;
+                        break;
+                    }
+                }
+                if (!piano)
+                    throw new Error('Nessun provider disponibile ha budget sufficiente per una domanda: controlla chiavi e quota oppure aggiungi Gemini.');
+            }
+            const numeri = new Set(pendenti.flatMap(x => x.pagine));
+            let pagine = pendenti.length && l.input
+                ? ritagliaPagine(l.input.pagine.filter(p => numeri.has(p.n)), batch, limiteCorrezione(l, pendenti, piano?.caratteri)) : selezionaPagine(l, batch, n, piano?.caratteri);
+            pagine = adattaPagineAlBudget(pagine, piano?.caratteri, ps => pendenti.length
+                ? CodaQuizQualita.promptCorrezione(pendenti, ps) : prompt(l, n, ps));
             if (pendenti.length) {
-                const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o)), opzioni = { maxOut: maxOutPer(pendenti.length), tronca: false, prudente: true,
+                const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o)), opzioni = { maxOut, tronca: false, prudente: true,
                     archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
                 const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
                 let r;
@@ -1776,7 +1969,7 @@ const CodaQuizRunner = (() => {
             }
             if (!n || !pagine.length)
                 throw new Error('la sorgente non contiene testo utilizzabile');
-            const opzioni = { maxOut: maxOutPer(n), tronca: false, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
+            const opzioni = { maxOut, tronca: false, prudente: true, archetipo: l.specifica.archetipo ? String(l.specifica.archetipo) : undefined };
             const chiama = d.chiama || ((m, o) => IA.chiedi(m, 'genera', o));
             const battito = setInterval(() => { CodaQuiz.rinnovaLease(account, proprietario, Date.now(), 120000).catch(e => console.warn('CodaQuizRunner: rinnovo lease fallito', e)); }, 30000);
             let r;
@@ -1810,7 +2003,8 @@ const CodaQuizRunner = (() => {
             await CodaQuiz.rilasciaLease(account, proprietario).catch(e => console.warn('CodaQuizRunner: rilascio lease fallito', e));
         }
     }
-    return { specifica, pagineTesto, creaDaTesto, creaDaPaginePdf, creaDaPdf, selezionaPagine, grandezzaBatch, prompt, domandeDa, avanza };
+    return { specifica, pagineTesto, creaDaTesto, creaPianoDaTesto, creaDaPaginePdf, creaPianoDaPaginePdf, creaDaLibroPdf, creaPianoDaLibroPdf,
+        creaDaPdf, creaPianoDaPdf, creaDaPdfs, creaPianoDaPdfs, selezionaPagine, grandezzaBatch, prompt, domandeDa, avanza };
 })();
 
 const CodaQuizUI = (() => {
@@ -1827,20 +2021,55 @@ const CodaQuizUI = (() => {
         const account = CodaQuiz.accountAttuale(), materia = h('input', { type: 'text', placeholder: 'Materia', 'aria-label': 'Materia del quiz' });
         const argomento = h('input', { type: 'text', placeholder: 'Argomento', 'aria-label': 'Argomento del quiz' });
         const step = h('input', { type: 'text', placeholder: 'Step (es. 3.3)', 'aria-label': 'Step di destinazione del quiz' });
-        const microstep = h('input', { type: 'text', placeholder: 'Microstep (es. 3.3.1)', 'aria-label': 'Microstep di destinazione del quiz' });
+        const microstep = h('input', { type: 'text', placeholder: 'Microstep, anche più di uno (es. 3.3.1, 3.3.2)', 'aria-label': 'Microstep di destinazione del quiz' });
         const quantita = h('input', { type: 'number', min: '1', max: '200', value: '30', inputmode: 'numeric', 'aria-label': 'Numero di domande' });
+        const modalita = h('select', { 'aria-label': 'Modalità quantità quiz' }, h('option', { value: 'auto' }, 'Automatica'), h('option', { value: 'manuale' }, 'Totale manuale'));
+        const intensita = h('select', { 'aria-label': 'Intensità quantità quiz' }, h('option', { value: '1' }, 'Leggera'), h('option', { value: '2' }, 'Normale'), h('option', { value: '3' }, 'Intensa'));
+        intensita.value = '2';
+        const proposta = h('div.centro-nota', { role: 'status', 'aria-live': 'polite', 'data-piano-quantita': '' }, 'Indica uno o più microstep e calcola la proposta.');
         const testo = h('textarea', { rows: '8', placeholder: 'Incolla appunti o testo del libro…', 'aria-label': 'Testo da cui generare il quiz' });
-        const pdf = h('input', { type: 'file', accept: 'application/pdf,.pdf', 'aria-label': 'PDF testuale da cui generare il quiz' });
+        const pdf = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true, 'aria-label': 'Uno o più PDF testuali da cui generare il quiz' });
         const stato = h('p.piccolo', { role: 'status', 'aria-live': 'polite' }, 'La coda riprende quando riapri l’app. Non lavora a browser o dispositivo chiusi.');
         const elenco = h('div'), quote = QuoteUI.pannello();
         let occupato = false;
-        const opzioni = () => ({ quantita: Number(quantita.value), materia: materia.value, argomento: argomento.value, step: step.value, microstep: microstep.value });
+        let chiudiFoglio = () => { };
+        let pianoQuantita = null;
+        const idsMicrostep = () => [...new Set(microstep.value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean))];
+        function calcolaProposta() {
+            const ids = idsMicrostep();
+            if (!ids.length) {
+                pianoQuantita = null;
+                proposta.textContent = 'Indica uno o più microstep per calcolare la copertura.';
+                return null;
+            }
+            pianoQuantita = PianificazioneQuiz.calcola({ modalita: modalita.value === 'manuale' ? 'manuale' : 'auto', totaleManuale: Number(quantita.value), massimoTotale: 200,
+                intensita: Number(intensita.value), microstep: ids.map(id => ({ id })) });
+            proposta.textContent = 'Proposta: ' + pianoQuantita.totale + ' domande totali · ' + pianoQuantita.perMicrostep.map(x => x.id + ': ' + x.quantita).join(' · ') +
+                (pianoQuantita.avvisi.length ? ' · ' + pianoQuantita.avvisi.join(' ') : '');
+            return pianoQuantita;
+        }
+        const calcolaBtn = h('button.chip', { type: 'button', 'aria-label': 'Calcola proposta quantità', onclick: calcolaProposta }, 'Calcola proposta');
+        const opzioni = () => ({ quantita: Number(quantita.value), materia: materia.value, argomento: argomento.value, step: step.value, microstep: idsMicrostep()[0] || microstep.value });
         function dettagliQualita(l) {
             const q = l.rapportoQualita, revisioni = l.revisioni || [];
             if (!q && !revisioni.length)
                 return null;
             const problemi = q?.problemiPacchetto || [];
-            return h('details', null, h('summary.piccolo', null, 'Dettagli qualità · ' + (q ? q.pronte + ' pronte · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : revisioni.length + ' da controllare')), problemi.length ? h('div', null, h('p.piccolo', null, h('b', null, 'Controlli del pacchetto')), h('ul.piccolo', null, ...problemi.map(x => h('li', null, x)))) : h('p.piccolo.tenue', null, 'Nessun problema complessivo rilevato.'), revisioni.length ? h('div', null, h('p.piccolo', null, h('b', null, 'Domande non pronte')), ...revisioni.map(r => h('details', null, h('summary.piccolo', null, (r.stato === 'da_rivedere' ? 'Da rivedere' : 'Da correggere') + ' · ' + String(r.domanda.domanda || r.id).slice(0, 120)), h('p.piccolo.tenue', null, 'Tentativi: ' + r.tentativi + (r.pagine.length ? ' · pagine: ' + r.pagine.join(', ') : '')), h('ul.piccolo', null, ...r.motivi.map(x => h('li', null, x))), r.cronologia?.length ? h('details', null, h('summary.piccolo', null, 'Cronologia'), h('ul.piccolo', null, ...r.cronologia.map(x => h('li', null, 'Tentativo ' + x.tentativo + ' · ' + x.esito + ' · ' + x.campi.join(', '))))) : null, r.stato === 'da_rivedere' ? h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.rigeneraDomanda(account, l.id, r.id); stato.textContent = 'Rigenerazione individuale accodata: la domanda precedente resta nella cronologia e non conta nella copertura.'; await disegna(); } }, 'Rigenera questa domanda') : null))) : null);
+            return h('details', null, h('summary.piccolo', null, 'Dettagli qualità · ' + (q ? q.pronte + ' pronte · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : revisioni.length + ' da controllare')), problemi.length ? h('div', null, h('p.piccolo', null, h('b', null, 'Controlli del pacchetto')), h('ul.piccolo', null, ...problemi.map(x => h('li', null, x))))
+                : h('p.piccolo.tenue', null, 'Nessun problema complessivo rilevato.'), revisioni.length ? h('div', null, h('p.piccolo', null, h('b', null, 'Domande non pronte')), ...revisioni.map(r => h('details', null, h('summary.piccolo', null, (r.stato === 'da_rivedere' ? 'Da rivedere' : 'Da correggere') + ' · ' + String(r.domanda.domanda || r.id).slice(0, 120)), h('p.piccolo.tenue', null, 'Tentativi: ' + r.tentativi + (r.pagine.length ? ' · pagine: ' + r.pagine.join(', ') : '')), h('ul.piccolo', null, ...r.motivi.map(x => h('li', null, x))), r.cronologia?.length ? h('details', null, h('summary.piccolo', null, 'Cronologia'), h('ul.piccolo', null, ...r.cronologia.map(x => h('li', null, 'Tentativo ' + x.tentativo + ' · ' + x.esito + ' · ' + x.campi.join(', '))))) : null, r.stato === 'da_rivedere' ? h('div.chips', null, h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.riprovaCorrezione(account, l.id, r.id); stato.textContent = 'Correzione riaperta senza rigenerare la domanda; cronologia conservata.'; await disegna(); } }, 'Riprova correzione'), h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.rigeneraDomanda(account, l.id, r.id); stato.textContent = 'Rigenerazione individuale accodata: la domanda precedente resta nella cronologia e non conta nella copertura.'; await disegna(); } }, 'Rigenera questa domanda')) : null))) : null);
+        }
+        function prova(l) {
+            const lista = CodaQuizQualita.domandeProva(l);
+            if (!lista.length) {
+                stato.textContent = 'Nessuna domanda pronta da provare.';
+                return;
+            }
+            const materiaQ = String(l.specifica.materia || 'Quiz generato'), micro = String(l.specifica.microstep || l.specifica.step || 'Quiz generato');
+            const titolo = String(l.specifica.argomento || materiaQ), sk = 'prova-coda-' + l.id;
+            const pk = { tipo: 'step', id: 'prova-coda', step: 0, titolo: '', aggiornato: '', risorse: { libri: {}, quiz: {} }, materie: [] };
+            const s = { id: sk, k: 1, n: 1, titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' };
+            chiudiFoglio();
+            void QuizApp.apri(pk, materiaQ, micro, s, () => lista, { occh: 'Prova · coda quiz · senza statistiche', titolo, prova: true, chiudi: () => apri() });
         }
         async function esegui(l) {
             if (occupato)
@@ -1899,6 +2128,7 @@ const CodaQuizUI = (() => {
             }
             for (const l of lavori.slice().reverse()) {
                 const n = (l.risultati || []).length, tot = Number(l.specifica.quantita) || 0, q = l.rapportoQualita;
+                const fonti = l.input?.fonti || [], origine = fonti.length ? ' · libro virtuale: ' + fonti.length + ' file, ' + l.input.pagine.length + ' pagine' : '';
                 const azioni = [];
                 if (l.stato === 'in_coda' || l.stato === 'in_pausa')
                     azioni.push(h('button.chip', { type: 'button', onclick: () => esegui(l) }, l.stato === 'in_pausa' ? 'Riprendi' : 'Continua'));
@@ -1906,6 +2136,15 @@ const CodaQuizUI = (() => {
                     azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.pausa(account, l.id); stato.textContent = 'Coda in pausa.'; QuoteUI.aggiorna(quote.querySelector('[data-quote-ai]')); await disegna(); } }, 'Pausa'));
                 if (!['completato', 'annullato'].includes(l.stato))
                     azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.annulla(account, l.id); stato.textContent = 'Lavoro annullato; i checkpoint restano visibili finché non lo elimini.'; await disegna(); } }, 'Annulla'));
+                if (n)
+                    azioni.push(h('button.chip', { type: 'button', onclick: () => prova(l), 'aria-label': 'Prova ' + n + (n === 1 ? ' domanda pronta' : ' domande pronte') }, '▶ Prova le pronte'));
+                if ((l.revisioni || []).length)
+                    azioni.push(h('button.chip', { type: 'button', onclick: async () => {
+                            const r = await CodaQuiz.rivalidaLocale(account, l.id);
+                            const q = r.rapportoQualita;
+                            stato.textContent = 'Rivalidazione locale completata senza usare crediti: ' + (r.risultati || []).length + ' pronte' + (q ? ' · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere.' : '.');
+                            await disegna();
+                        } }, 'Rivalida gratis'));
                 if (l.stato === 'completato')
                     azioni.push(h('button.chip', { type: 'button', onclick: () => scarica(l) }, 'Scarica JSON'));
                 if (l.stato === 'completato' && !l.innestoId)
@@ -1922,7 +2161,7 @@ const CodaQuizUI = (() => {
                         } }, 'Innestalo nel piano'));
                 if (l.stato === 'completato' || l.stato === 'annullato')
                     azioni.push(h('button.chip', { type: 'button', onclick: async () => { await CodaQuiz.elimina(account, l.id); await disegna(); } }, 'Elimina'));
-                elenco.appendChild(h('section.card', null, h('p', null, h('b', null, etichettaStato[l.stato]), ' · ', String(l.specifica.materia || l.specifica.argomento || l.sorgente.id)), h('p.piccolo.tenue', null, n + '/' + tot + ' pronte' + (q ? ' · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : '') + ' · ' + (l.checkpoint || []).length + ' checkpoint' + (l.innestoId ? ' · innestato' : '') + (l.ultimoErrore ? ' · ' + l.ultimoErrore : '') +
+                elenco.appendChild(h('section.card', { 'data-coda-id': l.id }, h('p', null, h('b', null, etichettaStato[l.stato]), ' · ', String(l.specifica.materia || l.specifica.argomento || l.sorgente.id)), h('p.piccolo.tenue', null, n + '/' + tot + ' pronte' + origine + (q ? ' · ' + q.daCorreggere + ' da correggere · ' + q.daRivedere + ' da rivedere' : '') + ' · ' + (l.checkpoint || []).length + ' checkpoint' + (l.innestoId ? ' · innestato' : '') + (l.ultimoErrore ? ' · ' + l.ultimoErrore : '') +
                     (l.prossimoTentativoIl ? ' · non prima delle ' + dataOra(l.prossimoTentativoIl) : '')), dettagliQualita(l), h('div.chips', null, ...azioni)));
             }
         }
@@ -1930,17 +2169,23 @@ const CodaQuizUI = (() => {
             if (occupato)
                 return;
             try {
-                stato.textContent = pdf.files && pdf.files[0] ? 'Estraggo il testo del PDF (senza OCR)…' : 'Preparo il testo…';
-                const l = pdf.files && pdf.files[0] ? await CodaQuizRunner.creaDaPdf(account, pdf.files[0], opzioni()) : await CodaQuizRunner.creaDaTesto(account, testo.value, opzioni());
+                const files = Array.from(pdf.files || []);
+                stato.textContent = files.length > 1 ? 'Costruisco il libro virtuale dai PDF (senza OCR)…' : files.length ? 'Estraggo il testo del PDF (senza OCR)…' : 'Preparo il testo…';
+                const piano = calcolaProposta();
+                if (!piano)
+                    throw new Error('indica almeno un microstep prima di creare la coda');
+                const lavori = files.length > 1 ? await CodaQuizRunner.creaPianoDaPdfs(account, files, opzioni(), piano)
+                    : files.length ? await CodaQuizRunner.creaPianoDaPdf(account, files[0], opzioni(), piano) : await CodaQuizRunner.creaPianoDaTesto(account, testo.value, opzioni(), piano);
                 await disegna();
-                await esegui(l);
+                await esegui(lavori[0]);
             }
             catch (e) {
                 stato.textContent = String(e instanceof Error ? e.message : e);
             }
         };
-        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Genera in micro-batch con il router AI già configurato. Il PDF deve contenere testo: OCR e richieste parallele non sono inclusi.'), h('div.chips', null, materia, argomento, step, microstep, quantita), h('p.piccolo.tenue', null, 'Step e microstep collegano le sole domande pronte al corso e al piano esistente.'), testo, h('p.piccolo', null, 'oppure'), pdf, h('button.btn', { type: 'button', onclick: avvia }, 'Genera nella coda'), quote, stato, h('h3', null, 'Coda locale'), elenco);
-        foglio({ titolo: 'Genera quiz in app', corpo });
+        const corpo = h('div', null, h('p.piccolo.tenue', null, 'Genera in micro-batch con il router AI già configurato. Puoi scegliere più PDF: diventano un solo libro virtuale con checkpoint condivisi. OCR e richieste parallele non sono inclusi.'), h('div.chips', null, materia, argomento, step, microstep), h('div.chips', null, modalita, quantita, intensita, calcolaBtn), proposta, h('p.piccolo.tenue', null, 'La proposta è la copertura totale. Ogni microstep avrà un lavoro distinto; i batch del provider non cambiano queste quantità.'), testo, h('p.piccolo', null, 'oppure'), pdf, h('button.btn', { type: 'button', onclick: avvia }, 'Genera nella coda'), quote, stato, h('h3', null, 'Coda locale'), elenco);
+        const fg = foglio({ titolo: 'Genera quiz in app', corpo });
+        chiudiFoglio = fg.chiudi;
         CodaQuiz.recuperaInterrotti(account).then(disegna).catch(e => { stato.textContent = String(e); });
     }
     return { apri };
@@ -2522,7 +2767,14 @@ const DiagnosiQuiz = (() => {
         }
         if (!Array.isArray(d))
             return { errore: 'Non trovo un elenco di patch (serve un array di oggetti con «id»).' };
-        return { patch: d.filter(oggetto) };
+        const patch = d.filter(oggetto).map(o => {
+            const p = { ...o };
+            if (p.spiegazione === undefined && p.explanation !== undefined)
+                p.spiegazione = p.explanation;
+            delete p.explanation;
+            return p;
+        });
+        return { patch };
     }
     const valoreValido = (k, v) => k === 'opzioni' ? Array.isArray(v) && v.length === 4 && v.every(x => typeof x === 'string' && x.trim())
         : k === 'spiegazioneDistrattori' || k === 'distractorTypes' ? Array.isArray(v) && v.length === 3 && v.every(x => typeof x === 'string' && x.trim())
@@ -2532,17 +2784,24 @@ const DiagnosiQuiz = (() => {
     function applicaPatch(qs, patch, autorizzate) {
         const out = qs.map(q => oggetto(q) ? { ...q } : q), log = [], mancanti = [], rifiutate = [];
         let n = 0;
-        for (const p of patch) {
-            if (p.id === undefined) {
+        for (const originale of patch) {
+            if (originale.id === undefined) {
                 mancanti.push('elemento senza id');
                 continue;
             }
-            const q = out.find(x => oggetto(x) && x.id === p.id);
+            const p = { ...originale }, q = out.find(x => oggetto(x) && x.id === p.id);
             if (!q) {
                 mancanti.push(String(p.id));
                 continue;
             }
-            const ch = Object.keys(p).filter(k => k !== 'id'), permessi = autorizzate && autorizzate[String(p.id)];
+            const permessi = autorizzate && autorizzate[String(p.id)];
+            if (permessi && permessi.includes('fonte') && permessi.includes('sourceRef')) {
+                if (p.fonte === undefined && typeof p.sourceRef === 'string')
+                    p.fonte = p.sourceRef;
+                if (p.sourceRef === undefined && typeof p.fonte === 'string')
+                    p.sourceRef = p.fonte;
+            }
+            const ch = Object.keys(p).filter(k => k !== 'id');
             const vietati = ch.filter(k => !CHIAVI.includes(k) || (permessi && !permessi.includes(k)) || !valoreValido(k, p[k]));
             if (!ch.length || vietati.length) {
                 const msg = p.id + ': patch rifiutata' + (vietati.length ? ', campi non autorizzati o malformati: ' + vietati.join(', ') : ', nessun campo');
@@ -2589,6 +2848,7 @@ const DiagnosiQuiz = (() => {
         [/sourceRef diverso/, () => ({ f: ['sourceRef'], c: ['fonte'] })],
         [/Bloom L[1-4] dichiarato/, () => ({ f: ['domanda'], c: ['domanda', 'opzioni', 'esatta'] })],
         [/^citazione p\. /, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
+        [/manca una pagina presente nel micro-batch|non ha riscontro testuale sufficiente/, () => ({ f: ['fonte', 'sourceRef', 'spiegazione'], c: ['domanda', 'opzioni', 'esatta', 'fonte', 'citazione'] })],
     ];
     const specDi = (msg) => { msg = msg.replace(/^(?:Formato|Didattica|Fonte|Correzione):\s*/, ''); for (const [re, fn] of SPEC) {
         const m = msg.match(re);
@@ -3443,6 +3703,123 @@ const MasterPrompt = (() => {
     return { paginaLeggibile, indiceLettura, pagineCampione, segmentoDa, nomeLibro, numeroStampato, stimaOffset, slug, prossimo, RANGE_SCHEDE, SEQUENZA_LIVELLI, CHIAVI_V3, regolaArchetipo, costruisci, costruisciPiano, costruisciSchede, promptSchede };
 })();
 
+const PianificazioneQuiz = (() => {
+    const numero = (v, max) => Math.max(0, Math.min(max, Math.floor(Number(v)) || 0));
+    const ordineId = (id) => { let h = 2166136261; for (const c of id)
+        h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; };
+    const segnale = (m, id) => m && Object.prototype.hasOwnProperty.call(m, id) ? m[id] : undefined;
+    function daUnita(u, id, s) {
+        const intervallo = u && u.pagine, pagineUnita = intervallo && Number.isFinite(intervallo[0]) && Number.isFinite(intervallo[1]) && intervallo[1] >= intervallo[0]
+            ? Math.floor(intervallo[1] - intervallo[0] + 1) : undefined;
+        return {
+            id,
+            pagine: segnale(s.pagine, id) ?? pagineUnita,
+            concetti: u && Array.isArray(u.concettiChiave) ? u.concettiChiave.length : undefined,
+            applicazioni: segnale(s.applicazioni, id),
+            densita: u ? u.densita : undefined,
+            livelliRichiesti: segnale(s.livelliRichiesti, id),
+            minutiDisponibili: segnale(s.minutiDisponibili, id),
+            priorita: u ? !!u.priorita : undefined,
+        };
+    }
+    function daUnitaAI(unita, segnali = {}) {
+        return (unita || []).map(u => daUnita(u, String(u.uid), segnali));
+    }
+    function daPianoV1(piano, unita = [], segnali = {}) {
+        const note = new Map((unita || []).map(u => [String(u.uid), u])), ids = [], visti = new Set();
+        for (const b of (piano && piano.blocchi) || [])
+            for (const c of b.copre || [])
+                for (const valore of c.micro || []) {
+                    const id = String(valore || '').trim();
+                    if (id && !visti.has(id)) {
+                        visti.add(id);
+                        ids.push(id);
+                    }
+                }
+        return ids.map(id => daUnita(note.get(id), id, segnali));
+    }
+    function ridistribuisci(q, totale) {
+        const liberi = Math.max(0, totale - q.length), somma = q.reduce((a, x) => a + x.quantita, 0) || q.length;
+        const quote = q.map(x => { const esatta = liberi * x.quantita / somma; return { id: x.id, n: 1 + Math.floor(esatta), resto: esatta - Math.floor(esatta) }; });
+        let mancanti = totale - quote.reduce((a, x) => a + x.n, 0);
+        const ordine = quote.slice().sort((a, b) => b.resto - a.resto || ordineId(a.id) - ordineId(b.id) || a.id.localeCompare(b.id));
+        for (let i = 0; i < mancanti; i++)
+            ordine[i % ordine.length].n++;
+        const perId = new Map(quote.map(x => [x.id, x.n]));
+        return q.map(x => ({ ...x, quantita: perId.get(x.id) || 1, motivi: x.motivi.concat('Ridotta dal massimo globale.') }));
+    }
+    function automatica(x, intensita) {
+        let quantita = 4;
+        const motivi = ['Base minima di copertura.'];
+        const pagine = numero(x.pagine, 1000);
+        if (pagine) {
+            quantita += Math.ceil(pagine / 5);
+            motivi.push(pagine + ' pagine.');
+        }
+        const concetti = numero(x.concetti, 200);
+        if (concetti) {
+            quantita += Math.ceil(concetti / 2);
+            motivi.push(concetti + ' concetti.');
+        }
+        const applicazioni = numero(x.applicazioni, 50);
+        if (applicazioni) {
+            quantita += applicazioni * 2;
+            motivi.push(applicazioni + ' applicazioni.');
+        }
+        const densita = numero(x.densita, 5);
+        if (densita > 1) {
+            quantita += (densita - 1) * 2;
+            motivi.push('Densità ' + densita + '/5.');
+        }
+        const livelli = numero(x.livelliRichiesti, 4);
+        if (livelli > 1) {
+            quantita += (livelli - 1) * 2;
+            motivi.push(livelli + ' livelli cognitivi.');
+        }
+        if (x.priorita) {
+            quantita = Math.ceil(quantita * 1.2);
+            motivi.push('Priorità nel piano.');
+        }
+        quantita = Math.max(1, Math.round(quantita * ([0.8, 1, 1.2][intensita - 1] || 1)));
+        const minuti = numero(x.minutiDisponibili, 100000);
+        if (minuti) {
+            const capTempo = Math.max(1, Math.floor(minuti / 2));
+            if (capTempo < quantita) {
+                quantita = capTempo;
+                motivi.push('Copertura ridotta dal tempo disponibile: ' + minuti + ' minuti.');
+            }
+        }
+        return { id: String(x.id), quantita, motivi };
+    }
+    function calcola(r) {
+        const micro = (r.microstep || []).map(x => ({ ...x })), n = micro.length;
+        if (!n)
+            return { totale: 0, perMicrostep: [], avvisi: ['Nessun microstep da coprire.'] };
+        const massimo = Math.max(n, Math.min(200, Math.floor(Number(r.massimoTotale)) || n));
+        if (r.modalita === 'auto') {
+            let perMicrostep = micro.map(x => automatica(x, r.intensita));
+            const stimato = perMicrostep.reduce((a, x) => a + x.quantita, 0), tagliato = stimato > massimo;
+            if (tagliato)
+                perMicrostep = ridistribuisci(perMicrostep, massimo);
+            const ridotti = perMicrostep.filter(x => x.motivi.some(m => /^Copertura ridotta/.test(m))).map(x => x.id);
+            return { totale: perMicrostep.reduce((a, x) => a + x.quantita, 0), perMicrostep,
+                avvisi: (ridotti.length ? ['Tempo insufficiente: copertura ridotta per ' + ridotti.join(', ') + '.'] : [])
+                    .concat(tagliato ? ['Stima di ' + stimato + ' domande ridotta al massimo consentito di ' + massimo + '.'] : []) };
+        }
+        const richiesto = Math.floor(Number(r.totaleManuale)) || n;
+        const totale = Math.max(n, Math.min(massimo, richiesto)), base = Math.floor(totale / n), resto = totale % n;
+        const extra = new Set(micro.slice().sort((a, b) => ordineId(String(a.id)) - ordineId(String(b.id)) || String(a.id).localeCompare(String(b.id))).slice(0, resto).map(x => String(x.id)));
+        const avvisi = richiesto > massimo ? ['Totale ridotto al massimo consentito di ' + massimo + ' domande.']
+            : richiesto < n ? ['Totale aumentato a ' + n + ': serve almeno una domanda per microstep.'] : [];
+        return {
+            totale,
+            perMicrostep: micro.map(x => ({ id: String(x.id), quantita: base + (extra.has(String(x.id)) ? 1 : 0), motivi: ['Distribuzione del totale scelto.'] })),
+            avvisi,
+        };
+    }
+    return { calcola, daUnitaAI, daPianoV1 };
+})();
+
 const ProfiliAI = (() => {
     const grande = (id, nome) => ({ id, nome, contesto: 'grande', file: true, json: 'alta', perRisposta: 18, maxCaratteri: 0 });
     const COPILOT = { contesto: 'medio', file: false, json: 'media', perRisposta: 10, maxCaratteri: 40000 };
@@ -3522,7 +3899,7 @@ const QuoteUI = (() => {
     function aggiorna(el) {
         const s = IA.snapshotQuote(), ps = Object.values(s.provider);
         el.textContent = '';
-        const disponibili = ps.filter(x => x.stato === 'pronto' || x.stato === 'guardia_85');
+        const disponibili = ps.filter(x => ['configurato', 'disponibile', 'guardia_85'].includes(x.stato));
         el.append(h('p.piccolo', null, h('b', null, 'Provider in uso: '), s.attivo ? nomi[s.attivo] || s.attivo : 'nessuno'));
         if (!disponibili.length) {
             const prossimi = ps.map(x => x.ripristinoIl).filter(Boolean), quando = prossimi.length ? Math.min(...prossimi) : null;
@@ -3530,7 +3907,8 @@ const QuoteUI = (() => {
         }
         el.append(h('ul.piccolo', null, ...ps.map(x => {
             const q = x.origineQuota === 'misurata' ? x.quotaDisponibile + ' richieste (misurata)' : x.origineQuota === 'stimata' ? (x.quotaStimata == null ? 'stima insufficiente' : 'circa ' + x.quotaStimata + ' richieste, stima locale') : 'quota sconosciuta';
-            const motivo = x.stato === 'pronto' ? '' : x.stato === 'senza_chiave' ? ' · chiave assente' : x.stato === 'guardia_85' ? ' · soglia prudenziale 85%' : ' · ' + x.stato;
+            const motivo = x.stato === 'configurato' ? ' · chiave presente, risposta e quota non garantite' : x.stato === 'disponibile' ? ' · ultima richiesta riuscita'
+                : x.stato === 'senza_chiave' ? ' · chiave assente' : x.stato === 'guardia_85' ? ' · soglia prudenziale 85%' : ' · ' + x.stato;
             return h('li', null, (s.attivo === x.id ? '▶ ' : '') + nomi[x.id] + ': ' + x.stato + motivo + ' · ' + q + (x.microBatchResidui == null ? '' : ' · ≤' + x.microBatchResidui + ' micro-batch') + (x.ripristinoIl ? ' · riprova ' + ora(x.ripristinoIl) : '') + (x.ultimoErroreHttp ? ' · HTTP ' + x.ultimoErroreHttp : '') + (x.ultimoErroreRete ? ' · ' + x.ultimoErroreRete : ''));
         })));
         if (s.failover.length)

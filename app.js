@@ -6648,14 +6648,43 @@ const CreaQuiz = (() => {
             }
         }
     }
+    function sessioniDalPiano(p, v) {
+        const t = Studio.trovaSotto(v.k.replace(/^G2-/, ''));
+        if (!t)
+            return [];
+        const banche = t.sub.microstep.map(micro => ({ microstep: micro.n, domande: micro.schede.flatMap(s => Dominio.domandeDi(s.id) || []) }));
+        const livello = Number(p.livelloIntensita) || 2;
+        return Pianificatore.sessioniQuiz(banche, livello);
+    }
+    function apriSessioneDalPiano(p, v, sessione) {
+        const t = Studio.trovaSotto(v.k.replace(/^G2-/, ''));
+        if (!t || !sessione.domande.length)
+            return;
+        const titolo = v.t + ' · ' + sessione.microstep;
+        const s = { id: sessione.domande[0].sk, k: 1, n: 1, titolo, tipo: 'P', problemi: false, pagine: '', quizFile: '' };
+        void QuizApp.apri(t.pk, t.mat.m, sessione.microstep, s, () => sessione.domande.map(d => ({ ...d })), {
+            occh: 'Sessione breve · ' + sessione.domande.length + '/' + sessione.richieste + ' pronte · banca ' + sessione.disponibili, titolo, modo: 'neuro',
+        });
+    }
     function dalPiano(p, v) {
+        const sessioni = sessioniDalPiano(p, v).filter(x => x.domande.length);
+        if (sessioni.length === 1) {
+            apriSessioneDalPiano(p, v, sessioni[0]);
+            return;
+        }
+        if (sessioni.length > 1) {
+            let f;
+            const corpo = h('div.modulo', null, h('p.piccolo.tenue', null, 'Scegli il microstep. La sessione usa solo domande già pronte e non cambia la copertura totale della banca.'), ...sessioni.map(x => h('button.btn.neutro', { type: 'button', 'aria-label': 'Avvia sessione ' + x.microstep + ' con ' + x.domande.length + ' di ' + x.richieste + ' domande pronte; banca ' + x.disponibili, onclick: () => { f.chiudi(); apriSessioneDalPiano(p, v, x); } }, x.microstep + ' · ' + x.domande.length + '/' + x.richieste + ' pronte · banca ' + x.disponibili)));
+            f = foglio({ titolo: 'Sessione quiz breve', corpo });
+            return;
+        }
         const esistente = tutti().find(r => r.pianoId === p.id && r.voceId === v.k);
         if (esistente)
             apri(esistente);
         else
             nuovo({ pianoId: p.id, voceId: v.k, argomento: v.t, materia: nomeMateria(p.vincoliAI?.materiaCodice || materiaDi(v.k)) });
     }
-    return { dalPiano, nuovo, elenco, apri, tutti, controlla, crea, leggero };
+    return { sessioniDalPiano, dalPiano, nuovo, elenco, apri, tutti, controlla, crea, leggero };
 })();
 
 const Domande = (() => {
@@ -8545,7 +8574,7 @@ const IA = (() => {
             const r = await richiesta(p, '/models', k, undefined);
             if (!r.ok)
                 return c ? c.m : null;
-            const j = await r.json();
+            const j = await leggiJson(r);
             const m = (j.data || j.models || []).map(x => String(x.id || x.name || '').replace(/^models\//, '')).filter(Boolean);
             const v = { t: Date.now(), m };
             disp[ch] = v;
@@ -8587,7 +8616,7 @@ const IA = (() => {
             clearTimeout(timer);
             if (ac.signal.aborted)
                 throw erroreIncerto(p, m, fase, post);
-            throw erroreIncerto(p, m, navigator.onLine === false ? 'offline' : 'cors_rete', post, x);
+            throw erroreIncerto(p, m, navigator.onLine === false ? 'offline' : 'errore_rete', post, x);
         }
     }
     async function leggiJson(res) {
@@ -8612,7 +8641,7 @@ const IA = (() => {
         const tipo = corpo && !form ? { 'Content-Type': 'application/json' } : {};
         const op = { method: corpo ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + k, ...tipo }, body: corpo ? (form ? corpo : JSON.stringify(corpo)) : undefined };
         let r = await fetchTemporizzato(p, m, base + perc, op);
-        if (gem && (r.status === 401 || r.status === 403 || r.status === 400)) {
+        if (gem && (r.status === 401 || r.status === 403)) {
             const r2 = await fetchTemporizzato(p, m, base + perc, { ...op, headers: { 'x-goog-api-key': k, ...tipo } });
             if (r2.ok || r2.status === 429)
                 return r2;
@@ -8765,7 +8794,7 @@ const IA = (() => {
     let RM = {};
     let RP = {};
     let NO = {};
-    const diag = Object.fromEntries(PROVS.map(p => [p, { modello: null, aggiornatoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null }]));
+    const diag = Object.fromEntries(PROVS.map(p => [p, { modello: null, aggiornatoIl: null, ultimoSuccessoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null }]));
     let passaggi = [], providerAttivo = null;
     const notificaDiag = (p) => { if (p)
         diag[p].aggiornatoIl = Date.now(); try {
@@ -8773,7 +8802,7 @@ const IA = (() => {
     }
     catch (_) { } };
     function erroreIncerto(p, m, fase, incerto, causa) {
-        const e = new Error((incerto ? 'Esito incerto: ' : '') + (fase.startsWith('timeout') ? 'timeout della richiesta AI' : fase === 'offline' ? 'dispositivo offline' : fase === 'risposta_malformata' ? 'risposta malformata' : 'errore CORS/rete'));
+        const e = new Error((incerto ? 'Esito incerto: ' : '') + (fase.startsWith('timeout') ? 'timeout della richiesta AI' : fase === 'offline' ? 'dispositivo offline' : fase === 'risposta_malformata' ? 'risposta malformata' : 'errore di rete (causa non determinata)'));
         e.fase = fase;
         e.consumoIncerto = incerto;
         e.causa = causa;
@@ -8803,7 +8832,7 @@ const IA = (() => {
             passaggi = [];
             providerAttivo = null;
             for (const x of PROVS)
-                Object.assign(diag[x], { modello: null, aggiornatoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null });
+                Object.assign(diag[x], { modello: null, aggiornatoIl: null, ultimoSuccessoIl: null, ripristinoIl: null, ultimoErroreHttp: null, ultimoErroreRete: null, ultimoFailover: null, misurata: null });
             lsScrivi(KU, '');
             return;
         }
@@ -8825,7 +8854,32 @@ const IA = (() => {
     const stimaTok = (msgs) => Math.ceil(msgs.reduce((s, x) => s + (typeof x.content === 'string' ? x.content.length
         : Array.isArray(x.content) ? x.content.reduce((a, c) => a + (c && typeof c.text === 'string' ? c.text.length : 0), 0) : 0), 0) / 3.5);
     const budget = (p, m, out) => Math.min(LIMITI[p].ctx, Math.floor(0.7 * sm(p, m).tpm)) - out;
-    const budgetCaratteriPrudente = (out) => Math.max(0, Math.floor(Math.min(...PROVS.map(p => Math.min(LIMITI[p].ctx, Math.floor(0.7 * LIMITI[p].tpm)) - out)) * 3.5));
+    const budgetCaratteriPrudente = (out, p, m = '') => Math.max(0, Math.floor((Math.min(LIMITI[p].ctx, Math.floor(0.7 * (m ? sm(p, m).tpm : LIMITI[p].tpm))) - out) * 3.5));
+    function budgetIngressoDisponibile(p, m, out, lim = SOGLIA) {
+        const { id, q } = quota(p, m), c = contatori(id), s = sm(p, m);
+        let n = budget(p, m, out);
+        if (q.tpm)
+            n = Math.min(n, Math.floor(q.tpm * lim) - c.tpm60s - out);
+        if (q.tpd)
+            n = Math.min(n, Math.floor(q.tpd * lim) - c.tpdToday - out);
+        if (s.rest && s.rest.finoA > Date.now())
+            n = Math.min(n, s.rest.tok - out);
+        return Math.max(0, n);
+    }
+    async function pianificaBudgetCaratteri(r, out, o = {}) {
+        const forn = await catena(r, o.evita, o.archetipo), prova = (lim, guardia) => {
+            for (const f of forn) {
+                const b = bloccato(f.prov, f.modello, out, chiave(f.prov));
+                if (b && !(guardia && b === 'quota' && !quotaPiena(f.prov, f.modello, out, 1)))
+                    continue;
+                const tok = budgetIngressoDisponibile(f.prov, f.modello, out, lim);
+                if (tok > 0)
+                    return { caratteri: Math.floor(tok * 3.5), prov: f.prov, modello: f.modello, guardia };
+            }
+            return null;
+        };
+        return prova(SOGLIA, false) || prova(1, true);
+    }
     function bloccato(p, m, serve, k) {
         const ora = Date.now(), P = RP[p], s = sm(p, m);
         if (NO[p] && NO[p] === impronta(k))
@@ -8879,6 +8933,7 @@ const IA = (() => {
             aggiornaUso(id, u => { u.n++; u.w.push([ora, tok]); u.t = (u.t || 0) + tok; });
         if (res.ok) {
             s.k = 0;
+            d.ultimoSuccessoIl = ora;
             notificaDiag(p);
             return;
         }
@@ -8986,13 +9041,15 @@ const IA = (() => {
         const out = {}, ora = Date.now(), base = stato(), usi = tuttoUso();
         for (const p of PROVS) {
             const d = diag[p], idUso = Object.keys(usi).find(k => k === p || k.startsWith(p + ':')), m = d.modello || (idUso && idUso.includes(':') ? idUso.slice(p.length + 1) : null);
-            let statoQ = !chiave(p) ? 'senza_chiave' : base[p].ok ? 'pronto' : base[p].motivo === 'limite gratuito' ? 'esaurito' : base[p].motivo === 'non raggiungibile' ? 'cooldown' : 'errore_temporaneo';
+            let statoQ = !chiave(p) ? 'senza_chiave'
+                : base[p].motivo === 'chiave non valida' ? 'autenticazione_fallita' : base[p].motivo === 'limite gratuito' ? 'esaurito'
+                    : base[p].motivo === 'non raggiungibile' ? 'non_raggiungibile' : !base[p].ok ? 'errore_temporaneo' : d.ultimoSuccessoIl ? 'disponibile' : 'configurato';
             let stima = null, micro = null;
             if (m && chiave(p)) {
                 const { id, q } = quota(p, m), c = contatori(id), dati = c.rpm60s + c.rpdToday + c.tpdToday > 0;
-                if (statoQ === 'pronto' && quotaPiena(p, m, 0, 1))
+                if ((statoQ === 'configurato' || statoQ === 'disponibile') && quotaPiena(p, m, 0, 1))
                     statoQ = 'esaurito';
-                else if (statoQ === 'pronto' && quotaPiena(p, m, 0))
+                else if ((statoQ === 'configurato' || statoQ === 'disponibile') && quotaPiena(p, m, 0))
                     statoQ = 'guardia_85';
                 const rr = [Math.floor(q.rpm * SOGLIA) - c.rpm60s, q.rpd ? Math.floor(q.rpd * SOGLIA) - c.rpdToday : Infinity];
                 const avg = c.rpdToday ? Math.max(1, Math.ceil(c.tpdToday / c.rpdToday)) : 0;
@@ -9005,11 +9062,20 @@ const IA = (() => {
             }
             const rip = Math.max(base[p].finoA || 0, d.ripristinoIl || 0);
             out[p] = { id: p, haChiave: !!chiave(p), modello: m, stato: statoQ, origineQuota: d.misurata == null ? (m ? 'stimata' : 'sconosciuta') : 'misurata', quotaDisponibile: d.misurata, quotaStimata: d.misurata == null ? stima : null,
-                aggiornatoIl: d.aggiornatoIl, ripristinoIl: rip || null, ultimoErroreHttp: d.ultimoErroreHttp, ultimoErroreRete: d.ultimoErroreRete, ultimoFailover: d.ultimoFailover, microBatchResidui: micro };
+                aggiornatoIl: d.aggiornatoIl, ultimoSuccessoIl: d.ultimoSuccessoIl, ripristinoIl: rip || null, ultimoErroreHttp: d.ultimoErroreHttp, ultimoErroreRete: d.ultimoErroreRete, ultimoFailover: d.ultimoFailover, microBatchResidui: micro };
         }
         return { provider: out, attivo: providerAttivo, failover: passaggi.slice() };
     }
     const errore = (j, stato) => { const e = new Error((j && (j.error && j.error.message || j[0] && j[0].error && j[0].error.message)) || 'errore ' + stato); e.stato = stato; return e; };
+    function erroreRisposta(j, stato, prudente) {
+        const e = errore(j, stato);
+        if (prudente && stato >= 500) {
+            e.consumoIncerto = true;
+            e.fase = 'http_' + stato + '_incerto';
+            e.message = 'Esito incerto: HTTP ' + stato + ' dopo l\'invio';
+        }
+        return e;
+    }
     const contenuto = (j) => String(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '');
     async function tenta(f, m2, o, comeJson, tok) {
         const k = chiave(f.prov);
@@ -9030,7 +9096,7 @@ const IA = (() => {
         const j = await leggiJson(res).catch((e) => { if (e && e.consumoIncerto)
             throw e; return {}; });
         if (!res.ok)
-            throw errore(j, res.status);
+            throw erroreRisposta(j, res.status, o.prudente);
         const t = contenuto(j);
         if (!comeJson) {
             const s = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^[\s\S]*?<\/think>/i, '').trim();
@@ -9051,7 +9117,7 @@ const IA = (() => {
         const res2 = await manda(f.prov, f.modello, '/chat/completions', k, corpo, tok), j2 = await leggiJson(res2).catch((e) => { if (e && e.consumoIncerto)
             throw e; return {}; });
         if (!res2.ok)
-            throw errore(j2, res2.status);
+            throw erroreRisposta(j2, res2.status, o.prudente);
         const t2 = contenuto(j2);
         return { testo: t2, j: json(t2), prov: f.prov, modello: f.modello };
     }
@@ -9188,7 +9254,7 @@ const IA = (() => {
             elenco.textContent = '';
             for (const p of PROVS) {
                 const x = st[p];
-                const d = x.ok ? '✅ pronto' : x.motivo === 'senza chiave' ? '—' : x.motivo === 'chiave non valida' ? '❌ chiave non valida'
+                const d = x.ok ? '✅ pronto localmente (quota non verificata)' : x.motivo === 'senza chiave' ? '—' : x.motivo === 'chiave non valida' ? '❌ chiave non valida'
                     : x.motivo === 'privacy' ? '🔒 escluso (Strict Privacy)'
                         : '⏳ in pausa fino alle ' + ora2(x.finoA || Date.now()) + (x.motivo === 'non raggiungibile' ? ' (non raggiungibile)' : '');
                 elenco.appendChild(h('div', null, NOMI[p] + ': ' + d));
@@ -9239,7 +9305,7 @@ const IA = (() => {
         }
         catch (_) { }
     })();
-    return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro, budgetCaratteriPrudente,
+    return { chiedi, testo, json: (msgs, r, o) => chiedi(msgs, r, o).then(x => x.j), trascrivi, campoGemini, campoAltri, disponibili, catena, ordinePerArchetipo, scegli, accorcia, parseJsonSicuro, budgetCaratteriPrudente, pianificaBudgetCaratteri,
         chiave, impostaChiave, tutteChiavi, formatoOk, stato, snapshotQuote, impostaTimeout, azzera, ALTRI, PROVS, XKIRO_FREE, PROVIDER_FREE_QUOTAS, opzioni, impostaOpzione, parseRateLimitInfo,
         _r: { stimaTok, budget, dur, quota, contatori, quotaPiena, CATENA, get RM() { return RM; } },
         get gemini() { return !!chiave('gemini'); } };
@@ -13632,6 +13698,19 @@ const Pianificatore = (() => {
     ];
     const livelloValido = (x) => clamp(Math.round(+x) || 2, 1, 3);
     const configLivello = (l) => MATRICE_LIVELLI[livelloValido(l) - 1];
+    function sessioniQuiz(banche, livello) {
+        const richieste = configLivello(livello).itemPerMicroQuiz;
+        return (banche || []).map(b => {
+            const viste = new Set(), pronte = (b.domande || []).filter(d => {
+                const id = String(d && d.id || '').trim();
+                if (!id || viste.has(id))
+                    return false;
+                viste.add(id);
+                return true;
+            });
+            return { microstep: String(b.microstep || '').trim(), richieste, disponibili: pronte.length, domande: pronte.slice(0, richieste) };
+        }).filter(x => !!x.microstep);
+    }
     const PROFILO_BASE = { fasciaEta: '20-26', cronotipo: 'intermedio', autonomiaBRACMin: 55, oreSonnoMedie: '7-8', reazioneErrore: 'sfida_attiva', canalePreferito: 'quiz_immediati' };
     const DOMANDE_UNIVERSALI = [
         { campo: 'fasciaEta', testo: 'Quanti anni hai?', opzioni: [['<16', 'Meno di 16'], ['16-19', '16–19'], ['20-26', '20–26'], ['27-40', '27–40'], ['40+', 'Più di 40']] },
@@ -14058,7 +14137,7 @@ const Pianificatore = (() => {
     return { segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
         unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
         compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
-        MATRICE_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, normalizzaProfilo, applicaGuardRailBiologici,
+        MATRICE_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, sessioniQuiz, normalizzaProfilo, applicaGuardRailBiologici,
         picchiCircadiani, modalitaOffloading, allocaGiornata, pesiIniziali, applicaRisposte, paroleChiaveBM25, domandeCalibrazioneDefault, promptCalibrazione,
         leggiDomandeCalibrazione, generaDomandeCalibrazione, monitoraAffaticamento, attivaDeload, livelloEffettivo, aggiornaDeload };
 })();
