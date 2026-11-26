@@ -430,6 +430,7 @@ t('verificaCitazioni: ✅ resta, ↔ corretta in fonte, sourceRef e [[…]] e re
   eq(r.problemi, [{ sev: 'err', id: 'q2', msg: 'citazione p. 50: la pagina non contiene i concetti della domanda' },
     { sev: 'err', id: 'q5', msg: 'citazione p. 30: sulla pagina solo parte dei concetti della domanda' }]);
   eq([r.ok, r.dubbi], [1, ['q4']]);
+  eq(r.verificate, [24], 'blocco 2: pagine PDF verificate (✅ e ↔ corretta), terzo segnale di IndicePagine');
   eq(r.qs.slice(1), qs.slice(1), 'le altre domande restano come sono');
   eq(CE.verificaCitazioni(qs, { fonte: 'nessuna', tratti: [], affidabilita: 'nessuna' }, () => MIT).ok, 0, 'mappa nessuna: niente verifica');
 });
@@ -515,6 +516,41 @@ console.log('== Parti incollate e unione per ID (v0.64 T6) ==');
     const parti = [{ k: 1, N: 3, da: 1, a: 6 }, { k: 2, N: 3, da: 7, a: 12 }, { k: 3, N: 3, da: 13, a: 18 }];
     eq(CE.partiIncollate(parti, [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18].map(q)), [true, false, true]);
     eq(CE.partiIncollate(parti, []), [false, false, false]);
+  });
+}
+// ---------- Motore unificato, blocco 2 parte 2: IndicePagine collegato a Centro/MappaPagine ----------
+{
+  const LIN = { radice: w => w.length > 6 ? w.slice(0, -2) : w.length > 4 ? w.slice(0, -1) : w, espandi: p => p };
+  const riemp = k => Array.from({ length: 30 }, (_, i) => 'parola' + ((i * 7 + k) % 41)).join(' ');
+  // libro di 30 pagine PDF; la stampata è PDF − 4; il trasporto attivo è trattato alle PDF 20–22 (pp. 16–18)
+  const TESTI = Array.from({ length: 30 }, (_, i) => ({ n: i + 1, testo: 'Pagina\n' + riemp(i) + (i + 1 === 21 ? '\nTrasporto attivo\npompa sodio potassio trasporto attivo ATP trasporto attivo pompa'
+    : i + 1 === 20 || i + 1 === 22 ? ' trasporto attivo pompa' : i + 1 === 8 ? ' trasporto' : '') }));
+  const MAPPA = { fonte: 'auto-etichette', tratti: [{ pdfDa: 5, pdfA: 30, stampDa: 1 }], affidabilita: 'esatta' };
+  const LIB = { id: 'lib-b-x', type: 'libro', updatedAt: 0, nome: 'Manuale', materia: 'B', pdf: [{ nome: 'Manuale.pdf' }], fonte: 'auto', mappa: MAPPA };
+  t('terminiMicro: voce dell\'indice senza numero + testi del piano, senza doppioni né vuoti', () => {
+    eq(CE.terminiMicro(INDICE, '3.3.3', ['Pompe e trasporto attivo', '', undefined, 'Trasporto attivo']), ['Trasporto attivo', 'Pompe e trasporto attivo']);
+    eq(CE.terminiMicro(undefined, '3.3.3', ['Pompe']), ['Pompe']);
+  });
+  t('pagineTrovate senza indice: il tratto della pagina più forte, con le stampate dalla mappa', () => {
+    const x = CE.pagineTrovate(LIB, TESTI, '3.3.3', ['trasporto attivo'], LIN);
+    eq(x.fonte, 'testo'); eq([x.pagine.pdfDa, x.pagine.pdfA, x.pagine.stampDa, x.pagine.stampA, x.pagine.affidabilita], [20, 22, 16, 18, 'esatta']);
+    eq(x.copertura.stato, 'da_verificare', 'solo BM25: un segnale');
+    vero(/🟡 da verificare · pagine trovate nel testo: p\. 16–18 \(PDF 20–22\)/.test(CE.descriviTrovate(x)), CE.descriviTrovate(x));
+  });
+  t('pagineTrovate: le pagine verificate dalle citazioni (MappaPagine) sono il secondo segnale → coperto', () => {
+    eq(CE.pagineTrovate(LIB, TESTI, '3.3.3', ['trasporto attivo'], LIN, [21]).copertura.stato, 'coperto');
+  });
+  t('pagineTrovate con indice: intervallo dell\'indice (fonte C) e stato dai due segnali su tre', () => {
+    const conIndice = { ...LIB, indice: [{ capitolo: '3.3.2 Trasporto passivo', pagina: 10 }, { capitolo: '3.3.3 Trasporto attivo', pagina: 16 }, { capitolo: '3.3.4 Endocitosi', pagina: 19 }] };
+    const x = CE.pagineTrovate(conIndice, TESTI, '3.3.3', CE.terminiMicro(conIndice.indice, '3.3.3', []), LIN);
+    eq(x.fonte, 'indice'); eq([x.pagine.pdfDa, x.pagine.pdfA], [20, 22]); eq(x.copertura.stato, 'coperto');
+  });
+  t('pagineTrovate: correzioni a mano del libro vincono; nessun termine nel libro → lacuna senza pagine', () => {
+    const mano = { ...LIB, pagineMano: { '3.3.3': { escluse: [20, 21, 22], incluse: [8] } } };
+    const x = CE.pagineTrovate(mano, TESTI, '3.3.3', ['trasporto attivo'], LIN);
+    eq([x.pagine.pdfDa, x.pagine.pdfA, x.copertura.stato], [8, 8, 'coperto']);
+    const v = CE.pagineTrovate(LIB, TESTI, '3.3.3', ['fotosintesi'], LIN);
+    eq([v.pagine, v.copertura.stato], [null, 'lacuna']); vero(/🔴 non trovato/.test(CE.descriviTrovate(v)));
   });
 }
 // =====================================================================

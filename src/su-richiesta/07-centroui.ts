@@ -8,7 +8,9 @@ interface CreazioneRec extends Rec, StatoCreazione {
   type: 'creazione'; materia: string; nomeMateria: string; step: string; titolo?: string; data?: string;
   intensita?: OpzMP['intensita']; piano?: PianoCentro; fonti?: FontiSQ;
   /** T12: ultima verifica delle citazioni sul PDF (problemi con la fonte di allora: valgono finché la fonte non cambia). */
-  citazioni?: { quando: string; libro: string; firma?: string; drive?: VersionePdfDrive[]; ok: number; dubbi: string[]; registro: string[]; problemi: Array<ProblemaQ & { fonte: string }> };
+  citazioni?: { quando: string; libro: string; firma?: string; drive?: VersionePdfDrive[]; ok: number; dubbi: string[]; registro: string[]; problemi: Array<ProblemaQ & { fonte: string }>;
+    /** Blocco 2: pagine PDF dove le citazioni sono state trovate (terzo segnale di IndicePagine). */
+    verificate?: number[] };
 }
 
 interface VersionePdfDrive { nome: string; id: string; modificato: string; }
@@ -166,13 +168,52 @@ const CentroUI = (() => {
     }
     return null;
   }
+  /** Blocco 2: testo di TUTTE le pagine del libro in pagine PDF assolute; dalla cache locale «imc-testo-pdf» se già letto. */
+  async function testoLibro(l: LibroRec): Promise<PaginaTestoIdx[]> {
+    const out: PaginaTestoIdx[] = [];
+    const seg = l.pdf.map(f => ({ nome: f.nome, base: f.segmentoDa ? f.segmentoDa - 1 : 0 })).sort((a, b) => a.base - b.base);
+    for (const sg of seg) {
+      const loc = pdfScelti.get(chiavePdf(l, sg.nome));
+      let chiave: string, dati: () => Promise<Blob>;
+      if (loc) { chiave = 'loc:' + l.id + ':' + sg.nome + ':' + loc.versione; dati = async () => loc.file; }
+      else {
+        const f = await pdfDrive(sg.nome);
+        chiave = 'drv:' + f.id + '@' + f.modificato; dati = async () => new Blob([await PdfCache.prendi(f.id, undefined, f.modificato) as unknown as BlobPart]);   // cast: tsc recenti tipizzano Uint8Array<ArrayBufferLike>
+      }
+      (await TestoPdf.tutte(dati, chiave, 'eol')).forEach((testo, i) => out.push({ n: sg.base + i + 1, testo }));
+    }
+    return out;
+  }
+  const trovatePer = new Map<string, PagineTrovate>();   // r.id|microstep → pagine trovate da IndicePagine (per il prompt e la riga di stato)
+  /** Senza indice del libro: IndicePagine cerca il microstep in tutto il testo (primo libro della materia con PDF). */
+  async function trovaPagine(r: CreazioneRec, ms: string): Promise<{ trovate: PagineTrovate; testi: PaginaTestoIdx[] } | null> {
+    for (const lf of r.fonti ? r.fonti.libri : []) {
+      const l = Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, lf.nome));
+      if (!l || l.deleted || !l.pdf.length) continue;
+      const testi = await testoLibro(l);
+      const sc = r.piano ? r.piano.schede.find(x => x.micro[0] === ms) : undefined;
+      const termini = Centro.terminiMicro(l.indice, ms, [sc ? sc.blocco : undefined]);
+      const verificate = r.citazioni && r.citazioni.libro === l.nome ? r.citazioni.verificate || [] : [];
+      const trovate = Centro.pagineTrovate(l, testi, ms, termini.length ? termini : [r.titolo || r.step], { radice: Locale.radice, espandi: Locale.espandi }, verificate);
+      trovatePer.set(r.id + '|' + ms, trovate);
+      return { trovate, testi };
+    }
+    return null;
+  }
   /** Testo del PDF per un microstep (pagine PDF da..a, al massimo 40), con le pagine senza testo segnate; null se non c'è. */
   async function materialeDi(r: CreazioneRec, ms: string): Promise<PaginaTesto[] | null> {
     const x = libroPer(r, ms);
-    if (!x || x.p.pdfDa === null) return null;
-    const da = x.p.pdfDa, a = Math.min(x.p.pdfA !== null ? x.p.pdfA : da + 19, da + 39);
-    const testi = await testiPagine(x.libro, Array.from({ length: a - da + 1 }, (_, i) => da + i), () => { /* stato mostrato dal passo */ });
-    return ProfiliAI.pagine(testi, da, a);
+    if (x && x.p.pdfDa !== null) {
+      const da = x.p.pdfDa, a = Math.min(x.p.pdfA !== null ? x.p.pdfA : da + 19, da + 39);
+      const testi = await testiPagine(x.libro, Array.from({ length: a - da + 1 }, (_, i) => da + i), () => { /* stato mostrato dal passo */ });
+      return ProfiliAI.pagine(testi, da, a);
+    }
+    // blocco 2: nessun indice → le pagine le trova IndicePagine nel testo del libro
+    const t = await trovaPagine(r, ms).catch(e => { console.warn('[centro] IndicePagine', e); return null; });
+    const p = t && t.trovate.pagine;
+    if (!t || !p || p.pdfDa === null || p.pdfA === null) return null;
+    const da = p.pdfDa, a = p.pdfA;
+    return ProfiliAI.pagine(new Map(t.testi.filter(x => x.n >= da && x.n <= a).map(x => [x.n, x.testo] as [number, string])), da, a);
   }
   const elencoProblemi = (problemi: ProblemaQ[], etichetta: string, max = 40) => problemi.length
     ? h('ul.piccolo.centro-avvisi', { 'aria-label': etichetta }, ...problemi.slice(0, max).map(p => h('li', null, SEGNO[p.sev] + ' ' + p.id + ' — ' + p.msg)),
@@ -460,7 +501,7 @@ const CentroUI = (() => {
 
       const casella = h('input', { type: 'checkbox', checked: coppia || undefined }) as HTMLInputElement;
       casella.addEventListener('change', () => { coppia = casella.checked; vai(3); });
-      let testoPrompt: string, rigaTesto: HTMLElement | null = null, bloccoParti: HTMLElement | null = null, mixEl: HTMLElement | null = null, parte: ParteAI | undefined;
+      let testoPrompt: string, zonaTrovate: HTMLElement | null = null, rigaTesto: HTMLElement | null = null, bloccoParti: HTMLElement | null = null, mixEl: HTMLElement | null = null, parte: ParteAI | undefined;
       if (continua) {
         const gia = (parteDi(r, n0) || { quiz: [] as DomAI[] }).quiz, ult = gia[gia.length - 1];
         const ultimo = ult ? String(ult.domanda || ult.id || '').slice(0, 160) : undefined;
@@ -470,6 +511,7 @@ const CentroUI = (() => {
         const lst = bersaglio.map(n => delPiano(n)).filter((x): x is SchedaCentro => !!x);
         const libri = (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, l.nome))).filter((x): x is LibroRec => !!x);
         const pagine = Centro.paginePer(libri, lst.map(x => x.micro[0]).filter(Boolean));
+        for (const x of lst) { const tv = trovatePer.get(r.id + '|' + x.micro[0]); if (tv && tv.pagine && !pagine[x.micro[0]]) pagine[x.micro[0]] = tv.pagine; }   // blocco 2
         const proprietario = Drive.eProprietario();
         const mix = mixPer.get(r.id) || ProfiliAI.mix(Dominio.archetipoMateria(r.materia), proprietario, PER());
         if (!proprietario) mixEl = campiMix(r, mix);   // Medicina: solo mcq, il prompt resta quello di v0.63
@@ -502,6 +544,8 @@ const CentroUI = (() => {
           const disponibile = !!t && t !== 'attesa' && t.some(x => !x.vuota);
           const cas = h('input', { type: 'checkbox', checked: conTesto && disponibile || undefined, disabled: !disponibile || undefined }) as HTMLInputElement;
           cas.addEventListener('change', () => { conTesto = cas.checked; vai(3); });
+          const tv = trovatePer.get(r.id + '|' + (lst.length ? lst[0].micro[0] : ''));
+          if (tv) zonaTrovate = h('p.piccolo', { role: 'status' }, Centro.descriviTrovate(tv));
           rigaTesto = h('label.riga-tra.piccolo', null,
             ci ? 'Includo ' + mt!.pagine.length + (mt!.pagine.length === 1 ? ' pagina, ' : ' pagine, ') + numero(mt!.caratteri) + ' caratteri del tuo PDF' + (mt!.escluse ? ' (tagliato: ' + mt!.escluse + ' pagine fuori)' : '')
               : disponibile ? 'Testo del PDF tolto dal prompt' : 'Testo del PDF non disponibile: il prompt dice «materiale non incluso»', cas);
@@ -514,7 +558,7 @@ const CentroUI = (() => {
         continua ? h('p.piccolo.tenue', null, 'Incolla questo prompt nella stessa chat: l\'AI scrive solo le domande che mancano.')
           : aParti ? h('p.piccolo.tenue', null, descriviProfilo(prof))
           : h('label.riga-tra.piccolo', null, '2 schede per messaggio (36 domande)', casella),
-        rigaTesto,
+        zonaTrovate, rigaTesto,
         ...copiabile(testoPrompt, 'Prompt da copiare nell\'AI per ' + bersaglio.map(sig).join(' e '), continua ? '📋 Copia «continua da qui»' : '📋 Copia il prompt'),
         h('h3.centro-sotto', null, 'Risposta dell\'AI'),
         rispostaAI('Risposta dell\'AI con le schede ' + bersaglio.map(sig).join(' e '), 'Incolla qui la risposta (anche la chat intera)…', '📥 Leggi la risposta',
@@ -597,7 +641,7 @@ const CentroUI = (() => {
       const stato = h('span.piccolo', { role: 'status' }), btn = h('button.chip', { type: 'button', 'aria-label': 'Verifica le citazioni sul PDF di ' + l.nome }, '🔎 Verifica le citazioni sul PDF') as HTMLButtonElement;
       const scegli = h('input', { type: 'file', accept: 'application/pdf', multiple: true, 'aria-label': 'Scegli dal dispositivo il PDF di ' + l.nome }) as HTMLInputElement;
       scegli.addEventListener('change', () => { for (const f of Array.from(scegli.files || [])) pdfScelti.set(chiavePdf(l, f.name), { file: f, versione: f.size + ':' + f.lastModified });
-        testiPer.clear();   // il PDF scelto può avere lo stesso nome ma contenuto diverso
+        testiPer.clear(); trovatePer.clear();   // il PDF scelto può avere lo stesso nome ma contenuto diverso
         nota = notaDi([(scegli.files || []).length + ' PDF scelti: ora verifica.']);
         vai(4); });
       btn.addEventListener('click', async () => {
@@ -611,7 +655,7 @@ const CentroUI = (() => {
           if (res.registro.length) salvaDomande(r, res.qs, daScheda);
           const fonteDi = (id: string) => String((res.qs.find(q => String(q.id) === id) || {}).fonte || '');
           const nuovo: CreazioneRec = { ...r, citazioni: { quando: ymd(new Date()), libro: l.nome, firma: firmaCitazioni(l, res.qs),
-            drive: Array.from(versioni.values()), ok: res.ok, dubbi: res.dubbi, registro: res.registro,
+            drive: Array.from(versioni.values()), ok: res.ok, dubbi: res.dubbi, registro: res.registro, verificate: res.verificate,
             problemi: res.problemi.map(p => ({ ...p, fonte: fonteDi(p.id) })) } };
           validitaDrive.set(chiaveValidita(nuovo), 'valida');
           salva(nuovo);

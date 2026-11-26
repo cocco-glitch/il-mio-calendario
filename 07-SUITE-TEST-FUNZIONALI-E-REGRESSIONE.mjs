@@ -181,7 +181,20 @@ const IDX = IP.costruisci('BIO', PAG, LINGUA);
 t('costruisci: pagine duplicate indicizzate una volta (N e df non contano il doppione)', () => {
   eq(IDX.N, 11); eq(IDX.per.get(9).dup, 2, 'p. 9 = doppione di p. 2'); eq(IDX.df.get(LINGUA.radice('organelli')), 1, 'df di «organelli»');
 });
-t('soglia τ: 90° percentile dei punteggi > 0; 0 se nessuna pagina risponde', () => { eq(IP.soglia([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), 9); eq(IP.soglia([0, 0]), 0); eq(IP.soglia([4]), 4); });
+t('soglia τ: 0,55 × il punteggio massimo della query; 0 se nessuna pagina risponde', () => { eq(IP.soglia([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), 5.5); eq(IP.soglia([0, 0]), 0); eq(IP.soglia([4]), 2.2); });
+t('τ non dipende dalla lunghezza del libro: pagine estranee in più non lo spostano (il percentile sì)', () => {
+  const lungo = IP.costruisci('BIO', PAG.concat(Array.from({ length: 60 }, (_, i) => ({ n: 100 + i, testo: 'Altro\n' + riemp(20 + i) + ' potenziale' }))), LINGUA);
+  const t1 = IP.copertura(IDX, ['potenziale']).tau, t2 = IP.copertura(lungo, ['potenziale']).tau;
+  vero(Math.abs(t1 - t2) / t1 < 0.25, 'τ ' + t1 + ' vs ' + t2);
+});
+t('contiguità: la pagina accanto a una trattazione, con i termini, ne fa parte (fino a 2 pagine); mai fuori dall\'intervallo', () => {
+  const c = IP.copertura(IDX, ['potenziale'], { tau: 2 }), cl = n => (c.riscontri.find(r => r.n === n) || {}).classe;
+  const forti = c.riscontri.filter(r => r.segnali.bm25).map(r => r.n);
+  eq(forti, [4], 'sopra τ solo p. 4');
+  eq([3, 4, 5, 6].map(cl).every(x => x === 'approfondimento' || x === 'applicazione'), true, 'tratto 3–6 intero: ' + [3, 4, 5, 6].map(cl));
+  vero(/accanto a una trattazione/.test(c.riscontri.find(r => !r.segnali.bm25 && r.n >= 3 && r.n <= 6).motivo), 'motivo spiegato');
+  eq(IP.copertura(IDX, ['potenziale'], { tau: 1, intervallo: [3, 6] }).riscontri.find(r => r.n === 8).classe, 'richiamo', 'p. 8 fuori intervallo resta richiamo');
+});
 t('BM25: la pagina che tratta il concetto supera quella che lo cita di passaggio', () => {
   const c = IP.copertura(IDX, ['potenziale'], { tau: 1 });
   const s = n => (c.riscontri.find(r => r.n === n) || {}).punteggio || 0;

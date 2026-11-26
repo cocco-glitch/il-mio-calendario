@@ -32,8 +32,12 @@ interface LibroRec extends Rec {
   ancore?: Array<{ stampata: PaginaStampata; pdf: number }>; indice?: VoceIndice[]; prova?: { quando: string; ok: number; tot: number };
   /** Ultima misura automatica (fonte A), tenuta anche quando lo studente sceglie B/C/D: ci si torna con «A». */
   misurata?: MappaPag | null;
+  /** Blocco 2: correzioni a mano di IndicePagine per microstep (pagine PDF assolute); vincono sempre sul calcolo. */
+  pagineMano?: Record<string, { incluse?: number[]; escluse?: number[] }>;
 }
 interface PagineMicro { stampDa: PaginaStampata; stampA: PaginaStampata | null; pdfDa: number | null; pdfA: number | null; affidabilita: MappaPag['affidabilita']; }
+/** Blocco 2: pagine del microstep trovate nel testo del libro (IndicePagine), con la copertura spiegata. pagine null = lacuna. */
+interface PagineTrovate { pagine: PagineMicro | null; copertura: CoperturaPagine; fonte: 'indice' | 'testo'; }
 
 const Centro = (() => {
   const s = (x: unknown) => typeof x === 'string' ? x.trim() : x == null ? '' : String(x).trim();
@@ -331,6 +335,51 @@ const Centro = (() => {
     return out;
   }
 
+  // ---------- Blocco 2: IndicePagine (dove il libro tratta il microstep) ----------
+  const MAX_PAGINE = 40;   // stesso tetto del materiale per microstep
+  /** Termini della query: voce dell'indice del libro (senza numero) + testi dati (titolo del blocco, descrizione). Taratura: solo titolo ≤ 70% di richiamo. */
+  function terminiMicro(indice: VoceIndice[] | undefined, ms: string, altri: Array<string | undefined>): string[] {
+    const v = (indice || []).find(x => codiceVoce(x) === s(ms));
+    return [v ? s(v.capitolo).replace(/^\s*\d+(?:\.\d+)*\s*/, '') : '', ...altri.map(x => s(x))].filter((x, i, a) => x && a.indexOf(x) === i);
+  }
+  /** Tratto da dare all'AI: quello della pagina più forte, unito ai tratti vicini (salto ≤ 2 pagine) finché sta in MAX_PAGINE. */
+  function trattoMigliore(c: CoperturaPagine): [number, number] | null {
+    const forte = c.riscontri.find(r => r.classe === 'trattazione' || r.classe === 'approfondimento' || r.classe === 'applicazione');
+    const tr = c.tratti.slice().sort((a, b) => a.da - b.da), i = forte ? tr.findIndex(t => forte.n >= t.da && forte.n <= t.a) : -1;
+    if (i < 0) return null;
+    let da = tr[i].da, a = tr[i].a, sx = i - 1, dx = i + 1;
+    for (;;) {
+      const L = sx >= 0 && da - tr[sx].a <= 3 && a - tr[sx].da + 1 <= MAX_PAGINE ? tr[sx] : null, R = dx < tr.length && tr[dx].da - a <= 3 && tr[dx].a - da + 1 <= MAX_PAGINE ? tr[dx] : null;
+      if (L) { da = L.da; sx--; } else if (R) { a = R.a; dx++; } else break;
+    }
+    return [da, Math.min(a, da + MAX_PAGINE - 1)];
+  }
+  /**
+   * Pagine del microstep dal testo del libro (pagine PDF assolute, segmenti già uniti). Con l'indice (fonte C) l'intervallo resta quello
+   * dell'indice e IndicePagine dà solo lo stato (due segnali su tre); senza indice il tratto lo sceglie IndicePagine. `verificate` = pagine
+   * PDF dove la verifica delle citazioni (MappaPagine.verifica) ha trovato i concetti: terzo segnale.
+   */
+  function pagineTrovate(l: LibroRec, testi: PaginaTestoIdx[], ms: string, termini: string[], lingua: LinguaIndice, verificate: number[] = []): PagineTrovate {
+    const m = l.mappa && l.mappa.tratti.length && l.mappa.fonte !== 'nessuna' ? l.mappa : null;
+    const daIndice = l.indice && l.indice.length ? pagineMicrostep(l.indice, l.mappa, ms) : null;
+    const iv: [number, number] | undefined = daIndice && daIndice.pdfDa !== null ? [daIndice.pdfDa, daIndice.pdfA !== null ? daIndice.pdfA : daIndice.pdfDa + 19] : undefined;
+    const corr = (l.pagineMano || {})[s(ms)] || {};
+    const copertura = IndicePagine.copertura(IndicePagine.costruisci(l.nome, testi, lingua), termini, { intervallo: iv, verificate, incluse: corr.incluse, escluse: corr.escluse });
+    if (iv && daIndice) return { pagine: daIndice, copertura, fonte: 'indice' };
+    const t = trattoMigliore(copertura);
+    if (!t) return { pagine: null, copertura, fonte: 'testo' };
+    const st = (n: number): PaginaStampata => { const x = m ? MappaPagine.aStampata(m, n) : null; return x !== null ? x : n; };
+    return { pagine: { stampDa: st(t[0]), stampA: st(t[1]), pdfDa: t[0], pdfA: t[1], affidabilita: m ? m.affidabilita : 'nessuna' }, copertura, fonte: 'testo' };
+  }
+  /** Riga per lo studente: dove sono le pagine, con quale certezza, e cosa fare se è incerto. */
+  function descriviTrovate(x: PagineTrovate): string {
+    const st = x.copertura.stato === 'coperto' ? '🟢 trattato' : x.copertura.stato === 'da_verificare' ? '🟡 da verificare' : '🔴 non trovato';
+    if (!x.pagine) return st + ' nel libro: nessuna pagina tratta il microstep (controlla il programma o indica le pagine a mano)';
+    const p = x.pagine, pdf = p.pdfDa === p.pdfA ? 'PDF ' + p.pdfDa : 'PDF ' + p.pdfDa + '–' + p.pdfA;
+    return st + ' · ' + (x.fonte === 'indice' ? 'pagine dall’indice' : 'pagine trovate nel testo') + ': p. ' + p.stampDa + (p.stampA !== null && p.stampA !== p.stampDa ? '–' + p.stampA : '') + ' (' + pdf + ')'
+      + (x.copertura.stato === 'da_verificare' ? ' — un solo segnale: verifica le citazioni dopo l’import' : '');
+  }
+
   // ---------- T12: verifica delle citazioni sul testo del PDF ----------
   const VUOTE = new Set(['quale', 'quali', 'della', 'delle', 'degli', 'dello', 'nella', 'nelle', 'negli', 'nello', 'dalla', 'dalle', 'dagli', 'dallo',
     'sulla', 'sulle', 'sugli', 'sullo', 'questo', 'questa', 'questi', 'queste', 'quello', 'quella', 'quelli', 'quelle', 'viene', 'vengono', 'essere',
@@ -362,23 +411,25 @@ const Centro = (() => {
    * Citazione di ogni domanda ↔ testo della pagina (MappaPagine.verifica): ↔ si corregge da sola in fonte, sourceRef e [[…]] della spiegazione
    * (registrata), ⚠/✗ diventano problemi per il prompt di correzione, ❓ (pagina senza testo o non mappabile) si dichiara.
    */
-  function verificaCitazioni(qs: DomAI[], m: MappaPag | null, testoPagina: (pdf: number) => string): { qs: DomAI[]; registro: string[]; problemi: ProblemaQ[]; ok: number; dubbi: string[] } {
-    const out = { qs: [...qs], registro: [] as string[], problemi: [] as ProblemaQ[], ok: 0, dubbi: [] as string[] };
+  function verificaCitazioni(qs: DomAI[], m: MappaPag | null, testoPagina: (pdf: number) => string): { qs: DomAI[]; registro: string[]; problemi: ProblemaQ[]; ok: number; dubbi: string[]; verificate: number[] } {
+    const out = { qs: [...qs], registro: [] as string[], problemi: [] as ProblemaQ[], ok: 0, dubbi: [] as string[], verificate: [] as number[] };
+    const segna = (p: PaginaStampata | null) => { const n = p !== null ? MappaPagine.aPdf(m, p) : null; if (n !== null && !out.verificate.includes(n)) out.verificate.push(n); };
     if (!verificabile(m)) return out;
     qs.forEach((q, i) => {
       if (typeof q.fonte !== 'string' || !q.fonte.trim()) return;
       const id = String(q.id), v = MappaPagine.verifica(m, q.fonte, testoPagina, paroleChiave(q));
       const vecchia = (/\bpp?\.\s*(\d{1,5}|[ivxlcdm]+)\b/i.exec(q.fonte) || [])[1];
-      if (v.esito === '✅') out.ok++;
+      if (v.esito === '✅') { out.ok++; segna(v.pagina); }
       else if (v.esito === '❓') out.dubbi.push(id);
       else if (v.esito === '↔' && vecchia && v.pagina !== null) {
         const n: DomAI = { ...q, fonte: cambiaPagina(q.fonte, vecchia, v.pagina) };
         if (typeof q.sourceRef === 'string') n.sourceRef = cambiaPagina(q.sourceRef, vecchia, v.pagina);
         if (typeof q.spiegazione === 'string') n.spiegazione = q.spiegazione.replace(/\[\[[^\]]*\]\]/g, c => cambiaPagina(c, vecchia, v.pagina!));
-        out.qs[i] = n;
+        out.qs[i] = n; segna(v.pagina);
         out.registro.push(id + ': p. ' + vecchia + ' → p. ' + v.pagina + ' (i concetti sono sulla pagina accanto)');
       } else out.problemi.push({ sev: 'err', id, msg: 'citazione p. ' + (vecchia || v.pagina) + ': ' + (v.esito === '⚠' ? 'sulla pagina solo parte dei concetti della domanda' : 'la pagina non contiene i concetti della domanda') });
     });
+    out.verificate.sort((a, b) => a - b);
     return out;
   }
 
@@ -397,5 +448,5 @@ const Centro = (() => {
     return parti.map(p => { for (let k = p.da; k <= p.a; k++) if (!ci.has(k)) return false; return true; });
   }
 
-  return { prefisso, nomeParte, unisciDomande, partiIncollate, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni };
+  return { prefisso, nomeParte, unisciDomande, partiIncollate, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni, terminiMicro, pagineTrovate, descriviTrovate };
 })();

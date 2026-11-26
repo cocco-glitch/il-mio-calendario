@@ -5,8 +5,11 @@
 // Pipeline (audit S2 §7): BM25 per pagina (k1 = 1,2, b = 0,75) sulle radici dei termini → sinonimi a peso 0,5 →
 // classi per pagina → tratti contigui → stato del microstep con la regola dei DUE SEGNALI SU TRE
 // (intervallo dell'indice, BM25 ≥ τ, pagina verificata da MappaPagine). Le correzioni manuali vincono sempre.
-// τ non è un numero inventato: per libro e per query, 90° percentile dei punteggi non nulli, da calibrare sul pilota
-// (richiamo ≥ 0,95). Radice e sinonimi arrivano dall'esterno (Locale nell'app, funzioni semplici nei test).
+// τ tarato sul pilota (26/11/2026: 72 schede della banca, 261 pagine citate, Fasano e Bettelheim): τ = 0,55 × il punteggio
+// massimo della query nel libro (non dipende da quante pagine ha il libro, a differenza del percentile) e ogni trattazione si
+// estende fino a 2 pagine contigue che contengono i termini (un paragrafo continua sulla pagina accanto). Esito: richiamo
+// 93% con ~12 pagine per microstep; il 95% lo danno i due segnali su tre, non il BM25 da solo. La query deve avere titolo
+// E descrizione del microstep (solo titolo: richiamo ≤ 70%). Radice e sinonimi arrivano dall'esterno (Locale nell'app).
 
 type ClassePagina = 'presenza' | 'trattazione' | 'approfondimento' | 'applicazione' | 'richiamo' | 'fuori_programma';
 type StatoCoperturaPagine = 'coperto' | 'da_verificare' | 'lacuna';
@@ -23,7 +26,7 @@ interface CoperturaPagine { stato: StatoCoperturaPagine; tau: number; riscontri:
 interface OpzCoperturaPagine { intervallo?: [number, number]; tau?: number; verificate?: Iterable<number>; incluse?: Iterable<number>; escluse?: Iterable<number>; }
 
 const IndicePagine = (() => {
-  const K1 = 1.2, B = 0.75, PESO_SINONIMO = 0.5, PERCENTILE = 0.9;
+  const K1 = 1.2, B = 0.75, PESO_SINONIMO = 0.5, ALFA = 0.55, VICINI = 2;
   const STOP = new Set('alla alle agli dalla dalle degli delle della dello nella nelle negli nello sulla sulle come anche sono essere viene vengono questo questa questi queste quello quella perche quando dove mentre oppure ogni tutti tutte loro ciascun'.split(' '));
   const n2 = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const parole = (s: string) => n2(s).split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !STOP.has(w));
@@ -72,10 +75,10 @@ const IndicePagine = (() => {
     }
     return { s: Math.round(s * 1000) / 1000, occ, inTitolo };
   }
-  /** τ della query in questo libro: 90° percentile dei punteggi > 0 (0 se nessuna pagina risponde). */
-  function soglia(punteggi: number[], percentile = PERCENTILE): number {
-    const v = punteggi.filter(x => x > 0).sort((a, b) => a - b);
-    return v.length ? v[Math.min(v.length - 1, Math.floor(percentile * (v.length - 1)))] : 0;
+  /** τ della query in questo libro: ALFA × il punteggio massimo (0 se nessuna pagina risponde). */
+  function soglia(punteggi: number[], alfa = ALFA): number {
+    const m = punteggi.reduce((a, b) => b > a ? b : a, 0);
+    return m > 0 ? Math.round(alfa * m * 1000) / 1000 : 0;
   }
   function estratto(testo: string, radici: string[]): string {
     const t = testo.replace(/\s+/g, ' '), low = n2(t);
@@ -105,6 +108,13 @@ const IndicePagine = (() => {
       const motivo = manuale ? 'inclusa a mano' : tratta ? 'BM25 ' + x.s + ' ≥ τ ' + tau + (x.inTitolo ? ' e termine nel titolo' : ' e ' + x.occ + ' occorrenze')
         : x.occ + ' occorrenze, BM25 ' + x.s + (x.s >= tau ? ' ma termine né nel titolo né ripetuto' : ' < τ ' + tau);
       riscontri.push(riscontro(x, classe, tau, dentro, ver, motivo, dup.get(x.p.n)));
+    }
+    // contiguità: fino a VICINI pagine accanto a una trattazione, con i termini e non fuori dall'intervallo, ne fanno parte
+    const fortiDi = () => new Set(riscontri.filter(r => r.classe === 'trattazione' || r.classe === 'applicazione').map(r => r.n));
+    for (let giro = 0; giro < VICINI; giro++) {
+      const f = fortiDi();
+      riscontri = riscontri.map(r => (r.classe === 'presenza' || (r.classe === 'richiamo' && !iv)) && (f.has(r.n - 1) || f.has(r.n + 1))
+        ? { ...r, classe: (ind.per.get(r.n)!.esercizio ? 'applicazione' : 'trattazione') as ClassePagina, motivo: r.motivo + '; accanto a una trattazione' } : r);
     }
     // tratti: pagine contigue di trattazione/applicazione; ≥ 3 pagine → approfondimento
     const forti = riscontri.filter(r => r.classe === 'trattazione' || r.classe === 'applicazione').map(r => r.n).sort((a, b) => a - b);
