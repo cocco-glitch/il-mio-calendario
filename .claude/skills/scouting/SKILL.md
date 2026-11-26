@@ -1,6 +1,6 @@
 ---
 name: scouting
-description: Scouting prima di costruire una funzione nuova: come la risolvono le app esistenti (anche quelle con AI), cosa ne sa Claude, cosa dice la neuroscienza dell'apprendimento; poi valutazione con livello di prova e proposta di fusione con piano e tattiche, decisa insieme all'utente. Usala SEMPRE prima di progettare o implementare una funzione, un blocco o un cambio di comportamento visibile (es. «aggiungiamo…», «come facciamo le flashcard/i ripassi/il piano…», «prendiamo spunto da Anki/Quizlet/Notion…», «come lo fanno le altre app?», «è la soluzione migliore?»), anche se l'utente non dice «scouting». Non serve per bug, refactoring senza effetti visibili o domande puntuali.
+description: "Scouting prima di costruire una funzione nuova: come la risolvono le app esistenti (anche quelle con AI), cosa ne sa Claude, cosa dice la neuroscienza dell'apprendimento; poi valutazione con livello di prova e proposta di fusione con piano e tattiche, decisa insieme all'utente. Usala SEMPRE prima di progettare o implementare una funzione, un blocco o un cambio di comportamento visibile (es. «aggiungiamo…», «come facciamo le flashcard/i ripassi/il piano…», «prendiamo spunto da Anki/Quizlet/Notion…», «come lo fanno le altre app?», «è la soluzione migliore?»), anche se l'utente non dice «scouting». Non serve per bug, refactoring senza effetti visibili o domande puntuali."
 ---
 
 # Scouting prima di costruire
