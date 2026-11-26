@@ -379,13 +379,10 @@ const Dominio = (() => {
     return { pk, capitoli: d.capitoli, avvisi: d.avvisi };
   }
   async function testoDaPdf(f: File): Promise<string> {
-    const L = await caricaPdfJs();
-    const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise, righe: string[] = [];
-    for (let p = 1; p <= Math.min(doc.numPages, 12); p++) {
-      const c = await (await doc.getPage(p)).getTextContent(); let y: number | null = null, r = '';
-      for (const it of c.items as any[]) { const yy = Math.round(it.transform[5]); if (y !== null && Math.abs(yy - y) > 2) { righe.push(r); r = ''; } r += (r && !r.endsWith(' ') ? ' ' : '') + it.str; y = yy; }
-      if (r) righe.push(r);
-    }
+    const righe: string[] = [];
+    await TestoPdf.con(f, async doc => {   // blocco 1: stesso raggruppamento per y di prima, ora con chiusura del documento
+      for (let p = 1; p <= Math.min(doc.numPages, 12); p++) righe.push(...TestoPdf.righe(await TestoPdf.elementi(doc, p)));
+    });
     return righe.join('\n');
   }
   const leggiImmagine = (f: File) => new Promise<string>((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => ko(new Error('immagine illeggibile')); r.readAsDataURL(f); });

@@ -28,17 +28,20 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'imc-bp3-'));
 fs.writeFileSync(path.join(TMP, 'stub.d.ts'), 'interface Rec { id: string; type: string; updatedAt: number; deleted?: boolean; acc?: string; }\n'
   + 'interface VocePiano { k: string; t: string; d?: string; speciale?: boolean; }\n'
   + 'interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }\n'
+  + 'declare function caricaPdfJs(): Promise<any>;\ninterface Blob { arrayBuffer(): Promise<ArrayBuffer>; }\ndeclare const console: { warn(...a: unknown[]): void; log(...a: unknown[]): void };\n'
   + "interface PkPiano { tipo: 'piano'; id: string; modo?: string; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; }\n");
 fs.copyFileSync(path.join(SRC, '01-json.ts'), path.join(TMP, 'json.ts'));   // v0.57 (A15): parser unico usato da Neuro e Pianificatore
-fs.copyFileSync(path.join(SRC, '07-fsrs.ts'), path.join(TMP, 'fsrs.ts'));   // blocco 3: nucleo FSRS unico usato da Neuro
+fs.copyFileSync(path.join(SRC, '07-fsrs.ts'), path.join(TMP, 'fsrs.ts'));
+fs.copyFileSync(path.join(SRC, '07-testopdf.ts'), path.join(TMP, 'testopdf.ts'));   // blocco 1: punto unico di lettura dei PDF   // blocco 3: nucleo FSRS unico usato da Neuro
 fs.copyFileSync(path.join(SRC, '07-neuro.ts'), path.join(TMP, 'neuro.ts'));
 fs.copyFileSync(path.join(SRC, '07-pianificatore.ts'), path.join(TMP, 'pianificatore.ts'));
 try {
   execFileSync(process.execPath, [path.join(RADICE, 'node_modules', 'typescript', 'bin', 'tsc'), '--target', 'es2020', '--lib', 'es2020', '--strict',
-    '--noEmitOnError', 'false', '--outDir', 'out', 'stub.d.ts', 'json.ts', 'fsrs.ts', 'neuro.ts', 'pianificatore.ts'], { cwd: TMP, stdio: 'pipe' });
+    '--noEmitOnError', 'false', '--outDir', 'out', 'stub.d.ts', 'json.ts', 'fsrs.ts', 'testopdf.ts', 'neuro.ts', 'pianificatore.ts'], { cwd: TMP, stdio: 'pipe' });
 } catch (e) { console.log('⚠️ tsc sui moduli puri:\n' + String(e.stdout || e.message).slice(0, 2000)); }
 const JS_JSON = fs.readFileSync(path.join(TMP, 'out', 'json.js'), 'utf8');
 const JS_FSRS = fs.readFileSync(path.join(TMP, 'out', 'fsrs.js'), 'utf8');
+const JS_TPDF = fs.readFileSync(path.join(TMP, 'out', 'testopdf.js'), 'utf8');
 const JS = fs.readFileSync(path.join(TMP, 'out', 'neuro.js'), 'utf8');
 const JS_PIAN = fs.readFileSync(path.join(TMP, 'out', 'pianificatore.js'), 'utf8');
 let chiamateRete = 0;
@@ -46,9 +49,10 @@ const sandbox = { console, fetch: async () => { chiamateRete++; throw new Error(
 vm.createContext(sandbox);
 vm.runInContext(JS_JSON + '\n;this.JsonAI = JsonAI;', sandbox);
 vm.runInContext(JS_FSRS + '\n;this.Fsrs = Fsrs;', sandbox);
+vm.runInContext(JS_TPDF + '\n;this.TestoPdf = TestoPdf;', sandbox);
 vm.runInContext(JS + '\n;this.Neuro = Neuro;', sandbox);
 vm.runInContext(JS_PIAN + '\n;this.Pianificatore = Pianificatore;', sandbox);
-const N = sandbox.Neuro, P = sandbox.Pianificatore, FS = sandbox.Fsrs;
+const N = sandbox.Neuro, P = sandbox.Pianificatore, FS = sandbox.Fsrs, TP = sandbox.TestoPdf;
 const OGGI = '2026-11-18';
 
 console.log('\n== BP3 §1.2 Matrice certezza × correttezza ==');
@@ -112,6 +116,44 @@ t('§4-F: sotto-step spuntato senza punteggio entra come «esposto» (nessun vot
   vero(/!m\.ultimo \|\| m\.esposto\) return null/.test(m), 'ricordo non mostrato se mai verificato');
   vero(/x\.esposto \? 'primo controllo'/.test(c), 'coda: «primo controllo» al posto della percentuale');
   eq(FS.esposizione().s, 1); eq(FS.intervallo(FS.esposizione().s, 0.9), 1);
+});
+
+console.log('\n== Motore unificato · blocco 1: TestoPdf, punto unico di lettura dei PDF ==');
+const ITEMS = [{ str: 'Il', hasEOL: false, transform: [1, 0, 0, 1, 50, 700] }, { str: 'potenziale', hasEOL: true, transform: [1, 0, 0, 1, 60, 700.4] },
+  { str: '', hasEOL: false, transform: [1, 0, 0, 1, 50, 690] }, { str: 'd\'azione ', hasEOL: false, transform: [1, 0, 0, 1, 50, 680] }, { str: 'è', hasEOL: true, transform: [1, 0, 0, 1, 90, 681] }, {}];
+// formule copiate dal codice di f82c7f0, per provare che il formato non cambia di un carattere
+const VECCHIO = {
+  spazi: it => it.map(x => x.str || '').join(' '),
+  eol: it => it.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join(''),
+  righe: it => { const righe = []; let y = null, r = ''; for (const x of it) { const yy = Math.round(x.transform ? x.transform[5] : 0); if (y !== null && Math.abs(yy - y) > 2) { righe.push(r); r = ''; } r += (r && !r.endsWith(' ') ? ' ' : '') + x.str; y = yy; } if (r) righe.push(r); return righe.join('\n'); },
+};
+t('TestoPdf.formatta: «spazi», «eol» e «righe» identici alle formule di prima', () => {
+  for (const m of ['spazi', 'eol', 'righe']) eq(TP.formatta(ITEMS, m), VECCHIO[m](ITEMS), m);
+  eq(TP.formatta(ITEMS), VECCHIO.spazi(ITEMS), 'predefinito = spazi');
+  eq(TP.formatta([], 'righe'), '', 'pagina vuota');
+});
+t('coda quiz: l\'hash `versione` di un PDF non cambia (stesso testo, stesso sha256)', () => {
+  const pag = [ITEMS, ITEMS.slice(0, 2)];
+  eq(pag.map(it => TP.formatta(it, 'spazi')).join('\n'), pag.map(VECCHIO.spazi).join('\n'));
+  vero(/TestoPdf\.pagina\(doc, n, 'spazi'\)/.test(leggi('su-richiesta/07-codaquizrunner.ts')), 'il runner usa il formato «spazi»');
+});
+await t('TestoPdf.con chiude il documento anche se la lettura fallisce; ogni pagina viene pulita', async () => {
+  const log = [];
+  sandbox.caricaPdfJs = async () => ({ getDocument: o => { log.push('apri:' + o.isEvalSupported + ':' + o.data.length); return { promise: Promise.resolve({
+    numPages: 2, destroy: async () => { log.push('chiudi'); },
+    getPage: async n => ({ getTextContent: async () => { if (n === 2) throw new Error('pagina rotta'); return { items: ITEMS }; }, cleanup: () => log.push('pulisci:' + n) }) }) }; } });
+  const blob = { arrayBuffer: async () => new ArrayBuffer(4) };
+  eq(await TP.con(blob, d => TP.pagina(d, 1, 'eol')), VECCHIO.eol(ITEMS));
+  let errore = '';
+  try { await TP.con(blob, d => TP.pagina(d, 2)); } catch (e) { errore = e.message; }
+  eq(errore, 'pagina rotta'); eq(log, ['apri:false:4', 'pulisci:1', 'chiudi', 'apri:false:4', 'pulisci:2', 'chiudi']);
+});
+t('i chiamanti passano da TestoPdf (Centro, coda quiz, master prompt, piani AI, appunti, wizard, Creaquiz, visore)', () => {
+  const usi = { 'su-richiesta/07-centroui.ts': /TestoPdf\.con\(/, 'su-richiesta/07-codaquizrunner.ts': /TestoPdf\.con\(/, 'su-richiesta/07-strumentiquiz.ts': /TestoPdf\.con\(dati/,
+    '07-pianiai.ts': /TestoPdf\.con\(blob/, '07-mano.ts': /TestoPdf\.con\(f,/, '07-dominio.ts': /TestoPdf\.righe\(await TestoPdf\.elementi/, '07-creaquiz.ts': /TestoPdf\.con\(await Drive\.scaricaBlob/, '07-studio.ts': /TestoPdf\.apri\(dati\)/ };
+  for (const [f, re] of Object.entries(usi)) vero(re.test(leggi(f)), f);
+  vero(/TestoPdf\.chiudi\(doc\)/.test(leggi('07-creaquiz.ts')) && /TestoPdf\.chiudi\(doc\)/.test(leggi('su-richiesta/07-strumentiquiz.ts')), 'chiusura uniforme');
+  vero(!/declare const pdfjsLib/.test(leggi('07-studio.ts')), 'visore senza seconda copia del caricatore');
 });
 t('metadati non validi scartati, validi conservati', () => {
   const d = N.normalizza({ ...vecchia, bloomLevel: 7, distractorTypes: { 1: 'misconception', 2: 'boh' }, confidenceLog: 'x', sourceRef: { libro: 'Zan', stepId: 'C-1' } });
@@ -526,10 +568,12 @@ await t('testQuestionario6Piu3Fallback: 3 domande AI (≤600 token, max 450) e f
 });
 // ---------- v0.56.2: urgenze pre-BP6 (audit A1–A4, A7, A9, U8) ----------
 const tuttiSrc = SRC_TUTTI().map(f => [f, leggi(f)]);
-t('U5 pdf.js: ogni getDocument con isEvalSupported:false (CVE-2024-4367)', () => {
+t('U5 pdf.js: un solo getDocument, in 07-testopdf.ts, con isEvalSupported:false (CVE-2024-4367)', () => {
   const chiamate = tuttiSrc.flatMap(([f, s]) => s.split('\n').filter(r => /\.getDocument\(/.test(r)).map(c => [f, c.trim()]));
-  vero(chiamate.length >= 5, 'trovate ' + chiamate.length + ' chiamate');
+  eq(chiamate.map(c => c[0]), ['07-testopdf.ts'], 'punti di apertura dei PDF');   // blocco 1: prima ≥ 5, sparsi in 9 file
   for (const [f, c] of chiamate) vero(/isEvalSupported:\s*false/.test(c), f + ': ' + c);
+  const testo = tuttiSrc.filter(([, s]) => /getTextContent\(/.test(s)).map(([f]) => f);
+  eq(testo, ['07-testopdf.ts'], 'lettura del testo dei PDF solo in TestoPdf');
 });
 t('U7 service worker: replaceAll del segnaposto, nessun __VERSIONE__ rimasto', () => {
   const b = fs.readFileSync(path.join(RADICE, 'build.mjs'), 'utf8');
@@ -914,7 +958,7 @@ await t('v0.59.2: quiz in app — confutazioni da spiegazioneDistrattori, sezion
   vero(/conStrumentiQuiz\(\(\) => StrumentiQuiz\.prompt\(\)\)/.test(st) && /conStrumentiQuiz\(\(\) => StrumentiQuiz\.diagnostica\(\)\)/.test(st), 'voci in Studio «⋯», caricate su richiesta');
   vero(/dist\/strumenti-quiz\.js/.test(bm) && /app \+ '\\n' \+ extra/.test(bm) && /'strumenti-quiz\.js'/.test(sw), 'strumenti-quiz.js costruito, nell\'anteprima e in cache offline');
   vero(!fs.readdirSync(SRC).some(f => /diagnosiquiz|masterprompt|strumentiquiz/.test(f)), 'strumenti quiz fuori dal pacchetto principale');
-  vero(/isEvalSupported: false/.test(sq) && !/innerHTML/.test(sq), 'pdf.js senza eval, niente innerHTML');
+  vero(/TestoPdf\.(con|apri)\(/.test(sq) && !/getDocument\(/.test(sq) && !/innerHTML/.test(sq), 'pdf.js solo via TestoPdf (senza eval, U5), niente innerHTML');
 });
 
 const fl = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort();

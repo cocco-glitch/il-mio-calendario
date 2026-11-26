@@ -739,18 +739,20 @@ function caricaPdfJs(): Promise<any> {
   return pdfjsPronto;
 }
 async function pdfInImmagini(f: File, max = 20): Promise<{ pagine: { s: string; w: number; h: number }[]; testo: string }> {
-  const L = await caricaPdfJs();
-  const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise;
-  const n = Math.min(doc.numPages, max), pagine: { s: string; w: number; h: number }[] = [], testi: string[] = [];
-  for (let i = 1; i <= n; i++) {
-    const p = await doc.getPage(i), v0 = p.getViewport({ scale: 1 }), sc = 1000 / v0.width, v = p.getViewport({ scale: sc });
-    const c = document.createElement('canvas'); c.width = Math.round(v.width); c.height = Math.round(v.height);
-    const cx = c.getContext('2d')!; cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
-    await p.render({ canvasContext: cx, viewport: v }).promise;
-    pagine.push({ s: c.toDataURL('image/jpeg', .7), w: c.width, h: c.height });
-    try { const tc = await p.getTextContent(); const t = tc.items.map((x: any) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim(); if (t) testi.push('### Pagina ' + i + '\n' + t); } catch (_) { /* pagina senza testo (scansione) */ }
-  }
-  if (doc.numPages > max) avviso('Inserite le prime ' + max + ' pagine su ' + doc.numPages + ' (per non appesantire l\'appunto).', 6000);
+  const pagine: { s: string; w: number; h: number }[] = [], testi: string[] = [];
+  const tot = await TestoPdf.con(f, async doc => {
+    const n = Math.min(doc.numPages, max);
+    for (let i = 1; i <= n; i++) {
+      const p = await doc.getPage(i), v0 = p.getViewport({ scale: 1 }), sc = 1000 / v0.width, v = p.getViewport({ scale: sc });
+      const c = document.createElement('canvas'); c.width = Math.round(v.width); c.height = Math.round(v.height);
+      const cx = c.getContext('2d')!; cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+      await p.render({ canvasContext: cx, viewport: v }).promise;
+      pagine.push({ s: c.toDataURL('image/jpeg', .7), w: c.width, h: c.height });
+      try { const t = (await TestoPdf.pagina(doc, i, 'eol')).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim(); if (t) testi.push('### Pagina ' + i + '\n' + t); } catch (e) { console.warn('[appunto da PDF] pagina ' + i + ' senza testo (scansione?)', e); }
+    }
+    return doc.numPages as number;
+  });
+  if (tot > max) avviso('Inserite le prime ' + max + ' pagine su ' + tot + ' (per non appesantire l\'appunto).', 6000);
   return { pagine, testo: testi.join('\n\n') };
 }
 function fotoInImmagine(f: File): Promise<{ s: string; w: number; h: number }> {

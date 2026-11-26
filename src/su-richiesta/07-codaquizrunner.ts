@@ -97,14 +97,10 @@ const CodaQuizRunner = (() => {
   }
   async function estraiPdf(file: File): Promise<DocumentoPdfQuiz> {
     if (!file || !/\.pdf$/i.test(file.name || '')) throw new Error('scegli un PDF');
-    const L = await caricaPdfJs(), doc = await L.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
     const pagine: PaginaSorgenteQuiz[] = [];
-    try {
-      for (let n = 1; n <= doc.numPages; n++) {
-        const tc: { items: Array<{ str?: string }> } = await (await doc.getPage(n)).getTextContent();
-        pagine.push({ n, testo: tc.items.map(x => x.str || '').join(' ') });
-      }
-    } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
+    await TestoPdf.con(file, async doc => {
+      for (let n = 1; n <= doc.numPages; n++) pagine.push({ n, testo: await TestoPdf.pagina(doc, n, 'spazi') });   // formato invariato: entra nell'hash `versione`
+    });
     return { id: file.name, nome: file.name, versione: 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine };
   }
   async function creaDaPdf(account: string, file: File, o: SpecificaGenerazioneQuiz): Promise<LavoroQuiz> {

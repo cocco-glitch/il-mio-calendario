@@ -320,7 +320,6 @@ async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS, cb?: (
   } catch (e: any) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e))); }
 }
 
-declare const pdfjsLib: any;
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 /**
  * Cache dei PDF dei libri sul dispositivo (Cache Storage): il primo apertura scarica il file intero
@@ -366,11 +365,10 @@ async function apriPdf(fileId: string, pagina: number, titolo: string): Promise<
   const v = visore(titolo);
   const stato = h('div.vuoto.centro', null, 'Apro il PDF…'); v.corpo.appendChild(stato);
   try {
-    await new Promise<void>((ok, ko) => { if (typeof pdfjsLib !== 'undefined') return ok(); const s = document.createElement('script'); s.src = PDFJS + 'pdf.min.js'; s.onload = () => ok(); s.onerror = () => ko(new Error('Impossibile caricare il lettore PDF (serve la rete).')); document.head.appendChild(s); });
-    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
+    await caricaPdfJs();   // blocco 1: stesso caricatore di tutta l'app (prima una seconda copia qui)
     const dati = await PdfCache.prendi(fileId, (f, t) => { stato.textContent = 'Scarico il PDF… ' + (t ? Math.round(f / t * 100) + '%' : Math.round(f / 1048576) + ' MB') + ' (solo la prima volta)'; });
     stato.textContent = 'Apro il PDF…';
-    const doc = await pdfjsLib.getDocument({ data: dati, isEvalSupported: false }).promise;   // v0.56.2: CVE-2024-4367 (pdf.js 3.11)
+    const doc = await TestoPdf.apri(dati);   // v0.56.2: CVE-2024-4367 (pdf.js 3.11) → senza eval, in 07-testopdf.ts
     let p = Math.min(Math.max(1, pagina), doc.numPages), zoom = 1, giro = 0;
     const tela = h('canvas.pdf-tela') as HTMLCanvasElement, num = h('span.pdf-num');
     async function mostra(): Promise<void> {

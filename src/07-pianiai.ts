@@ -38,17 +38,12 @@ const PianiAI = (() => {
   /** Prime 15 pagine di un PDF su Drive (lotti da 4, page.cleanup()). */
   async function leggiFonte(id: string): Promise<FonteTesto | null> {
     const blob = await Drive.scaricaBlob(id);
-    const lib = await caricaPdfJs();
-    const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
-    const n = Math.min(15, pdf.numPages), pagine: string[] = [];
-    for (let a = 1; a <= n; a += 4) {
-      const lotto = await Promise.all(Array.from({ length: Math.min(4, n - a + 1) }, async (_, i) => {
-        const pg = await pdf.getPage(a + i);
-        try { const t = await pg.getTextContent(); return t.items.map((x: any) => x.str).join(' '); } finally { try { pg.cleanup(); } catch (_) { /* niente */ } }
-      }));
-      pagine.push(...lotto);
-    }
-    try { pdf.destroy(); } catch (_) { /* niente */ }
+    const pagine: string[] = [];
+    await TestoPdf.con(blob, async pdf => {
+      const n = Math.min(15, pdf.numPages);
+      for (let a = 1; a <= n; a += 4)   // lotti da 4 in parallelo; TestoPdf.pagina fa già page.cleanup()
+        pagine.push(...await Promise.all(Array.from({ length: Math.min(4, n - a + 1) }, (_, i) => TestoPdf.pagina(pdf, a + i, 'spazi'))));
+    });
     return { fileId: id, nome: (blob as any).name || id, pagine };
   }
   const idDaLink = (s: string) => { const m = /[-\w]{25,}/.exec(s); return m ? m[0] : ''; };

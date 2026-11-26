@@ -102,19 +102,16 @@ const CentroUI = (() => {
   async function testiPagine(l: LibroRec, pagine: number[], avanza: (m: string) => void, versioni?: Map<string, VersionePdfDrive>): Promise<Map<number, string>> {
     const testi = new Map<number, string>();
     const seg = l.pdf.map(f => ({ nome: f.nome, base: f.segmentoDa ? f.segmentoDa - 1 : 0 })).sort((a, b) => a.base - b.base);
-    const L = await caricaPdfJs();
     for (const [k, sg] of seg.entries()) {
       const fine = k + 1 < seg.length ? seg[k + 1].base : Infinity, mie = pagine.filter(p => p > sg.base && p <= fine);
       if (!mie.length) continue;
       avanza('Apro «' + sg.nome + '»…');
-      const doc = await L.getDocument({ data: await datiPdf(l, sg.nome, versioni), isEvalSupported: false }).promise;
-      try {
+      await TestoPdf.con(await datiPdf(l, sg.nome, versioni), async doc => {
         for (const p of mie) {
           if (p - sg.base > doc.numPages) continue;
-          const tc: { items: Array<{ str?: string }> } = await (await doc.getPage(p - sg.base)).getTextContent();
-          testi.set(p, tc.items.map(x => x.str || '').join(' '));
+          testi.set(p, await TestoPdf.pagina(doc, p - sg.base, 'spazi'));
         }
-      } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
+      });
     }
     return testi;
   }

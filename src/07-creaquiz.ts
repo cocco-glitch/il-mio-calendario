@@ -58,14 +58,14 @@ const CreaQuiz = (() => {
     if (utili.size >= 2) budget = Math.round(budget * .65);   // so già dove guardare: mando meno testo all'AI
     try {
       if (f.mimeType === 'application/pdf') {
-        const L = await caricaPdfJs(); passo('Leggo «' + f.name + '»…');
-        const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()), isEvalSupported: false }).promise;
+        passo('Leggo «' + f.name + '»…');
         const grezze: { i: number; t: string }[] = [];
-        for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
-          if (i % 25 === 0) passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);
-          const tc = await (await doc.getPage(i)).getTextContent();
-          grezze.push({ i, t: tc.items.map((x: any) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').trim() });
-        }
+        await TestoPdf.con(await Drive.scaricaBlob(f.id), async doc => {   // blocco 1: prima il documento non veniva mai chiuso
+          for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
+            if (i % 25 === 0) passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);
+            grezze.push({ i, t: (await TestoPdf.pagina(doc, i, 'eol')).replace(/[ \t]+/g, ' ').trim() });
+          }
+        });
         // v0.44 locale: via intestazioni/piè di pagina ripetuti e righe spezzate (meno token), radici e sinonimi per trovare le pagine
         const pulite = Locale.pulisciPagine(grezze.map(x => x.t)), rad = Locale.espandi(chiavi).map(Locale.radice);
         const pag: { i: number; t: string; s: number }[] = [];
@@ -450,8 +450,7 @@ const CreaQuiz = (() => {
       if (occupato) return false;
       occupato = true;
       try {
-        const lib = await caricaPdfJs();
-        const doc = await lib.getDocument({ data: new Uint8Array(await (await apri()).arrayBuffer()), isEvalSupported: false }).promise;
+        const doc = await TestoPdf.apri(await apri());
         try {
           const pagine = new Set<number>();
           for (const parte of intervalli.value.split(',')) {
@@ -464,10 +463,9 @@ const CreaQuiz = (() => {
           const brani: string[] = [], lacune: number[] = [];
           for (const i of pagine) {
             stato.textContent = 'Lettura pagina ' + i;
-            const pagina = await doc.getPage(i);
-            const tc = await pagina.getTextContent();
-            let t = tc.items.map((x: { str?: string }) => x.str || '').join(' ').trim();
+            let t = (await TestoPdf.pagina(doc, i, 'spazi')).trim();
             if (t.replace(/\s/g, '').length < 25) {
+              const pagina = await doc.getPage(i);   // solo per l'OCR locale della pagina scansionata
               const Detector = (window as Window & { TextDetector?: new () => { detect(c: HTMLCanvasElement): Promise<{ rawValue: string }[]> } }).TextDetector;
               if (Detector) {
                 const canvas = document.createElement('canvas');
@@ -488,7 +486,7 @@ const CreaQuiz = (() => {
           testo.value = [testo.value, ...brani].filter(Boolean).join('\n\n'); aggiorna();
           stato.textContent = lacune.length ? 'Testo insufficiente. Trascrivi o correggi le pagine ' + lacune.join(', ') : 'Pagine estratte: ' + Array.from(pagine).join(', ');
           return true;
-        } finally { await doc.destroy(); }
+        } finally { await TestoPdf.chiudi(doc); }
       } catch (e) { stato.textContent = e instanceof Error ? e.message : 'PDF illeggibile.'; return false; }
       finally { occupato = false; }
     };

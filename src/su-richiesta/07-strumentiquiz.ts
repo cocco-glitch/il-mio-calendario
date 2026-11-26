@@ -170,9 +170,7 @@ const StrumentiQuiz = (() => {
    * etichette del PDF (fonte A), se no numeri stampati letti su TUTTE le pagine (mai un solo scostamento stimato).
    */
   async function misuraPdf(dati: Blob, avanza?: (msg: string) => void): Promise<{ lettura: LetturaPdfMP; mappa: MappaPag | null; pagine: number }> {
-    const L = await caricaPdfJs();
-    const doc = await L.getDocument({ data: new Uint8Array(await dati.arrayBuffer()), isEvalSupported: false }).promise;
-    try {
+    return TestoPdf.con(dati, async doc => {
       const tot: number = doc.numPages, campione = new Set(MasterPrompt.pagineCampione(tot));
       let et: Array<string | null> | null = null;
       try { et = await doc.getPageLabels(); } catch (e) { console.warn('[misura] etichette pagine', e); }
@@ -181,13 +179,12 @@ const StrumentiQuiz = (() => {
       for (let i = 1; i <= tot; i++) {
         if (conEtichette && !campione.has(i)) continue;
         if (avanza && !conEtichette && i % 20 === 0) avanza('Leggo i numeri di pagina: ' + i + '/' + tot + '…');
-        const tc: { items: Array<{ str?: string; hasEOL?: boolean }> } = await (await doc.getPage(i)).getTextContent();
-        const t = tc.items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
+        const t = await TestoPdf.pagina(doc, i, 'eol');
         if (campione.has(i)) testi.push(t);
         numeri[i - 1] = conEtichette ? [] : MasterPrompt.numeroStampato(t);
       }
       return { lettura: MasterPrompt.indiceLettura(testi), mappa: Centro.mappaAuto(et, numeri), pagine: tot };
-    } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
+    });
   }
   /** Tutti i PDF di un libro (anche a segmenti) → lettura peggiore e mappa unica in pagine PDF assolute. */
   async function misura(g: GruppoLibroSQ, avanza: (msg: string) => void): Promise<{ lettura: LetturaPdfMP | null; mappa: MappaPag | null }> {
@@ -373,8 +370,7 @@ const StrumentiQuiz = (() => {
       try {
         let b = x.f.file || blobLibro.get(x.f.id);
         if (!b) { b = await Drive.scaricaBlob(x.f.id); blobLibro.set(x.f.id, b); }
-        const L = await caricaPdfJs();
-        const doc = await L.getDocument({ data: new Uint8Array(await b.arrayBuffer()), isEvalSupported: false }).promise;
+        const doc = await TestoPdf.apri(b);
         try {
           const n = pdf - x.base;
           if (n > doc.numPages) { nota.textContent = 'Il PDF ha solo ' + (doc.numPages + x.base) + ' pagine.'; tela.hidden = true; return; }
@@ -384,7 +380,7 @@ const StrumentiQuiz = (() => {
           tela.width = vp.width; tela.height = vp.height; tela.style.width = vp.width / dpr + 'px'; tela.hidden = false;
           await pag.render({ canvasContext: tela.getContext('2d'), viewport: vp }).promise;
           nota.textContent = 'Pagina ' + pdf + ' del PDF: quale numero è stampato (in alto o in basso)?';
-        } finally { if (typeof doc.destroy === 'function') await doc.destroy(); }
+        } finally { await TestoPdf.chiudi(doc); }
       } catch (e) { nota.textContent = '⚠️ Pagina non mostrata: ' + (e instanceof Error ? e.message : String(e)); tela.hidden = true; }
     }
     /** Foglio «Pagine» di un libro: fonte A–D, ancore B guidate, indice C, prova a 3 pagine. */
