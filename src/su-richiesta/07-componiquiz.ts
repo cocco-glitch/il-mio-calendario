@@ -172,6 +172,21 @@ const ComponiQuiz = (() => {
     const sim = !!o.piano, presenti = Array.from(new Set(Stato.tutti<MemoriaCon>('memoria').filter(m => !m.deleted && String(m.er || '').startsWith('con:') && m.sk).map(m => matSk(m.sk))
       .concat(fatte().map(matSk)))).filter(m => m !== '?').sort();
     const corpo = h('div.modulo');
+    // simulazione: i file della cartella Drive nello stesso foglio (decisione utente 27/11), con i minuti scelti qui; senza Google, un pulsante
+    const drive = h('div.gruppo.misto-drive');
+    if (sim && Drive.pronto) {
+      drive.appendChild(h('div.tenue.piccolo', null, 'Cerco le simulazioni su Drive…'));
+      Simulazioni.file().then(lista => {
+        svuota(drive); if (!lista.length) return;
+        const fatte = Simulazioni.tutte();
+        drive.append(h('div.tenue.piccolo', null, 'Oppure una simulazione da Drive (stessi minuti):'), ...lista.map(x => {
+          const nome = x.name.replace(/\.html?$/i, ''), prec = fatte.filter(z => z.fileId === x.id);
+          return h('button.voce-lista', { type: 'button', onclick: () => { f.chiudi(); void avviaSimulazione(x.id, nome, o.minuti || Simulazioni.minutiPredefiniti()); } },
+            h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, nome),
+              h('span.voce-sotto', null, prec.length ? 'Fatta ' + prec.length + (prec.length === 1 ? ' volta' : ' volte') + (prec[0].pct != null ? ' · ultima ' + prec[0].pct + '%' : '') : 'Mai fatta')));
+        }));
+      }, e => { svuota(drive); console.warn('ComponiQuiz: simulazioni Drive', e); });
+    } else if (sim) drive.appendChild(h('button.btn.neutro', { type: 'button', onclick: () => { f.chiudi(); void apriSimulazioni(); } }, 'Accedi a Google per le simulazioni su Drive'));
     const seg = <T>(voci: [T, string][], val: T, set: (v: T) => void) => h('div.segmenti', null, voci.map(([v, t]) => h('button' + (v === val ? '.attivo' : ''), { type: 'button', onclick: () => { set(v); disegna(); } }, t)));
     const num = (v: number, min: number, max: number, set: (n: number) => void, et: string) => {
       const i = h('input', { type: 'number', min: String(min), max: String(max), value: String(v), 'aria-label': et, inputmode: 'numeric' }) as HTMLInputElement;
@@ -191,7 +206,7 @@ const ComponiQuiz = (() => {
         sim ? null : riga('Modo', seg<boolean>([[false, '🧠 Allenamento'], [true, '📝 Esame']], o.esame, v => { o.esame = v; })),
         o.esame ? riga('Minuti', h('div.chips', null, num(o.minuti, 0, 300, n => { o.minuti = n; }, 'Minuti a disposizione'), h('span.tenue.piccolo', null, '0 = senza limite'))) : null,
         h('button.btn', { type: 'button', onclick: () => { f.chiudi(); void avvia(o); } }, sim ? '▶ Inizia la simulazione' : '▶ Inizia il quiz'),
-        sim ? h('button.btn.neutro', { type: 'button', onclick: () => { f.chiudi(); void apriSimulazioni(); } }, 'Usa una simulazione da Drive') : null];
+        sim ? drive : null];
       for (const el of parti) if (el) corpo.appendChild(el);
     }
     const f = foglio({ titolo: sim ? '📝 Simulazione d\'esame' : '🧩 Componi un quiz', corpo });

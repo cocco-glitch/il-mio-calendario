@@ -24,7 +24,7 @@ with sync_playwright() as p:
     pg.evaluate("""(q => { window.serveGoogle = () => false;
       Drive.cercaCartelle = async t => t === 'consolidamento' ? [{ id: 'cart1', name: 'Schede esame/consolidamento' }] : [];
       Drive.elencaTutti = async id => id === 'cart1' ? [{ id: 'f2', name: 'Simulazione mista 2.html' }, { id: 'f1', name: 'Simulazione mista 1.html' }, { id: 'x', name: 'note.txt' }] : [];
-      Drive.scaricaTesto = async id => q; })(%s)""" % json.dumps(QUIZ))
+      Drive.scaricaTesto = async id => q; Object.defineProperty(Drive, 'pronto', { get: () => true }); })(%s)""" % json.dumps(QUIZ))
     # Il giorno della Simulazione 3: la voce del piano apre la modalità simulazione
     try: pg.wait_for_function("[...document.querySelectorAll('.voce-lista')].some(v => v.textContent.includes('Simulazione 3') && v.textContent.includes('tocca per iniziare'))", timeout=8000)   # la pagina Oggi si ridisegna dopo il caricamento del piano
     except Exception: pass
@@ -34,7 +34,7 @@ with sync_playwright() as p:
     # fase 12 (27/11): la voce apre la simulazione in app (domande e minuti a scelta) con i file Drive come seconda scelta
     voce.first.click(); pg.wait_for_selector('.foglio >> text=Inizia la simulazione', timeout=8000)
     ok(pg.locator('.foglio input[aria-label="Minuti a disposizione"]').count() == 1, 'foglio della simulazione in app: minuti a scelta')
-    pg.click('.foglio button:has-text("Usa una simulazione da Drive")'); pg.wait_for_selector('.foglio >> text=Simulazione mista 1')
+    pg.wait_for_selector('.foglio >> text=Simulazione mista 1')   # i file Drive nello stesso foglio, senza tocchi in più
     t = pg.inner_text('.foglio')
     ok(t.index('mista 1') < t.index('mista 2') and 'note' not in t, 'elenco dei file HTML in ordine')
     pg.click('.foglio >> text=Simulazione mista 1'); pg.wait_for_selector('.visore iframe')
