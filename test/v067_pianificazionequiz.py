@@ -4,7 +4,8 @@ from playwright.sync_api import sync_playwright
 
 RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 r = subprocess.run(['node', 'test/centro.mjs'], cwd=RADICE, text=True, encoding='utf-8', capture_output=True)
-if r.returncode or 'Centro 61/61' not in r.stdout:
+m = __import__('re').search(r'Centro (\d+)/(\d+)', r.stdout)   # il numero può solo salire (CONSTRAINTS): almeno 61, tutti superati
+if r.returncode or not m or m.group(1) != m.group(2) or int(m.group(2)) < 61:
     print('FAIL P0.67-A/B: contratto PianificazioneQuiz')
     print((r.stdout + '\n' + r.stderr)[-4000:])
     sys.exit(1)
