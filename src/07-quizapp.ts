@@ -604,7 +604,7 @@ const Editor = (() => {
     // Blocco 7: correzione manuale del concetto (record 'modq' già sincronizzato; Concetti.assegna usa `concetto` per primo)
     const conc = h('select', { 'aria-label': 'Concetto della domanda' }, h('option', { value: '' }, 'Automatico (lo sceglie l\'app)')) as HTMLSelectElement;
     const gConc = h('div.gruppo', { hidden: true }, h('div.gruppo-titolo', null, 'Concetto'), conc, h('div.tenue.piccolo', null, 'Conta per la padronanza di questo concetto nei prossimi quiz.'));
-    if (focus) caricaStrumentiQuiz().then(() => {
+    if (focus) caricaMotoreStudio().then(() => {
       const et = Concetti.etichette(focus); if (et.length < 2) return;
       const att = d.concetto && !et.some(e => Concetti.slug(e) === Concetti.slug(d.concetto!)) ? [d.concetto] : [];
       for (const e of att.concat(et)) conc.appendChild(h('option', { value: e, selected: !!d.concetto && Concetti.slug(e) === Concetti.slug(d.concetto) }, e));

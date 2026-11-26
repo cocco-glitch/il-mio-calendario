@@ -171,7 +171,7 @@ const PianiAI = (() => {
         } return; }
         // Blocco 7: doppioni e argomenti mancanti della mappa AI (solo avvisi, 0 token; con l'indice locale le unità SONO le voci)
         if (r.fonte === 'ai' && r.struttura) {
-          try { await caricaStrumentiQuiz(); const c = Copertura.analizza(r.piano.unita, r.struttura, { radice: Locale.radice, espandi: Locale.espandi }); if (c.avvisi.length) r.piano.avvisiCopertura = c.avvisi; }
+          try { await caricaMotoreStudio(); const c = Copertura.analizza(r.piano.unita, r.struttura, { radice: Locale.radice, espandi: Locale.espandi }); if (c.avvisi.length) r.piano.avvisiCopertura = c.avvisi; }
           catch (e) { console.warn('Copertura non calcolata:', e); }
         }
         salvaPiano(r.piano);

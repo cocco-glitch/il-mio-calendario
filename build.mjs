@@ -20,13 +20,19 @@ const js = readdirSync('build-tmp').filter(f => f.endsWith('.js')).sort()
   .map(f => readFileSync('build-tmp/' + f, 'utf8')).join('\n');
 const app = '"use strict";\n' + js.replace(/^"use strict";\n/gm, '');
 // v0.59.2: src/su-richiesta/*.ts → strumenti-quiz.js, caricato solo al primo uso (conStrumentiQuiz); stessi controlli di tipo
-const jsExtra = readdirSync('build-tmp/su-richiesta').filter(f => f.endsWith('.js')).sort()
-  .map(f => readFileSync('build-tmp/su-richiesta/' + f, 'utf8')).join('\n');
-const extra = '"use strict";\n' + jsExtra.replace(/^"use strict";\n/gm, '');
+// Motore unificato (divisione del chunk): il percorso di studio (Studia ora, fine quiz, concetti, padronanza, IndicePagine, Copertura)
+// va in motore-studio.js e non usa nulla della creazione; strumenti-quiz.js (Centro, coda, prompt, validatore) lo richiede caricato prima.
+const MOTORE = ['07-concetti.js', '07-copertura.js', '07-finequiz.js', '07-finequizui.js', '07-indicepagine.js', '07-motorestudio.js', '07-padronanzaui.js', '07-studiaoraui.js'];
+const unisci = fs => '"use strict";\n' + fs.map(f => readFileSync('build-tmp/su-richiesta/' + f, 'utf8')).join('\n').replace(/^"use strict";\n/gm, '');
+const suRichiesta = readdirSync('build-tmp/su-richiesta').filter(f => f.endsWith('.js')).sort();
+for (const f of MOTORE) if (!suRichiesta.includes(f)) throw new Error('build: modulo del motore mancante ' + f);
+const motore = unisci(suRichiesta.filter(f => MOTORE.includes(f)));
+const extra = unisci(suRichiesta.filter(f => !MOTORE.includes(f)));
 
 mkdirSync('dist');
 cpSync('public', 'dist', { recursive: true });
 writeFileSync('dist/app.js', app);
+writeFileSync('dist/motore-studio.js', motore);
 writeFileSync('dist/strumenti-quiz.js', extra);
 const versione = Date.now().toString(36);
 writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replaceAll('__VERSIONE__', versione));   // v0.56.2: tutte le occorrenze (prima restava il segnaposto)
@@ -51,7 +57,7 @@ for (const f of readdirSync('studio/banca').filter(f => /^banca-step-\d+\.json$/
 const html = readFileSync('public/index.html', 'utf8')
   .replace(/<!--PWA-->[\s\S]*?<!--\/PWA-->\n/, '')
   .replace('<link rel="stylesheet" href="style.css">', () => '<style>\n' + readFileSync('public/style.css', 'utf8') + '</style>')
-  .replace('<script src="app.js"></script>', () => '<script>\n' + (app + '\n' + extra).replace(/<\/script/g, '<\\/script') + '</script>');
+  .replace('<script src="app.js"></script>', () => '<script>\n' + (app + '\n' + motore + '\n' + extra).replace(/<\/script/g, '<\\/script') + '</script>');
 writeFileSync('dist/anteprima.html', html);
 rmSync('build-tmp', { recursive: true, force: true });
 console.log('OK: dist/ pronta (cache ' + versione + ', app.js ' + Math.round(app.length / 1024) + ' kB)');

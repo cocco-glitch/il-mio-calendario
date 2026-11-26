@@ -142,7 +142,7 @@ function sezionePadronanza(): HTMLElement {
   const ci = Stato.tutti<Memoria>('memoria').some(m => !m.deleted && String(m.er || '').startsWith('con:'));
   if (!ci) { el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, 'Nessun concetto verificato: fai il quiz di una scheda della banca. Lettura e appunti non contano.')); return el; }
   el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, 'Carico…'));
-  caricaStrumentiQuiz().then(() => { if (el.isConnected || el.parentNode) PadronanzaUI.riempi(el); },
+  caricaMotoreStudio().then(() => { if (el.isConnected || el.parentNode) PadronanzaUI.riempi(el); },
     (e: Error) => { svuota(el); el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, '⚠️ Non disponibile: ' + (e && e.message))); });
   return el;
 }

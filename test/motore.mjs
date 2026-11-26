@@ -176,7 +176,7 @@ t('motore puro: niente Stato, DOM, storage o rete', () => {
 t('app.js tiene solo gli agganci: composizione e fogli nel chunk su richiesta', () => {
   const so = leggi('07-studiaora.ts'), ui = leggi('su-richiesta/07-studiaoraui.ts');
   vero(!/function componi|function adesso|function eseguiVoce|const StudiaOra =/.test(so), 'composizione rimasta in app.js');
-  vero(/conStrumentiQuiz\(\(\) => StudiaOraUI\.scegli\(\)\)/.test(so) && /conStrumentiQuiz\(\(\) => StudiaOraUI\.sessione\(\)\)/.test(so), 'agganci');
+  vero(/conMotoreStudio\(\(\) => StudiaOraUI\.scegli\(\)\)/.test(so) && /conMotoreStudio\(\(\) => StudiaOraUI\.sessione\(\)\)/.test(so), 'agganci (motore-studio.js, divisione del chunk)');
   vero(/const StudiaOra = /.test(ui) && /MotoreStudio\.componi\(/.test(ui) && /CodaRipasso\.dovuti/.test(ui), 'StudiaOra nel chunk usa MotoreStudio e la coda unica');
 });
 t('sessione = record \'sessioneora\' sincronizzato, distinto da \'sessione\' del Timer; localStorage solo per la migrazione', () => {

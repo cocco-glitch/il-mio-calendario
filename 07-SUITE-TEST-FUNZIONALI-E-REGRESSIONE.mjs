@@ -1036,7 +1036,7 @@ await t('v0.59.2: quiz in app — confutazioni da spiegazioneDistrattori, sezion
   vero(/sezioniSpiegazione\(d\.e\)/.test(qa) && /function sezioniSpiegazione/.test(sp) && /RISPOSTA ESATTA\|PERCH/.test(qa), 'spiegazione a sezioni, lettere originali omesse');
   vero(/d\.erroreTipico/.test(qa) && /d\.erroreTipico = s\(x\.erroreTipico\)/.test(id), 'erroreTipico importato e mostrato');
   vero(/conStrumentiQuiz\(\(\) => StrumentiQuiz\.prompt\(\)\)/.test(st) && /conStrumentiQuiz\(\(\) => StrumentiQuiz\.diagnostica\(\)\)/.test(st), 'voci in Studio «⋯», caricate su richiesta');
-  vero(/dist\/strumenti-quiz\.js/.test(bm) && /app \+ '\\n' \+ extra/.test(bm) && /'strumenti-quiz\.js'/.test(sw), 'strumenti-quiz.js costruito, nell\'anteprima e in cache offline');
+  vero(/dist\/strumenti-quiz\.js/.test(bm) && /dist\/motore-studio\.js/.test(bm) && /app \+ '\\n' \+ motore \+ '\\n' \+ extra/.test(bm) && /'motore-studio\.js', 'strumenti-quiz\.js'/.test(sw), 'strumenti-quiz.js e motore-studio.js costruiti, nell\'anteprima e in cache offline');
   vero(!fs.readdirSync(SRC).some(f => /diagnosiquiz|masterprompt|strumentiquiz/.test(f)), 'strumenti quiz fuori dal pacchetto principale');
   vero(/TestoPdf\.(con|apri)\(/.test(sq) && !/getDocument\(/.test(sq) && !/innerHTML/.test(sq), 'pdf.js solo via TestoPdf (senza eval, U5), niente innerHTML');
 });
@@ -1127,6 +1127,19 @@ await t('settimana finale: simulazioni a D−6 e D−3, revisione il giorno dopo
   const a = P.calcolaFattibilita(V({ dataTarget: '2026-12-20' }), UNITA, { oggi: OGGI }), b = P.calcolaFattibilita(V({ dataTarget: '2026-12-20', giorniFinale: 0 }), UNITA, { oggi: OGGI });
   vero(a.oreDisponibili < b.oreDisponibili, 'con la finestra meno ore per gli argomenti: ' + a.oreDisponibili + ' vs ' + b.oreDisponibili);
   eq(chiamateRete - rete0, 0, 'nessuna chiamata di rete');
+});
+
+await t('Divisione del chunk: motore-studio.js non usa la creazione, strumenti-quiz.js lo carica prima, il percorso di studio chiama solo il motore', () => {
+  const bm = fs.readFileSync(path.join(SRC, '..', 'build.mjs'), 'utf8'), sp = leggi('07-sezionispiegazione.ts');
+  const MOT = JSON.parse(bm.match(/const MOTORE = (\[[^\]]*\])/)[1].replace(/'/g, '"')).map(f => f.replace(/\.js$/, '.ts'));
+  const tutti = fs.readdirSync(path.join(SRC, 'su-richiesta')).filter(f => f.endsWith('.ts'));
+  vero(MOT.length >= 8 && MOT.every(f => tutti.includes(f)), 'lista del motore allineata ai file');
+  const nomi = f => [...leggi('su-richiesta/' + f).matchAll(/^(?:const|let|function|class)\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1]);
+  const creazione = tutti.filter(f => !MOT.includes(f)).flatMap(nomi);
+  for (const f of MOT) { const s = leggi('su-richiesta/' + f).replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, ''); const usati = creazione.filter(n => new RegExp('\\b' + n + '\\b').test(s)); vero(!usati.length, f + ' usa la creazione: ' + usati.join(', ')); }
+  vero(/caricaMotoreStudio\(\)\.then\(\(\) => caricaChunk\('strumenti-quiz\.js'/.test(sp), 'strumenti-quiz.js dopo il motore (IndicePagine)');
+  for (const [f, re] of [['07-studiaora.ts', /conMotoreStudio\(\(\) => StudiaOraUI\.scegli\(\)\)/], ['07-cattura.ts', /caricaMotoreStudio\(\)\.then\(\(\) => FineQuizUI\.dopo/], ['07-extra.ts', /caricaMotoreStudio\(\)\.then\(\(\) => \{ if \(el\.isConnected/], ['07-pianiai.ts', /await caricaMotoreStudio\(\); const c = Copertura/], ['07-quizapp.ts', /if \(focus\) caricaMotoreStudio\(\)/], ['08-viste.ts', /conMotoreStudio\(\(\) => StudiaOraUI\.preferenze/], ['09-main.ts', /conMotoreStudio\(\(\) => StudiaOraUI\.studia\(true\)\)/]])
+    vero(re.test(leggi(f)), f + ': percorso di studio senza la creazione');
 });
 
 fs.rmSync(TMP, { recursive: true, force: true });

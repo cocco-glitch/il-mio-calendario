@@ -72,7 +72,7 @@ const Cattura = (() => {
       testo = '📝 ' + riga + ' (annotato, il punteggio non cambia)';
     } else {
       Studio.segna(id, { fatta: true, data: oggiK, punteggio: d.pct, deboli: d.livelli && d.livelli.length ? d.livelli : undefined } as Partial<Progresso>);
-      if (d.dettagli || (imp().carteAuto === 'auto' && d.sbagliate && d.sbagliate.length)) caricaStrumentiQuiz().then(() => FineQuizUI.dopo(id, d, f => { dopo.push(f); }), e => console.warn('fine quiz', e));
+      if (d.dettagli || (imp().carteAuto === 'auto' && d.sbagliate && d.sbagliate.length)) caricaMotoreStudio().then(() => FineQuizUI.dopo(id, d, f => { dopo.push(f); }), e => console.warn('fine quiz', e));
       testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
     }
     let ritirato = false;

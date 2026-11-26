@@ -13,20 +13,27 @@ function sezioniSpiegazione(sp: string): Array<{ etichetta: string; testo: strin
   return out;
 }
 
-/** v0.59.2: «🧠 Prompt quiz per Gemini» e «🩺 Diagnostica quiz» stanno in strumenti-quiz.js, caricato solo al primo uso
- *  (≈ 22 KB gzip in meno per tutti, budget peso di CONSTRAINTS.md). Il service worker lo tiene in cache per l'offline. */
-let strumentiQuizInArrivo: Promise<void> | null = null;
-/** v0.61: attendibile (ImportaDrive.apri usa il Validatore unico che sta lì). */
-function caricaStrumentiQuiz(): Promise<void> {
-  if (typeof StrumentiQuiz !== 'undefined') return Promise.resolve();
-  if (!strumentiQuizInArrivo) strumentiQuizInArrivo = new Promise<void>((ok, ko) => {
-    const s = document.createElement('script'); s.src = 'strumenti-quiz.js?v=' + encodeURIComponent(VERSIONE);
+/** v0.59.2: gli strumenti dei quiz si caricano solo al primo uso (budget peso di CONSTRAINTS.md); il service worker li tiene in cache.
+ *  Divisione del chunk (motore unificato): motore-studio.js = percorso di studio (Studia ora, fine quiz, concetti, padronanza,
+ *  IndicePagine, Copertura), ≈ 20 KB gzip; strumenti-quiz.js = creazione (Centro, coda, prompt, validatore) e richiede il motore. */
+const chunkInArrivo: { [file: string]: Promise<void> | undefined } = {};
+function caricaChunk(file: string, pronto: () => boolean): Promise<void> {
+  if (pronto()) return Promise.resolve();
+  return chunkInArrivo[file] || (chunkInArrivo[file] = new Promise<void>((ok, ko) => {
+    const s = document.createElement('script'); s.src = file + '?v=' + encodeURIComponent(VERSIONE);
     s.onload = () => ok();
-    s.onerror = () => { strumentiQuizInArrivo = null; s.remove(); ko(new Error('serve la connessione la prima volta')); };
+    s.onerror = () => { delete chunkInArrivo[file]; s.remove(); ko(new Error('serve la connessione la prima volta')); };
     document.head.appendChild(s);
-  });
-  return strumentiQuizInArrivo;
+  }));
+}
+function caricaMotoreStudio(): Promise<void> { return caricaChunk('motore-studio.js', () => typeof StudiaOraUI !== 'undefined'); }
+/** v0.61: attendibile (ImportaDrive.apri usa il Validatore unico che sta lì). Carica prima il motore (IndicePagine). */
+function caricaStrumentiQuiz(): Promise<void> {
+  return caricaMotoreStudio().then(() => caricaChunk('strumenti-quiz.js', () => typeof StrumentiQuiz !== 'undefined'));
 }
 function conStrumentiQuiz(fn: () => void): void {
   caricaStrumentiQuiz().then(fn, (e: Error) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
+}
+function conMotoreStudio(fn: () => void): void {
+  caricaMotoreStudio().then(fn, (e: Error) => avviso('⚠️ Strumenti di studio non disponibili: ' + e.message, 6000));
 }

@@ -7,8 +7,8 @@ interface VoceSessione { tipo: 'ripasso' | 'carte' | 'quiz' | 'appunto' | 'piano
 interface SessioneRec extends Rec { type: 'sessioneora'; inizio: number; minuti: number; obiettivo: string; voci: VoceSessione[]; esclusi?: { titolo: string; perche: string }[]; pref?: PrefMetodi; chiusa?: number; }
 /** Sessione aperta (la più recente non chiusa). */
 function sessioneAperta(): SessioneRec | undefined { return Stato.tutti<SessioneRec>('sessioneora').filter(s => !s.chiusa).sort((a, b) => b.inizio - a.inizio)[0]; }
-function apriStudiaOra(): void { conStrumentiQuiz(() => StudiaOraUI.scegli()); }
-function apriSessione(): void { conStrumentiQuiz(() => StudiaOraUI.sessione()); }
+function apriStudiaOra(): void { conMotoreStudio(() => StudiaOraUI.scegli()); }
+function apriSessione(): void { conMotoreStudio(() => StudiaOraUI.sessione()); }
 
 /** Riquadro in cima a Oggi. */
 function widgetStudiaOra(): HTMLElement {
@@ -21,9 +21,9 @@ function widgetStudiaOra(): HTMLElement {
   // v0.58: card «Adesso» — cosa fare ora in una riga, durata stimata e [Inizia] che avvia subito la sessione (2 tocchi da app chiusa)
   // Il riassunto (2 composizioni della sessione) si calcola dopo il disegno: Oggi resta nel budget dei tempi (prestazioni.py).
   const e = prossimoEsame(), durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
-  const inizia = () => conStrumentiQuiz(() => StudiaOraUI.studia());
+  const inizia = () => conMotoreStudio(() => StudiaOraUI.studia());
   const btn = h('button.btn.studia-ora', { onclick: inizia }, '▶ Inizia');
-  caricaStrumentiQuiz().then(() => setTimeout(() => {   // dopo il disegno: Oggi resta nel budget dei tempi
+  caricaMotoreStudio().then(() => setTimeout(() => {   // dopo il disegno: Oggi resta nel budget dei tempi
     if (!riassunto.isConnected) return;
     const a = StudiaOraUI.adesso(); riassunto.textContent = a.riassunto;
     durata.textContent = a.minuti ? ' · ' + a.minuti + ' min' : ''; if (!a.minuti) btn.textContent = '▶ Studio libero con timer';

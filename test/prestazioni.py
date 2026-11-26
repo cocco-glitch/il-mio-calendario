@@ -47,4 +47,8 @@ with sync_playwright() as p:
     print('errori:',errs or 'nessuno'); ok(not errs, 'nessun errore di pagina')
 kb = len(gzip.compress(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist', 'app.js'), 'rb').read(), 9)) / 1024
 ok(kb <= 306, 'app.js gzip <= 306 KB (%d KB)' % kb)
+# Divisione del chunk (motore unificato): tetti vincolanti dei due chunk su richiesta
+for nome, tetto in (('motore-studio.js', 30), ('strumenti-quiz.js', 100)):
+  kc = len(gzip.compress(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist', nome), 'rb').read(), 9)) / 1024
+  ok(kc <= tetto, '%s gzip <= %d KB (%.1f KB)' % (nome, tetto, kc))
 print('TUTTO OK' if not err else '%d FALLITI' % len(err))
