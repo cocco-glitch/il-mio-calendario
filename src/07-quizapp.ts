@@ -227,7 +227,7 @@ const QuizApp = (() => {
 
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi).
    *  info.prova (v0.63, Centro di creazione): prova della scheda prima dell'import — nessuno statq, nessuna sessione, nessuna carta. */
-  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void; immagini?: Record<string, string>; modo?: ModoQ; prova?: boolean }): Promise<void> {
+  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void; immagini?: Record<string, string>; modo?: ModoQ; prova?: boolean; verifica?: boolean; focus?: string }): Promise<void> {
     const prova = !!(info && info.prova);
     const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { /* */ })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
     v.corpo.classList.add('qz');
@@ -488,7 +488,7 @@ const QuizApp = (() => {
       if (fort) s2 += '<p class="tenue piccolo">🍀 ' + fort + (fort === 1 ? ' risposta fortunata' : ' risposte fortunate') + ': da consolidare entro domani.</p>';
       if (sb.length) s2 += '<h3>Da rivedere (' + sb.length + ')</h3>' + sb.map(x => '<details class="qz-altre"><summary>' + fmt(x.d.q) + '</summary><p><b>Risposta corretta:</b> ' + fmt(x.d.t === 'mcq' ? x.d.o![0] : x.d.show) + '</p>' + passi(x.d.e) + (x.d.r ? '<p class="tenue piccolo">Ripassa: ' + esc(x.d.r) + '</p>' : '') + '</details>').join('');
       s2 += '<div class="chips qz-export"><span class="tenue piccolo">Esporta (appunti + .imcpack):</span><button type="button" class="chip" data-exp="errori">Errori</button><button type="button" class="chip" data-exp="illusione">Illusioni</button><button type="button" class="chip" data-exp="bloom3">Bloom ≥ 3</button></div>';
-      s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen && !prova ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
+      s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen && !prova && !(info && info.verifica) ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
         + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
       app.innerHTML = s2; v.corpo.scrollTop = 0;
       const r: RisultatoQuiz = { domandeSvolte: P.map(x => x.d.q), imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
@@ -504,6 +504,7 @@ const QuizApp = (() => {
       if (registrato) return;
       registrato = true;
       if (!gen && !prova) Cattura.salva(s.id, r);
+      if (gen && !prova && info && info.verifica) { r.verifica = true; if (info.focus) r.focus = info.focus; Cattura.salva(s.id, r); }   // F1/F2 (S9): mini-verifica dei concetti
       if (gen && !prova && Stato.prendi<QCreato>(s.id)?.type === 'qcreato') {
         toastAnnulla?.remove();
         const ritira = Array.from(annulli.values()).reverse();

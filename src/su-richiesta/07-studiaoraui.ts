@@ -17,6 +17,7 @@ const StudiaOra = (() => {
     if (e.sorgente === 'carte') return e.sotto;
     if (e.sorgente === 'quiz') return e.n + ' domande scadute';
     if (e.sorgente === 'appunti') return 'sezioni da ripassare';
+    if (e.sorgente === 'concetti') return 'verifica scaduta · ' + e.sotto;
     return 'ripasso previsto dal piano';
   }
 
@@ -26,7 +27,7 @@ const StudiaOra = (() => {
     // 1–2: coda unica dei ripassi; le illusioni di competenza degli ultimi 2 giorni salgono al livello 1
     for (const e of CodaRipasso.dovuti(g)) {
       const ill = e.sorgente === 'quiz' && QuizRifare.dovute(g).some(s => !!(s.neuro && s.neuro.ultimoCaso === 'illusione_competenza' && s.ultima >= ieri));
-      out.push({ id: e.voce.id ? 'scheda:' + e.voce.id : e.id, livello: ill ? 1 : 2, ind: e.priorita, metodo: metodoCoda(e.sorgente), min: e.voce.min, voce: e.voce,
+      out.push({ id: e.voce.id && e.sorgente !== 'concetti' ? 'scheda:' + e.voce.id : e.id, livello: ill ? 1 : 2, ind: e.priorita, metodo: metodoCoda(e.sorgente), min: e.voce.min, voce: e.voce,
         motivo: ill ? 'eri certo ma era sbagliato' : motivoCoda(e), gruppo: e.sorgente === 'step' ? 'step' : e.sorgente === 'appunti' ? 'appunti' : undefined });
     }
     const vg = Studio.vociDelGiorno(giorno).filter(x => !x.v.speciale && x.p.modo !== 'raffinamento' && !x.v.isRipassoFSRS);
@@ -65,6 +66,20 @@ const StudiaOra = (() => {
       out.push({ id: 'cons:' + k, livello: 6, ind: -m.s, metodo: 'quiz', min: MIN, gruppo: 'step', motivo: 'da fissare prima che si stabilizzi (stabilità ' + Math.round(m.s) + ' g)',
         voce: { tipo: 'ripasso', titolo: '🔒 Consolida ' + Studio.etichetta(k), sotto: 'Rifai: ' + sc.titolo, min: MIN, k, id: sc.id } });
     }
+    // F1 (S9): settimana finale (voce FINALE/FIN del giorno o esame tra 1 e 7 giorni) → verifiche cumulative dei concetti già visti,
+    // prima i più deboli, materie alternate; prendono il posto dei «Consolida» qui sotto (stesso id per scheda).
+    const finale = Studio.vociDelGiorno(giorno).some(x => /^FINALE-|~FIN~/.test(x.v.k))
+      || esamiNoti().some(e => { const d = Math.round((daDt(e.data).getTime() - daDt(g).getTime()) / 864e5); return d >= 1 && d <= 7; });
+    if (finale) VerificaConcetti.perFinale(Stato.tutti<MemoriaCon>('memoria'), g, sk => { const t = trovaScheda(sk); return t ? materiaDi(t.k) || t.m : ''; }).forEach((x, i) => {
+      const t = trovaScheda(x.sk); if (!t) return;
+      // la scheda ha già concetti scaduti nella coda: una sola verifica, prima gli scaduti poi i più deboli (al più 3)
+      const gia = out.find(c => c.voce.tipo === 'concetti' && c.voce.id === x.sk);
+      if (gia) { const con = (gia.voce.con || []).concat(x.etichette.filter(e => !(gia.voce.con || []).includes(e))).slice(0, VerificaConcetti.MAX_CON);
+        gia.voce = { ...gia.voce, con, sotto: con.join(' · '), min: VerificaConcetti.PER * con.length }; gia.min = gia.voce.min; return; }
+      const min = VerificaConcetti.PER * x.etichette.length, sotto = x.etichette.join(' · ');
+      out.push({ id: 'conc:' + x.sk, livello: 6, ind: 1000 - i, metodo: 'quiz', min, motivo: 'settimana finale · ' + Concetti.NOMI[x.peggiore] + ' · ricordo ' + Math.round(x.r * 100) + '%',
+        voce: { tipo: 'concetti', titolo: '🧩 Verifica cumulativa · ' + Studio.etichetta(t.k), sotto, min, k: t.k, id: x.sk, con: x.etichette } });
+    });
     // 6 (blocco 6): concetti «in consolidamento» (padronanza 'con:'), una voce per scheda, con i concetti nel motivo
     const perScheda = new Map<string, { et: string[]; s: number }>();
     for (const m of Stato.tutti<MemoriaCon>('memoria')) {
@@ -72,7 +87,7 @@ const StudiaOra = (() => {
       const x = perScheda.get(m.sk) || { et: [], s: Infinity }; x.et.push(m.etichetta); x.s = Math.min(x.s, m.s); perScheda.set(m.sk, x);
     }
     for (const [sk, x] of perScheda) {
-      const t = trovaScheda(sk); if (!t || out.some(c => c.id === 'cons:' + t.k)) continue;
+      const t = trovaScheda(sk); if (!t || out.some(c => c.id === 'cons:' + t.k || c.id === 'conc:' + sk)) continue;
       out.push({ id: 'conc:' + sk, livello: 6, ind: -x.s, metodo: 'quiz', min: MIN, gruppo: 'step',
         motivo: x.et.length + (x.et.length === 1 ? ' concetto' : ' concetti') + ' in consolidamento: ' + x.et.slice(0, 3).join(', ') + (x.et.length > 3 ? '…' : ''),
         voce: { tipo: 'ripasso', titolo: '🧩 Consolida ' + Studio.etichetta(t.k), sotto: 'Rifai: ' + t.s.titolo, min: MIN, k: t.k, id: sk } });
@@ -121,6 +136,7 @@ function eseguiVoce(v: VoceSessione): void {
   if (v.tipo === 'freddo' && v.k) { avviaProvaAFreddo(v.k); return; }
   if (v.tipo === 'carte') { avviaCarte(undefined, 'Flashcard'); return; }
   if (v.tipo === 'quiz') { QuizRifare.avvia(); return; }
+  if (v.tipo === 'concetti' && v.id) { VerificaConcetti.avvia(v.id, v.con || []); return; }
   if (v.tipo === 'piano' && v.id) { apriPianoDi(v.id); return; }
   if (v.tipo === 'appunto' && v.id) { const a = Stato.prendi<Appunto>(v.id); if (a) { apriCornell(a, true); return; } }
   if (v.id) { const t = trovaScheda(v.id); if (t) { apriScheda(t.pk, t.m, t.micro, t.s, v.tipo === 'ripasso' || v.tipo === 'errore'); return; } }
@@ -144,6 +160,7 @@ const StudiaOraUI = (() => {
     if (n('carte')) pezzi.push((nc.ripasso + nc.nuove) + ' carte');
     if (n('quiz')) pezzi.push(Math.min(nq, QuizRifare.MAX) + ' quiz da rifare');
     if (n('appunto')) pezzi.push(n('appunto') + (n('appunto') === 1 ? ' appunto' : ' appunti'));
+    if (n('concetti')) pezzi.push(n('concetti') + (n('concetti') === 1 ? ' verifica di concetti' : ' verifiche di concetti'));
     if (n('piano')) pezzi.push(n('piano') + (n('piano') === 1 ? ' ripasso del piano' : ' ripassi del piano'));
     const st = voci.find(v => (v.tipo === 'scheda' || v.tipo === 'freddo') && v.k);
     if (st && st.k) pezzi.push(Studio.etichetta(st.k));

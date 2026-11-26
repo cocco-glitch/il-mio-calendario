@@ -196,5 +196,52 @@ t('QuizApp passa tutte le risposte e il focus della banca; DomB.concetto facolta
   vero(/if \(s\(x\.concetto\)\) d\.concetto = s\(x\.concetto\)\.slice\(0, 60\)/.test(leggi('07-importadrive.ts')));
 });
 
+// ---------- S9 (F1/F2): mini-verifica dei concetti ----------
+carica('su-richiesta/07-verificaconcetti.ts', 'VerificaConcetti');
+const V = sb.VerificaConcetti;
+const assMap = coppie => new Map(coppie.map(([id, e]) => [id, { chiave: 'x|' + e, etichetta: e === '*' ? 'Scheda' : e, ripiego: e === '*' }]));
+t('S9 scegli: 3 domande per concetto (soglia di affidabilità), alternate A B C A B C, prima le mai viste, mai il ripiego, al più 3 concetti', () => {
+  vero(V.PER === C.MIN_AFFIDABILE && V.MAX_CON === 3, 'PER = MIN_AFFIDABILE: con meno domande «consolidato» sarebbe irraggiungibile');
+  const dom = ['a1', 'a2', 'a3', 'a4', 'b1', 'b2', 'c1', 'd1', 'r1'].map(id => ({ id }));
+  const ass = assMap([['a1', 'Alfa'], ['a2', 'Alfa'], ['a3', 'Alfa'], ['a4', 'Alfa'], ['b1', 'Beta'], ['b2', 'Beta'], ['c1', 'Gamma'], ['d1', 'Delta'], ['r1', '*']]);
+  const vista = id => ({ a1: '2026-11-20', a2: '', a3: '2026-11-01', a4: '2026-11-10' })[id] || '';
+  eq(V.scegli(dom, ass, ['Alfa', 'Beta', 'Gamma', 'Delta'], vista).map(d => d.id), ['a2', 'b1', 'c1', 'a3', 'b2', 'a4']);
+  eq(V.scegli(dom, ass, ['alfa'], vista).length, 3, 'confronto sullo slug (maiuscole)');
+  eq(V.scegli(dom, ass, ['Scheda'], vista), [], 'il ripiego non è un concetto da verificare');
+});
+const memC = (sk, e, ver, due, extra = {}) => ({ id: 'm-' + sk + e, type: 'memoria', er: 'con:' + sk + '|' + e, sk, etichetta: e, ultimo: ver[ver.length - 1][0], due, s: 4, d: 5, n: ver.length,
+  ver, log: ver.map(v => [v[0], v[1] === v[2] ? 3 : 1]), ...extra });
+t('S9 perFinale: solo concetti già verificati e NON scaduti, niente ripiego; schede dalla più debole; al più 3 concetti per scheda', () => {
+  const g = '2026-11-16';
+  const mem = [memC('C-1', 'Legami', [['2026-11-13', 3, 3, 0]], '2026-11-20'), memC('C-1', 'Moli', [['2026-11-13', 1, 3, 0]], '2026-11-18'),
+    memC('C-1', 'Scaduto', [['2026-11-13', 3, 3, 0]], '2026-11-15'), memC('C-1', 'Rip', [['2026-11-13', 3, 3, 0]], '2026-11-25', { ripiego: true }),
+    memC('B-1', 'Cellula', [['2026-11-12', 3, 3, 0], ['2026-11-14', 3, 3, 0]], '2026-11-24'), memC('C-2', 'Gas', [['2026-11-13', 3, 3, 0]], '2026-11-22'),
+    memC('F-1', 'Moto', [['2026-11-13', 0, 3, 0]], '2026-11-17'),
+    memC('C-3', 'A', [['2026-11-13', 3, 3, 0]], '2026-11-30'), memC('C-3', 'B', [['2026-11-13', 3, 3, 0]], '2026-11-30'), memC('C-3', 'C', [['2026-11-13', 3, 3, 0]], '2026-11-30'), memC('C-3', 'D', [['2026-11-13', 3, 3, 0]], '2026-11-30')];
+  const r = V.perFinale(mem, g, sk => sk[0]);
+  const c1 = r.find(x => x.sk === 'C-1');
+  eq(c1.etichette, ['Moli', 'Legami'], 'C-1: prima il più debole; niente scaduto (lo porta la coda) né ripiego');
+  eq(c1.peggiore, 'da_studiare');
+  vero(r.find(x => x.sk === 'C-3').etichette.length === 3, 'al più 3 concetti per scheda');
+  eq(r.slice(0, 2).map(x => x.sk).sort(), ['C-1', 'F-1'], 'in testa le schede con un concetto da studiare');
+  vero(r.every((x, i) => !i || x.materia !== r[i - 1].materia || r.slice(i).every(y => y.materia === x.materia)), 'materie alternate finché ce ne sono più di una: ' + r.map(x => x.sk).join(' '));
+});
+t('S9 generalità: verifica su una materia mai vista (psichiatria), stessa regola', () => {
+  const lista = ['recettori D2', 'effetti extrapiramidali', 'clozapina'];
+  const dom = [{ id: 'p1', q: 'Quale recettore D2 bloccano gli antipsicotici tipici?', giusta: 'D2 dopaminergico' }, { id: 'p2', q: 'Che cos\'è la distonia acuta tra gli effetti extrapiramidali?', giusta: 'effetto extrapiramidale' },
+    { id: 'p3', q: 'Perché la clozapina richiede il controllo dei neutrofili?', giusta: 'agranulocitosi da clozapina' }];
+  const ass = C.assegna('PSI-1', 'Antipsicotici', dom, lista, L);
+  eq(V.scegli(dom, ass, ['clozapina', 'recettori D2'], () => '').map(d => d.id), ['p3', 'p1']);
+});
+t('S9 agganci: coda «concetti» (app.js), voce «concetti» in Studia ora, settimana finale, verifica senza punteggio', () => {
+  const co = leggi('07-coda.ts'), so = leggi('su-richiesta/07-studiaoraui.ts'), qa = leggi('07-quizapp.ts'), ca = leggi('07-cattura.ts');
+  vero(/'concetti'\]/.test(co.split('\n').find(l => l.includes('const ORDINE')) || '') && /apri: \(\) => conMotoreStudio\(\(\) => VerificaConcetti\.avvia\(sk, x\.et\)\)/.test(co), 'sorgente concetti nella coda unica, chunk del motore');
+  vero(/m\.due <= g && m\.ultimo/.test(co) && /!m\.ripiego/.test(co), 'solo scaduti e mai il ripiego');
+  vero(/if \(v\.tipo === 'concetti' && v\.id\) \{ VerificaConcetti\.avvia\(v\.id, v\.con \|\| \[\]\)/.test(so), 'eseguiVoce');
+  vero(/\/\^FINALE-\|~FIN~\/\.test\(x\.v\.k\)/.test(so) && /d >= 1 && d <= 7/.test(so) && /VerificaConcetti\.perFinale\(/.test(so), 'settimana finale: voce del piano o esame tra 1 e 7 giorni');
+  vero(/if \(gen && !prova && info && info\.verifica\) \{ r\.verifica = true;/.test(qa) && /if \(d\.verifica\) \{/.test(ca), 'QuizApp → Cattura con verifica');
+  vero(/'07-verificaconcetti\.js'\]/.test(fs.readFileSync(path.join(SRC, '..', 'build.mjs'), 'utf8')), 'nel chunk del motore');
+});
+
 console.log('\nConcetti ' + ok + '/' + (ok + ko) + (ko ? ' — ' + ko + ' falliti' : ''));
 process.exit(ko ? 1 : 0);

@@ -145,7 +145,11 @@ t('Carte.daErrori rispetta carteAuto (mai) e migra carteDaErrori === false; il p
 t('Cattura.salva: aggancio al chunk solo per quiz interi con dettagli o carteAuto auto; annulli aggiunti eseguiti', () => {
   const s = leggi('07-cattura.ts');
   vero(/FineQuizUI\.dopo\(id, d, f => \{ dopo\.push\(f\); \}\)/.test(s) && /for \(const f of dopo\) f\(\);/.test(s));
-  vero(s.indexOf('FineQuizUI.dopo') > s.indexOf('if (d.errori)'), 'non per «Rifai solo gli errori»');
+  // S9: il ramo «verifica» (mini-verifica dei concetti) chiama il chunk per la padronanza; il ramo «errori» mai
+  const ramoErr = s.slice(s.indexOf('} else if (d.errori) {'), s.indexOf('} else {', s.indexOf('} else if (d.errori) {')));
+  const ramoVer = s.slice(s.indexOf('if (d.verifica) {'), s.indexOf('} else if (d.errori) {'));
+  vero(ramoErr.length > 20 && !/FineQuizUI/.test(ramoErr), 'non per «Rifai solo gli errori»');
+  vero(/FineQuizUI\.dopo/.test(ramoVer) && !/punteggio: /.test(ramoVer), 'verifica dei concetti: padronanza sì, punteggio della scheda no');
 });
 t('QuizApp: dettagli anche dai quiz creati (qcreato), esclusi solo gli esercizi a numeri; con caso, distrattore e confutazione', () => {
   const s = leggi('07-quizapp.ts');

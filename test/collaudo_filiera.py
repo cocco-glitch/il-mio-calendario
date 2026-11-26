@@ -139,7 +139,7 @@ with sync_playwright() as p:
     print('        argomenti nel piano %d su %d del catalogo; giorni con argomenti nuovi: %d' % (len(set(arg)), n_cat, sum(1 for d, ks in giorni.items() if d < '2026-11-15' and any(k in arg for k in ks))))
     if len(set(arg)) < n_cat:
         ok(str(n_cat - len(set(arg))) + ' argomenti non entrano' in avv, 'l\'anteprima avvisa che %d argomenti non entrano' % (n_cat - len(set(arg))))
-        if 'settimana finale' not in avv.lower(): falla('avviso «non entrano»: suggerisce ore/riserve/minuti ma non dice che la settimana finale (7 g) occupa %d degli 8 giorni disponibili (con 3 = emergenza ne restano 6)' % len(fin))
+        ok('settimana finale' in avv and 'guadagni' in avv, 'F3: l\'avviso nomina la settimana finale e quanti giorni si guadagnano con 3')
     pg.close()
 
     # ---------- 3. Oggi «Adesso» e Studia ora (13/11, primo giorno del piano) ----------
@@ -148,6 +148,7 @@ with sync_playwright() as p:
     pg.wait_for_function("(() => { const c = document.querySelector('.card.adesso'); return !!c && !/…/.test(c.innerText); })()", timeout=8000)
     ad = pg.inner_text('.card.adesso'); print('        Adesso: ' + ad.replace('\n', ' | ')[:160])
     ok('Inizia' in ad, 'card «Adesso» pronta con [Inizia]')
+    ok('9 giorni' in ad, 'F4: «Adesso» conta i giorni all\'esame del piano generato (22/11 → 9 giorni)')
     for minuti in (25, 50, 90):
         pr = pg.evaluate("StudiaOraUI && StudiaOra.proposta(%d)" % minuti) if False else pg.evaluate("(() => { const p = StudiaOra.proposta(%d); return { ob: p.obiettivo, v: p.voci.map(v => [v.tipo, v.min, v.titolo, v.motivo || '']), es: p.esclusi.length }; })()" % minuti)
         tot = sum(v[1] for v in pr['v'])
@@ -216,20 +217,58 @@ with sync_playwright() as p:
 
     # ---------- 6. giorni simulati ----------
     print('— 6. Cosa torna nei giorni dopo (sk %s, sbagliate %s)' % (sk, sbagliate))
+    # storico realistico: altre 5 schede già verificate il 13/11 (Concetti.aggiorna, la stessa funzione del fine quiz)
+    pg = pagina(ctx, '2026-11-14T08:00:00+01:00'); pg.evaluate('caricaMotoreStudio()'); pg.wait_for_function("typeof Concetti !== 'undefined'")
+    seme = pg.evaluate("""async () => { const out = [];
+      for (const [st, m] of [[2, 'C'], [2, 'B'], [3, 'B'], [2, 'F'], [3, 'F']]) { const B = await Banca.carica(st, m); if (!B) continue;
+        const sk = Object.keys(B.schede).find(k => trovaScheda(k) && Concetti.etichette(B.schede[k].focus || '').length >= 3); if (!sk) continue;
+        const et = Concetti.etichette(B.schede[sk].focus).slice(0, 3);
+        et.forEach((e, i) => { const ch = Concetti.chiave(sk, e), id = 'mem-con-' + Carte.hash(ch);
+          Stato.salva(Concetti.aggiorna(undefined, { id, chiave: ch, sk, etichetta: e, ripiego: false, nEt: et.length }, [{ ok: true }, { ok: i !== 0 }, { ok: true }], '2026-11-13'), true); });
+        out.push(sk); } return out; }""")
+    print('        storico seminato: %s' % seme); ok(len(seme) >= 4, 'storico di %d schede in 3 materie' % len(seme))
+    pg.close()
     for g in ('2026-11-14', '2026-11-16', '2026-11-20', '2026-11-23'):
         pg = pagina(ctx, g + 'T15:00:00+01:00'); pg.evaluate('caricaMotoreStudio()'); pg.wait_for_function("typeof StudiaOra !== 'undefined'")
-        r = pg.evaluate("""([sk, sb]) => { const t = trovaScheda(sk); const coda = CodaRipasso.dovuti().map(e => e.sorgente + ':' + (e.k || '') + ' ' + e.titolo);
-          const qr = QuizRifare.dovute().map(s => s.id); const p = StudiaOra.proposta(50); const g = ymd(new Date());
-          const scad = Stato.tutti('memoria').filter(m => m.er.startsWith('con:' + sk + '|') && !m.ripiego && m.due <= g && m.ver[m.ver.length - 1][1] === m.ver[m.ver.length - 1][2]).map(m => m.etichetta);   // scaduti e senza errori: le sbagliate tornano già da Quiz da rifare
-          return { coda, scad, tot: p.voci.reduce((t, v) => t + v.min, 0), qr: qr.length, voci: p.voci.map(v => v.tipo + ':' + (v.k || v.id || '') + ' ' + v.min), toccata: p.voci.some(v => v.k === t.k || v.id === sk || (v.ids || []).length),
-                   carte: Carte.conta(), fin: Studio.vociDelGiorno(new Date('%sT12:00')).some(x => /^FINALE/.test(x.v.k)) }; }""".replace('%s', g), [sk, sbagliate])
-        print('    %s  coda: %s' % (g, r['coda'][:4]))
-        print('              quiz da rifare: %d · carte %s · concetti scaduti della scheda: %s' % (r['qr'], r['carte'], r['scad']))
-        print('              Studia ora 50 → %d min: %s' % (r['tot'], r['voci']))
+        r = pg.evaluate("""([sk, g]) => { const coda = CodaRipasso.dovuti().map(e => e.sorgente + ':' + (e.voce.id || '') + ' ' + e.sotto);
+          const p = StudiaOra.proposta(50);
+          const scad = Stato.tutti('memoria').filter(m => m.er.startsWith('con:' + sk + '|') && !m.ripiego && m.due <= g).map(m => m.etichetta);
+          return { coda, scad, esc: p.esclusi.map(e => e.titolo + ' → ' + e.perche), tot: p.voci.reduce((t, v) => t + v.min, 0), qr: QuizRifare.dovute().length, voci: p.voci.map(v => v.tipo + ':' + (v.id || v.k || '') + ' ' + v.min),
+                   conc: p.voci.filter(v => v.tipo === 'concetti').map(v => [v.id, v.con, v.motivo]), fin: Studio.vociDelGiorno(new Date(g + 'T12:00')).some(x => /^FINALE/.test(x.v.k)) }; }""", [sk, g])
+        print('    %s  coda: %s' % (g, r['coda'][:5]))
+        print('              Studia ora 50 → %d min: %s' % (r['tot'], r['voci'])); print('              esclusi: %s' % (r['esc'][:4] or '—'))
         if g == '2026-11-14': ok(r['qr'] >= 2 and any(c.startswith('quiz:') for c in r['coda']), 'D+1: le 2 domande sbagliate tornano in «Quiz da rifare»')
+        if g == '2026-11-14':
+            pg.evaluate("vai('oggi')"); pg.wait_for_selector('.card.ripassa'); rip = pg.inner_text('.card.ripassa')
+            ok('concett' in rip and 'Verifica concetti' in rip, 'Oggi «Ripassa»: conta i concetti e mostra la verifica (%s)' % rip.split('\n')[1][:90])
+            pg.locator('.card.ripassa button', has_text='Verifica concetti').first.click(); pg.wait_for_selector('.qz-domanda', timeout=8000)
+            ok('il punteggio della scheda non cambia' in pg.inner_text('.qz-testa').lower(), 'dal tocco in Oggi si apre la mini-verifica, dichiarata come tale')
+            pg.keyboard.press('Escape')
         if g == '2026-11-20': ok(r['fin'], 'D−2: giorno di settimana finale nel piano')
-        if r['fin'] and r['tot'] < 40: falla('%s (settimana finale): Studia ora da 50 min propone solo %d min; le voci FINALE del piano non diventano attività' % (g, r['tot']))
-        if r['scad'] and g < '2026-11-22' and not any(v.startswith('ripasso:') and ('C3.1' in v or sk in v) for v in r['voci']): falla('%s: concetti risposti bene ma scaduti %s: nessuna verifica proposta (Studia ora e la coda non leggono le scadenze con:, quindi «consolidato» arriva solo se lo studente rifà il quiz da sé)' % (g, r['scad']))
+        if r['scad'] and g < '2026-11-22':
+            in_so = any(x[0] == sk for x in r['conc']) or any('non entra nel tempo' in e for e in r['esc'])
+            ok(any(c.startswith('concetti:' + sk) for c in r['coda']) and in_so, 'F2 %s: concetti scaduti %s → «Verifica concetti» in Oggi; in Studia ora o escluso solo per il tempo' % (g, r['scad']))
+        if r['fin']:
+            saturo = r['tot'] >= 38 and all('non entra nel tempo' in e or 'metodo' in e for e in r['esc'])
+            ok(saturo and len(r['conc']) >= 3 and len({x[0][0] for x in r['conc']}) >= 2, 'F1 %s (settimana finale): Studia ora 50 min → %d min (sessione satura), %d verifiche di concetti, materie %s' % (g, r['tot'], len(r['conc']), ''.join(sorted({x[0][0] for x in r['conc']}))))
+        if g == '2026-11-16':
+            # la mini-verifica fino in fondo: tutte giuste → padronanza avanzata, punteggio della scheda invariato
+            prima = pg.evaluate("(sk) => (Studio.prog(sk) || {}).punteggio", sk)
+            v = pg.evaluate("(sk) => StudiaOra.proposta(50).voci.find(v => v.tipo === 'concetti' && v.id === sk) || null", sk)
+            pg.evaluate("(v) => eseguiVoce(v)", v); pg.wait_for_selector('.qz-domanda', timeout=8000)
+            nq = pg.locator('.qz-metro span').count()
+            for k in range(nq):
+                if k: pg.click('[data-az=avanti]')
+                rispondi(True)
+            pg.click('[data-az=avanti]'); pg.wait_for_selector('.qz-punti'); pg.wait_for_timeout(600)
+            dopo = pg.evaluate("""([sk, et]) => ({ p: (Studio.prog(sk) || {}).punteggio, nota: (Studio.prog(sk) || {}).nota || '',
+              con: Stato.tutti('memoria').filter(m => m.er.startsWith('con:' + sk + '|') && et.includes(m.etichetta)).map(m => [m.etichetta, m.ver[m.ver.length - 1], m.due, Concetti.stato(m, '2026-11-16').stato]) })""", [sk, v['con']])
+            print('        mini-verifica %d domande su %s → %s' % (nq, v['con'], dopo['con']))
+            ok(nq == 3 * len(v['con']) or nq >= len(v['con']), 'mini-verifica: %d domande per %d concetti' % (nq, len(v['con'])))
+            ok(dopo['p'] == prima and 'Verifica concetti 16/11' in dopo['nota'], 'punteggio della scheda invariato (%s) e verifica annotata' % prima)
+            ok(all(c[1][0] == '2026-11-16' and c[2] > '2026-11-16' for c in dopo['con']), 'padronanza aggiornata il 16/11 e nuova scadenza nel futuro')
+            r2 = pg.evaluate("(sk) => CodaRipasso.dovuti().some(e => e.sorgente === 'concetti' && e.voce.id === sk)", sk)
+            ok(not r2, 'dopo la verifica la scheda esce dalla coda dei concetti')
         pg.close()
 
     # ---------- 7. dati popolati, offline con i due chunk ----------

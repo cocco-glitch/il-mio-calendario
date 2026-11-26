@@ -6,7 +6,7 @@
 // nessuno stato (le date di ripasso le scrivono, come prima, quiz, visore carte, Cornell e Ripassi.registra).
 // Studia ora compone la sessione da qui; Oggi mostra un solo riquadro «🧠 Ripassa (N)» (U6).
 
-type SorgenteCoda = 'step' | 'carte' | 'quiz' | 'appunti' | 'piano';
+type SorgenteCoda = 'step' | 'carte' | 'quiz' | 'appunti' | 'piano' | 'concetti';
 interface ElemCoda {
   sorgente: SorgenteCoda; id: string; titolo: string; sotto: string;
   /** Quante cose conta in «Ripassa (N)» (carte e quiz sono raggruppati in un elemento). */
@@ -17,7 +17,7 @@ interface ElemCoda {
 }
 
 const CodaRipasso = (() => {
-  const ORDINE: SorgenteCoda[] = ['step', 'carte', 'quiz', 'appunti', 'piano'];   // a parità di priorità, l'ordine di prima
+  const ORDINE: SorgenteCoda[] = ['step', 'carte', 'quiz', 'appunti', 'piano', 'concetti'];   // a parità di priorità, l'ordine di prima
   const MIN = 10;
   const giornoData = (g: string) => new Date(g + 'T12:00');
 
@@ -64,11 +64,30 @@ const CodaRipasso = (() => {
         apri: () => apriPianoDi(pid) };
     });
   }
-  const ADAPTER: Record<SorgenteCoda, (g: string) => ElemCoda[]> = { step, carte, quiz, appunti, piano };
+  /** F2 (S9): concetti con la verifica scaduta (record 'con:', mai il ripiego), una mini-verifica per scheda: fino a 3 concetti × 3 domande. */
+  function concetti(g: string): ElemCoda[] {
+    const per = new Map<string, { et: string[]; r: number }>();
+    for (const m of Stato.tutti<Memoria & { sk?: string; etichetta?: string; ripiego?: boolean }>('memoria').filter(m => !m.deleted && String(m.er || '').startsWith('con:') && !m.ripiego && m.sk && m.etichetta && m.due <= g && m.ultimo)
+      .sort((a, b) => a.due < b.due ? -1 : a.due > b.due ? 1 : 0)) {
+      const x = per.get(m.sk!) || { et: [], r: 1 }; if (x.et.length >= 3) continue;
+      x.et.push(m.etichetta!); x.r = Math.min(x.r, Fsrs.recuperabilita(Math.max(0, (daDt(g).getTime() - daDt(m.ultimo!).getTime()) / 864e5), m.s)); per.set(m.sk!, x);
+    }
+    const out: ElemCoda[] = [];
+    per.forEach((x, sk) => {
+      const t = trovaScheda(sk); if (!t) return;
+      const min = 3 * x.et.length, sotto = x.et.join(' · ') + ' · ricordo ' + Math.round(x.r * 100) + '%';
+      out.push({ sorgente: 'concetti', id: 'conc:' + sk, k: t.k, materia: materiaDi(t.k), n: x.et.length, min, rischio: 1 - x.r, priorita: 0,
+        titolo: '🧩 Verifica concetti · ' + Studio.etichetta(t.k), sotto,
+        voce: { tipo: 'concetti', titolo: '🧩 Verifica concetti · ' + Studio.etichetta(t.k), sotto, min, k: t.k, id: sk, con: x.et },
+        apri: () => conMotoreStudio(() => VerificaConcetti.avvia(sk, x.et)) });
+    });
+    return out;
+  }
+  const ADAPTER: Record<SorgenteCoda, (g: string) => ElemCoda[]> = { step, carte, quiz, appunti, piano, concetti };
 
   /** 0..1: quanto è vicino l'esame (della materia, se c'è; un esame senza materie vale per tutte). */
   function vicinanza(materia: string | undefined, g: string): number {
-    const es = Stato.tutti<Esame>('esame').filter(e => !e.deleted && (!materia || !e.materie || !e.materie.length || e.materie.includes(materia)));
+    const es = esamiNoti().filter(e => !materia || !e.materie || !e.materie.length || e.materie.includes(materia));   // F4: anche l'esame dei piani generati
     let d = Infinity; for (const e of es) { const x = Math.round((daDt(e.data).getTime() - daDt(g).getTime()) / 864e5); if (x >= 0 && x < d) d = x; }
     return d === Infinity ? 0 : Math.max(0, 1 - d / 60);
   }
@@ -94,7 +113,7 @@ function widgetRipassa(): HTMLElement | null {
   if (!el.length) return r.fatti.length ? h('section.card.ripassa', null, h('h2.card-titolo', null, '🧠 Ripassa'),
     h('div.tenue.piccolo', null, '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.')) : null;
   const somma = (s: SorgenteCoda) => el.filter(e => e.sorgente === s).reduce((t, e) => t + e.n, 0);
-  const nomi: [SorgenteCoda, string, string][] = [['step', 'sotto-step', 'sotto-step'], ['carte', 'carta', 'carte'], ['quiz', 'quiz', 'quiz'], ['appunti', 'appunto', 'appunti'], ['piano', 'dal piano', 'dal piano']];
+  const nomi: [SorgenteCoda, string, string][] = [['step', 'sotto-step', 'sotto-step'], ['carte', 'carta', 'carte'], ['quiz', 'quiz', 'quiz'], ['appunti', 'appunto', 'appunti'], ['piano', 'dal piano', 'dal piano'], ['concetti', 'concetto', 'concetti']];
   const pezzi = nomi.map(([s, uno, piu]) => { const n = somma(s); return n ? n + ' ' + (n === 1 ? uno : piu) : ''; }).filter(Boolean);
   const min = el.reduce((t, e) => t + e.min, 0), N = el.reduce((t, e) => t + e.n, 0), MAX = 5;
   return h('section.card.ripassa', null,

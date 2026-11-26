@@ -19,6 +19,8 @@ interface RisultatoQuiz { domandeSvolte?: string[]; imc: 'quiz-risultato'; pct: 
   dettagli?: EsitoQ[];
   /** blocco 6: argomenti della scheda (campo `focus` della banca = lista chiusa dei concetti) e titolo per il ripiego. */
   focus?: string; titoloScheda?: string;
+  /** F1/F2 (S9): mini-verifica dei concetti (VerificaConcetti): aggiorna la padronanza, non il punteggio della scheda. */
+  verifica?: boolean;
 }
 interface EsitoQ { id: string; q: string; giusta: string; spieg?: string; ok: boolean; caso?: CasoN; scelta?: string; perche?: string;
   /** blocco 6: concetto scelto dall'AI (DomB.concetto) e concetto assegnato nel chunk (Concetti.assegna). */
@@ -66,7 +68,12 @@ const Cattura = (() => {
     const annullaDom = typeof Domande !== 'undefined' ? Domande.registra(id, t ? Studio.etichetta(t.k) + ' ' + t.micro + ' · ' + t.s.titolo : id, d) : () => { /* niente */ }; // v0.16
     const dopo: (() => void)[] = [];   // blocco 5: annulli aggiunti dal foglio «Fine quiz» (carte create in automatico)
     let testo: string;
-    if (d.errori) {
+    if (d.verifica) {
+      const riga = 'Verifica concetti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
+      Studio.segna(id, { nota: ((p0 && p0.nota) ? p0.nota + '\n' : '') + riga });
+      if (d.dettagli) caricaMotoreStudio().then(() => FineQuizUI.dopo(id, d, f => { dopo.push(f); }), e => console.warn('verifica concetti', e));
+      testo = '🧩 ' + riga + ' (padronanza aggiornata, il punteggio della scheda non cambia)';
+    } else if (d.errori) {
       const riga = 'Errori rifatti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
       Studio.segna(id, { nota: ((p0 && p0.nota) ? p0.nota + '\n' : '') + riga });
       testo = '📝 ' + riga + ' (annotato, il punteggio non cambia)';

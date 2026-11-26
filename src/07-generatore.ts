@@ -116,7 +116,10 @@ const Generatore = (() => {
       }
       if (saltati) avvisi.push(saltati + ' secondi giri non entrano: aggiungi ore o giorni.');
     }
-    if (fuori.length) avvisi.push(fuori.length + ' argomenti non entrano prima dell\'esame: aumenta le ore, riduci le riserve o i minuti per argomento.');
+    // F3 (S9): se la settimana finale è lunga, dirlo: è spesso lei a togliere i giorni di studio
+    const guadagno = o.finale > 3 ? fin.length - fin.filter(d => d >= Pianificatore.finestraFinale(o.esame, 3).inizio).length : 0;
+    if (fuori.length) avvisi.push(fuori.length + ' argomenti non entrano prima dell\'esame: aumenta le ore, riduci le riserve o i minuti per argomento'
+      + (guadagno > 0 ? '; oppure accorcia la settimana finale (oggi ' + fin.length + ' giorni senza argomenti nuovi: con 3, l\'emergenza, guadagni ' + guadagno + (guadagno === 1 ? ' giorno' : ' giorni') + ' di studio)' : '') + '.');
     if (!tutti.length) avvisi.push('Nessun giorno disponibile tra inizio ed esame.');
     const lista = Array.from(giorni.values()).sort((a, b) => a.data < b.data ? -1 : 1);
     lista.forEach((g, i) => g.n = i + 1);

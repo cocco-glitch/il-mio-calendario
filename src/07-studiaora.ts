@@ -2,7 +2,7 @@
 // Blocco 4 (motore unificato): composizione (MotoreStudio, livelli 1–6), fogli e preferenze stanno nel chunk
 // strumenti-quiz.js (07-motorestudio.ts, 07-studiaoraui.ts). La sessione è un record 'sessioneora' sincronizzato ('sessione' è del Timer).
 
-interface VoceSessione { tipo: 'ripasso' | 'carte' | 'quiz' | 'appunto' | 'piano' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean;
+interface VoceSessione { tipo: 'ripasso' | 'carte' | 'quiz' | 'appunto' | 'piano' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo' | 'concetti'; /** F1/F2: concetti della mini-verifica */ con?: string[]; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean;
   /** blocco 4: metodo, livello e motivo reale; avviata (ms) e secondi impiegati per imparare le durate */ metodo?: MetodoS; livello?: number; motivo?: string; avviata?: number; sec?: number; }
 interface SessioneRec extends Rec { type: 'sessioneora'; inizio: number; minuti: number; obiettivo: string; voci: VoceSessione[]; esclusi?: { titolo: string; perche: string }[]; pref?: PrefMetodi; chiusa?: number; }
 /** Sessione aperta (la più recente non chiusa). */
@@ -43,14 +43,22 @@ function widgetStudiaOra(): HTMLElement {
 
 /** v0.58: esame più vicino (oggi compreso) e stato rispetto al piano. */
 /** v0.60: giorni al prossimo esame se la «Modalità esame» è attiva (≤ 21 giorni, non spenta), altrimenti null. */
+/** F4 (S9): esami noti = record 'esame' + data d'esame dei piani generati attivi (letta dal piano, nessun record nuovo). */
+function esamiNoti(): { nome: string; data: string; materie?: string[] }[] {
+  const es: { nome: string; data: string; materie?: string[] }[] = Stato.tutti<Esame>('esame').filter(x => !x.deleted).map(x => ({ nome: x.nome, data: x.data, materie: x.materie }));
+  for (const p of Studio.pianiAttivi() as (PkPiano & { generato?: { esame?: string } })[]) {
+    const d = p.generato && p.generato.esame; if (d && !es.some(e => e.data === d)) es.push({ nome: p.titolo || 'Esame del piano', data: d });
+  }
+  return es;
+}
 function modalitaEsame(): number | null {
   if ((imp() || {} as Impostazioni).modoEsame === 'no') return null;
-  const gg = Stato.tutti<Esame>('esame').map(x => giorniA(x.data)).filter(n => n >= 0);
+  const gg = esamiNoti().map(x => giorniA(x.data)).filter(n => n >= 0);
   const m = gg.length ? Math.min(...gg) : Infinity;
   return m <= 21 ? m : null;
 }
 function prossimoEsame(): { nome: string; giorni: number; stato: string } | null {
-  const e = Stato.tutti<Esame>('esame').filter(x => !x.deleted && giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
+  const e = esamiNoti().filter(x => giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
   if (!e) return null;
   const r = Studio.pkPiani().length ? Studio.inRitardo().length : -1;
   return { nome: e.nome.replace(/ semestre filtro$/i, ''), giorni: giorniA(e.data), stato: r < 0 ? '' : r ? 'indietro di ' + r + ' step' : 'in pari ✓' };
