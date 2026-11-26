@@ -243,5 +243,53 @@ t('S9 agganci: coda «concetti» (app.js), voce «concetti» in Studia ora, sett
   vero(/'07-verificaconcetti\.js'\]/.test(fs.readFileSync(path.join(SRC, '..', 'build.mjs'), 'utf8')), 'nel chunk del motore');
 });
 
+// ---------- fase 9/12 (27/11): quiz manuali sui deboli e cumulativi, simulazione in app ----------
+carica('su-richiesta/07-componiquiz.ts', 'ComponiQuiz');
+const Q = sb.ComponiQuiz;
+const memQ = () => [memC('C-1', 'Moli', [['2026-11-13', 1, 3, 0]], '2026-11-18'), memC('C-1', 'Legami', [['2026-11-13', 3, 3, 0]], '2026-11-20'),
+  memC('C-1', 'Rip', [['2026-11-13', 0, 3, 0]], '2026-11-25', { ripiego: true }),
+  memC('B-1', 'Cellula', [['2026-11-12', 3, 3, 0], ['2026-11-14', 3, 3, 0]], '2026-11-24'), memC('B-2', 'Dna', [['2026-11-01', 3, 3, 0], ['2026-11-05', 3, 3, 0], ['2026-11-09', 3, 3, 0]], '2026-11-15'),
+  memC('F-1', 'Moto', [['2026-11-13', 2, 3, 0]], '2026-11-17'), memC('PSI-1', 'clozapina', [['2026-11-13', 0, 3, 0]], '2026-11-17')];
+const mat = sk => sk.split('-')[0];
+t('fase 9 deboli: da studiare/da consolidare o scaduti, mai il ripiego né i solidi non scaduti; dalla scheda peggiore, materie alternate; vale su una materia mai vista', () => {
+  const r = Q.candidati('deboli', memQ(), '2026-11-16', mat, ['B-9'], []);
+  eq(r.map(x => x.sk), ['C-1', 'PSI-1', 'F-1', 'B-2'], 'B-1 (in consolidamento, non scaduto) fuori; B-2 dentro perché scaduto, ma dopo F-1 (da consolidare); B-9 fatta ma senza quiz: solo nel cumulativo');
+  eq(r[0].etichette, ['Moli', 'Legami'], 'C-1: prima il più debole, mai il ripiego');
+  eq(Q.candidati('deboli', memQ(), '2026-11-16', mat, [], ['C', 'F']).map(x => x.sk), ['C-1', 'F-1'], 'filtro per materia');
+});
+t('fase 9 cumulativo: tutte le schede verificate + quelle fatte senza quiz in app (concetti dal focus al caricamento), dal ricordo più basso, materie alternate', () => {
+  const r = Q.candidati('cumulativo', memQ(), '2026-11-16', mat, ['B-9', 'C-1'], []);
+  eq(r.map(x => x.sk).sort(), ['B-1', 'B-2', 'B-9', 'C-1', 'F-1', 'PSI-1']);
+  eq(r.find(x => x.sk === 'B-9').etichette, [], 'scheda fatta senza record con: → concetti dal focus');
+  vero(r.every((x, i) => !i || x.materia !== r[i - 1].materia || r.slice(i).every(y => y.materia === x.materia)), 'materie alternate: ' + r.map(x => x.sk).join(' '));
+  eq(Q.perScheda('deboli'), 9, 'deboli: 3 domande × 3 concetti (MIN_AFFIDABILE)'); eq(Q.perScheda('cumulativo'), 3, 'cumulativo: una per concetto');
+});
+t('fase 9 intreccia: domanda per domanda tra le schede (A1 B1 C1 A2 …) fino a n', () => {
+  eq(Q.intreccia([['a1', 'a2', 'a3'], ['b1'], ['c1', 'c2']], 5), ['a1', 'b1', 'c1', 'a2', 'c2']);
+  eq(Q.intreccia([['a1'], ['b1']], Infinity), ['a1', 'b1']);
+});
+t('fase 9 dividi: il risultato misto si divide per scheda (punteggio, sbagliate, dettagli), sempre «verifica» e «misto»; domande ignote scartate', () => {
+  const r = { imc: 'quiz-risultato', pct: 50, giuste: 2, totale: 4, livelli: [], debole: null, errori: false, dettagli: [
+    { id: 'a1', q: 'qa1', giusta: 'x', ok: true }, { id: 'b1', q: 'qb1', giusta: 'y', spieg: 'perché', ok: false }, { id: 'a2', q: 'qa2', giusta: 'z', ok: false }, { id: 'b2', q: 'qb2', giusta: 'w', ok: true }, { id: '??', q: '?', giusta: '', ok: false }] };
+  const p = Q.dividi(r, new Map([['a1', 'C-1'], ['a2', 'C-1'], ['b1', 'B-1'], ['b2', 'B-1']]));
+  eq([...p.keys()], ['C-1', 'B-1']);
+  const c = p.get('C-1'), b = p.get('B-1');
+  eq([c.giuste, c.totale, c.pct, c.dettagli.map(e => e.id), c.sbagliate], [1, 2, 50, ['a1', 'a2'], [['qa2', 'z', '']]]);
+  eq([b.dettagli.map(e => e.id), b.sbagliate], [['b1', 'b2'], [['qb1', 'y', 'perché']]]);
+  vero([c, b].every(x => x.verifica && x.misto && !x.errori), 'verifica: il punteggio delle schede non cambia');
+});
+t('fase 9/12 agganci: QuizApp passa il risultato a `fine` (non a Cattura), `ferma` chiude a tempo, Cattura muta, niente «Consolida» nel misto, ingresso dalla padronanza, voci SIM/REV, chunk', () => {
+  const qa = leggi('07-quizapp.ts'), ca = leggi('07-cattura.ts'), fu = leggi('su-richiesta/07-finequizui.ts'), pu = leggi('su-richiesta/07-padronanzaui.ts'), st = leggi('07-studio.ts'), cq = leggi('su-richiesta/07-componiquiz.ts');
+  vero(/if \(info\.fine\) info\.fine\(r\); else Cattura\.salva\(s\.id, r\);/.test(qa), 'fine al posto di Cattura.salva');
+  vero(/if \(info && info\.ferma\) info\.ferma\(\(\) => \{ if \(!finito\) \{ finito = true; disegnaQ\(\); \} \}\);/.test(qa), 'ferma');
+  vero(/Editor\.apri\(x\.d, x\.d\.sk \|\| s\.id,/.test(qa), 'l\'editor modifica la domanda nella SUA scheda');
+  vero(/muto\?: boolean\): \(\) => void \{/.test(ca) && /if \(!muto\) avviso\(testo/.test(ca), 'Cattura muta: un solo avviso per tutte le schede');
+  vero(/r\.dettagli && !r\.misto \? document\.querySelector\('\.qz-carta'\)/.test(fu), 'niente riquadro di una sola scheda nel misto');
+  vero(/Cattura\.salva\(sk, rp, undefined, true\)/.test(cq) && /verifica: true,/.test(cq), 'una Cattura.salva in verifica per scheda');
+  vero(/ComponiQuiz\.apri\(\{ tipo: 'deboli' \}\)/.test(pu) && /ComponiQuiz\.apri\(\{ tipo: 'cumulativo' \}\)/.test(pu), 'ingresso dalla vista padronanza');
+  vero(/\/\^\(SIM\|VERIFICA\|REV-\)\/\.test\(x\.v\.k\)/.test(st) && /conMotoreStudio\(\(\) => ComponiQuiz\.daVoce\(x\.p, x\.v\)\)/.test(st), 'SIM/REV del piano aprono la simulazione e la revisione');
+  vero(/'07-componiquiz\.js'/.test(fs.readFileSync(path.join(SRC, '..', 'build.mjs'), 'utf8')), 'nel chunk del motore');
+});
+
 console.log('\nConcetti ' + ok + '/' + (ok + ko) + (ko ? ' — ' + ko + ' falliti' : ''));
 process.exit(ko ? 1 : 0);

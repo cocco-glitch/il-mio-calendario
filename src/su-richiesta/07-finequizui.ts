@@ -118,7 +118,7 @@ const FineQuizUI = (() => {
         if (t) t.insertBefore(h('span', null, ' · 🃏 ' + ids.length + (ids.length === 1 ? ' carta creata' : ' carte create')), t.firstChild ? t.firstChild.nextSibling : null);
       }
     }
-    const box = r.dettagli ? document.querySelector('.qz-carta') : null;
+    const box = r.dettagli && !r.misto ? document.querySelector('.qz-carta') : null;   // quiz misto: una riga sola, la scrive ComponiQuiz
     if (!box || box.querySelector('.finequiz')) return;   // quiz HTML: niente riquadro (decisione utente 26/11)
     const riga = rigaConcetti(stati, det.filter(e => e.con && e.con.ripiego).length);
     if (p.solido) { solido(id, box, riga); return; }

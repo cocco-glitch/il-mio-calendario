@@ -73,15 +73,25 @@ const Generatore = (() => {
     // blocco 6: `finale` = giorni di CALENDARIO prima dell'esame (D−N…D−1, come Pianificatore.finestraFinale), non giorni di studio
     const iniFin = Pianificatore.finestraFinale(o.esame, o.finale).inizio, fin = liberi.filter(d => d >= iniFin);
     liberi = liberi.filter(d => d < iniFin);
-    fin.forEach((d, i) => metti(d, { k: 'FINALE-' + (fin.length - i), t: '📚 Settimana finale ' + (i + 1) + '/' + fin.length, d: 'Niente argomenti nuovi: quiz cumulativo, errori ricorrenti, tabelle e formule. Ripassi e flashcard di oggi.', speciale: true }));
-    // 3) simulazioni nella fase "prestazione" (ultimo 40% dei giorni rimasti), ognuna seguita dalla revisione
-    const sim: string[] = [];
-    if (o.simulazioni > 0 && liberi.length > 4) {
+    // fase 12 (27/11, come il Pianificatore): le ultime 2 simulazioni a D−6 e D−3 dentro la settimana finale (o il giorno di studio
+    // prima), revisione degli errori il giorno di studio dopo (correzione ritardata [B]); con la finestra di 3 giorni resta solo D−3
+    const simF: string[] = [], revF: string[] = [];
+    for (const dm of [3, 6].slice(0, Math.min(2, o.simulazioni))) {
+      const d = fin.filter(x => x <= piu(o.esame, -dm) && !simF.includes(x) && !revF.includes(x)).pop(), r = d ? fin.find(x => x > d && !simF.includes(x)) : undefined;
+      if (d && r && !revF.includes(r)) { simF.unshift(d); revF.unshift(r); }
+    }
+    const altri = fin.filter(d => !simF.includes(d) && !revF.includes(d));
+    altri.forEach((d, i) => metti(d, { k: 'FINALE-' + (altri.length - i), t: '📚 Settimana finale ' + (i + 1) + '/' + altri.length, d: 'Niente argomenti nuovi: quiz cumulativo, errori ricorrenti, tabelle e formule. Ripassi e flashcard di oggi.', speciale: true }));
+    // 3) le altre simulazioni nella fase "prestazione" (ultimo 40% dei giorni rimasti), ognuna seguita dalla revisione
+    const sim: string[] = [], nPre = o.simulazioni - simF.length;
+    if (nPre > 0 && liberi.length > 4) {
       const da = Math.floor(liberi.length * .6), span = liberi.length - da;
-      for (let i = 0; i < o.simulazioni; i++) { const idx = da + Math.floor((i + 1) * span / (o.simulazioni + 1)) - 1; if (idx >= 0 && idx < liberi.length && !sim.includes(liberi[idx])) sim.push(liberi[idx]); }
-      sim.forEach((d, i) => metti(d, { k: 'SIM-' + (i + 1), t: '⏱ Simulazione ' + (i + 1), d: 'A tempo, come all\'esame. Poi registra il punteggio.', speciale: true }));
+      for (let i = 0; i < nPre; i++) { const idx = da + Math.floor((i + 1) * span / (nPre + 1)) - 1; if (idx >= 0 && idx < liberi.length && !sim.includes(liberi[idx])) sim.push(liberi[idx]); }
       liberi = liberi.filter(d => !sim.includes(d));
     }
+    const nSim = sim.length;
+    sim.concat(simF).forEach((d, i) => metti(d, { k: 'SIM-' + (i + 1), t: '⏱ Simulazione ' + (i + 1) + (i >= nSim ? ' (D−' + tra(d, o.esame) + ')' : ''), d: 'A tempo, come all\'esame: si apre nell\'app (domande e minuti a scelta) o da Drive. Domani la revisione degli errori.', speciale: true }));
+    revF.forEach((d, i) => metti(d, { k: 'REV-' + (nSim + i + 1), t: '🔎 Revisione simulazione ' + (nSim + i + 1), d: 'Rifai le domande sbagliate della simulazione di ieri; poi ripassi e flashcard di oggi.', speciale: true }));
     // 4) riserve: un giorno ogni N giorni utili resta vuoto (assorbe i ritardi)
     if (o.riservaOgni > 1) {
       const ris = liberi.filter((_d, i) => (i + 1) % o.riservaOgni === 0);

@@ -42,6 +42,16 @@ with sync_playwright() as p:
     pg.screenshot(path='test/gen-anteprima.png', full_page=True)
     r = pg.evaluate("Generatore.genera(Object.assign({}, %s))" % json.dumps({'titolo': 'x', 'esame': '2027-01-10', 'inizio': '2026-12-11', 'modo': 'raffinamento', 'argomenti': [], 'deboliPrima': True, 'giorniSett': [0,1,2,3,4,5,6], 'ore': 6, 'minArg': 100, 'riservaOgni': 7, 'simulazioni': 3, 'finale': 2, 'riposo': True, 'secondoGiro': True}))
     ok(r['piano']['giorni'][-1]['voci'][0]['k'] == 'RIPOSO' and r['piano']['giorni'][-1]['data'] == '2027-01-09', 'vigilia di riposo 09/01')
+    # fase 12 (27/11): le ultime 2 simulazioni a D−6 e D−3 nella settimana finale, revisione il giorno dopo; le altre prima
+    def sim_rev(finale):
+      q = pg.evaluate("Generatore.genera(Object.assign({}, %s)).piano" % json.dumps({'titolo': 'x', 'esame': '2027-01-10', 'inizio': '2026-12-11', 'modo': 'teoria', 'argomenti': [], 'deboliPrima': True, 'giorniSett': [0,1,2,3,4,5,6], 'ore': 6, 'minArg': 100, 'riservaOgni': 7, 'simulazioni': 3, 'finale': finale, 'riposo': True, 'secondoGiro': False}))
+      return {v['k']: g['data'] for g in q['giorni'] for v in g['voci'] if v['k'][:4] in ('SIM-', 'REV-')}
+    sr = sim_rev(7)
+    ok(sr.get('SIM-2') == '2027-01-04' and sr.get('REV-2') == '2027-01-05' and sr.get('SIM-3') == '2027-01-07' and sr.get('REV-3') == '2027-01-08' and sr.get('SIM-1', '9') < '2027-01-03', 'finale 7: SIM a D−6/D−3, REV a D−5/D−2, la prima prima della settimana finale %s' % sr)
+    sr = sim_rev(3)
+    ok(sr.get('SIM-3') == '2027-01-07' and sr.get('REV-3') == '2027-01-08' and sr.get('SIM-2', '9') < '2027-01-07', 'finale 3 (emergenza): solo D−3 nella finestra %s' % sr)
+    sr = sim_rev(0)
+    ok(len([k for k in sr if k.startswith('SIM-')]) == 3 and all(v < '2027-01-09' for v in sr.values()), 'senza settimana finale: tutte nella fase prestazione %s' % sr)
     pg.click('text=✓ Crea il piano'); pg.wait_for_timeout(300)
     pg.wait_for_selector('.dialogo'); ok('Piano di raffinamento' in pg.inner_text('.dialogo'), 'propone di nascondere il raffinamento che si sovrappone')
     pg.click('.dialogo button:has-text("Sì, nascondi")'); pg.wait_for_timeout(200)

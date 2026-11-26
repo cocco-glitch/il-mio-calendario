@@ -234,7 +234,7 @@ with sync_playwright() as p:
           const p = StudiaOra.proposta(50);
           const scad = Stato.tutti('memoria').filter(m => m.er.startsWith('con:' + sk + '|') && !m.ripiego && m.due <= g).map(m => m.etichetta);
           return { coda, scad, esc: p.esclusi.map(e => e.titolo + ' → ' + e.perche), tot: p.voci.reduce((t, v) => t + v.min, 0), qr: QuizRifare.dovute().length, voci: p.voci.map(v => v.tipo + ':' + (v.id || v.k || '') + ' ' + v.min),
-                   conc: p.voci.filter(v => v.tipo === 'concetti').map(v => [v.id, v.con, v.motivo]), fin: Studio.vociDelGiorno(new Date(g + 'T12:00')).some(x => /^FINALE/.test(x.v.k)) }; }""", [sk, g])
+                   conc: p.voci.filter(v => v.tipo === 'concetti').map(v => [v.id, v.con, v.motivo]), fin: Studio.vociDelGiorno(new Date(g + 'T12:00')).map(x => x.v.k).filter(k => /^(FINALE|SIM-|REV-)/.test(k)).join(' ') }; }""", [sk, g])
         print('    %s  coda: %s' % (g, r['coda'][:5]))
         print('              Studia ora 50 → %d min: %s' % (r['tot'], r['voci'])); print('              esclusi: %s' % (r['esc'][:4] or '—'))
         if g == '2026-11-14': ok(r['qr'] >= 2 and any(c.startswith('quiz:') for c in r['coda']), 'D+1: le 2 domande sbagliate tornano in «Quiz da rifare»')
@@ -244,7 +244,9 @@ with sync_playwright() as p:
             pg.locator('.card.ripassa button', has_text='Verifica concetti').first.click(); pg.wait_for_selector('.qz-domanda', timeout=8000)
             ok('il punteggio della scheda non cambia' in pg.inner_text('.qz-testa').lower(), 'dal tocco in Oggi si apre la mini-verifica, dichiarata come tale')
             pg.keyboard.press('Escape')
-        if g == '2026-11-20': ok(r['fin'], 'D−2: giorno di settimana finale nel piano')
+        # fase 12 (27/11): D−3 simulazione, D−2 revisione dei suoi errori (come il Pianificatore), gli altri giorni FINALE
+        if g == '2026-11-16': ok(r['fin'].startswith('SIM-'), 'D−6: simulazione nella settimana finale (%s)' % r['fin'])
+        if g == '2026-11-20': ok(r['fin'].startswith('REV-'), 'D−2: revisione degli errori della simulazione di D−3 (%s)' % r['fin'])
         if r['scad'] and g < '2026-11-22':
             in_so = any(x[0] == sk for x in r['conc']) or any('non entra nel tempo' in e for e in r['esc'])
             ok(any(c.startswith('concetti:' + sk) for c in r['coda']) and in_so, 'F2 %s: concetti scaduti %s → «Verifica concetti» in Oggi; in Studia ora o escluso solo per il tempo' % (g, r['scad']))

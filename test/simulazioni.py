@@ -31,7 +31,10 @@ with sync_playwright() as p:
     voce = pg.locator('.voce-lista', has_text='Simulazione 3').filter(has_text='tocca per iniziare')
     vt = voce.first.text_content() if voce.count() else '(nessuna voce; pagina: ' + pg.text_content('.pagina')[:300] + ')'
     ok('tocca per iniziare' in vt, 'Oggi: «Simulazione 3 · tocca per iniziare»' + ('' if 'tocca per iniziare' in vt else ' → ' + vt))
-    voce.first.click(); pg.wait_for_selector('.foglio >> text=Simulazione mista 1')
+    # fase 12 (27/11): la voce apre la simulazione in app (domande e minuti a scelta) con i file Drive come seconda scelta
+    voce.first.click(); pg.wait_for_selector('.foglio >> text=Inizia la simulazione', timeout=8000)
+    ok(pg.locator('.foglio input[aria-label="Minuti a disposizione"]').count() == 1, 'foglio della simulazione in app: minuti a scelta')
+    pg.click('.foglio button:has-text("Usa una simulazione da Drive")'); pg.wait_for_selector('.foglio >> text=Simulazione mista 1')
     t = pg.inner_text('.foglio')
     ok(t.index('mista 1') < t.index('mista 2') and 'note' not in t, 'elenco dei file HTML in ordine')
     pg.click('.foglio >> text=Simulazione mista 1'); pg.wait_for_selector('.visore iframe')

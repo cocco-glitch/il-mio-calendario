@@ -29,6 +29,9 @@ const PadronanzaUI = (() => {
     svuota(el);
     el.appendChild(h('h2.card-titolo', null, '🧩 Padronanza per concetto'));
     el.appendChild(h('p.tenue.piccolo', null, 'Conta solo i quiz: lettura e appunti non la cambiano. Consolidato = verificato in almeno 3 giorni su 7 o più, ultime 2 verifiche ≥ 80%.'));
+    // fase 9 (27/11): quiz manuali sui deboli e cumulativi (ComponiQuiz), anche con le sole schede fatte senza quiz in app
+    el.appendChild(h('div.chips', null, h('button.btn', { type: 'button', onclick: () => ComponiQuiz.apri({ tipo: 'deboli' }) }, '🎯 Quiz sui punti deboli'),
+      h('button.btn.neutro', { type: 'button', onclick: () => ComponiQuiz.apri({ tipo: 'cumulativo' }) }, '📚 Quiz cumulativo')));
     if (!righe.length) { el.appendChild(h('p.tenue.piccolo', null, 'Nessun concetto verificato: fai il quiz di una scheda della banca.')); return; }
     const perM = new Map<string, typeof righe>();
     for (const r of righe) { const t = trovaScheda(r.sk), m = t ? t.m : '?'; const l = perM.get(m) || []; l.push(r); perM.set(m, l); }

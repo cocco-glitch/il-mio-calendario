@@ -21,6 +21,8 @@ interface RisultatoQuiz { domandeSvolte?: string[]; imc: 'quiz-risultato'; pct: 
   focus?: string; titoloScheda?: string;
   /** F1/F2 (S9): mini-verifica dei concetti (VerificaConcetti): aggiorna la padronanza, non il punteggio della scheda. */
   verifica?: boolean;
+  /** fase 9 (27/11): una parte del quiz misto di ComponiQuiz (il riquadro «Consolida» non si mostra: le schede sono più d'una). */
+  misto?: boolean;
 }
 interface EsitoQ { id: string; q: string; giusta: string; spieg?: string; ok: boolean; caso?: CasoN; scelta?: string; perche?: string;
   /** blocco 6: concetto scelto dall'AI (DomB.concetto) e concetto assegnato nel chunk (Concetti.assegna). */
@@ -59,7 +61,8 @@ const Cattura = (() => {
   }
 
   /** Salva il risultato; restituisce la funzione per annullare. */
-  function salva(id: string, d: RisultatoQuiz, ritiraRisposte?: () => void): () => void {
+  /** muto (fase 9): niente avviso, lo dà il chiamante (quiz misto: uno solo per tutte le schede). */
+  function salva(id: string, d: RisultatoQuiz, ritiraRisposte?: () => void, muto?: boolean): () => void {
     const oggiK = ymd(new Date());
     const p0 = Studio.prog(id), primaProg = p0 ? JSON.parse(JSON.stringify(p0)) : null;
     const t = trovaScheda(id), idMem = t ? 'mem-sub-' + t.k : '';
@@ -91,9 +94,9 @@ const Cattura = (() => {
       for (const f of dopo) f();
       if (primaProg) Stato.salva(primaProg); else Stato.elimina('prog-' + id);
       if (idMem) { if (primaMem) Stato.salva(primaMem); else if (Stato.prendi<Rec>(idMem)) Stato.elimina(idMem); }
-      avviso('Annullato: risultato non salvato.');
+      if (!muto) avviso('Annullato: risultato non salvato.');
     };
-    avviso(testo + ' · tocca per annullare', 8000, annulla);
+    if (!muto) avviso(testo + ' · tocca per annullare', 8000, annulla);
     return annulla;
   }
 

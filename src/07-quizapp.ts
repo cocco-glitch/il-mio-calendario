@@ -227,7 +227,9 @@ const QuizApp = (() => {
 
   /** gen: Q3, esercizi generati (nessun salvataggio sulla scheda, «Rifai tutto» = numeri nuovi).
    *  info.prova (v0.63, Centro di creazione): prova della scheda prima dell'import — nessuno statq, nessuna sessione, nessuna carta. */
-  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void; immagini?: Record<string, string>; modo?: ModoQ; prova?: boolean; verifica?: boolean; focus?: string }): Promise<void> {
+  async function apri(pk: PkStep, m: string, micro: string, s: SchedaS, gen?: () => DomB[], info?: { occh: string; titolo: string; chiudi?: () => void; immagini?: Record<string, string>; modo?: ModoQ; prova?: boolean; verifica?: boolean; focus?: string;
+    /** fase 9 (27/11): quiz misto di ComponiQuiz — `fine` sostituisce Cattura.salva (divide per scheda), `ferma` riceve la chiusura per il limite di tempo. */
+    fine?: (r: RisultatoQuiz) => void; ferma?: (f: () => void) => void }): Promise<void> {
     const prova = !!(info && info.prova);
     const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { /* */ })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
     v.corpo.classList.add('qz');
@@ -287,6 +289,7 @@ const QuizApp = (() => {
     }
     const annulli = new Map<Voce, () => void>();
     let registrato = false;
+    if (info && info.ferma) info.ferma(() => { if (!finito) { finito = true; disegnaQ(); } });
     const nuovo = (idx: number[], rip: boolean) => {
       P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
       annulli.clear(); registrato = false;
@@ -504,7 +507,7 @@ const QuizApp = (() => {
       if (registrato) return;
       registrato = true;
       if (!gen && !prova) Cattura.salva(s.id, r);
-      if (gen && !prova && info && info.verifica) { r.verifica = true; if (info.focus) r.focus = info.focus; Cattura.salva(s.id, r); }   // F1/F2 (S9): mini-verifica dei concetti
+      if (gen && !prova && info && info.verifica) { r.verifica = true; if (info.focus) r.focus = info.focus; if (info.fine) info.fine(r); else Cattura.salva(s.id, r); }   // F1/F2 (S9): mini-verifica dei concetti
       if (gen && !prova && Stato.prendi<QCreato>(s.id)?.type === 'qcreato') {
         toastAnnulla?.remove();
         const ritira = Array.from(annulli.values()).reverse();
@@ -539,7 +542,7 @@ const QuizApp = (() => {
       else if (az === 'avanti') { if (cur < P.length - 1) { cur++; apertaX = false; disegnaQ(); v.corpo.scrollTop = 0; } else { const senza = P.filter(y => !fatta(y)).length; if (senza) chiedi('Vedere il risultato?', [{ testo: 'Vedi il risultato', valore: 'si' }, { testo: 'Torna al quiz', valore: 'no' }], senza + (senza === 1 ? ' domanda senza risposta: conta come errata.' : ' domande senza risposta: contano come errate.')).then(si => { if (si === 'si') { finito = true; disegnaQ(); } }); else { finito = true; disegnaQ(); } } }
       else if (az === 'errori') nuovo(P.map((y, k) => y.ok ? -1 : dati.domande.indexOf(y.d)).filter(k => k >= 0), true);
       else if (az === 'tutto') { if (gen) dati.domande = gen(); nuovo(dati.domande.map((_, k) => k), false); }
-      else if (az === 'modifica') Editor.apri(x.d, s.id, nd => {
+      else if (az === 'modifica') Editor.apri(x.d, x.d.sk || s.id, nd => {
         const k = dati.domande.indexOf(x.d);
         if (!nd) { if (k >= 0) dati.domande.splice(k, 1); P.splice(cur, 1); if (!P.length) { finito = true; } else if (cur >= P.length) cur = P.length - 1; disegnaQ(); return; }
         if (k >= 0) dati.domande[k] = nd;
