@@ -1,6 +1,6 @@
 // 07-studiaoraui.ts — motore unificato, blocco 4: «Studia ora» nel chunk su richiesta.
 // Istantanea = sola lettura dei moduli (CodaRipasso, Studio, Freddo, Ripassi, piano AI) → candidati per MotoreStudio.
-// Sessione = record 'sessione' sincronizzato (isolato per account come gli altri): voci, motivi, esclusi, secondi.
+// Sessione = record 'sessioneora' sincronizzato ('sessione' è del Timer) (isolato per account come gli altri): voci, motivi, esclusi, secondi.
 // Preferenze N5 in Impostazioni: metodi {quiz, carte, appunti}, carteAuto (mai/proponi/auto), suggerisciAppunti.
 
 const StudiaOra = (() => {
@@ -70,7 +70,7 @@ const StudiaOra = (() => {
 
   function osservazioni(): OsservazioneS[] {
     const out: OsservazioneS[] = [];
-    for (const s of Stato.tutti<SessioneRec>('sessione').filter(x => x.chiusa).sort((a, b) => a.inizio - b.inizio).slice(-30))
+    for (const s of Stato.tutti<SessioneRec>('sessioneora').filter(x => x.chiusa).sort((a, b) => a.inizio - b.inizio).slice(-30))
       for (const v of s.voci) if (v.metodo && v.sec) out.push({ metodo: v.metodo, min: v.min, sec: v.sec });
     return out;
   }
@@ -83,12 +83,12 @@ const StudiaOra = (() => {
   /** Una sola volta: la sessione locale di prima (localStorage) diventa un record. */
   function migra(): void {
     let v: { inizio: number; minuti: number; voci: VoceSessione[] } | null = null; try { v = JSON.parse(localStorage.getItem(VECCHIA) || 'null'); localStorage.removeItem(VECCHIA); } catch (e) { console.warn('StudiaOra.migra', e); }
-    if (v && Array.isArray(v.voci) && !sessioneAperta()) Stato.salva({ id: 'ses-' + v.inizio, type: 'sessione', updatedAt: Date.now(), inizio: v.inizio, minuti: v.minuti, obiettivo: 'auto', voci: v.voci } as SessioneRec);
+    if (v && Array.isArray(v.voci) && !sessioneAperta()) Stato.salva({ id: 'sor-' + v.inizio, type: 'sessioneora', updatedAt: Date.now(), inizio: v.inizio, minuti: v.minuti, obiettivo: 'auto', voci: v.voci } as SessioneRec);
   }
   function leggi(): SessioneRec | null { migra(); return sessioneAperta() || null; }
   function avvia(minuti: number, o: ObiettivoS = 'auto', pref = prefGlobali()): SessioneRec {
     const p = proposta(minuti, oggi(), o, pref), t = Date.now();
-    const s: SessioneRec = { id: 'ses-' + t, type: 'sessione', updatedAt: t, inizio: t, minuti, obiettivo: p.obiettivo, voci: p.voci, esclusi: p.esclusi.slice(0, 20), pref };
+    const s: SessioneRec = { id: 'sor-' + t, type: 'sessioneora', updatedAt: t, inizio: t, minuti, obiettivo: p.obiettivo, voci: p.voci, esclusi: p.esclusi.slice(0, 20), pref };
     Stato.salva(s);
     const prima = s.voci.find(v => v.k);
     Timer.avvia({ m: prima && prima.k ? materiaDi(prima.k) : undefined, k: prima && prima.k, titolo: 'Studia ora · ' + minuti + ' min', durata: minuti });

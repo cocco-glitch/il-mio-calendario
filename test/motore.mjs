@@ -179,9 +179,11 @@ t('app.js tiene solo gli agganci: composizione e fogli nel chunk su richiesta', 
   vero(/conStrumentiQuiz\(\(\) => StudiaOraUI\.scegli\(\)\)/.test(so) && /conStrumentiQuiz\(\(\) => StudiaOraUI\.sessione\(\)\)/.test(so), 'agganci');
   vero(/const StudiaOra = /.test(ui) && /MotoreStudio\.componi\(/.test(ui) && /CodaRipasso\.dovuti/.test(ui), 'StudiaOra nel chunk usa MotoreStudio e la coda unica');
 });
-t('sessione = record \'sessione\' sincronizzato; localStorage solo per la migrazione una tantum', () => {
-  const ui = leggi('su-richiesta/07-studiaoraui.ts');
-  vero(/type: 'sessione'/.test(ui) && /Stato\.salva\(s\)/.test(ui), 'record sessione');
+t('sessione = record \'sessioneora\' sincronizzato, distinto da \'sessione\' del Timer; localStorage solo per la migrazione', () => {
+  const ui = leggi('su-richiesta/07-studiaoraui.ts'), so = leggi('07-studiaora.ts');
+  vero(/type: 'sessioneora'/.test(ui) && /type: 'sessioneora'/.test(so) && /Stato\.salva\(s\)/.test(ui), 'record sessioneora');
+  vero(!/'sessione'\)/.test(ui + so) && !/type: 'sessione'[,;]/.test(ui + so), 'nessuna lettura/scrittura dei record del Timer');
+  vero(/type: 'sessione'/.test(leggi('07-extra.ts')), 'il Timer usa ancora \'sessione\'');
   eq((ui.match(/localStorage\./g) || []).length, 2, 'solo getItem + removeItem della migrazione');
 });
 t('preferenze N5 in Impostazioni e migrazione carteDaErrori → carteAuto', () => {

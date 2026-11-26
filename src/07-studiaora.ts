@@ -1,12 +1,12 @@
 // 07-studiaora.ts — "Studia ora": in app.js restano solo tipi, agganci e il riquadro di Oggi.
 // Blocco 4 (motore unificato): composizione (MotoreStudio, livelli 1–6), fogli e preferenze stanno nel chunk
-// strumenti-quiz.js (07-motorestudio.ts, 07-studiaoraui.ts). La sessione è un record 'sessione' sincronizzato.
+// strumenti-quiz.js (07-motorestudio.ts, 07-studiaoraui.ts). La sessione è un record 'sessioneora' sincronizzato ('sessione' è del Timer).
 
 interface VoceSessione { tipo: 'ripasso' | 'carte' | 'quiz' | 'appunto' | 'piano' | 'freddo' | 'scheda' | 'errore' | 'pausa' | 'richiamo'; titolo: string; sotto: string; min: number; k?: string; id?: string; fatto?: boolean;
   /** blocco 4: metodo, livello e motivo reale; avviata (ms) e secondi impiegati per imparare le durate */ metodo?: MetodoS; livello?: number; motivo?: string; avviata?: number; sec?: number; }
-interface SessioneRec extends Rec { type: 'sessione'; inizio: number; minuti: number; obiettivo: string; voci: VoceSessione[]; esclusi?: { titolo: string; perche: string }[]; pref?: PrefMetodi; chiusa?: number; }
+interface SessioneRec extends Rec { type: 'sessioneora'; inizio: number; minuti: number; obiettivo: string; voci: VoceSessione[]; esclusi?: { titolo: string; perche: string }[]; pref?: PrefMetodi; chiusa?: number; }
 /** Sessione aperta (la più recente non chiusa). */
-function sessioneAperta(): SessioneRec | undefined { return Stato.tutti<SessioneRec>('sessione').filter(s => !s.chiusa).sort((a, b) => b.inizio - a.inizio)[0]; }
+function sessioneAperta(): SessioneRec | undefined { return Stato.tutti<SessioneRec>('sessioneora').filter(s => !s.chiusa).sort((a, b) => b.inizio - a.inizio)[0]; }
 function apriStudiaOra(): void { conStrumentiQuiz(() => StudiaOraUI.scegli()); }
 function apriSessione(): void { conStrumentiQuiz(() => StudiaOraUI.sessione()); }
 
