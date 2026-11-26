@@ -197,7 +197,7 @@ function scorciatoiaAvvio(): void {
   if (!az) return;
   try { history.replaceState(null, '', location.pathname); } catch (e) { console.warn('scorciatoia: replaceState', e); }
   if (az === 'condividi') conStrumentiQuiz(() => CentroUI.apri(condiviso));
-  else if (az === 'studia') { if (StudiaOra.leggi()) { apriSessione(); return; } const a = adesso(); if (a.minuti) { StudiaOra.avvia(a.minuti); setTimeout(apriSessione, 50); } else apriStudiaOra(); }
+  else if (az === 'studia') conStrumentiQuiz(() => StudiaOraUI.studia(true));
   else if (az === 'aggiungi') apriNuovo();
   else if (az === 'ripassa') avviaCarte(undefined, 'Flashcard');
 }

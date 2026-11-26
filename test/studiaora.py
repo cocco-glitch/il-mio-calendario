@@ -25,6 +25,7 @@ with sync_playwright() as p:
     tit = pg.eval_on_selector_all('.card', 'els => els.slice(0, 2).map(e => (e.querySelector(".studia-ora") || e).textContent.trim().slice(0, 40))')
     # v0.58: la prima card è «Adesso» con [▶ Inizia] (avvio diretto) e «Altra durata» (scelta del tempo)
     ok('Inizia' in tit[0] and 'Adesso' in pg.inner_text('.card.adesso'), 'card Adesso in cima a Oggi: %s' % tit)
+    pg.evaluate('caricaStrumentiQuiz()')   # blocco 4: Studia ora sta nel chunk su richiesta
     v = pg.evaluate("StudiaOra.componi(50).map(v => v.tipo + ':' + v.min)")
     ok(v[0].startswith('ripasso') and 'freddo:10' in v and v[-1] == 'richiamo:5', '50 min: ripasso, prova a freddo, …, richiamo finale: %s' % v)
     ok(sum(int(x.split(':')[1]) for x in v) <= 55 and 'pausa:5' in v, 'durata rispettata con una pausa')

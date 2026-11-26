@@ -93,6 +93,8 @@ interface Impostazioni extends Rec {
   // v0.7 — Ripassi (F2)
   ripassoMinuti?: number;                // tetto giornaliero dei ripassi (predef. 30)
   ritenzione?: number;                   // ritenzione desiderata FSRS (predef. 0.90)
+  // blocco 4 (N5): metodi che Studia ora può proporre; carte dagli errori dei quiz; appunti suggeriti dopo il quiz
+  metodi?: PrefMetodi; carteAuto?: 'mai' | 'proponi' | 'auto'; suggerisciAppunti?: boolean;
 }
 /**
  * v0.7 — Scheda di memoria di un "elemento da ricordare" (scheda quiz, carta, errore, pagine).

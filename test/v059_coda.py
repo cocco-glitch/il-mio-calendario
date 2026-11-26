@@ -96,6 +96,7 @@ with sync_playwright() as p:
         ok(larg, '%s: niente scorrimento orizzontale' % nome)
 
         # --- Studia ora usa la coda: ci sono tutte le sorgenti, anche il ripasso del piano (prima mancava) ---
+        pg.evaluate('caricaStrumentiQuiz()')   # blocco 4: Studia ora sta nel chunk su richiesta
         voci = pg.evaluate("StudiaOra.componi(90, new Date('%sT15:00')).map(v => v.tipo)" % G)
         ok(all(x in voci for x in ('ripasso', 'carte', 'quiz', 'appunto', 'piano')), '%s: Studia ora con le 5 sorgenti %s' % (nome, voci))
         voci25 = pg.evaluate("StudiaOra.componi(25, new Date('%sT15:00')).reduce((s, v) => s + v.min, 0)" % G)

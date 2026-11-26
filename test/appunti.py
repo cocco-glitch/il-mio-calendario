@@ -87,6 +87,7 @@ with sync_playwright() as p:
     nuovo = pg.evaluate("(() => { const a = Appunti.nuovo({ titolo: 'oggi', testo: '# A\\nx' }); Stato.salva(a); return Appunti.daRipassare(a).length; })()")
     ok(nuovo == 0, 'appunto di oggi: si ripassa da domani')
     pg.clock.set_fixed_time('2026-11-14T09:00:00+01:00')
+    pg.evaluate('caricaStrumentiQuiz()')   # blocco 4: Studia ora sta nel chunk su richiesta
     ok(any(v['tipo'] == 'appunto' for v in pg.evaluate("StudiaOra.componi(90)")), 'domani: appunti in «Studia ora»')
     pg.evaluate("vai('oggi')"); pg.wait_for_timeout(200)
     ok(pg.locator('.card.ripassa', has_text='appunt').count() == 1, 'appunti nel riquadro «Ripassa» di Oggi (v0.59)')

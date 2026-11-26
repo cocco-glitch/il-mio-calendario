@@ -77,6 +77,7 @@ with sync_playwright() as p:
     ok(x == {'corsi': ['step-3'], 'voci': ['piano@' + OGGI]}, 'B3.3 dentro step-3 e nel piano spostato a oggi, una volta sola: %s' % x)
     ok(pg.evaluate("Studio.trovaSotto('B3.3').mat.sottostep.map(s => s.k).join(',')").startswith('B3.1,B3.2,B3.3'), 'B3.3 inserito dopo B3.2')
     ok(pg.evaluate("Dominio.haDomande(Studio.schedeDi(Studio.trovaSotto('B3.3').sub)[0].id)"), 'Banca sulle schede di B3.3')
+    pg.evaluate('caricaStrumentiQuiz()')   # blocco 4: Studia ora sta nel chunk su richiesta
     v = pg.evaluate("StudiaOra.componi(120).filter(v => v.k === 'B3.3').map(v => v.tipo + ':' + (v.id || ''))")
     ok(any(s.startswith('scheda:B-3.3.') for s in v), 'Studia ora propone le schede B3.3: %s' % v)
     importa('3.4', ('step-3', 'piano', OGGI))

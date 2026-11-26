@@ -728,6 +728,7 @@ function sezioneStudio(salva: SalvaImp): HTMLElement {
     riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')),
     riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')),
     riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')),
+    riga('Metodi di studio', h('button.btn-testo', { onclick: () => conStrumentiQuiz(() => StudiaOraUI.preferenze()) }, 'Scegli')),
     h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassa) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
 }
 

@@ -84,6 +84,7 @@ with sync_playwright() as p:
     inn = pg.evaluate("(() => { const x = Stato.prendi('inn-B3.3'); return { banche: x.banche.length, rap: !!x.rapporto, rip: x.ripassi.map(r => r.giorni + ':' + (r.target || []).length) }; })()")
     ok(inn == {'banche': 6, 'rap': True, 'rip': ['1:2', '3:1', '7:6']}, '6 schede in Banca, rapporto salvato, ripassi +1/+3/+7 con target: %s' % inn)
     ok('108 domande in Banca' in pg.inner_text('.foglio'), 'esito: 108 domande in Banca')
+    pg.evaluate('caricaStrumentiQuiz()')   # blocco 4: Studia ora sta nel chunk su richiesta
     v = pg.evaluate("StudiaOra.componi(120).filter(v => v.k === 'B3.3').map(v => v.tipo + ':' + (v.id || ''))")
     ok(any(s.startswith('scheda:B-3.3.') for s in v), 'Studia ora propone le schede B3.3: %s' % v)
     pg.evaluate("document.querySelectorAll('.foglio-sfondo').forEach(e => e.remove()); vai('oggi')"); pg.wait_for_timeout(300)
