@@ -55,6 +55,7 @@ Scelte di partenza:
 | Colori hex fuori dai token in `style.css` | 99 | non sale |
 | `font-size` distinti | 24 | non sale; i nuovi usano i token `--fs-*`/`--fw-xs` |
 | Contrasto accento tema scuro | 3,72:1 | sale fino a ≥ 4,5 (A9) |
+| Precisione delle pagine trovate (IndicePagine, pilota BIO+CHI) | ~54% stimata (11/30 pagine «in più» pertinenti; apparente 27,6%), richiamo 93,1% | sale fino a ≥ 80% con richiamo ≥ 95% (obiettivo dell'audit confermato dall'utente il 26/11; a Codex, piste nell'HANDOFF S8; misura: `node test/pilota-pagine.mjs <dati.json>` + controllo a mano) |
 
 ## Eccezioni
 | ID | Regola | Dove | Motivo | Scadenza |
