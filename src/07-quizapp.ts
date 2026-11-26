@@ -492,6 +492,12 @@ const QuizApp = (() => {
       app.innerHTML = s2; v.corpo.scrollTop = 0;
       const r: RisultatoQuiz = { domandeSvolte: P.map(x => x.d.q), imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
         sbagliate: sb.map(x => [x.d.q, x.d.t === 'mcq' ? x.d.o![0] : String(x.d.show || ''), (Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e)] as [string, string, string]) };
+      // blocco 5: dettagli per il riquadro «Consolida» (sbagliate e fortunate; gli esercizi generati a numeri no)
+      r.dettagli = P.filter(x => !x.d.gen && (!x.ok || x.caso === 'lucky_guess')).map(x => {
+        const oi = !x.ok && x.d.t === 'mcq' && typeof x.picked === 'number' ? x.ord[x.picked] : 0;
+        return { id: x.d.id, q: x.d.q, giusta: x.d.t === 'mcq' ? x.d.o![0] : String(x.d.show || ''), spieg: Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e, ok: !!x.ok, caso: x.caso,
+          ...(oi ? { scelta: x.d.o![oi], perche: ewDi(x.d)[oi - 1] || undefined } : {}) };
+      });
       if (registrato) return;
       registrato = true;
       if (!gen && !prova) Cattura.salva(s.id, r);

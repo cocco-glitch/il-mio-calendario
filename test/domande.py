@@ -60,12 +60,26 @@ with sync_playwright() as p:
     pg.screenshot(path='test/domande.png', full_page=True)
     pg.click('text=✓ La sapevo'); pg.wait_for_timeout(200)
     ok(pg.evaluate("Domande.ricorrenti().length") == 0 and 'Ricorrenti 0' in pg.inner_text('body'), 'la sapevo → esce dalle ricorrenti')
-    # v0.20.3: errori → flashcard
-    nc = pg.evaluate("Carte.carteDi('mz-errori').length")
+    # blocco 5 (decisione utente 26/11): con carteAuto 'proponi' (predefinito) i quiz HTML non creano carte da soli
+    ok(pg.evaluate("Carte.carteDi('mz-errori').length") == 0, "carteAuto 'proponi': nessuna carta automatica dagli errori dei quiz HTML")
+    # il pulsante «Ripassa gli errori come flashcard» le crea (scelta esplicita), in sotto-mazzi collegati
+    nc = pg.evaluate("Carte.daErrori(Domande.tutte(), true).length")
     ok(nc >= 1 and pg.evaluate("Carte.mazzi().filter(m => m.padre === 'mz-errori').every(m => !!m.sub || m.id === 'mz-err-sim')"), 'errori diventati flashcard in sotto-mazzi collegati (%d)' % nc)
     ok(pg.evaluate("Carte.carte().filter(c => c.mazzo.startsWith('mz-err')).some(c => c.r.includes('0,0821'))"), 'retro = risposta giusta (+ spiegazione)')
-    n2 = pg.evaluate("Carte.daErrori(Domande.tutte()).length")
-    ok(n2 == 0 or pg.evaluate("Carte.carteDi('mz-errori').length") == nc + n2, 'nessun doppione')
+    n2 = pg.evaluate("Carte.daErrori(Domande.tutte(), true).length")
+    ok(n2 == 0 and pg.evaluate("Carte.carteDi('mz-errori').length") == nc, 'nessun doppione')
+    ok(pg.evaluate("(() => { const i = imp(); Stato.salva({ ...i, carteAuto: 'mai' }); return Carte.daErrori(Domande.tutte()).length === 0 && Carte.daErrori(Domande.tutte(), true).length === 0; })()"), "carteAuto 'mai': niente carte automatiche; il pulsante manuale funziona ancora")
+    # carteAuto 'auto': il quiz HTML crea da solo al massimo 5 carte, e «tocca per annullare» le toglie
+    pg.evaluate("(() => { for (const c of Carte.carteDi('mz-errori')) Stato.elimina(c.id); const i = imp(); Stato.salva({ ...i, carteAuto: 'auto' }); })()")
+    pg.evaluate("""(html => { const f = document.createElement('iframe'); f.id = 'q'; f.setAttribute('sandbox', 'allow-scripts'); f.srcdoc = Cattura.inietta(html); f.style.cssText = 'position:fixed;bottom:0;left:0;width:200px;height:120px;z-index:99999'; document.body.appendChild(f); Cattura.osserva(f, '%s', 'Prova'); })(%s)""" % (sid, json.dumps(QUIZ)))
+    fq.locator('#r1').wait_for(); fq.locator('#r1').click()
+    pg.wait_for_function("Carte.carteDi('mz-errori').length > 0", timeout=10000)
+    na = pg.evaluate("Carte.carteDi('mz-errori').length")
+    ok(1 <= na <= 5 and not pg.locator('.foglio').count(), "carteAuto 'auto': %d carte create, nessun foglio per il quiz HTML" % na)
+    ok(pg.locator('#avvisi .avviso', has_text='tocca per annullare').filter(has_text='carte create').count() == 1, "il toast del salvataggio dice delle carte e resta l'unico da annullare")
+    pg.locator('#avvisi .avviso', has_text='tocca per annullare').last.dispatch_event('click'); pg.wait_for_timeout(200)
+    ok(pg.evaluate("Carte.carteDi('mz-errori').length") == 0, "annulla del salvataggio: tolte anche le carte create in automatico")
+    pg.evaluate("document.getElementById('q').remove(); vai('studio')")
     # Riquadro in Oggi
     pg.evaluate("Domande.segna(Domande.tutte()[0].id, false); Domande.segna(Domande.tutte()[0].id, false); vai('oggi')"); pg.wait_for_timeout(200)
     ok('domanda ricorrente' in pg.inner_text('body'), 'Oggi: riquadro errori con le ricorrenti')

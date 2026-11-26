@@ -15,7 +15,10 @@
 
 interface RisultatoQuiz { domandeSvolte?: string[]; imc: 'quiz-risultato'; pct: number; giuste: number | null; totale: number | null; livelli: [string, number, number][]; debole: string | null; errori: boolean;
   sbagliate?: [string, string, string][];   // v0.16: [domanda, risposta corretta, spiegazione] dalla sezione «Da rivedere»
+  /** blocco 5: solo dal quiz nell'app — domande sbagliate o fortunate, con caso della matrice e distrattore scelto. */
+  dettagli?: EsitoQ[];
 }
+interface EsitoQ { id: string; q: string; giusta: string; spieg?: string; ok: boolean; caso?: CasoN; scelta?: string; perche?: string; }
 
 const Cattura = (() => {
   const SPIA = '<script>(function(){var retry=false,inviato=null;function leggi(){try{'
@@ -57,6 +60,7 @@ const Cattura = (() => {
     const m0 = idMem ? Stato.prendi<Rec>(idMem) : undefined, primaMem = m0 ? JSON.parse(JSON.stringify(m0)) : null;
     const quanto = d.giuste != null && d.totale != null ? d.giuste + '/' + d.totale : d.pct + '%';
     const annullaDom = typeof Domande !== 'undefined' ? Domande.registra(id, t ? Studio.etichetta(t.k) + ' ' + t.micro + ' · ' + t.s.titolo : id, d) : () => { /* niente */ }; // v0.16
+    const dopo: (() => void)[] = [];   // blocco 5: annulli aggiunti dal foglio «Fine quiz» (carte create in automatico)
     let testo: string;
     if (d.errori) {
       const riga = 'Errori rifatti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
@@ -64,6 +68,7 @@ const Cattura = (() => {
       testo = '📝 ' + riga + ' (annotato, il punteggio non cambia)';
     } else {
       Studio.segna(id, { fatta: true, data: oggiK, punteggio: d.pct, deboli: d.livelli && d.livelli.length ? d.livelli : undefined } as Partial<Progresso>);
+      if (d.dettagli || (imp().carteAuto === 'auto' && d.sbagliate && d.sbagliate.length)) caricaStrumentiQuiz().then(() => FineQuizUI.dopo(id, d, f => { dopo.push(f); }), e => console.warn('fine quiz', e));
       testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
     }
     let ritirato = false;
@@ -72,6 +77,7 @@ const Cattura = (() => {
       ritirato = true;
       ritiraRisposte?.();
       annullaDom();
+      for (const f of dopo) f();
       if (primaProg) Stato.salva(primaProg); else Stato.elimina('prog-' + id);
       if (idMem) { if (primaMem) Stato.salva(primaMem); else if (Stato.prendi<Rec>(idMem)) Stato.elimina(idMem); }
       avviso('Annullato: risultato non salvato.');

@@ -15,7 +15,9 @@ def ok(c,m):
 
 with sync_playwright() as p:
     pg=p.chromium.launch().new_page(viewport={'width':390,'height':844}); pg.goto(URL); pg.wait_for_selector('.tabbar')
-    pg.evaluate("""() => { localStorage.setItem('imc-quiz-modo','esame');
+    # blocco 5 (26/11): le carte dagli errori nascono solo con carteAuto 'auto' (o per scelta nel riquadro «Consolida»):
+    # qui 'auto', così si verificano propagazione e rollback anche delle carte create in automatico (asincrone, dal chunk)
+    pg.evaluate("""() => { localStorage.setItem('imc-quiz-modo','esame'); Stato.salva({ ...imp(), carteAuto: 'auto' });
       const piano={formato:'pacchetto-studio',tipo:'piano',id:'ai-rollback',origine:'ai_neuro',titolo:'Piano rollback',aggiornato:'2026-11-01',giorniTeoria:0,giorni:[],vincoliAI:{materiaCodice:'BIO'},livelloIntensita:0,unita:[]}; Studio.importa(piano);
       window.__aggiornaDeload=Pianificatore.aggiornaDeload; Pianificatore.aggiornaDeload=p=>({...p,nota:'mutato-dal-circuito',deload:{attivo:false,fino:'2026-11-22',livelloTarget:1,livelloRidotto:1,motivo:'test'}});
       window.__undoFatica=0; const cf=PianiAI.controllaFatica; PianiAI.controllaFatica=()=>{const u=cf(); return ()=>{window.__undoFatica++; u();};};
@@ -31,6 +33,7 @@ with sync_playwright() as p:
     ok(prima['stat'][0]['n']==1 and prima['stat'][0]['ok']==0 and prima['piano']=='mutato-dal-circuito','errore aggiorna stat/FSRS e circuito fatica')
     ok(prima['errori']==0, 'gli errori di sessione vengono consolidati una sola volta al risultato')
     pg.click('[data-az=avanti]'); pg.wait_for_selector('.qz-punti'); pg.wait_for_timeout(120)
+    pg.wait_for_function("Carte.carte().length >= 1", timeout=10000)
     salvato=pg.evaluate("""() => ({prog:!!Studio.prog('qc-v065-rollback'),errori:Domande.aperte().length,carte:Carte.carte().length,dovuti:CodaRipasso.dovuti().length})""")
     ok(salvato['prog'] and salvato['errori']==1 and salvato['carte']>=1 and salvato['dovuti']>=1,'risultato propagato a Studio, Errori, carte/Ripassa e coda Oggi')
     # Il click ripetuto sul risultato non deve salvare una seconda volta.

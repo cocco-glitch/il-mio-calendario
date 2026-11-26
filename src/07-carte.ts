@@ -19,7 +19,8 @@
 // Immagini: "![testo](nome.png)" se nome.png è nella cartella Drive importata → "![testo](drive:ID)".
 
 interface Mazzo extends Rec { type: 'mazzo'; nome: string; padre?: string; sub?: string; micro?: string; fonte?: { id: string; tipo: 'file' | 'cartella'; agg?: string }; }
-interface Carta extends Rec { type: 'carta'; mazzo: string; f: string; r: string; tipo: 'base' | 'cloze'; inversa?: boolean; tag?: string; ctx?: string; }
+interface Carta extends Rec { type: 'carta'; mazzo: string; f: string; r: string; tipo: 'base' | 'cloze'; inversa?: boolean; tag?: string; ctx?: string;
+  /** blocco 5: concetto (lo assegna il blocco 6) e domande del quiz da cui è nata. */ concetto?: string; origine?: { domande: string[] }; }
 type ModoCarte = 'gira' | 'scelta' | 'scrivi';
 
 const Carte = (() => {
@@ -203,26 +204,31 @@ const Carte = (() => {
    * con un sotto-mazzo per sotto-step (collegato: entra nei ripassi e in «Studia ora»). Stessa domanda =
    * stessa carta. Restituisce gli id delle carte NUOVE (per l'Annulla).
    */
-  function daErrori(lista: { schedaId: string; q: string; giusta: string; spieg?: string }[]): string[] {
-    if ((imp() as any).carteDaErrori === false) return [];
+  /** Sotto-mazzo degli errori: per step se la scheda è nel piano; i quiz creati (qcreato) a parte dalle simulazioni. */
+  function mazzoErrori(schedaId: string): string {
+    const t = schedaId.startsWith('sim:') ? null : trovaScheda(schedaId);
+    return 'mz-err-' + (t ? t.k : Stato.prendi<Rec>(schedaId)?.type === 'qcreato' ? 'qc' : 'sim');
+  }
+  function daErrori(lista: { schedaId: string; q: string; giusta: string; spieg?: string; f?: string; r?: string; tag?: string; qid?: string }[], forza = false): string[] {
+    const i = imp() as Impostazioni & { carteDaErrori?: boolean };
+    if (!forza && (i.carteAuto === 'mai' || (!i.carteAuto && i.carteDaErrori === false))) return [];
     const nuove: string[] = [];
     let radice = Stato.prendi<Mazzo>('mz-errori');
     for (const d of lista) {
       if (!d.q || !d.giusta) continue;
       if (!radice || radice.deleted) { radice = { id: 'mz-errori', type: 'mazzo', updatedAt: 0, nome: '⚠️ Errori dei quiz' } as Mazzo; Stato.salva(radice, true); }
-      const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId);
-      const idM = 'mz-err-' + (t ? t.k : 'sim');
+      const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId), idM = mazzoErrori(d.schedaId);
       if (!Stato.prendi<Mazzo>(idM) || Stato.prendi<Mazzo>(idM)!.deleted)
-        Stato.salva({ id: idM, type: 'mazzo', updatedAt: 0, nome: t ? Studio.etichetta(t.k) + ' · errori' : 'Simulazioni · errori', padre: 'mz-errori', ...(t ? { sub: t.k, micro: t.micro } : {}) } as Mazzo, true);
+        Stato.salva({ id: idM, type: 'mazzo', updatedAt: 0, nome: t ? Studio.etichetta(t.k) + ' · errori' : idM === 'mz-err-qc' ? 'Quiz creati · errori' : 'Simulazioni · errori', padre: 'mz-errori', ...(t ? { sub: t.k, micro: t.micro } : {}) } as Mazzo, true);
       const id = 'cr-' + hash(idM + '|' + norm(d.q));
       if (Stato.prendi<Carta>(id) && !Stato.prendi<Carta>(id)!.deleted) continue;
-      Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f: d.q, r: d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), tipo: 'base', tag: 'errore' } as Carta, true);
+      Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f: d.f || d.q, r: d.r || d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), tipo: 'base', tag: d.tag || 'errore', ...(d.qid ? { origine: { domande: [d.qid] } } : {}) } as Carta, true);
       nuove.push(id);
     }
     if (nuove.length) Stato.notifica();
     return nuove;
   }
-  return { daErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
+  return { daErrori, mazzoErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
 })();
 
 // ---------- Rendering di una faccia (Markdown minimale, completamenti, immagini da Drive) ----------

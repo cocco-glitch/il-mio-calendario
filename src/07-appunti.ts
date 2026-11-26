@@ -11,7 +11,8 @@
 // 'mz-appunti'), collegato allo stesso sotto-step; una riga cancellata toglie la sua carta.
 // Drive: copia «titolo.md» in «Calendario personale/Appunti», SOLO dopo conferma nell'app.
 
-interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; mano?: Mano; manoPng?: string; fonte?: { id: string; agg?: string }; creato?: string; giorno?: string; sub?: string; micro?: string; /** v0.60 (N2): step scelto dall'elenco: il titolo non lo cambia più. */ subMano?: 1; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number; }
+interface Appunto extends Rec { type: 'appunto'; titolo: string; testo: string; riassunto?: string; mano?: Mano; manoPng?: string; fonte?: { id: string; agg?: string }; creato?: string; giorno?: string; sub?: string; micro?: string; /** v0.60 (N2): step scelto dall'elenco: il titolo non lo cambia più. */ subMano?: 1; drive?: { id: string; agg: number; h?: string }; driveChiesto?: number;
+  /** blocco 5: appunto nato dal foglio «Fine quiz» (concetti: li assegna il blocco 6). */ origine?: { tipo: 'quiz'; scheda: string; concetti: string[] }; }
 
 const Appunti = (() => {
   const tutti = () => Stato.tutti<Appunto>('appunto').sort((a, b) => b.updatedAt - a.updatedAt);
