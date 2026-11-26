@@ -17,7 +17,7 @@ interface EsitoCon { ok: boolean; caso?: string; }
 interface AssegnaCon { chiave: string; etichetta: string; ripiego: boolean; }
 /** Record di padronanza: Memoria + campi propri (tutti facoltativi per i lettori vecchi). */
 interface MemoriaCon extends Memoria {
-  sk: string; etichetta: string; ripiego?: boolean; /** risposte fortunate di oggi (per rifare il passo) */ fortOggi?: number;
+  sk: string; etichetta: string; ripiego?: boolean; /** blocco 7: concetti della scheda (lista del focus) all'ultima verifica, per «N di M» */ nEt?: number; /** risposte fortunate di oggi (per rifare il passo) */ fortOggi?: number;
   /** verifiche per giorno: [giorno, giuste, domande, illusioni], ultime 20 */ ver: [string, number, number, number][];
   prima?: { d: number; s: number; ultimo?: string; n: number; lapsi: number; due: string } | null;
 }
@@ -93,7 +93,7 @@ const Concetti = (() => {
    * Nuovo stato del concetto dopo gli esiti di un quiz (puro: restituisce il record da salvare).
    * Stesso giorno dell'ultima verifica: gli esiti si sommano a quelli di oggi e il passo si rifà da `prima`.
    */
-  function aggiorna(m0: MemoriaCon | undefined, base: { id: string; chiave: string; sk: string; etichetta: string; ripiego: boolean }, esiti: EsitoCon[], giorno: string, ritenzione = 0.9): MemoriaCon {
+  function aggiorna(m0: MemoriaCon | undefined, base: { id: string; chiave: string; sk: string; etichetta: string; ripiego: boolean; nEt?: number }, esiti: EsitoCon[], giorno: string, ritenzione = 0.9): MemoriaCon {
     const g0 = esiti.filter(e => e.ok).length, i0 = esiti.filter(e => !e.ok && e.caso === 'illusione_competenza').length;
     const f0 = esiti.filter(e => e.ok && e.caso === 'lucky_guess').length;
     const ver = (m0 && m0.ver ? m0.ver.slice() : []) as [string, number, number, number][];
@@ -106,7 +106,7 @@ const Concetti = (() => {
     const g = voto(giuste, tot, ill, fort), t = pr && pr.ultimo ? Math.max(0, giorniTra(pr.ultimo, giorno)) : 0;
     const st = Fsrs.passo(pr && pr.ultimo ? { d: pr.d, s: pr.s } : null, g, t);
     const log = ((m0 && m0.log) || []).filter(x => x[0] !== giorno).concat([[giorno, g]] as [string, number][]).slice(-50);
-    return { id: base.id, type: 'memoria', updatedAt: 0, er: 'con:' + base.chiave, sk: base.sk, etichetta: base.etichetta, ...(base.ripiego ? { ripiego: true } : {}),
+    return { id: base.id, type: 'memoria', updatedAt: 0, er: 'con:' + base.chiave, sk: base.sk, etichetta: base.etichetta, ...(base.ripiego ? { ripiego: true } : {}), ...(base.nEt || (m0 && m0.nEt) ? { nEt: base.nEt || m0!.nEt } : {}),
       d: st.d, s: st.s, due: piu(giorno, Fsrs.intervallo(st.s, ritenzione)), ultimo: giorno, n: (pr ? pr.n : 0) + 1,
       lapsi: (pr ? pr.lapsi : 0) + (pr && pr.ultimo && g === 1 ? 1 : 0), log, ver: ver.slice(-20), prima: pr, fortOggi: fort } as MemoriaCon;
   }
@@ -132,5 +132,22 @@ const Concetti = (() => {
     const peggiore = ver.length ? ver.map(s => s.stato).sort((a, b) => ORDINE.indexOf(a) - ORDINE.indexOf(b))[0] : 'non_verificato';
     return { stato: ver.length < stati.length && peggiore === 'consolidato' ? 'in_consolidamento' : peggiore, verificati: ver.length, totale: stati.length };
   }
-  return { etichette, assegna, aggiorna, stato, insieme, voto, chiave, slug, NOMI, MARGINE, MIN_AFFIDABILE };
+  /**
+   * Blocco 7 (vista padronanza): riepilogo per scheda dei record 'con:'. «N di M»: M = concetti della scheda all'ultima verifica (nEt)
+   * o, se manca, quelli già visti; i non verificati restano tali (mai 0%). Le domande in ripiego si contano a parte.
+   */
+  function riepilogo(mem: MemoriaCon[], giorno: string): { sk: string; concetti: { etichetta: string; p: PadronanzaCon }[]; ripiego: PadronanzaCon | null; totale: number; nonVerificati: number; insieme: StatoConcetto }[] {
+    const per = new Map<string, MemoriaCon[]>();
+    for (const m of mem) if (m && !m.deleted && String(m.er || '').startsWith('con:') && m.sk) { const l = per.get(m.sk) || []; l.push(m); per.set(m.sk, l); }
+    const out = [];
+    for (const [sk, l] of per) {
+      const veri = l.filter(m => !m.ripiego).map(m => ({ etichetta: m.etichetta, p: stato(m, giorno) })), rip = l.find(m => m.ripiego);
+      const totale = Math.max(veri.length, ...l.map(m => m.nEt || 0)), nonVerificati = totale - veri.filter(c => c.p.stato !== 'non_verificato').length;
+      const st = insieme(veri.map(c => c.p).concat(Array.from({ length: totale - veri.length }, () => ({ stato: 'non_verificato' } as PadronanzaCon))));
+      veri.sort((a, b) => ORDINE.indexOf(a.p.stato) - ORDINE.indexOf(b.p.stato) || a.etichetta.localeCompare(b.etichetta));
+      out.push({ sk, concetti: veri, ripiego: rip ? stato(rip, giorno) : null, totale, nonVerificati, insieme: veri.length ? st.stato : 'non_verificato' as StatoConcetto });
+    }
+    return out.sort((a, b) => ORDINE.indexOf(a.insieme) - ORDINE.indexOf(b.insieme) || a.sk.localeCompare(b.sk));
+  }
+  return { etichette, assegna, aggiorna, stato, insieme, riepilogo, voto, chiave, slug, NOMI, ORDINE, MARGINE, MIN_AFFIDABILE };
 })();

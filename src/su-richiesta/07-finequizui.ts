@@ -32,14 +32,14 @@ const FineQuizUI = (() => {
     return r.dettagli;
   }
   /** Padronanza: un passo FSRS per concetto toccato (lettura e appunti non passano mai di qui). Restituisce l'annulla e gli stati. */
-  function padronanza(id: string, det: EsitoQ[]): { annulla: () => void; stati: PadronanzaCon[] } {
+  function padronanza(id: string, det: EsitoQ[], nEt = 0): { annulla: () => void; stati: PadronanzaCon[] } {
     const giorno = ymd(new Date()), per = new Map<string, { con: NonNullable<EsitoQ['con']>; es: EsitoCon[] }>();
     for (const e of det) { if (!e.con) continue; const g = per.get(e.con.chiave) || { con: e.con, es: [] }; g.es.push({ ok: e.ok, caso: e.caso }); per.set(e.con.chiave, g); }
     const prima: [string, MemoriaCon | undefined][] = [], stati: PadronanzaCon[] = [];
     for (const [ch, g] of per) {
       const idM = 'mem-con-' + Carte.hash(ch), m0 = Stato.prendi<MemoriaCon>(idM), vivo = m0 && !m0.deleted ? m0 : undefined;
       prima.push([idM, vivo ? JSON.parse(JSON.stringify(vivo)) : undefined]);
-      const m = Concetti.aggiorna(vivo, { id: idM, chiave: ch, sk: id, etichetta: g.con.etichetta, ripiego: g.con.ripiego }, g.es, giorno, Ripassi.ritenzione(giorno));
+      const m = Concetti.aggiorna(vivo, { id: idM, chiave: ch, sk: id, etichetta: g.con.etichetta, ripiego: g.con.ripiego, nEt }, g.es, giorno, Ripassi.ritenzione(giorno));
       Stato.salva(m, true); stati.push(Concetti.stato(m, giorno));
     }
     return { stati, annulla: () => { for (const [k, m] of prima) { if (m) Stato.salva(m, true); else if (Stato.prendi<Rec>(k)) Stato.elimina(k); } } };
@@ -107,7 +107,7 @@ const FineQuizUI = (() => {
   function dopo(id: string, r: RisultatoQuiz, aggiungiAnnulla: (f: () => void) => void): void {
     const pr = pref(), det = dettagliDi(r, id), p = FineQuiz.proposta(det, r.pct, pr, esiste(id));
     let stati: PadronanzaCon[] = [];
-    if (r.dettagli && !r.errori) { const pd = padronanza(id, det); stati = pd.stati; aggiungiAnnulla(pd.annulla); }
+    if (r.dettagli && !r.errori) { const pd = padronanza(id, det, Concetti.etichette(r.focus || '').length); stati = pd.stati; aggiungiAnnulla(pd.annulla); }
     if (pr.carte && pr.carteAuto !== 'mai') aggiungiAnnulla(aggiornaCarte(id, p));
     if (pr.carteAuto === 'auto' && p.nuove.length) {
       const ids = crea(id, FineQuiz.automatiche(p));

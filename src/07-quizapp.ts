@@ -546,7 +546,7 @@ const QuizApp = (() => {
         if (nd.t === 'mcq') { if (x.ord.length !== nd.o!.length) x.ord = mescola(nd.o!.map((_, j) => j)); x.hid = []; }
         if (!fattaPrima) { x.picked = null; x.ok = null; }
         disegnaQ();
-      });
+      }, false, dati.focus || '');
       else if (az === 'nuova') Editor.apri(null, s.id, nd => { if (nd) { dati.domande.push(nd); avviso('Domanda aggiunta: comparirà quando rifai il quiz.'); } });
       else if (az === 'ripristina') Editor.ripristina(s.id, () => avviso('Ripristinate: rifai il quiz per vederle.'));
     });
@@ -582,7 +582,8 @@ const Editor = (() => {
   const area = (v: string, righe = 2, ph = '') => h('textarea', { rows: righe, value: v, placeholder: ph }) as HTMLTextAreaElement;
   const pulisci = (d: DomB): Partial<DomB> => { const c: any = { ...d }; delete c.id; delete c.sk; delete c.mod; delete c.nuova; return c; };
 
-  function apri(d0: DomB | null, sk: string, fatto: (d: DomB | null) => void, inBozza = false): void {
+  /** focus: lista dei concetti della scheda (banca). Blocco 7: con ≥ 2 concetti l'editor offre «Concetto», che prevale sull'assegnazione automatica. */
+  function apri(d0: DomB | null, sk: string, fatto: (d: DomB | null) => void, inBozza = false, focus = ''): void {
     const nuova = !d0;
     const d: DomB = d0 ? JSON.parse(JSON.stringify(d0)) : { id: 'q-u-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), sk, t: 'mcq', lv: 'Applicativo', q: '', o: ['', '', '', '', ''], ew: ['', '', '', ''], e: '' };
     const recId = 'mq-' + d.id, r0 = Stato.prendi<ModQ>(recId);
@@ -600,6 +601,15 @@ const Editor = (() => {
     const passi = area((Array.isArray(d.e) ? d.e : [d.e]).join('\n'), 4, 'Correzione: un passaggio per riga (es. «Formula: …»)');
     const nota = h('div.tenue.piccolo');
     const blocco = h('div');
+    // Blocco 7: correzione manuale del concetto (record 'modq' già sincronizzato; Concetti.assegna usa `concetto` per primo)
+    const conc = h('select', { 'aria-label': 'Concetto della domanda' }, h('option', { value: '' }, 'Automatico (lo sceglie l\'app)')) as HTMLSelectElement;
+    const gConc = h('div.gruppo', { hidden: true }, h('div.gruppo-titolo', null, 'Concetto'), conc, h('div.tenue.piccolo', null, 'Conta per la padronanza di questo concetto nei prossimi quiz.'));
+    if (focus) caricaStrumentiQuiz().then(() => {
+      const et = Concetti.etichette(focus); if (et.length < 2) return;
+      const att = d.concetto && !et.some(e => Concetti.slug(e) === Concetti.slug(d.concetto!)) ? [d.concetto] : [];
+      for (const e of att.concat(et)) conc.appendChild(h('option', { value: e, selected: !!d.concetto && Concetti.slug(e) === Concetti.slug(d.concetto) }, e));
+      gConc.hidden = false;
+    }, (e: Error) => console.warn('Editor: concetti non disponibili', e && e.message));
     const controlla = () => {
       if (tipo.value !== 'mcq') { nota.textContent = ''; return; }
       const g = opz[0].value.trim().length, max = Math.max(...opz.slice(1).map(x => x.value.trim().length));
@@ -617,6 +627,7 @@ const Editor = (() => {
     tipo.onchange = disegnaTipo; disegnaTipo();
     const leggi = (): DomB | null => {
       const n: DomB = { ...d, t: tipo.value as any, lv: liv.value, q: testo.value.trim() };
+      if (!gConc.hidden) { if (conc.value) n.concetto = conc.value; else delete n.concetto; }
       const righe = passi.value.split('\n').map(x => x.trim()).filter(Boolean);
       n.e = righe.length > 1 ? righe : (righe[0] || '');
       if (!n.q) { avviso('Scrivi il testo della domanda.'); return null; }
@@ -643,6 +654,7 @@ const Editor = (() => {
         h('div.gruppo', null, h('div.gruppo-titolo', null, 'Domanda'), testo),
         blocco,
         h('div.gruppo', null, h('div.gruppo-titolo', null, 'Correzione passo-passo'), passi),
+        gConc,
         h('div.tenue.piccolo', null, 'Le modifiche si salvano con i tuoi dati su Drive; l\'originale resta e puoi ripristinarlo. Statistiche e spiegazioni AI della domanda restano collegate.'),
         nuova || inBozza ? null : h('div.bottoni', null,
           d0 && d0.mod && !d0.nuova ? h('button.btn.neutro', { onclick: () => { const orig = r0 && r0.originale; if (r0) Stato.elimina(recId); f.chiudi(); fatto({ ...(orig || {}), id: d.id, sk } as DomB); avviso('Ripristinato l\'originale.'); } }, '↩︎ Ripristina originale') : null,

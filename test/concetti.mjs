@@ -145,13 +145,44 @@ t('pilota: sulla banca BIO/CHI/FIS almeno il 60% delle domande riceve un concett
   vero(tot > 3000 && ass / tot >= 0.6, ass + '/' + tot);
 });
 
+// ---------- blocco 7: riepilogo per la vista padronanza ----------
+t('riepilogo: «N di M» con M dal focus (nEt), i non verificati restano tali, il ripiego a parte; ordine dal più debole', () => {
+  const a = C.aggiorna(undefined, { ...BASE('a'), etichetta: 'Krebs', nEt: 5 }, G(3), '2026-11-20');
+  const b = C.aggiorna(undefined, { ...BASE('b'), etichetta: 'Glicolisi', nEt: 5 }, S(3), '2026-11-20');
+  const r = C.aggiorna(undefined, { ...BASE('*'), etichetta: 'Scheda', ripiego: true }, G(2), '2026-11-20');
+  const altro = C.aggiorna(undefined, { id: 'mem-con-x', chiave: 'C-9|x', sk: 'C-9', etichetta: 'pH', ripiego: false }, G(4), '2026-11-20');
+  const out = C.riepilogo([altro, a, b, r, { ...a, id: 'z', deleted: true }], '2026-11-21');
+  eq(out.map(x => x.sk), ['B-1', 'C-9']);
+  const x = out[0];
+  eq([x.totale, x.nonVerificati, x.concetti.length], [5, 3]  .concat([2]));
+  eq(x.concetti.map(c => c.etichetta), ['Glicolisi', 'Krebs']);   // da studiare prima di da consolidare
+  eq(x.insieme, 'da_studiare'); vero(x.ripiego && x.ripiego.stato === 'da_consolidare', JSON.stringify(x.ripiego));
+  eq([out[1].totale, out[1].nonVerificati], [1, 0]);   // senza nEt: M = concetti visti
+});
+t('riepilogo: nEt si conserva fra verifiche anche quando la nuova non lo porta', () => {
+  const a = C.aggiorna(undefined, { ...BASE('a'), nEt: 4 }, G(3), '2026-11-20'), b = C.aggiorna(a, BASE('a'), G(3), '2026-11-22');
+  eq(b.nEt, 4);
+});
+t('vista padronanza: solo lettura (nessun Stato.salva), guscio nel bundle principale che carica il chunk solo con record con:', () => {
+  const ui = leggi('su-richiesta/07-padronanzaui.ts'), ex = leggi('07-extra.ts');
+  vero(!/Stato\.(salva|elimina)/.test(ui), 'la vista non scrive');
+  vero(/startsWith\('con:'\)\);\n  if \(!ci\)/.test(ex) && /PadronanzaUI\.riempi\(el\)/.test(ex) && /sezionePadronanza\(\),/.test(ex));
+  vero(/non verificato/.test(ui) && !/'[^'\n]*[^0-9]0%/.test(ui), 'mai 0% per i non verificati (nei testi mostrati)');
+});
+t('correzione manuale: l\'editor scrive `concetto` nella modifica (modq) e QuizApp passa il focus; assegna lo usa per primo', () => {
+  const q = leggi('07-quizapp.ts');
+  vero(/if \(conc\.value\) n\.concetto = conc\.value; else delete n\.concetto;/.test(q) && /\}, false, dati\.focus \|\| ''\);/.test(q));
+  const m = C.assegna('B-1', 'Scheda', [{ id: 'q1', q: 'Quanti ATP produce la glicolisi?', concetto: 'Krebs' }], ['Glicolisi', 'Krebs'], L);
+  eq(m.get('q1').etichetta, 'Krebs');
+});
+
 // ---------- agganci (guardie statiche) ----------
 t('padronanza solo dalle verifiche: Concetti.aggiorna è chiamato solo da FineQuizUI (mai da appunti, carte, letture)', () => {
   const dove = [];
   for (const dir of ['', 'su-richiesta']) for (const f of fs.readdirSync(path.join(SRC, dir)).filter(x => x.endsWith('.ts')))
     if (/Concetti\.aggiorna\(/.test(leggi(path.join(dir, f)))) dove.push(f);
   eq(dove, ['07-finequizui.ts']);
-  vero(/if \(r\.dettagli && !r\.errori\) \{ const pd = padronanza\(id, det\)/.test(leggi('su-richiesta/07-finequizui.ts')), 'solo quiz nell\'app, non «Rifai solo gli errori»');
+  vero(/if \(r\.dettagli && !r\.errori\) \{ const pd = padronanza\(id, det, Concetti\.etichette\(r\.focus \|\| ''\)\.length\)/.test(leggi('su-richiesta/07-finequizui.ts')), 'solo quiz nell\'app, non «Rifai solo gli errori»');
 });
 t('annullabile: il toast del salvataggio ripristina i record con: e le carte aggiornate', () => {
   const s = leggi('su-richiesta/07-finequizui.ts');

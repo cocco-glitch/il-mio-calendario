@@ -218,7 +218,7 @@ dialog.dialogo-sfondo:not([open]) { display: none; }
 dialog.dialogo-sfondo::backdrop { background: transparent; }
 .dialogo { background: var(--sup); border-radius: 18px; padding: 18px; width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 8px; }
 .dialogo-titolo { font-size: 18px; font-weight: 750; text-align: center; }
-.dialogo-testo { color: var(--tenue); text-align: center; margin-bottom: 6px; }
+.dialogo-testo { color: var(--tenue); text-align: center; margin-bottom: 6px; white-space: pre-line; }
 
 /* v0.58.5: avvisi SEMPRE in basso, sopra la barra (a sinistra del + flottante) e sopra il timer: mai sopra Cerca, + o Annulla/Salva */
 #avvisi { position: fixed; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 14px); left: 10px; right: 84px; z-index: 40; display: flex; flex-direction: column-reverse; gap: 6px; align-items: center; pointer-events: none; }
@@ -922,3 +922,13 @@ details.personalizza > summary { cursor: pointer; padding: 10px 4px; font-weight
 /* v0.64: risposta di codice in monospazio; conferma del voto della rubrica */
 .qz-fill textarea.qz-codice, .qz-voto .qz-codice { font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 .qz-fill textarea.ok { border-color: #2fa866; } .qz-fill textarea.ko { border-color: var(--rosso); }
+/* Blocco 7: vista «Padronanza per concetto» (Statistiche) */
+.pad-materia { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.pad-nome { font-size: var(--fs-m); margin: 0; }
+.pad-barra { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--sup2); }
+.pad-barra > span { height: 100%; }
+.pad-legenda { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.pad-legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.pad-scheda { border-top: 1px solid var(--linea); padding: 6px 0; }
+.pad-scheda > summary { cursor: pointer; min-height: 36px; line-height: 1.4; }
+.pad-concetti { margin: 6px 0; padding-left: 4px; list-style: none; display: flex; flex-direction: column; gap: 4px; }

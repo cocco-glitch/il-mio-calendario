@@ -136,6 +136,16 @@ function widgetTimer(): HTMLElement {
 }
 
 // ---------- Statistiche ----------
+/** Blocco 7: guscio della vista «Padronanza per concetto»; il contenuto (PadronanzaUI) sta nel chunk e si carica solo se c'è almeno un record 'con:'. */
+function sezionePadronanza(): HTMLElement {
+  const el = h('section.card.pad-sezione', { 'aria-live': 'polite' });
+  const ci = Stato.tutti<Memoria>('memoria').some(m => !m.deleted && String(m.er || '').startsWith('con:'));
+  if (!ci) { el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, 'Nessun concetto verificato: fai il quiz di una scheda della banca. Lettura e appunti non contano.')); return el; }
+  el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, 'Carico…'));
+  caricaStrumentiQuiz().then(() => { if (el.isConnected || el.parentNode) PadronanzaUI.riempi(el); },
+    (e: Error) => { svuota(el); el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, '⚠️ Non disponibile: ' + (e && e.message))); });
+  return el;
+}
 function vistaStatistiche(): HTMLElement {
   const g = oggi(), schede = tutteLeSchede();
   const codici = Array.from(new Set([...schede.map(x => x.mat.m), ...Stato.tutti<Sessione>('sessione').map(s => s.m || '').filter(Boolean)]));
@@ -160,6 +170,7 @@ function vistaStatistiche(): HTMLElement {
         h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))),
         h('span', null, String(giorni[i].getDate()))))),
       ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')),
+    sezionePadronanza(),
     sezionePuntiDeboli(),
     sezioneSottostepDeboli(),
     sezioneSonno(),

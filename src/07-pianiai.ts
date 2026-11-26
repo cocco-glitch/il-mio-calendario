@@ -169,6 +169,11 @@ const PianiAI = (() => {
           const av = indice.closest('details') as HTMLDetailsElement | null; if (av) av.open = true;
           indice.focus(); indice.scrollIntoView({ block: 'center' });
         } return; }
+        // Blocco 7: doppioni e argomenti mancanti della mappa AI (solo avvisi, 0 token; con l'indice locale le unità SONO le voci)
+        if (r.fonte === 'ai' && r.struttura) {
+          try { await caricaStrumentiQuiz(); const c = Copertura.analizza(r.piano.unita, r.struttura, { radice: Locale.radice, espandi: Locale.espandi }); if (c.avvisi.length) r.piano.avvisiCopertura = c.avvisi; }
+          catch (e: any) { console.warn('Copertura non calcolata:', e && e.message || e); }
+        }
         salvaPiano(r.piano);
         avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : '')
           + ' · L' + (r.piano.livelloIntensita || '?') + (r.piano.avvisiBio ? ' · 🛡 ' + r.piano.avvisiBio.join(' ') : ''), 8000);
@@ -238,11 +243,13 @@ const PianiAI = (() => {
     const dl = p.deload && p.deload.attivo ? p.deload : null;
     return h('span', null,
       p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null,
+      p.avvisiCopertura && p.avvisiCopertura.length ? h('button.btn.neutro', { 'aria-label': 'Avvisi di copertura del piano', onclick: () => { chiedi('Copertura del piano', [{ testo: 'Ho capito', valore: 'ok' }], p.avvisiCopertura!.join('\n')); } }, '🕳 ' + p.avvisiCopertura.length + ' avvisi') : null,
       h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'),
       h('button.btn.neutro', { onclick: async () => {
         const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
         const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
         if (r.piano && p.deload) { r.piano.deload = p.deload; r.piano.vincoliAI = p.vincoliAI; }
+        if (r.piano && p.avvisiCopertura) r.piano.avvisiCopertura = p.avvisiCopertura;
         if (!r.piano) { avviso('⛔ Da oggi il piano è critico: ' + r.fatt.rimedi.map(x => x.testo).join(' · '), 9000); return; }
         salvaPiano(r.piano); avviso('Piano ricalcolato da oggi (0 token).'); disegna();
       } }, '↻ Ricalcola da oggi'),

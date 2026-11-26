@@ -78,6 +78,8 @@ interface PkPianoAI extends PkPiano {
   giorni: GiornoPianoAI[]; capienza: number; unita: UnitaAI[]; fonteMappa: 'ai' | 'toc'; iper?: boolean;
   /** v0.56 (BP5, facoltativi): livello effettivo dopo i guard-rail, avvisi, de-load 48 h. */
   livelloIntensita?: IntensitaPiano; avvisiBio?: string[]; deload?: StatoDeload;
+  /** Blocco 7 (facoltativo): avvisi di Copertura (doppioni, argomenti mancanti, ripetizioni) calcolati alla creazione, 0 token. */
+  avvisiCopertura?: string[];
 }
 interface DipPianificatore {
   oggi: string;
