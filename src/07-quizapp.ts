@@ -161,9 +161,9 @@ const QuizApp = (() => {
     if (v.cert) {
       const t: TentativoN = { ts: new Date().toISOString(), corretto: giusta, livelloCertezza: v.cert, tempoRispostaMs: Math.max(0, Math.round(v.ms || 0)) };
       r.confidenceLog = Neuro.aggiungiTentativo(r.confidenceLog, t);
-      const p = Neuro.pianifica(r.neuro, v.cert, giusta, r.ultima);
+      const p = Neuro.pianifica(r.neuro, v.cert, giusta, r.ultima, Ripassi.ritenzione(r.ultima));   // blocco 3: FSRS unico
       v.srs = p; v.caso = p.ultimoCaso;
-      r.neuro = { iv: p.iv, ease: p.ease, due: p.due, reps: p.reps, ultimoCaso: p.ultimoCaso };
+      r.neuro = { iv: p.iv, ease: p.ease, due: p.due, reps: p.reps, ultimoCaso: p.ultimoCaso, d: p.d, s: p.s, ultimo: p.ultimo };
       if (p.tag && p.tag.length) r.neuro.tag = p.tag; if (p.daConsolidare) r.neuro.daConsolidare = true;
     }
     let scelta = '';

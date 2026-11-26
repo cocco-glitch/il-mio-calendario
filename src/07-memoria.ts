@@ -6,42 +6,26 @@
 // scende alla ritenzione desiderata (0,90; 0,95 nei 14 giorni prima di un esame).
 //
 // Voto ricavato dal punteggio della scheda: <50 → 1 (Di nuovo), 50–69 → 2 (Difficile), 70–89 → 3 (Bene),
-// ≥90 → 4 (Facile); senza punteggio → 3. Il voto si registra quando cambia la data della scheda
-// (ripasso nuovo) o il punteggio nello stesso giorno (correzione: si riparte dallo stato precedente).
+// ≥90 → 4 (Facile). Il voto si registra quando cambia la data della scheda (ripasso nuovo) o il punteggio
+// nello stesso giorno (correzione: si riparte dallo stato precedente).
+// Motore unificato, blocco 3: formule in 07-fsrs.ts (nucleo unico, condiviso con i quiz). Un sotto-step con
+// le prioritarie spuntate SENZA alcun punteggio entra come «esposto»: primo controllo il giorno dopo,
+// nessun voto inventato (prima valeva «Bene» e la stabilità partiva da 3,17 giorni).
 //
 // "Ripassi di oggi": SOTTO-STEP con data ≤ oggi, prima le più a rischio (R più bassa), con un tetto di
 // minuti al giorno (impostazione ripassoMinuti, predefinito 30) e minuti stimati per scheda (10).
 
-interface MemoriaPrima { d: number; s: number; due: string; ultimo?: string; n: number; lapsi: number; }
-interface MemoriaV extends Memoria { prima?: MemoriaPrima; }
+interface MemoriaPrima { d: number; s: number; due: string; ultimo?: string; n: number; lapsi: number; esposto?: boolean; }
+interface MemoriaV extends Memoria { prima?: MemoriaPrima; esposto?: boolean; }
 
 const Ripassi = (() => {
-  const W = [0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621];
-  const DECAY = -0.5, F = 19 / 81;
+  const { W, recuperabilita, intervallo, passo } = Fsrs;
   const MIN_SCHEDA = 10;
   const giorni = (a: string, b: string) => Math.round((inizioGiorno(daDt(b)).getTime() - inizioGiorno(daDt(a)).getTime()) / 86400000);
   const piu = (k: string, n: number) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
   const lim = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 
-  function recuperabilita(t: number, s: number): number { return Math.pow(1 + F * t / s, DECAY); }
-  function intervallo(s: number, r: number): number { return lim(Math.round(s / F * (Math.pow(r, 1 / DECAY) - 1)), 1, 365); }
-  const d0 = (g: number) => lim(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10);
   function voto(punteggio?: number): number { return punteggio == null ? 3 : punteggio < 50 ? 1 : punteggio < 70 ? 2 : punteggio < 90 ? 3 : 4; }
-
-  /** Un passo di FSRS: nuovo stato dopo un ripasso con voto g, t giorni dopo il precedente. */
-  function passo(st: { d: number; s: number } | null, g: number, t: number): { d: number; s: number } {
-    if (!st) return { d: d0(g), s: W[g - 1] };
-    const { d, s } = st;
-    let s2: number;
-    if (t <= 0) s2 = s * Math.exp(W[17] * (g - 3 + W[18]));                      // stesso giorno
-    else {
-      const r = recuperabilita(t, s);
-      if (g === 1) s2 = Math.min(s, W[11] * Math.pow(d, -W[12]) * (Math.pow(s + 1, W[13]) - 1) * Math.exp(W[14] * (1 - r)));
-      else s2 = s * (Math.exp(W[8]) * (11 - d) * Math.pow(s, -W[9]) * (Math.exp(W[10] * (1 - r)) - 1) * (g === 2 ? W[15] : 1) * (g === 4 ? W[16] : 1) + 1);
-    }
-    const dd = d - W[6] * (g - 3) * (10 - d) / 9;
-    return { d: lim(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), s: lim(s2, 0.1, 36500) };
-  }
 
   /** v0.57 (A16): UNICA fonte della ritenzione desiderata (carte, appunti, pianificatore).
    *  Ordine: scelta manuale → profilo cognitivo (Dominio) → minimo richiesto dal chiamante (es. livello
@@ -75,19 +59,21 @@ const Ripassi = (() => {
     }
     return piano && piano < ultima ? piano : ultima;
   }
-  function votoMedio(k: string): number {
-    const t = Studio.trovaSotto(k); if (!t) return 3;
+  /** Voto medio delle prioritarie con punteggio; null se nessuna ne ha (solo esposizione, §4-F). */
+  function votoMedio(k: string): number | null {
+    const t = Studio.trovaSotto(k); if (!t) return null;
     const pt = Studio.schedeDi(t.sub).filter(x => x.tipo === 'P').map(x => (Studio.prog(x.id) || {} as Progresso).punteggio).filter(v => v != null) as number[];
-    return pt.length ? voto(pt.reduce((a, b) => a + b, 0) / pt.length) : 3;
+    return pt.length ? voto(pt.reduce((a, b) => a + b, 0) / pt.length) : null;
   }
   function salvaStato(k: string, base: MemoriaPrima | null, g: number, giorno: string, log: [string, number][], scheda?: string): void {
-    const t = base && base.ultimo ? giorni(base.ultimo, giorno) : 0;
-    const st = passo(base && base.ultimo ? { d: base.d, s: base.s } : null, g, t);
+    const verificato = !!(base && base.ultimo && !base.esposto);   // dopo una sola esposizione il primo voto vero riparte da zero
+    const t = verificato ? giorni(base!.ultimo!, giorno) : 0;
+    const st = passo(verificato ? { d: base!.d, s: base!.s } : null, g, t);
     const prec = (mem(k) || {} as any).schede as string[] | undefined;
     const m: MemoriaV & { schede?: string[] } = {
       id: 'mem-sub-' + k, type: 'memoria', updatedAt: 0, er: 'sub:' + k, d: st.d, s: st.s,
       due: piu(giorno, intervallo(st.s, ritenzione(giorno))), ultimo: giorno,
-      n: (base ? base.n : 0) + 1, lapsi: (base ? base.lapsi : 0) + (base && base.ultimo && g === 1 ? 1 : 0),
+      n: (base ? base.n : 0) + 1, lapsi: (base ? base.lapsi : 0) + (verificato && g === 1 ? 1 : 0),
       log: log.slice(-50), prima: base || undefined,
       schede: scheda ? (prec || []).concat([scheda]).slice(-30) : prec,   // schede usate per i ripassi (rotazione)
     };
@@ -95,10 +81,18 @@ const Ripassi = (() => {
   }
   function mem(k: string): MemoriaV | undefined { const m = Stato.prendi<MemoriaV>('mem-sub-' + k); return m && !m.deleted ? m : undefined; }
 
-  /** Primo ingresso nei ripassi (quando le prioritarie sono tutte fatte) o ricalcolo dell'apprendimento. */
+  /** Primo ingresso nei ripassi (quando le prioritarie sono tutte fatte) o ricalcolo dell'apprendimento.
+   *  Senza alcun punteggio: «esposto», log con voto 0 (= nessun voto), primo controllo il giorno dopo. */
   function apprendi(k: string): void {
     const giorno = dataApprendimento(k); if (!giorno) return;
-    salvaStato(k, null, votoMedio(k), giorno, [[giorno, votoMedio(k)]]);
+    const g = votoMedio(k);
+    if (g != null) { salvaStato(k, null, g, giorno, [[giorno, g]]); return; }
+    const st = Fsrs.esposizione(), mm = mem(k) as (MemoriaV & { schede?: string[] }) | undefined, prec = mm ? mm.schede : undefined;
+    const m: MemoriaV & { schede?: string[] } = {
+      id: 'mem-sub-' + k, type: 'memoria', updatedAt: 0, er: 'sub:' + k, d: st.d, s: st.s,
+      due: piu(giorno, 1), ultimo: giorno, n: 1, lapsi: 0, log: [[giorno, 0]], esposto: true, schede: prec,
+    };
+    Stato.salva(m, true);
   }
 
   /** Chiamata da Studio.segna: una scheda è stata spuntata o ha un nuovo punteggio. */
@@ -116,7 +110,7 @@ const Ripassi = (() => {
       Stato.salva(m, true);
       salvaStato(k, m.prima || null, g, giorno, log.concat([[giorno, g]]), id); return;
     }
-    salvaStato(k, { d: m.d, s: m.s, due: m.due, ultimo: m.ultimo, n: m.n, lapsi: m.lapsi }, g, giorno, ((m.log || []) as [string, number][]).concat([[giorno, g]]), id);
+    salvaStato(k, { d: m.d, s: m.s, due: m.due, ultimo: m.ultimo, n: m.n, lapsi: m.lapsi, esposto: m.esposto }, g, giorno, ((m.log || []) as [string, number][]).concat([[giorno, g]]), id);
   }
 
   /** Crea le memorie mancanti dei sotto-step completati (prima installazione o dati arrivati dalla sync). */
@@ -127,9 +121,9 @@ const Ripassi = (() => {
     return n;
   }
 
-  /** Probabilità di ricordare oggi un sotto-step (0–1). */
+  /** Probabilità di ricordare oggi un sotto-step (0–1); null se mai verificato (solo esposto). */
   function ricordo(k: string, giorno = ymd(new Date())): number | null {
-    const m = mem(k); if (!m || !m.ultimo) return null;
+    const m = mem(k); if (!m || !m.ultimo || m.esposto) return null;
     return recuperabilita(Math.max(0, giorni(m.ultimo, giorno)), m.s);
   }
   /** Scheda da proporre per il ripasso: una prioritaria non usata negli ultimi ripassi, la più debole (punteggio più basso). */
@@ -150,7 +144,7 @@ const Ripassi = (() => {
     const tutte = Stato.tutti<MemoriaV>('memoria').filter(m => m.er.startsWith('sub:'));
     const fatti = tutte.filter(m => m.ultimo === giorno && m.n > 1);
     const scadute = tutte.filter(m => m.due <= giorno && m.ultimo !== giorno && m.ultimo)
-      .map(m => ({ m, k: m.er.slice(4), r: recuperabilita(Math.max(0, giorni(m.ultimo!, giorno)), m.s) }))
+      .map(m => ({ m, k: m.er.slice(4), r: recuperabilita(Math.max(0, giorni(m.ultimo!, giorno)), m.s), esposto: !!m.esposto }))
       .sort((a, b) => a.r - b.r);
     const posti = Math.max(0, quanteAlGiorno() - fatti.length);
     return { oggi: scadute.slice(0, posti), coda: scadute.slice(posti), fatti, minuti: Math.min(posti, scadute.length) * MIN_SCHEDA };

@@ -25,11 +25,11 @@ const CodaRipasso = (() => {
     const out: ElemCoda[] = [];
     for (const x of Ripassi.delGiorno(g).oggi) {
       const sc = Ripassi.schedaDaProporre(x.k); if (!sc) continue;
-      const t = trovaScheda(sc.id), sub = Studio.trovaSotto(x.k), pc = Math.round(x.r * 100) + '%';
+      const t = trovaScheda(sc.id), sub = Studio.trovaSotto(x.k), pc = x.esposto ? 'primo controllo' : 'ricordo ' + Math.round(x.r * 100) + '%';   // blocco 3: esposto = mai verificato
       out.push({ sorgente: 'step', id: 'step:' + x.k, k: x.k, materia: materiaDi(x.k), n: 1, min: MIN, rischio: 1 - x.r, priorita: 0,
         titolo: Studio.etichetta(x.k) + (sub ? ' · ' + sub.sub.titolo : ''),
-        sotto: 'Rifai: ' + (t ? t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ')' : sc.titolo) + ' · ricordo ' + pc,
-        voce: { tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ricordo ' + pc, min: MIN, k: x.k, id: sc.id },
+        sotto: 'Rifai: ' + (t ? t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ')' : sc.titolo) + ' · ' + pc,
+        voce: { tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ' + pc, min: MIN, k: x.k, id: sc.id },
         apri: () => { const s = trovaScheda(sc.id); if (s) apriScheda(s.pk, s.m, s.micro, s.s, true); } });
     }
     return out;

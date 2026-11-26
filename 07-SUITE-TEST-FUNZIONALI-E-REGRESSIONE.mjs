@@ -30,22 +30,25 @@ fs.writeFileSync(path.join(TMP, 'stub.d.ts'), 'interface Rec { id: string; type:
   + 'interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }\n'
   + "interface PkPiano { tipo: 'piano'; id: string; modo?: string; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; }\n");
 fs.copyFileSync(path.join(SRC, '01-json.ts'), path.join(TMP, 'json.ts'));   // v0.57 (A15): parser unico usato da Neuro e Pianificatore
+fs.copyFileSync(path.join(SRC, '07-fsrs.ts'), path.join(TMP, 'fsrs.ts'));   // blocco 3: nucleo FSRS unico usato da Neuro
 fs.copyFileSync(path.join(SRC, '07-neuro.ts'), path.join(TMP, 'neuro.ts'));
 fs.copyFileSync(path.join(SRC, '07-pianificatore.ts'), path.join(TMP, 'pianificatore.ts'));
 try {
   execFileSync(process.execPath, [path.join(RADICE, 'node_modules', 'typescript', 'bin', 'tsc'), '--target', 'es2020', '--lib', 'es2020', '--strict',
-    '--noEmitOnError', 'false', '--outDir', 'out', 'stub.d.ts', 'json.ts', 'neuro.ts', 'pianificatore.ts'], { cwd: TMP, stdio: 'pipe' });
+    '--noEmitOnError', 'false', '--outDir', 'out', 'stub.d.ts', 'json.ts', 'fsrs.ts', 'neuro.ts', 'pianificatore.ts'], { cwd: TMP, stdio: 'pipe' });
 } catch (e) { console.log('⚠️ tsc sui moduli puri:\n' + String(e.stdout || e.message).slice(0, 2000)); }
 const JS_JSON = fs.readFileSync(path.join(TMP, 'out', 'json.js'), 'utf8');
+const JS_FSRS = fs.readFileSync(path.join(TMP, 'out', 'fsrs.js'), 'utf8');
 const JS = fs.readFileSync(path.join(TMP, 'out', 'neuro.js'), 'utf8');
 const JS_PIAN = fs.readFileSync(path.join(TMP, 'out', 'pianificatore.js'), 'utf8');
 let chiamateRete = 0;
 const sandbox = { console, fetch: async () => { chiamateRete++; throw new Error('rete vietata nei test'); }, Math, Date, JSON, Promise, Set, Map };
 vm.createContext(sandbox);
 vm.runInContext(JS_JSON + '\n;this.JsonAI = JsonAI;', sandbox);
+vm.runInContext(JS_FSRS + '\n;this.Fsrs = Fsrs;', sandbox);
 vm.runInContext(JS + '\n;this.Neuro = Neuro;', sandbox);
 vm.runInContext(JS_PIAN + '\n;this.Pianificatore = Pianificatore;', sandbox);
-const N = sandbox.Neuro, P = sandbox.Pianificatore;
+const N = sandbox.Neuro, P = sandbox.Pianificatore, FS = sandbox.Fsrs;
 const OGGI = '2026-11-18';
 
 console.log('\n== BP3 §1.2 Matrice certezza × correttezza ==');
@@ -58,9 +61,9 @@ t('incerto + giusta → lucky guess (max 1 g, ease fermo, da_consolidare)', () =
   const r = N.pianifica(prev, 1, true, OGGI);
   vero(r.iv <= 1, 'iv ≤ 1'); eq(r.ease, 2.5, 'ease invariato'); vero(r.daConsolidare, 'flag'); eq(r.ultimoCaso, 'lucky_guess');
 });
-t('certo + giusta → padronanza (×1,25 sullo standard)', () => {
+t('certo + giusta → padronanza (voto FSRS «Facile»: intervallo più lungo dello standard)', () => {
   const std = N.pianifica(prev, 2, true, OGGI), r = N.pianifica(prev, 3, true, OGGI);
-  eq(r.iv, Math.round(std.iv * 1.25 * 10) / 10); eq(r.ultimoCaso, 'padronanza');
+  vero(r.iv > std.iv, 'padronanza ' + r.iv + ' > standard ' + std.iv); vero(r.s > std.s, 'stabilità maggiore'); eq(r.ultimoCaso, 'padronanza');
 });
 t('incerto + sbagliata → lacuna nota (1 g + rimando alla teoria)', () => {
   const r = N.pianifica(prev, 1, false, OGGI); eq(r.iv, 1); vero(r.rimando, 'rimando'); eq(r.ultimoCaso, 'lacuna_nota');
@@ -77,7 +80,39 @@ console.log('\n== BP3 §1.1 Retrocompatibilità (quiz v0.51–v0.53 senza campi 
 const vecchia = { id: 'C-1-1-q1', sk: 'C-1-1', t: 'mcq', lv: 'Sbarramento', q: 'Domanda vecchia?', o: ['giusta', 'a', 'b', 'c', 'd'], e: ['In sintesi: x'] };
 t('normalizza non aggiunge campi a una domanda vecchia', () => eq(Object.keys(N.normalizza(vecchia)).sort(), Object.keys(vecchia).sort()));
 t('bloom stimato senza bloomLevel (mai undefined)', () => { eq(N.bloom(vecchia), 1); eq(N.bloom({ lv: 'Problema' }), 3); eq(N.bloom({ t: 'risposta_aperta_rubrica' }), 4); });
-t('pianifica senza stato precedente né certezza → standard', () => { const r = N.pianifica(null, null, true, OGGI); eq(r.iv, 1); eq(r.ultimoCaso, 'standard'); });
+t('pianifica senza stato precedente né certezza → standard (primo «Bene» FSRS: 3 giorni)', () => { const r = N.pianifica(null, null, true, OGGI); eq(r.iv, 3); eq(r.s, 3.173); eq(r.ultimo, OGGI); eq(r.ultimoCaso, 'standard'); });
+
+console.log('\n== Motore unificato · blocco 3: FSRS unico per le domande ==');
+t('Fsrs: con ritenzione 0,90 intervallo = stabilità (S := iv è esatto)', () => { for (const x of [1, 3, 7, 21, 60]) eq(FS.intervallo(x, 0.9), x, 'S=' + x); });
+t('Fsrs.daSm2: ease 2,5 → D 5, ease 1,3 → D 9, S = iv', () => { eq(FS.daSm2(3, 2.5), { d: 5, s: 3 }); eq(FS.daSm2(10, 1.3), { d: 9, s: 10 }); eq(FS.daSm2(0, 0).s, FS.W[2], 'iv assente → S del primo «Bene»'); });
+t('votoCaso: illusione/lacuna/errore → 1, fortunata → 2, giusta → 3, padronanza → 4', () => {
+  eq([N.votoCaso('illusione_competenza', false), N.votoCaso('lacuna_nota', false), N.votoCaso('standard', false), N.votoCaso('lucky_guess', true), N.votoCaso('standard', true), N.votoCaso('padronanza', true)], [1, 1, 1, 2, 3, 4]);
+});
+t('migrazione SM-2 → FSRS alla prima risposta: stesso passo di Fsrs con S = iv e t = oggi − (due − iv)', () => {
+  const vecchio = { iv: 3, ease: 2.5, due: '2026-11-20', reps: 2 }, r = N.pianifica(vecchio, 2, true, '2026-11-20');
+  const atteso = FS.passo({ d: 5, s: 3 }, 3, 3);
+  eq(r.s, Math.round(atteso.s * 1000) / 1000, 'stabilità'); eq(r.d, Math.round(atteso.d * 1000) / 1000, 'difficoltà'); vero(r.iv > 3, 'giusta al momento giusto → intervallo più lungo: ' + r.iv);
+});
+t('record già FSRS: usa d, s e ultimo salvati (non ease)', () => {
+  const a = { iv: 5, ease: 1.3, due: '2026-11-23', reps: 3, d: 4, s: 5, ultimo: '2026-11-18' }, r = N.pianifica(a, 2, true, '2026-11-23');
+  eq(r.s, Math.round(FS.passo({ d: 4, s: 5 }, 3, 5).s * 1000) / 1000);
+});
+t('ritenzione più alta (esame vicino) → intervallo non più lungo', () => { const a = N.pianifica(prev, 2, true, OGGI, 0.9), b = N.pianifica(prev, 2, true, OGGI, 0.95); vero(b.iv <= a.iv && b.iv < 10); });
+t('errore standard → voto 1: stabilità non maggiore e ripasso entro 1 giorno', () => { const r = N.pianifica({ iv: 10, ease: 2.5, due: OGGI, reps: 4, d: 5, s: 10, ultimo: '2026-11-08' }, 2, false, OGGI); vero(r.s <= 10 && r.iv <= 2, 's=' + r.s + ' iv=' + r.iv); eq(r.reps, 0); });
+t('campi SM-2 conservati per i dispositivi con versioni precedenti (iv, ease, due, reps)', () => { const r = N.pianifica(prev, 2, true, OGGI); for (const k of ['iv', 'ease', 'due', 'reps']) vero(k in r, 'manca ' + k); eq(r.ease, 2.6); });
+t('Ripassi e Neuro usano lo stesso nucleo FSRS (nessuna seconda copia delle formule)', () => {
+  const m = leggi('07-memoria.ts'), n = leggi('07-neuro.ts'), q = leggi('07-quizapp.ts');
+  vero(/= Fsrs;/.test(m) && !/W\[17\]/.test(m) && !/W\[17\]/.test(n), 'formule solo in 07-fsrs.ts');
+  vero(/Fsrs\.passo/.test(n) && /Ripassi\.ritenzione\(r\.ultima\)/.test(q) && /d: p\.d, s: p\.s, ultimo: p\.ultimo/.test(q), 'QuizApp salva lo stato FSRS');
+});
+t('§4-F: sotto-step spuntato senza punteggio entra come «esposto» (nessun voto inventato)', () => {
+  const m = leggi('07-memoria.ts'), c = leggi('07-coda.ts');
+  vero(/function votoMedio\(k: string\): number \| null/.test(m) && /: null;\n  \}/.test(m), 'votoMedio senza punteggi → null');
+  vero(/Fsrs\.esposizione\(\)/.test(m) && /due: piu\(giorno, 1\)/.test(m) && /esposto: true/.test(m), 'primo controllo il giorno dopo');
+  vero(/!m\.ultimo \|\| m\.esposto\) return null/.test(m), 'ricordo non mostrato se mai verificato');
+  vero(/x\.esposto \? 'primo controllo'/.test(c), 'coda: «primo controllo» al posto della percentuale');
+  eq(FS.esposizione().s, 1); eq(FS.intervallo(FS.esposizione().s, 0.9), 1);
+});
 t('metadati non validi scartati, validi conservati', () => {
   const d = N.normalizza({ ...vecchia, bloomLevel: 7, distractorTypes: { 1: 'misconception', 2: 'boh' }, confidenceLog: 'x', sourceRef: { libro: 'Zan', stepId: 'C-1' } });
   vero(d.bloomLevel === undefined && d.confidenceLog === undefined); eq(d.distractorTypes, { 1: 'misconception' }); eq(d.sourceRef, { libro: 'Zan', stepId: 'C-1' });

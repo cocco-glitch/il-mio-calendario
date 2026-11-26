@@ -124,6 +124,20 @@ with sync_playwright() as p:
     ok(pg.locator('.chip-ricordo').count() >= 4, 'chip "ricordo %" sui sotto-step completati')
     pg.screenshot(path='test/f2-studio.png', full_page=True)
 
+    # 10b) Motore unificato, blocco 3 (§4-F): prioritarie spuntate SENZA punteggio → «esposto», non «Bene»
+    libero = pg.evaluate("Studio.pkStep().flatMap(p => p.materie.flatMap(m => m.sottostep.map(s => s.k))).find(k => !Ripassi.mem(k) && Studio.schedeDi(Studio.trovaSotto(k).sub).some(x => x.tipo === 'P'))")
+    ok(bool(libero), 'sotto-step libero per la prova esposto: %s' % libero)
+    fatte(libero, None)
+    me = pg.evaluate("Ripassi.mem('%s')" % libero)
+    ok(me and me.get('esposto') is True and me['n'] == 1 and me['log'][0][1] == 0, 'senza punteggio: esposto, log con voto 0 (%s)' % (me and me.get('log')))
+    dopo = pg.evaluate("(k => { const d = new Date(k + 'T12:00'); d.setDate(d.getDate() + 1); return ymd(d); })('%s')" % me['ultimo'])
+    ok(me['due'] == dopo and abs(me['s'] - 1) < 1e-9, 'primo controllo il giorno dopo l\'apprendimento (%s → %s), S = 1 (non 3,17)' % (me['ultimo'], me['due']))
+    ok(pg.evaluate("Ripassi.ricordo('%s')" % libero) is None, 'ricordo non dichiarato finché non è verificato')
+    sid = P(libero)[0]
+    pg.evaluate("Studio.segna('%s', { fatta: true, data: '2026-11-12', punteggio: 80 })" % sid)
+    m3 = pg.evaluate("Ripassi.mem('%s')" % libero)
+    ok(m3 and not m3.get('esposto') and abs(m3['s'] - W[2]) < 1e-9 and m3['lapsi'] == 0 and m3['due'] == '2026-11-15', 'primo punteggio vero = primo «Bene» FSRS (S 3,17, due 15/11): %s' % (m3 and m3['due']))
+
     # 11) Tetto modificabile
     pg.evaluate("(() => { const i = imp(); i.ripassoMinuti = 60; Stato.salva(i); })()")
     ok(pg.evaluate("Ripassi.quanteAlGiorno()") == 6, 'tetto 60 min → 6 ripassi')

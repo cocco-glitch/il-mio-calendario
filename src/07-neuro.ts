@@ -4,9 +4,11 @@
 // 1. Metadati per domanda (tutti facoltativi, con ripiego sicuro → i quiz v0.51–v0.53 restano validi):
 //    bloomLevel 1–4, distractorTypes {indiceOpzione: tipo}, confidenceLog (ultimi tentativi), sourceRef.
 // 2. Matrice certezza × correttezza (1 = tiro a indovinare, 2 = abbastanza sicuro, 3 = certo):
-//    certo+sbagliata → illusione di competenza (0,5 giorni, ease −0,30, feedback contrastivo obbligatorio);
+//    certo+sbagliata → illusione di competenza (stesso giorno, ease −0,30, feedback contrastivo obbligatorio);
 //    incerto+giusta → risposta fortunata (max 1 giorno, ease fermo, «da consolidare»);
-//    certo+giusta → padronanza (intervallo ×1,25); incerto+sbagliata → lacuna nota (1 giorno + rimando alla teoria).
+//    certo+giusta → padronanza (voto FSRS «Facile»); incerto+sbagliata → lacuna nota (1 giorno + rimando alla teoria).
+//    Motore unificato, blocco 3: l'intervallo viene da FSRS-5 (07-fsrs.ts), lo stesso dei ripassi; `ease` resta
+//    calcolato come prima solo per i dispositivi con versioni precedenti e per la migrazione (Fsrs.daSm2).
 // 3. Interleaving: mai più di 2 domande di fila dello stesso micro-argomento; alternanza Bloom 1–2 / 3–4.
 // 4. Fatica attentiva (zero token): media mobile degli ultimi 5 tempi contro la base della sessione.
 // 5. Imbuto AI a 4 livelli: 0 locale → 1 spiegazioni già pronte/cache → 2 micro-chiamata (≤120 parole,
@@ -20,7 +22,8 @@ type Certezza = 1 | 2 | 3;
 interface TentativoN { ts: string; corretto: boolean; livelloCertezza: Certezza; tempoRispostaMs: number; }
 interface SourceRefN { libro?: string; capitolo?: string; pagina?: string; stepId?: string; }
 /** Stato di ripasso della singola domanda (dentro il record 'statq', campo facoltativo `neuro`). */
-interface SrsN { iv: number; ease: number; due: string; reps: number; tag?: string[]; daConsolidare?: boolean; ultimoCaso?: CasoN; }
+interface SrsN { iv: number; ease: number; due: string; reps: number; tag?: string[]; daConsolidare?: boolean; ultimoCaso?: CasoN;
+  d?: number; s?: number; ultimo?: string; }   // blocco 3: stato FSRS (facoltativo: i record SM-2 si migrano alla prima risposta)
 type CasoN = 'illusione_competenza' | 'lucky_guess' | 'padronanza' | 'lacuna_nota' | 'standard';
 type StatoPipe = 'bozza' | 'pronta' | 'verificata';
 interface PipeStep extends Rec { type: 'pipestep'; stepId: string; schedaProlissa: StatoPipe; schedaCondensata: StatoPipe; }
@@ -78,21 +81,30 @@ const Neuro = (() => {
     return 'standard';
   }
   const piuGiorni = (oggi: string, n: number) => { const d = new Date(oggi + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-  /** Nuovo stato di ripasso della domanda (SM-2 semplificato + correzione metacognitiva della BP3). */
-  function pianifica(prev: SrsN | null | undefined, certezza: Certezza | null | undefined, corretto: boolean, oggi: string): SrsN & { contrastivo: boolean; rimando: boolean } {
+  const giorniTra = (a: string, b: string) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 86400000);
+  /** Voto FSRS (1–4) dal caso della matrice: illusione, lacuna e errore → 1; fortunata → 2; giusta → 3; padronanza → 4. */
+  function votoCaso(c: CasoN, corretto: boolean): number {
+    return !corretto ? 1 : c === 'lucky_guess' ? 2 : c === 'padronanza' ? 4 : 3;
+  }
+  /** Nuovo stato di ripasso della domanda: FSRS-5 (nucleo unico) + correzione metacognitiva della BP3.
+   *  Un record SM-2 senza `s` si migra qui (S := iv, D da ease), senza riscrivere nulla in anticipo. */
+  function pianifica(prev: SrsN | null | undefined, certezza: Certezza | null | undefined, corretto: boolean, oggi: string, ritenzione = 0.9): SrsN & { contrastivo: boolean; rimando: boolean } {
     const p = prev && typeof prev === 'object' ? prev : null;
     const ease0 = p && p.ease > 0 ? p.ease : EASE0, iv0 = p && p.iv > 0 ? p.iv : 0, reps0 = p && p.reps > 0 ? p.reps : 0;
-    // standard
-    let iv = corretto ? (iv0 < 1 ? 1 : iv0 < 3 ? 3 : Math.round(iv0 * ease0)) : 1;
-    let ease = corretto ? ease0 + 0.1 : Math.max(EASE_MIN, ease0 - 0.2);
-    const c = caso(certezza, corretto);
+    let ease = corretto ? ease0 + 0.1 : Math.max(EASE_MIN, ease0 - 0.2);   // solo retrocompatibilità
+    const c = caso(certezza, corretto), g = votoCaso(c, corretto);
+    let st: { d: number; s: number } | null = null, t = 0;
+    if (p && p.s! > 0 && p.d! > 0) { st = { d: p.d!, s: p.s! }; t = p.ultimo ? Math.max(0, giorniTra(p.ultimo, oggi)) : 0; }
+    else if (iv0 > 0) { st = Fsrs.daSm2(iv0, ease0); t = p!.due ? Math.max(0, giorniTra(p!.due, oggi) + Math.round(iv0)) : 0; }   // ultimo ≈ due − iv
+    const nuovo = Fsrs.passo(st, g, t);
+    let iv = Fsrs.intervallo(nuovo.s, ritenzione);
     let tag = (p && p.tag ? p.tag.slice() : []).filter(t => t !== 'illusione_competenza' || !corretto);
     let daConsolidare = false, contrastivo = false, rimando = false;
     if (c === 'illusione_competenza') { iv = 0.5; ease = Math.max(EASE_MIN, ease0 - 0.30); contrastivo = true; if (!tag.includes('illusione_competenza')) tag.push('illusione_competenza'); }
     else if (c === 'lucky_guess') { iv = Math.min(iv, 1); ease = ease0; daConsolidare = true; }
-    else if (c === 'padronanza') iv = Math.round(iv * 1.25 * 10) / 10;
     else if (c === 'lacuna_nota') { iv = 1; rimando = true; }
-    const r: SrsN & { contrastivo: boolean; rimando: boolean } = { iv, ease: Math.round(ease * 100) / 100, due: piuGiorni(oggi, iv < 1 ? 0 : Math.round(iv)), reps: corretto ? reps0 + 1 : 0, contrastivo, rimando, ultimoCaso: c };
+    const r: SrsN & { contrastivo: boolean; rimando: boolean } = { iv, ease: Math.round(ease * 100) / 100, due: piuGiorni(oggi, iv < 1 ? 0 : Math.round(iv)), reps: corretto ? reps0 + 1 : 0, contrastivo, rimando, ultimoCaso: c,
+      d: Math.round(nuovo.d * 1000) / 1000, s: Math.round(nuovo.s * 1000) / 1000, ultimo: oggi };
     if (tag.length) r.tag = tag;
     if (daConsolidare) r.daConsolidare = true;
     return r;
@@ -381,7 +393,7 @@ const Neuro = (() => {
   }
 
   return { TIPI_DISTR, MAX_LOG, BREAKER, MAX_PAROLE_MICRO, MAX_TOKEN_MICRO, TESTO_FATICA, NOMI_DISTR,
-    bloom, normalizza, aggiungiTentativo, stepDi, argomentoDi, tipoDistrattore, caso, pianifica, piuGiorni,
+    bloom, normalizza, aggiungiTentativo, stepDi, argomentoDi, tipoDistrattore, caso, votoCaso, pianifica, piuGiorni,
     interleave, filaMax, fatica, prontaL1, imbuto, promptMicro, parole, serveBreaker, promptGemini,
     calcola, espandiTemplate, haTemplate, varianti, cloze, riparaJson, parseTollerante, daAlias, importa,
     normTesto, hashTesto, deduplica, daEsportare, compatto, pacchetto, statoPipe, copertura, prossimoStato };
