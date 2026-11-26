@@ -53,6 +53,7 @@ const Privacy = (() => {
   /** Cancella anche i PDF dei libri in Cache Storage (sono file del Drive dell'account precedente). */
   async function pulisciCache(): Promise<void> {
     try { if (typeof caches !== 'undefined') await caches.delete('imc-pdf'); } catch (e) { console.warn('Privacy: cache PDF non cancellata', e); }
+    try { if (typeof caches !== 'undefined') await caches.delete('imc-testo-pdf'); } catch (e) { console.warn('Privacy: cache del testo PDF non cancellata', e); }   // blocco 2 (TestoPdf.tutte)
   }
   /** Tutto ciò che appartiene all'account precedente, su questo dispositivo. */
   async function svuotaAccount(): Promise<void> {

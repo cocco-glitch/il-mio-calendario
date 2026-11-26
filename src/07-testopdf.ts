@@ -53,5 +53,27 @@ const TestoPdf = (() => {
   async function pagina(doc: Parameters<typeof elementi>[0], n: number, modo: ModoTestoPdf = 'spazi'): Promise<string> {
     return formatta(await elementi(doc, n), modo);
   }
-  return { apri, chiudi, con, elementi, pagina, formatta, righe };
+  // ---------- Blocco 2: cache locale del testo (Cache API, solo questo dispositivo, svuotata al cambio account) ----------
+  const CACHE = 'imc-testo-pdf';
+  const url = (chiave: string, modo: ModoTestoPdf) => location.origin + '/__testo-pdf/' + encodeURIComponent(chiave) + '/' + modo;
+  async function daCache(chiave: string, modo: ModoTestoPdf): Promise<string[] | null> {
+    try { const r = await (await caches.open(CACHE)).match(url(chiave, modo)); return r ? await r.json() as string[] : null; }
+    catch (e) { console.warn('[TestoPdf] cache non leggibile', e); return null; }
+  }
+  async function inCache(chiave: string, modo: ModoTestoPdf, pagine: string[]): Promise<void> {
+    try { await (await caches.open(CACHE)).put(url(chiave, modo), new Response(JSON.stringify(pagine), { headers: { 'content-type': 'application/json' } })); }
+    catch (e) { console.warn('[TestoPdf] cache non scritta (spazio?)', e); }
+  }
+  /** Testo di TUTTE le pagine; con una chiave (id@versione o sha256 del file) la seconda volta non riapre il PDF. */
+  async function tutte(dati: Blob | ArrayBuffer | Uint8Array | (() => Promise<Blob>), chiave: string | null, modo: ModoTestoPdf = 'eol', avanza?: (fatte: number, tot: number) => void): Promise<string[]> {
+    if (chiave) { const c = await daCache(chiave, modo); if (c) return c; }
+    const pagine = await con(typeof dati === 'function' ? await dati() : dati, async doc => {
+      const out: string[] = [];
+      for (let n = 1; n <= doc.numPages; n++) { out.push(await pagina(doc, n, modo)); if (avanza && n % 20 === 0) avanza(n, doc.numPages); }
+      return out;
+    });
+    if (chiave) await inCache(chiave, modo, pagine);
+    return pagine;
+  }
+  return { apri, chiudi, con, elementi, pagina, formatta, righe, tutte, CACHE };
 })();

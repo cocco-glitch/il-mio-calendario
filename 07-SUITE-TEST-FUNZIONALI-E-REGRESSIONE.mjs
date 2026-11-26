@@ -28,20 +28,22 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'imc-bp3-'));
 fs.writeFileSync(path.join(TMP, 'stub.d.ts'), 'interface Rec { id: string; type: string; updatedAt: number; deleted?: boolean; acc?: string; }\n'
   + 'interface VocePiano { k: string; t: string; d?: string; speciale?: boolean; }\n'
   + 'interface GiornoPiano { data: string; n?: number; voci: VocePiano[]; nota?: string; }\n'
-  + 'declare function caricaPdfJs(): Promise<any>;\ninterface Blob { arrayBuffer(): Promise<ArrayBuffer>; }\ndeclare const console: { warn(...a: unknown[]): void; log(...a: unknown[]): void };\n'
+  + 'declare function caricaPdfJs(): Promise<any>;\ninterface Blob { arrayBuffer(): Promise<ArrayBuffer>; }\ndeclare const console: { warn(...a: unknown[]): void; log(...a: unknown[]): void };\ndeclare const caches: { open(n: string): Promise<{ match(u: string): Promise<{ json(): Promise<unknown> } | undefined>; put(u: string, r: unknown): Promise<void> }> };\ndeclare const location: { origin: string };\ndeclare class Response { constructor(b: string, o?: unknown); }\n'
   + "interface PkPiano { tipo: 'piano'; id: string; modo?: string; titolo: string; aggiornato: string; giorniTeoria: number; nota?: string; giorni: GiornoPiano[]; }\n");
 fs.copyFileSync(path.join(SRC, '01-json.ts'), path.join(TMP, 'json.ts'));   // v0.57 (A15): parser unico usato da Neuro e Pianificatore
 fs.copyFileSync(path.join(SRC, '07-fsrs.ts'), path.join(TMP, 'fsrs.ts'));
-fs.copyFileSync(path.join(SRC, '07-testopdf.ts'), path.join(TMP, 'testopdf.ts'));   // blocco 1: punto unico di lettura dei PDF   // blocco 3: nucleo FSRS unico usato da Neuro
+fs.copyFileSync(path.join(SRC, '07-testopdf.ts'), path.join(TMP, 'testopdf.ts'));
+fs.copyFileSync(path.join(SRC, 'su-richiesta', '07-indicepagine.ts'), path.join(TMP, 'indicepagine.ts'));   // blocco 2: indice BM25 per pagina   // blocco 1: punto unico di lettura dei PDF   // blocco 3: nucleo FSRS unico usato da Neuro
 fs.copyFileSync(path.join(SRC, '07-neuro.ts'), path.join(TMP, 'neuro.ts'));
 fs.copyFileSync(path.join(SRC, '07-pianificatore.ts'), path.join(TMP, 'pianificatore.ts'));
 try {
   execFileSync(process.execPath, [path.join(RADICE, 'node_modules', 'typescript', 'bin', 'tsc'), '--target', 'es2020', '--lib', 'es2020', '--strict',
-    '--noEmitOnError', 'false', '--outDir', 'out', 'stub.d.ts', 'json.ts', 'fsrs.ts', 'testopdf.ts', 'neuro.ts', 'pianificatore.ts'], { cwd: TMP, stdio: 'pipe' });
+    '--noEmitOnError', 'false', '--outDir', 'out', 'stub.d.ts', 'json.ts', 'fsrs.ts', 'testopdf.ts', 'indicepagine.ts', 'neuro.ts', 'pianificatore.ts'], { cwd: TMP, stdio: 'pipe' });
 } catch (e) { console.log('⚠️ tsc sui moduli puri:\n' + String(e.stdout || e.message).slice(0, 2000)); }
 const JS_JSON = fs.readFileSync(path.join(TMP, 'out', 'json.js'), 'utf8');
 const JS_FSRS = fs.readFileSync(path.join(TMP, 'out', 'fsrs.js'), 'utf8');
 const JS_TPDF = fs.readFileSync(path.join(TMP, 'out', 'testopdf.js'), 'utf8');
+const JS_IDX = fs.readFileSync(path.join(TMP, 'out', 'indicepagine.js'), 'utf8');
 const JS = fs.readFileSync(path.join(TMP, 'out', 'neuro.js'), 'utf8');
 const JS_PIAN = fs.readFileSync(path.join(TMP, 'out', 'pianificatore.js'), 'utf8');
 let chiamateRete = 0;
@@ -50,9 +52,10 @@ vm.createContext(sandbox);
 vm.runInContext(JS_JSON + '\n;this.JsonAI = JsonAI;', sandbox);
 vm.runInContext(JS_FSRS + '\n;this.Fsrs = Fsrs;', sandbox);
 vm.runInContext(JS_TPDF + '\n;this.TestoPdf = TestoPdf;', sandbox);
+vm.runInContext(JS_IDX + '\n;this.IndicePagine = IndicePagine;', sandbox);
 vm.runInContext(JS + '\n;this.Neuro = Neuro;', sandbox);
 vm.runInContext(JS_PIAN + '\n;this.Pianificatore = Pianificatore;', sandbox);
-const N = sandbox.Neuro, P = sandbox.Pianificatore, FS = sandbox.Fsrs, TP = sandbox.TestoPdf;
+const N = sandbox.Neuro, P = sandbox.Pianificatore, FS = sandbox.Fsrs, TP = sandbox.TestoPdf, IP = sandbox.IndicePagine;
 const OGGI = '2026-11-18';
 
 console.log('\n== BP3 §1.2 Matrice certezza × correttezza ==');
@@ -154,6 +157,70 @@ t('i chiamanti passano da TestoPdf (Centro, coda quiz, master prompt, piani AI, 
   for (const [f, re] of Object.entries(usi)) vero(re.test(leggi(f)), f);
   vero(/TestoPdf\.chiudi\(doc\)/.test(leggi('07-creaquiz.ts')) && /TestoPdf\.chiudi\(doc\)/.test(leggi('su-richiesta/07-strumentiquiz.ts')), 'chiusura uniforme');
   vero(!/declare const pdfjsLib/.test(leggi('07-studio.ts')), 'visore senza seconda copia del caricatore');
+});
+
+console.log('\n== Motore unificato · blocco 2: IndicePagine (BM25 per pagina, classi, due segnali su tre) ==');
+// lingua finta e deterministica (nell'app: Locale.radice / Locale.espandi)
+const LINGUA = { radice: w => w.length > 6 ? w.slice(0, -2) : w.length > 4 ? w.slice(0, -1) : w, espandi: p => p.concat(p.some(w => w.startsWith('potenzial')) ? ['depolarizzazione'] : []) };
+const riemp = k => Array.from({ length: 40 }, (_, i) => 'parola' + ((i * 7 + k) % 53) + ' testo').join(' ');
+const PAG = [
+  { n: 1, testo: 'Indice del volume\n' + riemp(1) },
+  { n: 2, testo: 'Capitolo 1 La cellula\n' + riemp(2) + ' membrana cellula organelli' },
+  { n: 3, testo: '3.1 Il potenziale di membrana\n' + riemp(3) + ' potenziale potenziale potenziale membrana neurone' },
+  { n: 4, testo: 'Il potenziale d\'azione\n' + riemp(4) + ' potenziale azione potenziale azione depolarizzazione soglia potenziale' },
+  { n: 5, testo: 'Fasi del potenziale\n' + riemp(5) + ' potenziale potenziale ripolarizzazione potenziale canali sodio' },
+  { n: 6, testo: 'Esercizio 3.4\n' + riemp(6) + ' calcola il potenziale potenziale potenziale con V = 70 mV' },
+  { n: 7, testo: 'Capitolo 2 Il cuore\n' + riemp(7) + ' cuore atrio ventricolo' },
+  { n: 8, testo: 'Il ciclo cardiaco\n' + riemp(8) + ' cuore ciclo come visto il potenziale' },
+  { n: 9, testo: 'Capitolo 1 La cellula\n' + riemp(2) + ' membrana cellula organelli' },   // duplicato di p. 2 (stesso testo in un altro PDF)
+  { n: 10, testo: 'Riepilogo\n' + riemp(10) },
+  { n: 11, testo: 'Appendice\n' + riemp(11) },
+  { n: 12, testo: 'Glossario\n' + riemp(12) },
+];
+const IDX = IP.costruisci('BIO', PAG, LINGUA);
+t('costruisci: pagine duplicate indicizzate una volta (N e df non contano il doppione)', () => {
+  eq(IDX.N, 11); eq(IDX.per.get(9).dup, 2, 'p. 9 = doppione di p. 2'); eq(IDX.df.get(LINGUA.radice('organelli')), 1, 'df di «organelli»');
+});
+t('soglia τ: 90° percentile dei punteggi > 0; 0 se nessuna pagina risponde', () => { eq(IP.soglia([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), 9); eq(IP.soglia([0, 0]), 0); eq(IP.soglia([4]), 4); });
+t('BM25: la pagina che tratta il concetto supera quella che lo cita di passaggio', () => {
+  const c = IP.copertura(IDX, ['potenziale'], { tau: 1 });
+  const s = n => (c.riscontri.find(r => r.n === n) || {}).punteggio || 0;
+  vero(s(4) > s(8) && s(3) > s(8), 'p.3 ' + s(3) + ' / p.4 ' + s(4) + ' > p.8 ' + s(8));
+});
+t('classi: approfondimento (≥ 3 pagine contigue), applicazione (esercizio), presenza, richiamo fuori intervallo', () => {
+  const c = IP.copertura(IDX, ['potenziale'], { tau: 1, intervallo: [3, 6] }), cl = n => (c.riscontri.find(r => r.n === n) || {}).classe;
+  eq([cl(3), cl(4), cl(5)], ['approfondimento', 'approfondimento', 'approfondimento']); eq(cl(6), 'applicazione'); eq(cl(8), 'richiamo');
+  eq(c.tratti, [{ da: 3, a: 6, classe: 'approfondimento' }]);
+});
+t('due segnali su tre: intervallo + BM25 → coperto; solo BM25 → da verificare; nessun termine → lacuna', () => {
+  eq(IP.copertura(IDX, ['potenziale'], { tau: 1, intervallo: [3, 6] }).stato, 'coperto');
+  const solo = IP.copertura(IDX, ['potenziale'], { tau: 1 });
+  eq(solo.stato, 'da_verificare'); vero(solo.incertezze.some(x => /intervallo/.test(x)), 'dichiara il segnale mancante');
+  eq(IP.copertura(IDX, ['fotosintesi'], { intervallo: [3, 6] }).stato, 'lacuna');
+  eq(IP.copertura(IDX, ['potenziale'], { tau: 1, verificate: [4] }).stato, 'coperto', 'BM25 + verifica MappaPagine');
+});
+t('fuori programma: pagina nell\'intervallo senza termini del microstep è segnalata, non cancellata', () => {
+  const c = IP.copertura(IDX, ['potenziale'], { tau: 1, intervallo: [3, 7] });
+  eq((c.riscontri.find(r => r.n === 7) || {}).classe, 'fuori_programma');
+});
+t('correzioni manuali: inclusa vince su τ, esclusa sparisce', () => {
+  const c = IP.copertura(IDX, ['cuore'], { tau: 99, incluse: [7], escluse: [8] });
+  eq(c.stato, 'coperto'); vero(!c.riscontri.some(r => r.n === 8), 'esclusa'); eq((c.riscontri.find(r => r.n === 7) || {}).motivo, 'inclusa a mano');
+});
+t('sinonimi a peso 0,5 e riscontro spiegato (estratto ≤ 200 caratteri + «…», motivo, segnali)', () => {
+  const c = IP.copertura(IDX, ['potenziale'], { tau: 1, intervallo: [3, 6] }), r = c.riscontri.find(x => x.n === 4);
+  vero(r.estratto.length <= 202 && /potenziale/i.test(r.estratto), 'estratto: ' + r.estratto.length);
+  vero(/BM25 .* ≥ τ 1/.test(r.motivo) && r.segnali.intervallo && r.segnali.bm25 && !r.segnali.verificata, r.motivo);
+  const conSin = IP.copertura(IDX, ['potenziale'], { tau: 1 }).riscontri.find(x => x.n === 4).punteggio;
+  const senza = IP.copertura(IP.costruisci('BIO', PAG, { radice: LINGUA.radice, espandi: p => p }), ['potenziale'], { tau: 1 }).riscontri.find(x => x.n === 4).punteggio;
+  vero(conSin > senza, 'il sinonimo alza il punteggio: ' + conSin + ' > ' + senza);
+});
+t('titoliDa: righe numerate e intestazioni brevi, non le frasi', () => {
+  eq(IP.titoliDa('3.1 Il potenziale di membrana\nQuesta è una frase lunga che finisce con un punto.\nFasi del potenziale'), ['3.1 Il potenziale di membrana', 'Fasi del potenziale']);
+});
+t('cache del testo PDF svuotata al cambio account (isolamento) e indice nel chunk su richiesta', () => {
+  vero(/caches\.delete\('imc-testo-pdf'\)/.test(leggi('06-privacy.ts')) && /CACHE = 'imc-testo-pdf'/.test(leggi('07-testopdf.ts')), 'Privacy svuota la cache del testo');
+  vero(fs.existsSync(path.join(SRC, 'su-richiesta', '07-indicepagine.ts')) && !fs.existsSync(path.join(SRC, '07-indicepagine.ts')), 'IndicePagine fuori da app.js');
 });
 t('metadati non validi scartati, validi conservati', () => {
   const d = N.normalizza({ ...vecchia, bloomLevel: 7, distractorTypes: { 1: 'misconception', 2: 'boh' }, confidenceLog: 'x', sourceRef: { libro: 'Zan', stepId: 'C-1' } });
