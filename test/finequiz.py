@@ -104,7 +104,7 @@ try:
         pg.wait_for_selector('.pad-materia', timeout=8000)
         tp = pg.inner_text('.pad-sezione')
         ok('Padronanza per concetto' in tp and re.search(r'\d+ di \d+ concetti consolidati', tp) is not None and pg.locator('.pad-scheda').count() >= 1, 'vista padronanza: materia, «N di M», scheda')
-        ok(pg.locator('.pad-barra[role=img]').count() >= 1 and re.search(r'(?<!\d)0%', tp) is None, 'barra accessibile, nessuno «0%» per i concetti')
+        ok(pg.locator('.pad-barra[role=img]').count() >= 1 and '%' not in pg.inner_text('.pad-legenda') + (pg.get_attribute('.pad-barra', 'aria-label') or ''), 'barra accessibile; conteggi senza percentuali inventate')
         pg.locator('.pad-scheda summary').first.click(); pg.wait_for_timeout(200)
         ok(pg.locator('.pad-concetti li').count() >= 1 and pg.locator('.pad-scheda button', has_text='Rifai il quiz').count() >= 1, 'dettaglio: concetti con stato e motivo, azione «Rifai il quiz»')
         pg.screenshot(path='test/padronanza.png', full_page=True)

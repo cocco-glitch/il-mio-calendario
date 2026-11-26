@@ -11,12 +11,13 @@ const PadronanzaUI = (() => {
     da_studiare: 'var(--rosso)', da_consolidare: 'color-mix(in srgb, var(--rosso) 45%, var(--sup2))',
     in_consolidamento: 'color-mix(in srgb, var(--accento) 45%, var(--sup2))', consolidato: 'var(--accento)', non_verificato: 'var(--linea)',
   };
+  const plur = (s: StatoConcetto, n: number) => n === 1 ? Concetti.NOMI[s] : s === 'consolidato' ? 'consolidati' : s === 'non_verificato' ? 'non verificati' : Concetti.NOMI[s];
   const ICO: Record<StatoConcetto, string> = { da_studiare: '●', da_consolidare: '◐', in_consolidamento: '◑', consolidato: '✔', non_verificato: '○' };
 
   function barra5(n: Record<StatoConcetto, number>, tot: number, nome: string): HTMLElement {
-    const testo = VARI.filter(s => n[s]).map(s => n[s] + ' ' + Concetti.NOMI[s]).join(', ');
+    const testo = VARI.filter(s => n[s]).map(s => n[s] + ' ' + plur(s, n[s])).join(', ');
     return h('div.pad-barra', { role: 'img', 'aria-label': nome + ': ' + testo },
-      VARI.filter(s => n[s]).map(s => h('span', { style: { width: (n[s] / Math.max(1, tot)) * 100 + '%', background: COL[s] }, title: n[s] + ' ' + Concetti.NOMI[s] })));
+      VARI.filter(s => n[s]).map(s => h('span', { style: { width: (n[s] / Math.max(1, tot)) * 100 + '%', background: COL[s] }, title: n[s] + ' ' + plur(s, n[s]) })));
   }
   function apriQuiz(sk: string): void {
     const t = trovaScheda(sk); if (!t) { avviso('Scheda non trovata nei corsi caricati.'); return; }
@@ -40,7 +41,7 @@ const PadronanzaUI = (() => {
         h('h3.pad-nome', { style: { color: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }, nome),
         h('div.tenue.piccolo', null, n.consolidato + ' di ' + tot + ' concetti consolidati · ' + l.length + (l.length === 1 ? ' scheda verificata' : ' schede verificate')),
         barra5(n, tot, nome),
-        h('div.pad-legenda.tenue.piccolo', null, VARI.filter(s => n[s]).map(s => h('span', null, h('i', { style: { background: COL[s] }, 'aria-hidden': 'true' }), n[s] + ' ' + Concetti.NOMI[s]))),
+        h('div.pad-legenda.tenue.piccolo', null, VARI.filter(s => n[s]).map(s => h('span', null, h('i', { style: { background: COL[s] }, 'aria-hidden': 'true' }), n[s] + ' ' + plur(s, n[s])))),
         debole ? h('button.btn.neutro', { onclick: () => apriQuiz(debole.sk) }, '▶ Inizia dalla più debole') : null,
         l.map(r => {
           const t = trovaScheda(r.sk), tit = t ? t.micro + ' · ' + t.s.titolo : r.sk;

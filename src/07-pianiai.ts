@@ -172,7 +172,7 @@ const PianiAI = (() => {
         // Blocco 7: doppioni e argomenti mancanti della mappa AI (solo avvisi, 0 token; con l'indice locale le unità SONO le voci)
         if (r.fonte === 'ai' && r.struttura) {
           try { await caricaStrumentiQuiz(); const c = Copertura.analizza(r.piano.unita, r.struttura, { radice: Locale.radice, espandi: Locale.espandi }); if (c.avvisi.length) r.piano.avvisiCopertura = c.avvisi; }
-          catch (e: any) { console.warn('Copertura non calcolata:', e && e.message || e); }
+          catch (e) { console.warn('Copertura non calcolata:', e); }
         }
         salvaPiano(r.piano);
         avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : '')

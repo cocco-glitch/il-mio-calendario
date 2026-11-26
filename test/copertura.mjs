@@ -107,7 +107,7 @@ t('banca reale (217 schede): 0 doppioni alle soglie dell\'audit', () => {
 t('aggancio in PianiAI: solo con la mappa AI, dentro try, mai bloccante; Ricalcola conserva gli avvisi', () => {
   const s = leggi('07-pianiai.ts');
   vero(/r\.fonte === 'ai' && r\.struttura/.test(s) && /Copertura\.analizza\(r\.piano\.unita, r\.struttura/.test(s));
-  vero(/catch \(e: any\) \{ console\.warn\('Copertura non calcolata/.test(s));
+  vero(/catch \(e\) \{ console\.warn\('Copertura non calcolata/.test(s));
   vero(/r\.piano\.avvisiCopertura = p\.avvisiCopertura/.test(s));
 });
 t('modulo puro: niente DOM, Stato, rete', () => {
