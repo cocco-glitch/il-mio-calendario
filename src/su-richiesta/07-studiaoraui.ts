@@ -65,6 +65,18 @@ const StudiaOra = (() => {
       out.push({ id: 'cons:' + k, livello: 6, ind: -m.s, metodo: 'quiz', min: MIN, gruppo: 'step', motivo: 'da fissare prima che si stabilizzi (stabilità ' + Math.round(m.s) + ' g)',
         voce: { tipo: 'ripasso', titolo: '🔒 Consolida ' + Studio.etichetta(k), sotto: 'Rifai: ' + sc.titolo, min: MIN, k, id: sc.id } });
     }
+    // 6 (blocco 6): concetti «in consolidamento» (padronanza 'con:'), una voce per scheda, con i concetti nel motivo
+    const perScheda = new Map<string, { et: string[]; s: number }>();
+    for (const m of Stato.tutti<MemoriaCon>('memoria')) {
+      if (!m.er.startsWith('con:') || m.deleted || m.ripiego || m.due <= g || Concetti.stato(m, g).stato !== 'in_consolidamento') continue;
+      const x = perScheda.get(m.sk) || { et: [], s: Infinity }; x.et.push(m.etichetta); x.s = Math.min(x.s, m.s); perScheda.set(m.sk, x);
+    }
+    for (const [sk, x] of perScheda) {
+      const t = trovaScheda(sk); if (!t || out.some(c => c.id === 'cons:' + t.k)) continue;
+      out.push({ id: 'conc:' + sk, livello: 6, ind: -x.s, metodo: 'quiz', min: MIN, gruppo: 'step',
+        motivo: x.et.length + (x.et.length === 1 ? ' concetto' : ' concetti') + ' in consolidamento: ' + x.et.slice(0, 3).join(', ') + (x.et.length > 3 ? '…' : ''),
+        voce: { tipo: 'ripasso', titolo: '🧩 Consolida ' + Studio.etichetta(t.k), sotto: 'Rifai: ' + t.s.titolo, min: MIN, k: t.k, id: sk } });
+    }
     return out;
   }
 

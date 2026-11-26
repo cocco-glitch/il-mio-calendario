@@ -70,7 +70,10 @@ const Generatore = (() => {
     let liberi = tutti.slice();
     // 2) coda: vigilia di riposo, ripasso finale
     if (o.riposo && liberi.length && liberi[liberi.length - 1] === piu(o.esame, -1)) { metti(liberi.pop()!, { k: 'RIPOSO', t: '😌 Riposo pre-esame', d: 'Niente teoria nuova: una passeggiata, formule a colpo d\'occhio, a letto presto.', speciale: true }); }
-    for (let i = o.finale; i > 0 && liberi.length; i--) metti(liberi.pop()!, { k: 'FINALE-' + i, t: '📚 Ripasso finale ' + (o.finale - i + 1) + '/' + o.finale, d: 'Tabelle, formule ed errori ricorrenti. Ripassi e flashcard di oggi.', speciale: true });
+    // blocco 6: `finale` = giorni di CALENDARIO prima dell'esame (D−N…D−1, come Pianificatore.finestraFinale), non giorni di studio
+    const iniFin = Pianificatore.finestraFinale(o.esame, o.finale).inizio, fin = liberi.filter(d => d >= iniFin);
+    liberi = liberi.filter(d => d < iniFin);
+    fin.forEach((d, i) => metti(d, { k: 'FINALE-' + (fin.length - i), t: '📚 Settimana finale ' + (i + 1) + '/' + fin.length, d: 'Niente argomenti nuovi: quiz cumulativo, errori ricorrenti, tabelle e formule. Ripassi e flashcard di oggi.', speciale: true }));
     // 3) simulazioni nella fase "prestazione" (ultimo 40% dei giorni rimasti), ognuna seguita dalla revisione
     const sim: string[] = [];
     if (o.simulazioni > 0 && liberi.length > 4) {
@@ -139,7 +142,7 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
     esame: due ? esami[1].data : esami.length ? esami[0].data : ymd(new Date(Date.now() + 30 * 864e5)),
     inizio: due ? (() => { const d = daDt(esami[0].data); d.setDate(d.getDate() + 1); return ymd(d); })() : (() => { const d = new Date(); d.setDate(d.getDate() + 1); return ymd(d); })(),
     modo: due ? 'raffinamento' : 'teoria', argomenti: cat.map(x => x.k), deboliPrima: true,
-    giorniSett: [0, 1, 2, 3, 4, 5, 6], ore: 6, minArg: due ? 100 : 120, riservaOgni: 7, simulazioni: due ? 3 : 2, finale: 2, riposo: true, secondoGiro: true,
+    giorniSett: [0, 1, 2, 3, 4, 5, 6], ore: 6, minArg: due ? 100 : 120, riservaOgni: 7, simulazioni: due ? 3 : 2, finale: 7, riposo: true, secondoGiro: true,
     ...(base || {}),
   };
   const PASSI = ['Esame', 'Argomenti', 'Tempo', 'Struttura', 'Anteprima'];
@@ -203,7 +206,7 @@ function apriGeneratore(base?: Partial<OpzGen>, sostituisci?: string): void {
       corpo.append(
         campo('Giorno di riserva ogni', h('div.segmenti', null, [0, 5, 6, 7].map(n => h('button' + (o.riservaOgni === n ? '.attivo' : ''), { onclick: () => { o.riservaOgni = n; disegnaPasso(); } }, n ? n + ' giorni' : 'mai'))), 'Un giorno vuoto che assorbe i ritardi: i piani senza margine saltano alla prima influenza.'),
         campo('Simulazioni a tempo', h('div.segmenti', null, [0, 1, 2, 3, 4].map(n => h('button' + (o.simulazioni === n ? '.attivo' : ''), { onclick: () => { o.simulazioni = n; disegnaPasso(); } }, String(n)))), 'Nell\'ultima parte del piano, ognuna seguita dalla revisione degli errori.'),
-        campo('Giorni di ripasso finale', h('div.segmenti', null, [0, 1, 2, 3, 4].map(n => h('button' + (o.finale === n ? '.attivo' : ''), { onclick: () => { o.finale = n; disegnaPasso(); } }, String(n))))),
+        campo('Settimana finale (giorni di calendario; 3 = emergenza)', h('div.segmenti', null, [0, 3, 7].map(n => h('button' + (o.finale === n ? '.attivo' : ''), { onclick: () => { o.finale = n; disegnaPasso(); } }, String(n))))),
         h('label.widget-riga', null, h('span.nome', null, 'Vigilia di riposo', h('div.tenue.piccolo', null, 'Il sonno prima dell\'esame consolida più di un\'ultima nottata.')), interr(o.riposo, b => o.riposo = b)),
         h('label.widget-riga', null, h('span.nome', null, 'Secondo giro sui deboli', h('div.tenue.piccolo', null, 'Gli argomenti deboli tornano almeno 7 giorni dopo: ripetizione distanziata.')), interr(o.secondoGiro, b => o.secondoGiro = b)));
     }

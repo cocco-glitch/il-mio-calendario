@@ -116,13 +116,14 @@ const PianiAI = (() => {
       } finally { calibra.disabled = false; }
     } }, '🎯 3 domande sulla materia');
 
+    let giorniFinale: number | null = null;
     const vincoli = (): VincoliPianoAI => {
       const m = materia.value;
       return {
         materiaCodice: m, archetipo: Dominio.archetipoMateria(m), sorgentiDriveIds: fonti.value.split(/[,\s]+/).map(idDaLink).filter(Boolean),
         dataTarget: data.value, livelloPartenza: partenza.value as LivelloPartenzaAI, livelloObiettivo: (+obiettivo.value || 4) as 1 | 2 | 3 | 4,
         finestreSettimanali: giorni.filter(c => c.checked).map(c => ({ giornoSettimana: (c as any)._g, oraInizio: oraDa.value || '15:00', oraFine: oraA.value || '19:00' })),
-        maxOreGiorno: parseFloat(oreMax.value) || 3,
+        maxOreGiorno: parseFloat(oreMax.value) || 3, ...(giorniFinale != null ? { giorniFinale } : {}),
       };
     };
     /** v0.56: vincoli + intensità dopo i guard-rail, profilo e pesi (Blocco A + B); ore/giorno mai oltre il livello. */
@@ -141,6 +142,7 @@ const PianiAI = (() => {
         if (r.livelloObiettivo) obiettivo.value = String(r.livelloObiettivo);
         if (r.minutiExtra) oreMax.value = String(Math.min(10, (parseFloat(oreMax.value) || 3) + r.minutiExtra / 60));
         if (r.nuovaData) data.value = r.nuovaData;
+        if (r.giorniFinale != null) giorniFinale = r.giorniFinale;   // blocco 6: emergenza solo su conferma (questo tocco)
         avviso('Rimedio applicato: premi di nuovo «Crea».');
       } }, r.testo));
     };

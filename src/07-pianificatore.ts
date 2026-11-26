@@ -20,6 +20,8 @@ interface VincoliPianoAI {
   livelloPartenza: LivelloPartenzaAI; livelloObiettivo: 1 | 2 | 3 | 4; finestreSettimanali: FinestraSettimanale[]; maxOreGiorno: number;
   /** v0.56 (BP5, facoltativi): intensità 1–5 e profilo biopsicologico. Assenti = comportamento BP4 invariato. */
   livelloIntensita?: IntensitaPiano; profiloBio?: ProfiloBiopsicologico; pesi?: PesiAdattiviAlgoritmo;
+  /** blocco 6: giorni della settimana finale (calendario, D−N…D−1): 7 predefinito, 3 = emergenza solo su conferma, 0 = nessuna. */
+  giorniFinale?: number;
 }
 // ---------- v0.56 (BP5): 5 livelli di intensità, questionario 6+3, Burnout Circuit Breaker ----------
 type IntensitaPiano = 1 | 2 | 3;
@@ -58,7 +60,7 @@ interface EventoGCal {
   organizer?: { email?: string }; extendedProperties?: { private?: Record<string, string> };
 }
 interface SegnaliIper { illusioni: number; lucky: number; tassoErrore: number; risposte: number; attiva: boolean; topErrori: string[]; }
-interface RimedioAI { tipo: 'sopravvivenza' | 'piu_minuti' | 'sposta_data'; testo: string; livelloObiettivo?: 1 | 2 | 3 | 4; minutiExtra?: number; nuovaData?: string; }
+interface RimedioAI { tipo: 'sopravvivenza' | 'piu_minuti' | 'sposta_data' | 'finale_breve'; testo: string; livelloObiettivo?: 1 | 2 | 3 | 4; minutiExtra?: number; nuovaData?: string; giorniFinale?: number; }
 interface GiornoCapacita { data: string; finestre: [number, number][]; minuti: number; leggero: boolean; }
 interface FattibilitaAI {
   stato: StatoFattibilita; rapporto: number; oreNecessarie: number; oreDisponibili: number; bufferPct: number;
@@ -182,6 +184,17 @@ const Pianificatore = (() => {
     return lib;
   }
 
+  /**
+   * Blocco 6 (audit S2 §10): settimana finale in GIORNI DI CALENDARIO, D−F…D−1 (giorno d'esame escluso); fineNuovi = ultimo giorno
+   * per argomenti nuovi (L1–L2). Nella finestra: ripassi FSRS, L3/L4 di unità già iniziate, cumulativi e simulazioni. Calendario e
+   * non giorni di studio: «gli ultimi sette giorni» del brief; con 5 giorni di studio a settimana 7 giorni di studio ne
+   * occuperebbero 9–10 e ruberebbero tempo ai nuovi argomenti.
+   */
+  function finestraFinale(esame: string, giorni = 7): { inizio: string; fineNuovi: string } {
+    const inizio = piu(esame, -clamp(Math.round(+giorni || 0), 0, 30));
+    return { inizio, fineNuovi: piu(inizio, -1) };
+  }
+  const giorniFin = (v: VincoliPianoAI) => v.giorniFinale == null ? 7 : v.giorniFinale;
   /** Capacità giorno per giorno da oggi a target−1 (target−1 = giorno leggero, massimo 60 minuti). */
   function capacita(v: VincoliPianoAI, oggi: string, occ: IntervalloOcc[], altri?: (d: string) => number): GiornoCapacita[] {
     const out: GiornoCapacita[] = [], fine = piu(v.dataTarget, -1), tetto = Math.max(0.5, +v.maxOreGiorno || 2) * 60;
@@ -201,11 +214,12 @@ const Pianificatore = (() => {
 
   // ---------- Stadio 1: fattibilità (0 token) ----------
   function calcolaFattibilita(v: VincoliPianoAI, unita: UnitaAI[], ctx: { oggi: string; occupato?: IntervalloOcc[]; minutiAltriPiani?: (d: string) => number; segnali?: SegnaliIper | null }): FattibilitaAI {
-    const giorni = capacita(v, ctx.oggi, ctx.occupato || [], ctx.minutiAltriPiani);
-    const disp = arr1(giorni.reduce((s, g) => s + g.minuti, 0) / 60 * BUFFER_DISP), nec = oreNecessarie(unita, v, ctx.segnali);
+    const giorni = capacita(v, ctx.oggi, ctx.occupato || [], ctx.minutiAltriPiani), fin = finestraFinale(v.dataTarget, giorniFin(v));
+    // blocco 6: il tempo per gli argomenti si conta solo fino a fineNuovi (la settimana finale è per ripasso e simulazioni)
+    const disp = arr1(giorni.filter(g => g.data <= fin.fineNuovi).reduce((s, g) => s + g.minuti, 0) / 60 * BUFFER_DISP), nec = oreNecessarie(unita, v, ctx.segnali);
     const rapporto = arr1(nec / Math.max(0.5, disp));
     // v0.55.1: data obiettivo oggi, domani o già passata → non c'è nessun giorno di studio nuovo (target−1 è leggero)
-    const vicina = v.dataTarget <= piu(ctx.oggi, 1);
+    const vicina = v.dataTarget <= piu(ctx.oggi, 1) || fin.fineNuovi < ctx.oggi;   // blocco 6: esame entro la finestra = niente giorni per argomenti nuovi
     const stato: StatoFattibilita = vicina ? 'critico' : rapporto <= 0.90 ? 'ottimale' : rapporto <= 1.15 ? 'serrato' : 'critico';
     const rimedi: RimedioAI[] = [];
     if (stato === 'critico') {
@@ -217,6 +231,8 @@ const Pianificatore = (() => {
       const media = Math.max(0.25, disp / lavoro), giorniInPiu = Math.max(1, Math.ceil(mancano / media));
       const nuova = piu(vicina ? piu(ctx.oggi, 1) : v.dataTarget, giorniInPiu);   // mai una data nel passato
       rimedi.push({ tipo: 'sposta_data', nuovaData: nuova, testo: 'Sposta la data obiettivo al ' + nuova + ' (+' + giorniInPiu + ' giorni).' });
+      // blocco 6: emergenza = settimana finale di 3 giorni, mai applicata da sola (decisione utente 26/11)
+      if (giorniFin(v) > 3 && v.dataTarget > piu(ctx.oggi, 3)) rimedi.push({ tipo: 'finale_breve', giorniFinale: 3, testo: 'Piano d\'emergenza: settimana finale di 3 giorni invece di ' + giorniFin(v) + ' (solo se confermi).' });
     }
     return { stato, rapporto, oreNecessarie: nec, oreDisponibili: disp, bufferPct: stato === 'serrato' ? 0.08 : stato === 'ottimale' ? 0.10 : 0, extraIper: !!(ctx.segnali && ctx.segnali.attiva), giorni, rimedi };
   }
@@ -396,7 +412,9 @@ const Pianificatore = (() => {
       if (vo.livelloCognitivo && !vo.isRipassoFSRS && eAnal(vo.livelloCognitivo)) anal.set(g.data, (anal.get(g.data) || 0) + min);
       return true;
     }
+    const fin = finestraFinale(v.dataTarget, giorniFin(v));
     const pronto = (c: Compito, d: string) => {
+      if (c.liv <= 2 && d > fin.fineNuovi) return false;   // blocco 6: nella settimana finale niente argomenti nuovi
       if ((fattiLiv.get(c.u.uid) || 0) < c.liv - 1) return false;
       if (c.parte > 1 && (fattiLiv.get(c.u.uid + '#' + c.liv) || 0) < c.parte - 1) return false;
       if (c.liv === 1) return c.u.prereq.every(p => (fattiLiv.get(p) || 0) >= 1 || !unita.some(x => x.uid === p));
@@ -437,6 +455,14 @@ const Pianificatore = (() => {
             ripassi.push({ data: d, voce: { k: cod + '~' + pidC + '~' + pref.u.uid + '~R' + (i + 1), t: '🔁 Ripasso ' + (i + 1) + ' · ' + pref.u.titolo, uid: pref.u.uid, livelloCognitivo: 1, isRipassoFSRS: true, min, sorgenteRef: ref(pref.u) } });
           });
         }
+      }
+      // 2a) blocco 6: settimana finale — simulazione a D−6 e D−3 (revisione degli errori il giorno dopo), altrimenti ripasso cumulativo
+      const restoFin = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
+      if (g.data >= fin.inizio && restoFin >= 30) {
+        const dm = diff(g.data, v.dataTarget), sim = dm === 6 || dm === 3, dopoSim = dm === 5 || dm === 2;
+        metti(g, { k: cod + '~' + pidC + '~FIN~' + g.data.replace(/-/g, ''), speciale: true,
+          t: sim ? '📝 Simulazione d\'esame (D−' + dm + ')' : dopoSim ? '🔍 Revisione degli errori della simulazione' : '📚 Settimana finale: quiz cumulativo + ripassi',
+          d: sim ? 'Tempo reale, senza fonti. Domani si rivedono gli errori.' : 'Ripassi in scadenza, concetti da consolidare, un quiz cumulativo per step a rotazione; niente argomenti nuovi.' }, Math.min(restoFin, sim ? 120 : 90));
       }
       // 2b) BP5 §1.1: oltre l'hard cap analitico → Offloading Attivo Multi-Modale
       const restoOff = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
@@ -808,7 +834,7 @@ const Pianificatore = (() => {
     return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: (m as any).errore };
   }
 
-  return { segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
+  return { finestraFinale, segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
     unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
     compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
     // v0.56 (BP5)

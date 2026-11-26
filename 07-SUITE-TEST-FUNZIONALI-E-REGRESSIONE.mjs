@@ -1096,6 +1096,39 @@ t('v0.64.5 T13: onboarding ospite in tre domande, atomico e riapribile', () => {
   vero(/Dominio\.benvenuto\(\)/.test(m) && !/Drive\.stato\.sync === 'ok' && Dominio\.serveBenvenuto/.test(m), 'parte senza Drive');
 });
 
+console.log('\n== Motore unificato, blocco 6 · settimana finale (finestraFinale) ==');
+t('finestraFinale: D−7…D−1 in giorni di calendario, giorno d\'esame escluso; 3 = emergenza; 0 = nessuna finestra', () => {
+  eq(P.finestraFinale('2026-12-08'), { inizio: '2026-12-01', fineNuovi: '2026-11-30' });
+  eq(P.finestraFinale('2026-12-08', 3), { inizio: '2026-12-05', fineNuovi: '2026-12-04' });
+  eq(P.finestraFinale('2026-12-08', 0).inizio, '2026-12-08');
+});
+const nuoviInFinestra = (piano, esame, n = 7) => { const f = P.finestraFinale(esame, n); return tutteVoci(piano).filter(v => v.data >= f.inizio && v.livelloCognitivo && v.livelloCognitivo <= 2 && !v.isRipassoFSRS && !v.speciale); };
+await t('criterio di accettazione: 0 voci L1/L2 nuove in D−7…D−1 su 3 piani (una materia, tre materie, esame a 6 giorni con emergenza confermata)', async () => {
+  const una = await P.creaPiano(V({ dataTarget: '2026-12-20' }), { oggi: OGGI, unita: UNITA, pid: 'ai-fin1' });
+  vero(una.piano, 'piano una materia: ' + una.fatt.stato); eq(nuoviInFinestra(una.piano, '2026-12-20').length, 0, 'una materia');
+  for (const m of ['C', 'B', 'F']) {
+    const r = await P.creaPiano(V({ materiaCodice: m, dataTarget: '2026-12-22', maxOreGiorno: 1.5 }), { oggi: OGGI, unita: UNITA, pid: 'ai-fin-' + m });
+    vero(r.piano, m + ': ' + r.fatt.stato); eq(nuoviInFinestra(r.piano, '2026-12-22').length, 0, 'materia ' + m);
+  }
+  const vicina = await P.creaPiano(V({ dataTarget: '2026-11-24' }), { oggi: OGGI, unita: UNITA.slice(0, 1), pid: 'ai-fin6' });
+  eq(vicina.fatt.stato, 'critico', 'esame a 6 giorni con finestra di 7: niente giorni per argomenti nuovi');
+  const em = vicina.fatt.rimedi.find(x => x.tipo === 'finale_breve');
+  vero(em && em.giorniFinale === 3 && /solo se confermi/.test(em.testo), 'emergenza proposta, mai applicata da sola');
+  const conf = await P.creaPiano(V({ dataTarget: '2026-11-24', giorniFinale: 3 }), { oggi: OGGI, unita: UNITA.slice(0, 1), pid: 'ai-fin6b' });
+  vero(conf.piano, 'con emergenza confermata: ' + conf.fatt.stato); eq(nuoviInFinestra(conf.piano, '2026-11-24', 3).length, 0, 'esame a 6 giorni');
+  vero(tutteVoci(conf.piano).some(v => v.livelloCognitivo === 1 && v.data <= '2026-11-20'), 'gli argomenti nuovi stanno prima di fineNuovi');
+});
+await t('settimana finale: simulazioni a D−6 e D−3, revisione il giorno dopo, ore disponibili contate solo fino a fineNuovi', async () => {
+  const rete0 = chiamateRete;
+  const r = await P.creaPiano(V({ dataTarget: '2026-12-20', finestreSettimanali: finestre('15:00', '19:00', [0, 1, 2, 3, 4, 5, 6]) }), { oggi: OGGI, unita: UNITA, pid: 'ai-fin2' });
+  const fin = tutteVoci(r.piano).filter(v => /~FIN~/.test(v.k));
+  vero(fin.find(v => v.data === '2026-12-14' && /Simulazione/.test(v.t)) && fin.find(v => v.data === '2026-12-17' && /Simulazione/.test(v.t)), 'simulazioni D−6 e D−3');
+  vero(fin.find(v => v.data === '2026-12-15' && /Revisione/.test(v.t)), 'revisione il giorno dopo');
+  const a = P.calcolaFattibilita(V({ dataTarget: '2026-12-20' }), UNITA, { oggi: OGGI }), b = P.calcolaFattibilita(V({ dataTarget: '2026-12-20', giorniFinale: 0 }), UNITA, { oggi: OGGI });
+  vero(a.oreDisponibili < b.oreDisponibili, 'con la finestra meno ore per gli argomenti: ' + a.oreDisponibili + ' vs ' + b.oreDisponibili);
+  eq(chiamateRete - rete0, 0, 'nessuna chiamata di rete');
+});
+
 fs.rmSync(TMP, { recursive: true, force: true });
 const tot = ok + ko;
 console.log('\n' + (ko ? '✗' : '✓') + ' Superati ' + ok + '/' + tot + ' (' + Math.round(ok / tot * 100) + '%)' + (ko ? ' — falliti: ' + fallite.join('; ') : ''));

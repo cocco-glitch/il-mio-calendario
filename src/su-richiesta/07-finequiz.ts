@@ -1,7 +1,9 @@
 // 07-finequiz.ts — motore unificato, blocco 5 (N4): proposta PURA del foglio «Fine quiz».
 //
-// Decisioni utente 26/11 (Sessione 6): unità della carta = la DOMANDA (id stabile; `Carta.concetto` lo riempirà il blocco 6);
-// padronanza per concetto nel blocco 6; `carteAuto` 'proponi' per tutti (niente più carte da ogni errore aperto);
+// Decisioni utente 26/11 (Sessione 6): `carteAuto` 'proponi' per tutti (niente più carte da ogni errore aperto);
+// Sessione 7 (blocco 6): unità della carta = il CONCETTO quando la domanda ne ha uno (Concetti.assegna, `EsitoQ.con`): una carta
+// per concetto, rappresentata dalla domanda peggiore (illusione > errore > fortunata), con tutte le domande in `qids`;
+// le domande in ripiego (concetto non distinto) restano una carta per domanda, come nel blocco 5.
 // foglio solo per i quiz nell'app (i quiz HTML non hanno certezza né distrattore: lì vale solo 'auto').
 // Candidati, in quest'ordine (le risposte giuste e sicure non generano nulla):
 //  1 illusione di competenza (certo ma sbagliato) → carta comparativa «Perché X e non Y?» se c'è il distrattore scelto;
@@ -13,7 +15,8 @@
 
 type TipoCartaQ = 'illusione' | 'errore' | 'fortunata';
 type SceltaFine = 'carte' | 'nota' | 'entrambi';
-interface CandCartaQ { qid: string; tipo: TipoCartaQ; q: string; f: string; r: string; motivo: string; }
+interface CandCartaQ { qid: string; tipo: TipoCartaQ; q: string; f: string; r: string; motivo: string;
+  /** blocco 6: concetto (assente = carta per domanda) e tutte le domande del gruppo. */ chiave?: string; concetto?: string; qids: string[]; }
 interface PrefFine { carte: boolean; appunti: boolean; suggerisci: boolean; carteAuto: 'mai' | 'proponi' | 'auto'; }
 interface FineQuizP {
   solido: boolean; mostra: boolean; lacuna: boolean;
@@ -41,31 +44,45 @@ const FineQuiz = (() => {
     const giusta = una(e.giusta), spieg = e.spieg ? taglia(e.spieg, MAX_R) : '';
     if (t === 'illusione' && e.scelta) {
       const sc = una(e.scelta);
-      return { qid: e.id, tipo: t, q: e.q, motivo: 'eri certo ma era sbagliata',
+      return { qid: e.id, qids: [e.id], tipo: t, q: e.q, motivo: 'eri certo ma era sbagliata',
         f: e.q + '\n\nPerché «' + taglia(giusta, 120) + '» e non «' + taglia(sc, 120) + '»?',
         r: giusta + '\n\n' + (e.perche ? 'Perché «' + taglia(sc, 120) + '» non va: ' + taglia(e.perche, MAX_R) : spieg) };
     }
-    return { qid: e.id, tipo: t, q: e.q, motivo: t === 'illusione' ? 'eri certo ma era sbagliata' : t === 'fortunata' ? 'giusta tirando a indovinare: da fissare' : 'sbagliata',
+    return { qid: e.id, qids: [e.id], tipo: t, q: e.q, motivo: t === 'illusione' ? 'eri certo ma era sbagliata' : t === 'fortunata' ? 'giusta tirando a indovinare: da fissare' : 'sbagliata',
       f: e.q, r: giusta + (spieg ? '\n\n' + spieg : '') };
   }
-  /** Candidati in ordine: illusioni, errori, fortunate (dentro il tipo, l'ordine del quiz). Una domanda = una carta. */
-  function candidati(det: EsitoQ[]): CandCartaQ[] {
+  /** Candidati per domanda in ordine: illusioni, errori, fortunate (dentro il tipo, l'ordine del quiz); la stessa domanda una volta. */
+  function perDomanda(det: EsitoQ[]): CandCartaQ[] {
     const visti = new Set<string>(), out: CandCartaQ[] = [];
     for (const e of det) {
       const t = tipo(e), chiave = una(e.q).toLowerCase();
       if (!t || !chiave || !una(e.giusta) || visti.has(chiave)) continue;
-      visti.add(chiave); out.push(carta(e, t));
+      visti.add(chiave);
+      const c = carta(e, t);
+      if (e.con && !e.con.ripiego) { c.chiave = e.con.chiave; c.concetto = e.con.etichetta; }
+      out.push(c);
     }
     return out.sort((a, b) => ORD[a.tipo] - ORD[b.tipo]);   // sort stabile (ES2019): dentro il tipo resta l'ordine del quiz
+  }
+  /** Candidati delle carte: uno per concetto (la domanda peggiore lo rappresenta, le altre entrano in qids); ripiego = per domanda. */
+  function candidati(det: EsitoQ[]): CandCartaQ[] {
+    const out: CandCartaQ[] = [], per = new Map<string, CandCartaQ>();
+    for (const c of perDomanda(det)) {
+      if (!c.chiave) { out.push(c); continue; }
+      const g = per.get(c.chiave);
+      if (g) { g.qids.push(c.qid); continue; }
+      const nuovo = { ...c, qids: [c.qid] }; per.set(c.chiave, nuovo); out.push(nuovo);
+    }
+    return out;
   }
   /**
    * Proposta del foglio. `esiste(q)` dice se la carta di quella domanda c'è già (non si duplica).
    * mostra = c'è qualcosa da consolidare e almeno un'opzione permessa dalle preferenze.
    */
-  function proposta(det: EsitoQ[], pct: number, pref: PrefFine, esiste: (q: string) => boolean = () => false): FineQuizP {
-    const cand = candidati(det), nuove = cand.filter(c => !esiste(c.q));
+  function proposta(det: EsitoQ[], pct: number, pref: PrefFine, esiste: (q: string, c: CandCartaQ) => boolean = () => false): FineQuizP {
+    const cand = candidati(det), nuove = cand.filter(c => !esiste(c.q, c));
     const conta: Record<TipoCartaQ, number> = { illusione: 0, errore: 0, fortunata: 0 };
-    for (const c of cand) conta[c.tipo]++;
+    for (const c of perDomanda(det)) conta[c.tipo]++;   // gli errori si contano per domanda, le carte per concetto
     const sbagliate = conta.illusione + conta.errore;
     const lacuna = sbagliate >= LACUNA_N || (sbagliate > 0 && pct < LACUNA_PCT);
     const carteOk = pref.carte && pref.carteAuto === 'proponi' && nuove.length > 0;
@@ -85,6 +102,21 @@ const FineQuiz = (() => {
     return { solido: cand.length === 0, mostra: cand.length > 0 && opzioni.length > 0, lacuna, candidati: cand, nuove, gia: cand.length - nuove.length,
       opzioni, consiglio, perche, min: { carte: mc, nota: MIN_NOTA, entrambi: mc + MIN_NOTA }, conta };
   }
+  /**
+   * Aggiorna una carta di concetto che esiste già (blocco 6): le domande nuove entrano in `origine.domande`; dopo un'illusione
+   * la carta diventa comparativa, ma solo se il testo è ancora quello generato (`gen` = impronta): mai sovrascrivere l'utente.
+   * Restituisce la carta aggiornata, o null se non cambia nulla. `impronta` = la stessa funzione hash di Carte.
+   */
+  function unisci(c: Carta, cand: CandCartaQ, impronta: (s: string) => string): Carta | null {
+    const prima = (c.origine && c.origine.domande) || [], dom = prima.concat(cand.qids.filter(q => q && !prima.includes(q)));
+    const intatta = !!c.gen && c.gen === impronta(c.f + '\n' + c.r);   // senza impronta (carta vecchia): mai toccare il testo
+    const comparativa = cand.tipo === 'illusione' && c.tag !== 'illusione' && intatta && cand.f !== c.f;
+    if (dom.length === prima.length && !comparativa) return null;
+    const out: Carta = { ...c, origine: { domande: dom.slice(-30) } };
+    if (cand.concetto && !c.concetto) out.concetto = cand.concetto;
+    if (comparativa) { out.f = cand.f; out.r = cand.r; out.tag = 'illusione'; out.gen = impronta(cand.f + '\n' + cand.r); }
+    return out;
+  }
   /** Carte da creare da sole con carteAuto = 'auto': al massimo 5, nell'ordine dei candidati. */
   const automatiche = (p: FineQuizP) => p.nuove.slice(0, AUTO_MAX);
   /**
@@ -92,7 +124,7 @@ const FineQuiz = (() => {
    * niente «::» né «{{}}», così l'appunto non genera carte doppie. La sezione «Con parole mie» resta vuota per lo studente.
    */
   function cornell(det: EsitoQ[]): string {
-    const cand = candidati(det), err = cand.filter(c => c.tipo !== 'fortunata'), fort = cand.filter(c => c.tipo === 'fortunata');
+    const cand = perDomanda(det), err = cand.filter(c => c.tipo !== 'fortunata'), fort = cand.filter(c => c.tipo === 'fortunata');
     const pul = (x: string) => x.replace(/::/g, ':').replace(/\{\{|\}\}/g, '');   // niente carte implicite (Appunti.estraiCarte)
     const dom = (q: string) => { const x = taglia(q, 160); return /\?\s*$/.test(x) ? x : x + ' — perché?'; };
     const riga: string[] = [];
@@ -113,5 +145,5 @@ const FineQuiz = (() => {
     riga.push('', '## Con parole mie', '');
     return pul(riga.join('\n'));
   }
-  return { candidati, proposta, automatiche, cornell, taglia, AUTO_MAX };
+  return { candidati, perDomanda, proposta, unisci, automatiche, cornell, taglia, AUTO_MAX };
 })();

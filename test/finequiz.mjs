@@ -149,7 +149,8 @@ t('Cattura.salva: aggancio al chunk solo per quiz interi con dettagli o carteAut
 });
 t('QuizApp: dettagli anche dai quiz creati (qcreato), esclusi solo gli esercizi a numeri; con caso, distrattore e confutazione', () => {
   const s = leggi('07-quizapp.ts');
-  vero(/r\.dettagli = P\.filter\(x => !x\.d\.gen && \(!x\.ok \|\| x\.caso === 'lucky_guess'\)\)/.test(s));
+  // blocco 6: tutte le risposte (anche giuste) per la padronanza per concetto; FineQuiz filtra da sé i candidati
+  vero(/r\.dettagli = P\.filter\(x => !x\.d\.gen && x\.ok != null\)/.test(s));
   vero(/'mz-err-' \+ \(t \? t\.k : Stato\.prendi<Rec>\(schedaId\)\?\.type === 'qcreato' \? 'qc' : 'sim'\)/.test(leggi('07-carte.ts')), 'mazzo errori dei quiz creati');
   vero(/scelta: x\.d\.o!\[oi\], perche: ewDi\(x\.d\)\[oi - 1\]/.test(s));
 });
@@ -159,6 +160,51 @@ t('Appunto.origine e Carta.origine/concetto: campi solo facoltativi (schemaVersi
 });
 t('il foglio vive nel chunk su richiesta, non in app.js', () => {
   vero(fs.existsSync(path.join(SRC, 'su-richiesta/07-finequizui.ts')) && !fs.readdirSync(SRC).some(f => /finequiz/i.test(f)));
+});
+
+// ---------- blocco 6: carte per concetto ----------
+const con = (k, ripiego = false) => ({ chiave: 'B-1|' + k, etichetta: 'Concetto ' + k, ripiego });
+t('una carta per concetto: 3 domande sullo stesso concetto → 1 candidato, rappresentato dalla peggiore, con tutte le domande', () => {
+  const c = F.candidati([err(1, { con: con('a') }), ill(2, { con: con('a') }), fort(3, { con: con('a') }), err(4, { con: con('b') })]);
+  eq(c.map(x => [x.qid, x.tipo, x.chiave, x.qids]), [['q2', 'illusione', 'B-1|a', ['q2', 'q1', 'q3']], ['q4', 'errore', 'B-1|b', ['q4']]]);
+  vero(/Perché «Giusta 2» e non «Distrattore 2»/.test(c[0].f), 'l\'illusione dà la carta comparativa');
+});
+t('ripiego (concetto non distinto): resta una carta per domanda, senza chiave', () => {
+  const c = F.candidati([err(1, { con: con('*', true) }), err(2, { con: con('*', true) })]);
+  eq(c.map(x => [x.qid, x.chiave || null]), [['q1', null], ['q2', null]]);
+});
+t('gli errori si contano per domanda (lacuna), le carte per concetto', () => {
+  const p = F.proposta([1, 2, 3, 4, 5, 6].map(n => err(n, { con: con('a') })), 70, PROPONI);
+  eq([p.conta.errore, p.candidati.length, p.lacuna, p.consiglio], [6, 1, true, 'nota']);
+});
+t('esiste() riceve anche il candidato: la carta del concetto già presente non si duplica', () => {
+  const p = F.proposta([err(1, { con: con('a') }), err(2, { con: con('b') })], 80, PROPONI, (q, c) => c.chiave === 'B-1|a');
+  eq([p.nuove.map(c => c.chiave), p.gia], [['B-1|b'], 1]);
+});
+const imp = s => 'h' + s.length;   // impronta finta: basta che sia deterministica
+const carta0 = { id: 'cr-x', type: 'carta', updatedAt: 0, mazzo: 'm', f: 'Domanda 1?', r: 'Giusta 1', tipo: 'base', tag: 'errore', origine: { domande: ['q1'] } };
+t('unisci: domande nuove in origine; nulla da cambiare → null', () => {
+  const [c] = F.candidati([err(1, { con: con('a') }), err(5, { con: con('a') })]);
+  const u = F.unisci({ ...carta0, gen: imp('Domanda 1?\nGiusta 1') }, c, imp);
+  eq([u.origine.domande, u.f, u.concetto], [['q1', 'q5'], 'Domanda 1?', 'Concetto a']);
+  eq(F.unisci(u, c, imp), null);
+});
+t('unisci: dopo un\'illusione la carta intatta diventa comparativa; testo modificato dall\'utente o carta senza impronta: mai toccato', () => {
+  const [c] = F.candidati([ill(2, { con: con('a') })]);
+  const u = F.unisci({ ...carta0, gen: imp('Domanda 1?\nGiusta 1') }, c, imp);
+  vero(u.tag === 'illusione' && /Perché «Giusta 2»/.test(u.f) && u.gen === imp(u.f + '\n' + u.r), JSON.stringify(u));
+  const mod = F.unisci({ ...carta0, r: 'Mia risposta riscritta', gen: imp('Domanda 1?\nGiusta 1') }, c, imp);
+  eq([mod.f, mod.r, mod.tag, mod.origine.domande], ['Domanda 1?', 'Mia risposta riscritta', 'errore', ['q1', 'q2']]);
+  eq(F.unisci({ ...carta0 }, c, imp).f, 'Domanda 1?');
+});
+t('Cornell con i concetti: ogni domanda sbagliata resta nell\'appunto, anche se le carte sono una per concetto', () => {
+  const s = F.cornell([err(1, { con: con('a') }), err(2, { con: con('a') })]);
+  vero(/Domanda 1\?/.test(s) && /Domanda 2\?/.test(s), s);
+});
+t('Carte.daErrori: id dal concetto quando c\'è la chiave, impronta del testo generato salvata', () => {
+  const s = leggi('07-carte.ts');
+  vero(/const idErrore = \(idM: string, q: string, chiave\?: string\) => 'cr-' \+ hash\(idM \+ '\|' \+ \(chiave \? 'con\|' \+ chiave : norm\(q\)\)\)/.test(s));
+  vero(/gen: hash\(f \+ '\\n' \+ r\)/.test(s), 'impronta');
 });
 
 console.log('\nFineQuiz ' + ok + '/' + (ok + ko));

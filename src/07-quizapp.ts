@@ -18,7 +18,8 @@ interface DomB { schedaQuiz?: number; applicazione?: string; id: string; sk: str
   // v0.54 (BP3 §1.1): metadati neuro-cognitivi, tutti facoltativi (i quiz v0.51–v0.53 restano validi così come sono)
   bloomLevel?: BloomN; distractorTypes?: Record<number, TipoDistr>; confidenceLog?: TentativoN[]; sourceRef?: SourceRefN; subtopic?: string; stepId?: string;
   spiegazione?: string; spiegazioneDistrattori?: Record<number, string> | string[];
-  erroreTipico?: string; }   // v0.59.2: l'errore di ragionamento dietro il distrattore principale (quiz da Gemini)
+  erroreTipico?: string;
+  /** blocco 6: concetto della domanda (contratto AI, lista della scheda); assente nella banca storica: lo assegna Concetti. */ concetto?: string; }   // v0.59.2: l'errore di ragionamento dietro il distrattore principale (quiz da Gemini)
 interface BancaFile { step: number; schede: Record<string, { titolo: string; materia: string; microstep: string; k: number; n: number; fonti?: string; focus?: string }>; immagini: Record<string, string>; domande: DomB[]; }
 interface ModQ extends Rec { type: 'modq'; qid: string; sk: string; campi?: Partial<DomB>; nascosta?: boolean; nuova?: boolean; originale?: Partial<DomB>; }
 interface StatQ extends Rec { type: 'statq'; sk: string; n: number; ok: number; ultima: string; esito: boolean; scelte?: Record<string, number>; c?: Record<string, ContoQ>;
@@ -114,11 +115,11 @@ const Banca = (() => {
   }
 
   /** Domande di una scheda: dalla banca pubblicata, dalla copia locale o estraendole dal quiz su Drive. */
-  async function scheda(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<{ domande: DomB[]; immagini: Record<string, string>; fonte: string }> {
+  async function scheda(pk: PkStep, m: string, micro: string, s: SchedaS): Promise<{ domande: DomB[]; immagini: Record<string, string>; fonte: string; focus?: string }> {
     const imc = Dominio.domandeDi(s.id);   // v0.52: domande importate da un pacchetto .imcpack (record 'bancaimc')
     if (imc) return { domande: applica(imc.map(d => ({ ...d })), s.id), immagini: {}, fonte: 'imcpack' };
     const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
-    if (B && B.schede[s.id]) return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
+    if (B && B.schede[s.id]) return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca', focus: B.schede[s.id].focus };
     const K = 'imc-banca-' + s.id;
     try { const c = localStorage.getItem(K); if (c) { const j = JSON.parse(c); usaCopia(K); return { domande: applica(j.domande, s.id), immagini: j.immagini || {}, fonte: 'copia' }; } } catch (e) { console.warn('Banca: copia locale illeggibile', e); }
     if (!Drive.pronto) throw new Error('Questa scheda non è ancora nella banca: accedi a Google per estrarla dal quiz.');
@@ -231,7 +232,7 @@ const QuizApp = (() => {
     const v = info ? visore('✨ ' + info.titolo, info.chiudi || (() => { /* */ })) : visore((gen ? '🎲 ' : '🧩 ') + micro + (gen ? ' · esercizi nuovi' : ' · scheda ' + s.k + '/' + s.n), () => apriScheda(pk, m, micro, s));
     v.corpo.classList.add('qz');
     v.corpo.appendChild(h('div.vuoto.centro', null, 'Preparo le domande…'));
-    let dati: { domande: DomB[]; immagini: Record<string, string>; fonte: string };
+    let dati: { domande: DomB[]; immagini: Record<string, string>; fonte: string; focus?: string };
     try { dati = gen ? { domande: gen(), immagini: (info && info.immagini) || {}, fonte: 'gen' } : await Banca.scheda(pk, m, micro, s); }
     catch (e: any) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, String(e.message || e))); return; }
     if (!dati.domande.length) { svuota(v.corpo); v.corpo.appendChild(h('div.vuoto.centro', null, 'Nessuna domanda trovata.')); return; }
@@ -492,10 +493,12 @@ const QuizApp = (() => {
       app.innerHTML = s2; v.corpo.scrollTop = 0;
       const r: RisultatoQuiz = { domandeSvolte: P.map(x => x.d.q), imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
         sbagliate: sb.map(x => [x.d.q, x.d.t === 'mcq' ? x.d.o![0] : String(x.d.show || ''), (Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e)] as [string, string, string]) };
-      // blocco 5: dettagli per il riquadro «Consolida» (sbagliate e fortunate; gli esercizi generati a numeri no)
-      r.dettagli = P.filter(x => !x.d.gen && (!x.ok || x.caso === 'lucky_guess')).map(x => {
+      // blocco 5: dettagli per il riquadro «Consolida»; blocco 6: tutte le risposte, per la padronanza per concetto (esercizi a numeri esclusi)
+      r.titoloScheda = s.titolo; if (dati.focus) r.focus = dati.focus;
+      r.dettagli = P.filter(x => !x.d.gen && x.ok != null).map(x => {
         const oi = !x.ok && x.d.t === 'mcq' && typeof x.picked === 'number' ? x.ord[x.picked] : 0;
         return { id: x.d.id, q: x.d.q, giusta: x.d.t === 'mcq' ? x.d.o![0] : String(x.d.show || ''), spieg: Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e, ok: !!x.ok, caso: x.caso,
+          ...(x.d.concetto ? { concetto: x.d.concetto } : {}),
           ...(oi ? { scelta: x.d.o![oi], perche: ewDi(x.d)[oi - 1] || undefined } : {}) };
       });
       if (registrato) return;

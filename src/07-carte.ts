@@ -20,7 +20,8 @@
 
 interface Mazzo extends Rec { type: 'mazzo'; nome: string; padre?: string; sub?: string; micro?: string; fonte?: { id: string; tipo: 'file' | 'cartella'; agg?: string }; }
 interface Carta extends Rec { type: 'carta'; mazzo: string; f: string; r: string; tipo: 'base' | 'cloze'; inversa?: boolean; tag?: string; ctx?: string;
-  /** blocco 5: concetto (lo assegna il blocco 6) e domande del quiz da cui è nata. */ concetto?: string; origine?: { domande: string[] }; }
+  /** blocco 5–6: concetto, domande del quiz da cui è nata e impronta del testo generato (diversa = modificata dall'utente). */
+  concetto?: string; origine?: { domande: string[] }; gen?: string; }
 type ModoCarte = 'gira' | 'scelta' | 'scrivi';
 
 const Carte = (() => {
@@ -209,7 +210,9 @@ const Carte = (() => {
     const t = schedaId.startsWith('sim:') ? null : trovaScheda(schedaId);
     return 'mz-err-' + (t ? t.k : Stato.prendi<Rec>(schedaId)?.type === 'qcreato' ? 'qc' : 'sim');
   }
-  function daErrori(lista: { schedaId: string; q: string; giusta: string; spieg?: string; f?: string; r?: string; tag?: string; qid?: string }[], forza = false): string[] {
+  /** Id della carta di un errore: per CONCETTO se c'è la chiave (blocco 6), altrimenti per testo della domanda. */
+  const idErrore = (idM: string, q: string, chiave?: string) => 'cr-' + hash(idM + '|' + (chiave ? 'con|' + chiave : norm(q)));
+  function daErrori(lista: { schedaId: string; q: string; giusta: string; spieg?: string; f?: string; r?: string; tag?: string; qid?: string; chiave?: string; concetto?: string; qids?: string[] }[], forza = false): string[] {
     const i = imp() as Impostazioni & { carteDaErrori?: boolean };
     if (!forza && (i.carteAuto === 'mai' || (!i.carteAuto && i.carteDaErrori === false))) return [];
     const nuove: string[] = [];
@@ -220,15 +223,17 @@ const Carte = (() => {
       const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId), idM = mazzoErrori(d.schedaId);
       if (!Stato.prendi<Mazzo>(idM) || Stato.prendi<Mazzo>(idM)!.deleted)
         Stato.salva({ id: idM, type: 'mazzo', updatedAt: 0, nome: t ? Studio.etichetta(t.k) + ' · errori' : idM === 'mz-err-qc' ? 'Quiz creati · errori' : 'Simulazioni · errori', padre: 'mz-errori', ...(t ? { sub: t.k, micro: t.micro } : {}) } as Mazzo, true);
-      const id = 'cr-' + hash(idM + '|' + norm(d.q));
+      const id = idErrore(idM, d.q, d.chiave);
       if (Stato.prendi<Carta>(id) && !Stato.prendi<Carta>(id)!.deleted) continue;
-      Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f: d.f || d.q, r: d.r || d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), tipo: 'base', tag: d.tag || 'errore', ...(d.qid ? { origine: { domande: [d.qid] } } : {}) } as Carta, true);
+      const f = d.f || d.q, r = d.r || d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), dom = d.qids && d.qids.length ? d.qids : d.qid ? [d.qid] : [];
+      Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f, r, tipo: 'base', tag: d.tag || 'errore', gen: hash(f + '\n' + r),
+        ...(d.concetto ? { concetto: d.concetto } : {}), ...(dom.length ? { origine: { domande: dom } } : {}) } as Carta, true);
       nuove.push(id);
     }
     if (nuove.length) Stato.notifica();
     return nuove;
   }
-  return { daErrori, mazzoErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
+  return { daErrori, idErrore, mazzoErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
 })();
 
 // ---------- Rendering di una faccia (Markdown minimale, completamenti, immagini da Drive) ----------

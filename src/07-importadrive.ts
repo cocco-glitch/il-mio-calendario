@@ -15,7 +15,7 @@
 // ============================================================
 
 /** Una domanda nello schema dei pacchetti Drive (campi in italiano). */
-interface QuizDrive { id?: string; livelloCognitivo?: number | string; livello?: number | string; tipoItem?: string; domanda?: string; opzioni?: string[]; esatta?: number; spiegazione?: string; fonte?: string; erroreTipico?: string;
+interface QuizDrive { id?: string; livelloCognitivo?: number | string; livello?: number | string; tipoItem?: string; domanda?: string; opzioni?: string[]; esatta?: number; spiegazione?: string; fonte?: string; erroreTipico?: string; concetto?: string;
   sottoStep?: string; categoria?: string; stepId?: string; scheda?: string | number; coppiaGemellaId?: string;
   spiegazioneDistrattori?: string[] | Record<string, string>; distractorTypes?: string[] | Record<string, string>; sourceRef?: string | SourceRefN;
   // v0.64 quiz-v4 (solo tipi: nessun peso in app.js)
@@ -107,6 +107,7 @@ const ImportaDrive = (() => {
     if (sr) d.sourceRef = sr;
     if (s(x.sottoStep)) d.subtopic = s(x.sottoStep);
     if (s(x.erroreTipico)) d.erroreTipico = s(x.erroreTipico);   // v0.59.2: mostrato nella correzione quando sbagli
+    if (s(x.concetto)) d.concetto = s(x.concetto).slice(0, 60);  // blocco 6: padronanza per concetto
     return d;
   }
   /** v0.64 quiz-v4: completamento → fill, ordinamento → sequenza (ordine giusto; mescola il runner), aperta/codice → rubrica. */
@@ -133,6 +134,7 @@ const ImportaDrive = (() => {
     if (sr) d.sourceRef = sr;
     if (s(x.sottoStep)) d.subtopic = s(x.sottoStep);
     if (s(x.erroreTipico)) d.erroreTipico = s(x.erroreTipico);
+    if (s(x.concetto)) d.concetto = s(x.concetto).slice(0, 60);
     return d;
   }
   function falla(msg: string): never { throw new Error(msg); }

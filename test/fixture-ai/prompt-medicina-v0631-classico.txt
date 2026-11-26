@@ -60,6 +60,7 @@ LIVELLI — segui questa SEQUENZA per le 18 domande di ogni scheda (1ª, 2ª, �
  - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.
  - Coppie gemelle: due domande su concetti speculari, in schede diverse, con la stessa etichetta `"gemella": "G1"` (poi G2, G3…); circa 1 coppia ogni 3 schede.
  - `erroreTipico` sempre valorizzato: l'errore di ragionamento dietro il distrattore principale.
+ - `concetto`: 2–5 parole, il concetto che la domanda verifica; da 3 a 6 concetti per scheda, scritti SEMPRE uguali per le domande sullo stesso concetto (l'app ne misura la padronanza).
 
 REGOLE DI QUALITÀ (il controllo automatico le verifica)
  Q-A. La risposta corretta va SEMPRE in `opzioni[0]`: la posizione la sceglie l'app.
@@ -82,7 +83,7 @@ FASE 3 — CONSEGNA (niente troncamenti)
  - Formato di ogni messaggio:
    1. `STEP biologia 3.3 · SCHEDA <n> e <n+1> di <N> · microstep <x.y.z>`
    2. UN SOLO blocco ```json valido (doppi apici, zero virgole finali, nessun commento): { "formato": "quiz-v3", "parte": "biologia-3.3-s<n>-<n+1>", "quiz": [ … ] } con `"scheda": "S<n>"` e `"categoria": "prioritaria"|"raffinamento"` in ogni domanda
-      Campi di ogni domanda: livello, gemella, tipoItem, erroreTipico, domanda, opzioni, spiegazione, spiegazioneDistrattori, distractorTypes, fonte (gemella solo se fa parte di una coppia).
+      Campi di ogni domanda: livello, gemella, tipoItem, erroreTipico, concetto, domanda, opzioni, spiegazione, spiegazioneDistrattori, distractorTypes, fonte (gemella solo se fa parte di una coppia).
       livello = NUMERO 1–4 dalla sequenza; spiegazioneDistrattori e distractorTypes = 3 stringhe ciascuno, per opzioni[1], [2], [3].
    3. `STATO: schede consegnate X/N — prossimo: <microstep>. Scrivi "avanti".`
  - Dopo «avanti» consegni le schede successive: niente riassunti né conferme.
@@ -96,7 +97,7 @@ FASE 3 — CONSEGNA (niente troncamenti)
 ==========================================================
 ESEMPIO DI FORMATO (non copiarne il contenuto: imita struttura e livello di dettaglio)
 ==========================================================
-{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …","domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]","spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}
+{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …","concetto":"…","domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]","spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}
 
 ==========================================================
 AUTOVERIFICA PRIMA DI OGNI CONSEGNA

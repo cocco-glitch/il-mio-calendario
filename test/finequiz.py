@@ -66,6 +66,11 @@ try:
         ok('1 illusione' in t and 'Flashcard mirate' in t and 'Blocco note' in t and 'Entrambi' in t and 'Lascia decidere' in t, 'riquadro: 1 illusione e le opzioni (%s)' % t.replace('\n', ' | ')[:160])
         ok(pg.locator('[data-az=errori]').is_visible() and pg.locator('.qz-carta h3').is_visible(), '«Rifai solo gli errori» e «Da rivedere» restano visibili e cliccabili')
         ok(pg.evaluate("Carte.carteDi('mz-errori').length") == 0, "carteAuto 'proponi': nessuna carta prima della scelta")
+        # blocco 6: padronanza per concetto — un record memoria 'con:' per concetto toccato, tutte le risposte contate
+        nq = pg.locator('.qz-lvriga').evaluate_all("rs => rs.reduce((s, r) => s + +r.lastElementChild.textContent.split('/')[1], 0)")
+        cons = pg.evaluate("Stato.tutti('memoria').filter(m => m.er.startsWith('con:C-3.1.1-1|'))")
+        ok(len(cons) >= 1 and sum(m['ver'][-1][2] for m in cons) == nq and all(m['n'] == 1 for m in cons), 'padronanza: %d concetti, %d risposte su %d' % (len(cons), sum(m['ver'][-1][2] for m in cons), nq))
+        ok(any(not m.get('ripiego') for m in cons) and pg.locator('.qz-concetti').count() == 1 and 'Concetti verificati' in pg.inner_text('.qz-concetti'), 'concetti dal focus della banca e riga di stato nel riquadro (%s)' % (pg.inner_text('.qz-concetti') if pg.locator('.qz-concetti').count() else '—'))
         pg.click('[data-fine=entrambi]'); pg.wait_for_timeout(400)
         carte = pg.evaluate("Carte.carteDi('mz-errori')")
         ok(len(carte) == 1 and carte[0]['tag'] == 'illusione' and carte[0]['mazzo'] == 'mz-err-C3.1' and carte[0]['origine']['domande'] == [d0['id']], 'una carta per la domanda, nel mazzo dello step, con origine (%s)' % json.dumps(carte)[:200])
@@ -83,6 +88,8 @@ try:
         pg.wait_for_selector('.qz-solido', timeout=8000)
         ok(pg.locator('.finequiz').count() == 0 and re.search(r'Tutto solido · prossimo ripasso (dello step|delle domande) il \d\d/\d\d', pg.inner_text('.qz-solido')) is not None, 'tutto giusto e sicuro: nessun riquadro, riga «Tutto solido» (%s)' % pg.inner_text('.qz-solido'))
         ok(pg.evaluate("Carte.carteDi('mz-errori').length") == 1, 'nessuna carta nuova al secondo giro')
+        cons2 = pg.evaluate("Stato.tutti('memoria').filter(m => m.er.startsWith('con:C-3.1.1-1|'))")
+        ok(all(m['n'] == 1 for m in cons2) and sum(m['ver'][-1][2] for m in cons2) == 2 * nq, 'stesso giorno: esiti sommati, un solo passo FSRS per concetto')
         pg.screenshot(path='test/finequiz.png')
         b.close()
 finally:

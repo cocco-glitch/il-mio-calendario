@@ -99,7 +99,7 @@ const MasterPrompt = (() => {
   /** Sequenza fissa dei livelli delle 18 domande di una scheda (5 L1, 6 L2, 4 L3, 3 L4 = quote 25/35/25/15): l'AI la segue, non conta. */
   const SEQUENZA_LIVELLI = [1, 1, 2, 1, 2, 2, 3, 1, 2, 3, 2, 4, 1, 3, 2, 4, 3, 4];
   /** Campi di una domanda quiz-v3 (tutto il resto lo aggiunge l'app). */
-  const CHIAVI_V3 = ['livello', 'gemella', 'tipoItem', 'erroreTipico', 'domanda', 'opzioni', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte'];
+  const CHIAVI_V3 = ['livello', 'gemella', 'tipoItem', 'erroreTipico', 'concetto', 'domanda', 'opzioni', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte'];
 
   // ---------- regole per archetipo ----------
   function regolaArchetipo(arch: string, materia: string): string {
@@ -192,6 +192,7 @@ const MasterPrompt = (() => {
       ' - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.',
       ' - Coppie gemelle: due domande su concetti speculari, in schede diverse, con la stessa etichetta `"gemella": "G1"` (poi G2, G3…); circa 1 coppia ogni 3 schede.',
       ' - `erroreTipico` sempre valorizzato: l\'errore di ragionamento dietro il distrattore principale.',
+      ' - `concetto`: 2–5 parole, il concetto che la domanda verifica; da 3 a 6 concetti per scheda, scritti SEMPRE uguali per le domande sullo stesso concetto (l\'app ne misura la padronanza).',
       '', 'REGOLE DI QUALITÀ (il controllo automatico le verifica)',
       ' Q-A. La risposta corretta va SEMPRE in `opzioni[0]`: la posizione la sceglie l\'app.',
       ' Q-B. La corretta NON deve essere la più lunga: scrivila breve e allunga i distrattori.',
@@ -205,7 +206,7 @@ const MasterPrompt = (() => {
       ' Scrivi le lettere come se la corretta fosse A (cioè `opzioni[0]`): l\'app le riscrive dopo aver mescolato. La citazione [[…]] è uguale a `fonte`.',
       ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.'];
   }
-  const ESEMPIO = '{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …",' +
+  const ESEMPIO = '{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …","concetto":"…",' +
     '"domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],' +
     '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]",' +
     '"spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}';

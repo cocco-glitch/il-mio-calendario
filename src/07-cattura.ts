@@ -15,10 +15,14 @@
 
 interface RisultatoQuiz { domandeSvolte?: string[]; imc: 'quiz-risultato'; pct: number; giuste: number | null; totale: number | null; livelli: [string, number, number][]; debole: string | null; errori: boolean;
   sbagliate?: [string, string, string][];   // v0.16: [domanda, risposta corretta, spiegazione] dalla sezione «Da rivedere»
-  /** blocco 5: solo dal quiz nell'app — domande sbagliate o fortunate, con caso della matrice e distrattore scelto. */
+  /** blocco 5: solo dal quiz nell'app — con caso della matrice e distrattore scelto. Blocco 6: TUTTE le risposte (padronanza per concetto). */
   dettagli?: EsitoQ[];
+  /** blocco 6: argomenti della scheda (campo `focus` della banca = lista chiusa dei concetti) e titolo per il ripiego. */
+  focus?: string; titoloScheda?: string;
 }
-interface EsitoQ { id: string; q: string; giusta: string; spieg?: string; ok: boolean; caso?: CasoN; scelta?: string; perche?: string; }
+interface EsitoQ { id: string; q: string; giusta: string; spieg?: string; ok: boolean; caso?: CasoN; scelta?: string; perche?: string;
+  /** blocco 6: concetto scelto dall'AI (DomB.concetto) e concetto assegnato nel chunk (Concetti.assegna). */
+  concetto?: string; con?: { chiave: string; etichetta: string; ripiego: boolean }; }
 
 const Cattura = (() => {
   const SPIA = '<script>(function(){var retry=false,inviato=null;function leggi(){try{'

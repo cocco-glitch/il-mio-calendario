@@ -122,7 +122,8 @@ const Validatore = (() => {
       const q = q0, id = testo(q.id) || '(riga ' + (i + 1) + ')';
       const mcq = !testo(q.tipo) || q.tipo === 'mcq';
       for (const k of mcq ? CHIAVI_QUIZ : CHIAVI_BASE_V4) if (!(k in q)) add('err', id, 'chiave mancante: ' + k);
-      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k)) add('warn', id, 'chiave in più: ' + k);
+      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k) && !FACOLTATIVE.includes(k)) add('warn', id, 'chiave in più: ' + k);
+      if ('concetto' in q && (typeof q.concetto !== 'string' || !q.concetto.trim() || q.concetto.length > 60)) add('warn', id, 'concetto: 2–5 parole (al massimo 60 caratteri); senza, l\'app lo assegna da sola');
       if (testo(q.id)) { if (visti.has(id)) add('err', id, 'ID duplicato'); visti.add(id); }
       const L = q.livelloCognitivo;
       const lOk = typeof L === 'number' && [1, 2, 3, 4].includes(L);
@@ -233,6 +234,8 @@ const Validatore = (() => {
   }
 
   /** v0.64 quiz-v4: chiavi dei tipi di domanda, ammesse ma non obbligatorie (il v3 resta com'è). */
+  /** blocco 6: chiavi facoltative (un file senza resta valido; con, non è «chiave in più»). */
+  const FACOLTATIVE: ReadonlyArray<string> = ['concetto'];
   const CHIAVI_V4: ReadonlyArray<string> = ['tipo', 'risposte', 'elementi', 'rubrica', 'rispostaModello', 'linguaggio'];
   /** Chiavi obbligatorie per i tipi non mcq: le altre di CHIAVI_QUIZ sono proprie della scelta multipla o facoltative. */
   const CHIAVI_BASE_V4: ReadonlyArray<string> = ['id', 'stepId', 'scheda', 'categoria', 'livelloCognitivo', 'livello', 'domanda', 'fonte', 'sourceRef'];
@@ -247,7 +250,7 @@ const Validatore = (() => {
     const out = qs.map(q0 => {
       if (!oggetto(q0)) return q0;
       const q: DomQ = { ...q0 }, id = testo(q.id) || '?';
-      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k)) { log.push(id + ': rimossa la chiave in più «' + k + '»'); delete q[k]; }
+      for (const k of Object.keys(q)) if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k) && !FACOLTATIVE.includes(k)) { log.push(id + ': rimossa la chiave in più «' + k + '»'); delete q[k]; }
       if (q.tipo === 'completamento' && typeof q.domanda === 'string') { const d = q.domanda.replace(BUCHI, '___'); if (d !== q.domanda) { log.push(id + ': segnaposto del buco reso «___»'); q.domanda = d; } }
       if (q.tipo === 'ordinamento' && Array.isArray(q.elementi) && q.elementi.some(e => typeof e === 'string' && PREFISSO.test(e))) { log.push(id + ': tolti i prefissi di numerazione dagli elementi'); q.elementi = q.elementi.map(e => typeof e === 'string' ? e.replace(PREFISSO, '') : e); }
       for (const k of ['domanda', 'spiegazione', 'fonte', 'erroreTipico']) { const v = q[k]; if (typeof v === 'string' && v !== v.trim()) { log.push(id + ': tolti spazi superflui in «' + k + '»'); q[k] = v.trim(); } }
