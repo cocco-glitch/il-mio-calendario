@@ -554,5 +554,92 @@ console.log('== Parti incollate e unione per ID (v0.64 T6) ==');
   });
 }
 // =====================================================================
+console.log('\n== Fase 14: unire e dividere i micro-step (nel piano, prima dell\'import) ==');
+{
+  const LIN = { radice: w => w.length > 6 ? w.slice(0, -2) : w.length > 4 ? w.slice(0, -1) : w, espandi: p => p };
+  /** 4 schede: S1–S2 in 3.3.1, S3–S4 in 3.3.2 (stesso blocco), un solo blocco. */
+  const quattro = () => CE.daPiano(C.aPiano(C.leggi(JSON.stringify({ formato: 'piano-v1', blocchi: [{ codice: '3.3', titolo: 'Membrane',
+    copre: [{ schede: ['S1', 'S2'], micro: ['3.3.1'] }, { schede: ['S3', 'S4'], micro: ['3.3.2'] }] }] }))), '3.3');
+  const tutte = p => p.schede.map(x => x.n);
+  t('gruppi: schede per microstep nell\'ordine della prima scheda (come le sotto-schede della chiusura)', () => {
+    eq(CE.gruppi(quattro()).map(g => [g.micro, g.schede.map(x => x.n)]), [['3.3.1', [1, 2]], ['3.3.2', [3, 4]]]);
+  });
+  t('unisci: le schede di 3.3.2 passano in 3.3.1, numeri invariati, 3.3.2 resta coperto e resta la fonte delle pagine', () => {
+    const p = quattro(), q = CE.unisci(p, '3.3.1', '3.3.2');
+    eq(tutte(q), [1, 2, 3, 4], 'nessuna scheda persa o rinumerata');
+    eq(q.schede.map(x => [x.micro, CE.fonte(x)]), [[['3.3.1'], '3.3.1'], [['3.3.1'], '3.3.1'], [['3.3.1', '3.3.2'], '3.3.2'], [['3.3.1', '3.3.2'], '3.3.2']]);
+    eq(p.schede[2].micro, ['3.3.2'], 'il piano di partenza non cambia');
+    eq(CE.schede(q, OPZ).map(s => s.id), ['B-3.3.1-1', 'B-3.3.1-2', 'B-3.3.1-3', 'B-3.3.1-4']);
+    const ps = CE.chiusura(q, OPZ).programmaCalendario.pianoStrutturato;
+    eq(ps.sottoSchede.map(x => [x.codice, x.microstep, x.schedePrioritarie.length, x.durataMin]), [['3.3.1', ['3.3.1', '3.3.2'], 4, 50]], 'una sotto-scheda, tutto il tempo');
+  });
+  t('dividi: dopo S1 → S2 in un microstep nuovo (fratello libero), con le pagine di quello d\'origine', () => {
+    const q = CE.dividi(quattro(), '3.3.1', 1);
+    eq(q.schede.map(x => [x.n, x.micro[0], CE.fonte(x)]), [[1, '3.3.1', '3.3.1'], [2, '3.3.3', '3.3.1'], [3, '3.3.2', '3.3.2'], [4, '3.3.2', '3.3.2']]);
+    eq(q.nuovi, ['3.3.3']);
+    eq(CE.gruppi(q).map(g => g.micro), ['3.3.1', '3.3.3', '3.3.2']);
+    vero(q.schede.every(x => x.micro.every(m => m.startsWith('3.3.'))), 'nuovo codice dentro lo step');
+    eq(CE.dividi(quattro(), '3.3.1', 2), null, 'dopo l\'ultima scheda non si divide');
+    eq(CE.dividi(quattro(), '3.3.9', 1), null, 'microstep inesistente');
+  });
+  t('dividi poi unisci = piano di partenza (il codice creato sparisce, niente fonte residua)', () => {
+    const p = quattro(), q = CE.unisci(CE.dividi(p, '3.3.1', 1), '3.3.1', '3.3.3');
+    eq(q.schede, p.schede); vero(!q.nuovi, 'nuovi vuoto');
+  });
+  t('nuovoCodice: segue il più alto del piano anche fra i coperti e le fonti; sotto-livelli restano nello stesso padre', () => {
+    const p = quattro(); p.schede[3].micro = ['3.3.2', '3.3.7'];
+    eq(CE.nuovoCodice(p, '3.3.1'), '3.3.8');
+    const d = CE.daPiano(C.aPiano(C.leggi(JSON.stringify({ formato: 'piano-v1', blocchi: [{ codice: '3.3', titolo: 'X', copre: [{ schede: ['S1', 'S2'], micro: ['3.3.1.2'] }] }] }))), '3.3');
+    eq(CE.dividi(d, '3.3.1.2', 1).schede[1].micro, ['3.3.1.3']);
+  });
+  t('riallinea: unire/dividere conserva le schede arrivate; categoria cambiata, piano riletto o schede tolte → da fare', () => {
+    const p = quattro(), fl = [{ n: 1, stato: 'arrivata', parteId: 'x' }, { n: 2, stato: 'interrotta' }, { n: 3, stato: 'arrivata' }, { n: 4, stato: 'da-fare' }];
+    const st = q => CE.riallinea(p, fl, q).map(x => x.stato);
+    eq(st(CE.unisci(p, '3.3.1', '3.3.2')), ['arrivata', 'interrotta', 'arrivata', 'da-fare']);
+    eq(st(CE.dividi(p, '3.3.1', 1)), ['arrivata', 'interrotta', 'arrivata', 'da-fare']);
+    eq(CE.riallinea(p, fl, p)[0], { n: 1, stato: 'arrivata', parteId: 'x' }, 'parte conservata');
+    const c = JSON.parse(JSON.stringify(p)); c.schede[2].categoria = 'raffinamento';
+    eq(st(c), ['arrivata', 'interrotta', 'da-fare', 'da-fare']);
+    const m = JSON.parse(JSON.stringify(p)); m.schede[0].micro = ['3.3.2'];
+    eq(st(m)[0], 'da-fare', 'microstep cambiato a mano: le pagine sono altre');
+    eq(st({ ...p, azzera: true }), ['da-fare', 'da-fare', 'da-fare', 'da-fare']);
+    eq(CE.riallinea(undefined, undefined, p).map(x => x.stato), ['da-fare', 'da-fare', 'da-fare', 'da-fare'], 'prima approvazione');
+  });
+  t('minutiMicro: blocchi × 50 min ripartiti per schede, come la chiusura', () => {
+    eq(CE.minutiMicro(quattro()), { '3.3.1': 25, '3.3.2': 25 });
+    const p = quattro(); p.blocchi = ['A', 'B', 'C'];
+    eq(CE.minutiMicro(p), { '3.3.1': 75, '3.3.2': 75 });
+  });
+  t('proposte «Dividi?»: più di 4 concetti nuovi O più minuti di una sessione; mai con una sola scheda; punto a metà', () => {
+    const p = quattro();
+    eq(CE.proposte(p, { concetti: { '3.3.1': ['a', 'b', 'c', 'D', 'd'] } }, LIN), [], '4 distinti (d = D): non basta');
+    const x = CE.proposte(p, { concetti: { '3.3.1': ['a', 'b', 'c', 'd', 'e'] } }, LIN);
+    eq(x.map(y => [y.tipo, y.micro, y.dopo]), [['dividi', '3.3.1', 1]]); vero(/5 concetti nuovi/.test(x[0].motivo), x[0].motivo);
+    const lungo = quattro(); lungo.blocchi = ['A', 'B', 'C'];
+    const y = CE.proposte(lungo, {}, LIN);
+    eq(y.map(z => [z.tipo, z.micro]), [['dividi', '3.3.1'], ['dividi', '3.3.2']]); vero(/~75 min \(più di una sessione da 50\)/.test(y[0].motivo), y[0].motivo);
+    const solo = CE.unisci(quattro(), '3.3.1', '3.3.2'); solo.schede = solo.schede.slice(0, 1); solo.blocchi = ['A', 'B', 'C'];
+    eq(CE.proposte(solo, {}, LIN), [], 'una scheda non si divide');
+  });
+  t('proposte «Unisci?»: doppione di Copertura (stessi concetti, pagine ≥ 50%); senza pagine o pagine diverse → niente', () => {
+    const p = quattro();
+    const u = CE.proposte(p, { pagine: { '3.3.1': [10, 14], '3.3.2': [12, 15] } }, LIN);
+    eq(u.map(z => [z.tipo, z.micro, z.con]), [['unisci', '3.3.1', '3.3.2']]); vero(/75%/.test(u[0].motivo), u[0].motivo);
+    eq(CE.proposte(p, {}, LIN), [], 'pagine ignote');
+    eq(CE.proposte(p, { pagine: { '3.3.1': [10, 14], '3.3.2': [30, 34] } }, LIN), [], 'altre pagine = ripetizione didattica');
+    eq(CE.proposte(p, { pagine: { '3.3.1': [10, 14], '3.3.2': [12, 15] }, concetti: { '3.3.1': ['osmosi', 'diffusione'], '3.3.2': ['pompa sodio', 'endocitosi'] } }, LIN), [], 'concetti diversi');
+  });
+  t('pipeline: piano unito → chiusura → import con gli id del piano nuovo (nessun record esistente: gli id nascono qui)', () => {
+    const q = CE.unisci(quattro(), '3.3.1', '3.3.2');
+    const u = IP.unisci(IP.raggruppa([parte('biologia-3.3-s1-2', [1, 2]), parte('biologia-3.3-s3-4', [3, 4]), comeFile(CE.chiusura(q, OPZ))])[0]);
+    eq(u.bloccanti.length, 0);
+    const tr = ID.traduci(u.pacchetto, '2026-11-20');
+    eq(tr.sub.microstep.map(m => [m.n, m.schede.map(s => s.id)]), [['3.3.1', ['B-3.3.1-1', 'B-3.3.1-2', 'B-3.3.1-3', 'B-3.3.1-4']]]);
+    const d = CE.dividi(quattro(), '3.3.2', 3);
+    const ud = IP.unisci(IP.raggruppa([parte('biologia-3.3-s1-2', [1, 2]), parte('biologia-3.3-s3-4', [3, 4]), comeFile(CE.chiusura(d, OPZ))])[0]);
+    eq(ID.traduci(ud.pacchetto, '2026-11-20').sub.microstep.map(m => [m.n, m.schede.map(s => s.id)]), [['3.3.1', ['B-3.3.1-1', 'B-3.3.1-2']], ['3.3.2', ['B-3.3.2-3']], ['3.3.3', ['B-3.3.3-4']]]);
+  });
+}
+// =====================================================================
 console.log('\nCentro ' + ok + '/' + (ok + ko));
 process.exit(ko ? 1 : 0);

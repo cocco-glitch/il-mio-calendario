@@ -8,10 +8,16 @@
 // ============================================================
 
 type CategoriaScheda = 'prioritaria' | 'raffinamento';
-/** Una scheda del piano approvato: n = 1..N, micro[0] = microstep dell'app. */
-interface SchedaCentro { n: number; micro: string[]; categoria: CategoriaScheda; blocco: string; }
-/** Il piano di uno step dopo la lettura e le correzioni dell'app (modificabile in anteprima). */
-interface PianoCentro { step: string; schede: SchedaCentro[]; blocchi: string[]; avvisi: string[]; }
+/** Una scheda del piano approvato: n = 1..N, micro[0] = microstep dell'app. fonte = microstep delle sue pagine se unione/divisione l'ha spostata. */
+interface SchedaCentro { n: number; micro: string[]; categoria: CategoriaScheda; blocco: string; fonte?: string; }
+/** Il piano di uno step dopo la lettura e le correzioni dell'app (modificabile in anteprima). nuovi = codici creati da «Dividi»;
+ *  azzera = piano riletto o schede tolte (i numeri non corrispondono più alle schede già arrivate). */
+interface PianoCentro { step: string; schede: SchedaCentro[]; blocchi: string[]; avvisi: string[]; nuovi?: string[]; azzera?: boolean; }
+interface GruppoMicro { micro: string; schede: SchedaCentro[]; }
+/** Fase 14: proposta «Unisci?» o «Dividi?» con il perché; mai applicata da sola. */
+interface PropostaMicro { tipo: 'unisci' | 'dividi'; micro: string; con?: string; dopo?: number; motivo: string; }
+/** Segnali per le proposte: pagine PDF note per microstep (fonte), concetti delle domande arrivate, minuti della sessione ordinaria. */
+interface SegnaliMicro { pagine?: Record<string, [number, number]>; concetti?: Record<string, string[]>; minBlocco?: number; minSessione?: number; }
 interface OpzCentro { materia: string; codice: string; step: string; titolo?: string; unita?: string; archetipo?: string; data?: string; perScheda?: number; minBlocco?: number; }
 interface SchedaApp { n: number; sigla: string; id: string; micro: string[]; categoria: CategoriaScheda; blocco: string; }
 /** Una scheda nel flusso: ⏳ da fare, ✂️ interrotta (risposta troncata), ✅ arrivata. */
@@ -82,6 +88,87 @@ const Centro = (() => {
   function schede(p: PianoCentro, o: Pick<OpzCentro, 'codice'>): SchedaApp[] {
     const cod = codiceDi(o);
     return p.schede.map(x => ({ n: x.n, sigla: 'S' + due(x.n), id: cod + '-' + x.micro[0] + '-' + x.n, micro: x.micro.slice(), categoria: x.categoria, blocco: x.blocco }));
+  }
+
+  // ---------- Fase 14: unire e dividere i micro-step (solo nel piano, prima dell'import: gli id nascono all'import) ----------
+  /** Microstep da cui la scheda prende le pagine: quello d'origine se un'unione o una divisione l'ha spostata. */
+  const fonte = (x: SchedaCentro) => x.fonte || x.micro[0];
+  /** Le schede per microstep (micro[0]) nell'ordine della prima scheda: lo stesso ordine delle sotto-schede della chiusura. */
+  function gruppi(p: PianoCentro): GruppoMicro[] {
+    const m = new Map<string, SchedaCentro[]>();
+    for (const x of p.schede) { const l = m.get(x.micro[0]) || []; l.push(x); m.set(x.micro[0], l); }
+    return [...m.entries()].map(([micro, schede]) => ({ micro, schede }));
+  }
+  const copia = (p: PianoCentro): PianoCentro => JSON.parse(JSON.stringify(p));
+  /** Codice libero per un nuovo microstep: fratello di `ms`, col numero dopo il più alto già usato nel piano. */
+  function nuovoCodice(p: PianoCentro, ms: string): string {
+    const padre = ms.slice(0, ms.lastIndexOf('.')), usati = p.schede.flatMap(x => [...x.micro, fonte(x)]);
+    let max = 0;
+    for (const m of usati) { const r = m.slice(padre.length + 1); if (m.startsWith(padre + '.') && /^\d+$/.test(r)) max = Math.max(max, +r); }
+    return padre + '.' + (max + 1);
+  }
+  /**
+   * Unisce il microstep `b` ad `a`: le schede di b passano in a (micro[0] = a), conservano b fra i microstep coperti e le pagine d'origine.
+   * Un codice creato da «Dividi» sparisce del tutto (non è un argomento del programma). Numeri e stato delle schede non cambiano.
+   */
+  function unisci(p: PianoCentro, a: string, b: string): PianoCentro {
+    const q = copia(p); if (a === b) return q;
+    const finto = (q.nuovi || []).includes(b);
+    for (const x of q.schede) if (x.micro[0] === b) {
+      x.fonte = fonte(x);
+      x.micro = [...new Set([a, ...x.micro.filter(m => !(finto && m === b))])];
+      if (x.fonte === b && finto) delete x.fonte;
+      if (x.fonte === x.micro[0]) delete x.fonte;
+    }
+    if (finto) q.nuovi = q.nuovi!.filter(m => m !== b);
+    if (q.nuovi && !q.nuovi.length) delete q.nuovi;
+    return q;
+  }
+  /** Divide il microstep `ms` dopo la scheda `dopo`: le schede seguenti vanno in un microstep nuovo (fratello libero). null se non si può. */
+  function dividi(p: PianoCentro, ms: string, dopo: number): PianoCentro | null {
+    const q = copia(p), g = q.schede.filter(x => x.micro[0] === ms), i = g.findIndex(x => x.n === dopo);
+    if (i < 0 || i >= g.length - 1) return null;
+    const cod = nuovoCodice(q, ms);
+    for (const x of g.slice(i + 1)) { x.fonte = fonte(x); x.micro = [cod, ...x.micro.slice(1).filter(m => m !== cod)]; }
+    q.nuovi = [...(q.nuovi || []), cod];
+    return q;
+  }
+  /** Minuti di ogni microstep come nella chiusura: blocchi × minBlocco ripartiti per numero di schede. */
+  function minutiMicro(p: PianoCentro, minB = 50): Record<string, number> {
+    const g = gruppi(p), m = ripartisci(Math.max(1, p.blocchi.length) * minB, g.map(x => x.schede.length)), out: Record<string, number> = {};
+    g.forEach((x, i) => { out[x.micro] = m[i]; });
+    return out;
+  }
+  const MAX_CONCETTI = 4;   // memoria di lavoro ~4 elementi (Cowan 2001); decisione utente 27/11
+  /**
+   * Proposte (mai automatiche): «Dividi?» se un microstep con ≥ 2 schede ha più di 4 concetti nuovi o più minuti di una sessione ordinaria;
+   * «Unisci?» se Copertura vede un doppione (stessi concetti e pagine sovrapposte ≥ 50%). Concetti = etichette `concetto` delle domande arrivate.
+   */
+  function proposte(p: PianoCentro, sg: SegnaliMicro, lingua: LinguaIndice): PropostaMicro[] {
+    const out: PropostaMicro[] = [], g = gruppi(p), minB = sg.minBlocco || 50, sess = sg.minSessione || minB, min = minutiMicro(p, minB);
+    const concetti = (ms: string) => [...new Set((sg.concetti && sg.concetti[ms] || []).map(c => String(c || '').trim().toLowerCase()).filter(Boolean))];
+    for (const x of g) {
+      if (x.schede.length < 2) continue;
+      const nc = concetti(x.micro).length, perche = nc > MAX_CONCETTI ? nc + ' concetti nuovi (più di ' + MAX_CONCETTI + ')' : min[x.micro] > sess ? '~' + min[x.micro] + ' min (più di una sessione da ' + sess + ')' : '';
+      if (perche) out.push({ tipo: 'dividi', micro: x.micro, dopo: x.schede[Math.ceil(x.schede.length / 2) - 1].n, motivo: 'Dividi ' + x.micro + '? ' + perche });
+    }
+    const unita: UnitaCop[] = g.map(x => {
+      const f = fonte(x.schede[0]), pg = sg.pagine && sg.pagine[f], cc = concetti(x.micro);
+      return { uid: x.micro, titolo: [...new Set(x.schede.map(y => y.blocco))].join(' · ') || x.micro, concettiChiave: cc.length >= 2 ? cc : undefined, pagine: pg, fileId: pg ? 'libro' : undefined };
+    });
+    for (const d of Copertura.coppie(unita, lingua).duplicati) out.push({ tipo: 'unisci', micro: d.a, con: d.b, motivo: 'Unisci ' + d.b + ' a ' + d.a + '? Stessi concetti e pagine sovrapposte al ' + Math.round(d.sovrapp * 100) + '%' });
+    return out;
+  }
+  /**
+   * Stato delle schede dopo una nuova approvazione: resta «arrivata»/«interrotta» la scheda con lo stesso numero, le stesse pagine d'origine
+   * e la stessa categoria (unire/dividere non tocca il contenuto); il resto torna da fare. Piano riletto o schede tolte → tutto da fare.
+   */
+  function riallinea(vecchio: PianoCentro | undefined, flusso: SchedaFlusso[] | undefined, nuovo: PianoCentro): SchedaFlusso[] {
+    const ok = !!vecchio && !!flusso && !nuovo.azzera;
+    return nuovo.schede.map(x => {
+      const v = ok ? vecchio!.schede.find(y => y.n === x.n) : undefined, f = v ? flusso!.find(y => y.n === x.n) : undefined;
+      return f && fonte(v!) === fonte(x) && v!.categoria === x.categoria ? { ...f } : { n: x.n, stato: 'da-fare' as const };
+    });
   }
 
   /** «2026-11-25» → «25/11/2026» (la forma che ImportaDrive legge come data del pacchetto). */
@@ -448,5 +535,6 @@ const Centro = (() => {
     return parti.map(p => { for (let k = p.da; k <= p.a; k++) if (!ci.has(k)) return false; return true; });
   }
 
-  return { prefisso, nomeParte, unisciDomande, partiIncollate, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni, terminiMicro, pagineTrovate, descriviTrovate };
+  return { prefisso, nomeParte, unisciDomande, partiIncollate, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni, terminiMicro, pagineTrovate, descriviTrovate,
+    fonte, gruppi, unisci, dividi, nuovoCodice, minutiMicro, proposte, riallinea, MAX_CONCETTI };
 })();

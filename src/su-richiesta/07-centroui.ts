@@ -191,7 +191,7 @@ const CentroUI = (() => {
       const l = Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, lf.nome));
       if (!l || l.deleted || !l.pdf.length) continue;
       const testi = await testoLibro(l);
-      const sc = r.piano ? r.piano.schede.find(x => x.micro[0] === ms) : undefined;
+      const sc = r.piano ? r.piano.schede.find(x => Centro.fonte(x) === ms) : undefined;
       const termini = Centro.terminiMicro(l.indice, ms, [sc ? sc.blocco : undefined]);
       const verificate = r.citazioni && r.citazioni.libro === l.nome ? r.citazioni.verificate || [] : [];
       const trovate = Centro.pagineTrovate(l, testi, ms, termini.length ? termini : [r.titolo || r.step], { radice: Locale.radice, espandi: Locale.espandi }, verificate);
@@ -407,7 +407,7 @@ const CentroUI = (() => {
           esito.appendChild(h('p.piccolo', null, '⛔ Non trovo un piano. ' + (l.errori[0] || 'Serve il blocco piano-v1 (o le righe @B / COPRE).')));
           return;
         }
-        piano = Centro.daPiano(Contratto.aPiano(l), r.step);
+        piano = { ...Centro.daPiano(Contratto.aPiano(l), r.step), azzera: true };   // piano nuovo: le schede già arrivate non gli appartengono
         disegna();
       }
       function disegna(): void {
@@ -417,29 +417,52 @@ const CentroUI = (() => {
         const rinumera = () => p.schede.forEach((x, i) => { x.n = i + 1; });
         if (p.avvisi.length) anteprima.appendChild(h('ul.piccolo.centro-avvisi', { 'aria-label': 'Avvisi sul piano' }, ...p.avvisi.map(a => h('li', null, '⚠️ ' + a))));
         anteprima.appendChild(h('p.piccolo', null, h('b', null, p.schede.length + ' schede'), ' · ' + p.blocchi.length + ' blocchi: correggi microstep e categoria se serve.'));
-        const lista = h('ol.centro-schede', { 'aria-label': 'Schede del piano' });
-        p.schede.forEach((x, i) => {
-          const micro = h('input', { type: 'text', value: x.micro.join(', '), 'aria-label': 'Microstep della scheda S' + x.n, size: 8 }) as HTMLInputElement;
-          micro.addEventListener('change', () => {
-            const v = micro.value.split(/[,;\s]+/).map(m => m.trim()).filter(Boolean), ok = v.filter(m => RE_STEP.test(m) && m.startsWith(p.step + '.'));
-            if (!ok.length) { avviso('Microstep dello step ' + p.step + ', es. ' + p.step + '.1'); micro.value = x.micro.join(', '); return; }
-            x.micro = ok; micro.value = ok.join(', ');
+        // fase 14: proposte «Unisci?/Dividi?» col perché (mai applicate da sole) e gruppi per microstep con i due pulsanti
+        const cambia = (q: PianoCentro | null) => { if (!q) return; piano = q; disegna(); };
+        const conc: Record<string, string[]> = {}, pag: Record<string, [number, number]> = {};
+        for (const x of p.schede) {
+          const f = (r.schede || []).find(y => y.n === x.n), pt = f && f.stato !== 'da-fare' ? parteDi(r, x.n) : null;
+          if (pt) (conc[x.micro[0]] = conc[x.micro[0]] || []).push(...pt.quiz.map(q => String(q.concetto || '')).filter(Boolean));
+          const fo = Centro.fonte(x), lp = libroPer(r, fo), tv = trovatePer.get(r.id + '|' + fo), pg = lp ? lp.p : tv && tv.pagine;
+          if (pg && pg.pdfDa !== null && !pag[fo]) pag[fo] = [pg.pdfDa, pg.pdfA !== null ? pg.pdfA : pg.pdfDa];
+        }
+        const prop = Centro.proposte(p, { pagine: pag, concetti: conc }, { radice: Locale.radice, espandi: Locale.espandi });
+        if (prop.length) anteprima.appendChild(h('ul.piccolo.centro-avvisi', { 'aria-label': 'Proposte sui microstep' }, ...prop.map(x => h('li.riga-tra', null, '💡 ' + x.motivo,
+          h('button.chip', { type: 'button', 'aria-label': x.motivo, onclick: () => cambia(x.tipo === 'unisci' ? Centro.unisci(p, x.micro, x.con!) : Centro.dividi(p, x.micro, x.dopo!)) },
+            x.tipo === 'unisci' ? '⤵ Unisci' : '✂ Dividi')))));
+        const lista = h('ol.centro-schede', { 'aria-label': 'Schede del piano' }), gg = Centro.gruppi(p), min = Centro.minutiMicro(p);
+        gg.forEach((g, gi) => {
+          const dopo = gg[gi + 1];
+          lista.appendChild(h('li.riga-tra.centro-gruppo', null, h('span.piccolo', null, h('b', null, 'Microstep ' + g.micro), ' · ' + g.schede.length + (g.schede.length === 1 ? ' scheda' : ' schede') + ' · ~' + min[g.micro] + ' min'),
+            dopo ? h('button.chip', { type: 'button', 'aria-label': 'Unisci il microstep ' + dopo.micro + ' a ' + g.micro, onclick: () => cambia(Centro.unisci(p, g.micro, dopo.micro)) }, '⤵ Unisci al successivo') : null));
+          g.schede.forEach((x, k) => {
+            const i = p.schede.indexOf(x);
+            const micro = h('input', { type: 'text', value: x.micro.join(', '), 'aria-label': 'Microstep della scheda S' + x.n, size: 8 }) as HTMLInputElement;
+            micro.addEventListener('change', () => {
+              const v = micro.value.split(/[,;\s]+/).map(m => m.trim()).filter(Boolean), ok = v.filter(m => RE_STEP.test(m) && m.startsWith(p.step + '.'));
+              if (!ok.length) { avviso('Microstep dello step ' + p.step + ', es. ' + p.step + '.1'); micro.value = x.micro.join(', '); return; }
+              x.micro = ok; delete x.fonte; disegna();   // correzione a mano: vince (pagine del microstep scritto), i gruppi si ridisegnano
+            });
+            const cat = selettore([['prioritaria', 'Prioritaria'], ['raffinamento', 'Raffinamento']], x.categoria, function () { x.categoria = this.value as CategoriaScheda; });
+            cat.setAttribute('aria-label', 'Categoria della scheda S' + x.n);
+            const togli = h('button.btn-ico', { type: 'button', 'aria-label': 'Togli la scheda S' + x.n, onclick: () => { p.schede.splice(i, 1); rinumera(); p.azzera = true; disegna(); } }, '✕');
+            lista.appendChild(h('li.riga-tra', null, h('span', null, h('b', null, 'S' + String(x.n).padStart(2, '0')), h('span.piccolo.tenue', null, ' ' + x.blocco)), h('span.chips', null, micro, cat, togli)));
+            if (k < g.schede.length - 1) lista.appendChild(h('li.centro-taglio', null, h('button.chip', { type: 'button', 'aria-label': 'Dividi il microstep ' + g.micro + ' dopo la scheda S' + x.n,
+              onclick: () => cambia(Centro.dividi(p, g.micro, x.n)) }, '✂ Dividi qui')));
           });
-          const cat = selettore([['prioritaria', 'Prioritaria'], ['raffinamento', 'Raffinamento']], x.categoria, function () { x.categoria = this.value as CategoriaScheda; });
-          cat.setAttribute('aria-label', 'Categoria della scheda S' + x.n);
-          const togli = h('button.btn-ico', { type: 'button', 'aria-label': 'Togli la scheda S' + x.n, onclick: () => { p.schede.splice(i, 1); rinumera(); disegna(); } }, '✕');
-          lista.appendChild(h('li.riga-tra', null, h('span', null, h('b', null, 'S' + String(x.n).padStart(2, '0')), h('span.piccolo.tenue', null, ' ' + x.blocco)), h('span.chips', null, micro, cat, togli)));
         });
         anteprima.appendChild(lista);
         const aggiungi = h('button.chip', { type: 'button', onclick: () => {
           const ult = p.schede[p.schede.length - 1];
-          p.schede.push({ n: p.schede.length + 1, micro: ult ? ult.micro.slice() : [p.step + '.1'], categoria: 'prioritaria', blocco: ult ? ult.blocco : (p.blocchi[0] || p.step) });
+          p.schede.push({ n: p.schede.length + 1, micro: ult ? ult.micro.slice() : [p.step + '.1'], categoria: 'prioritaria', blocco: ult ? ult.blocco : (p.blocchi[0] || p.step), ...(ult && ult.fonte ? { fonte: ult.fonte } : {}) });
           disegna();
         } }, '＋ Aggiungi scheda');
         const approva = h('button.btn', { type: 'button', onclick: () => {
           if (!p.schede.length) { avviso('Il piano non ha schede.'); return; }
-          salva({ ...r, piano: p, schede: p.schede.map(x => ({ n: x.n, stato: 'da-fare' as const })), esiti: {} });
-          avviso('Piano salvato: ' + p.schede.length + ' schede.');
+          const sc = Centro.riallinea(r.piano as PianoCentro | undefined, r.schede, p), gia = sc.filter(x => x.stato !== 'da-fare').length;
+          delete p.azzera;
+          salva({ ...r, piano: p, schede: sc, esiti: {} });
+          avviso('Piano salvato: ' + p.schede.length + ' schede' + (gia ? ' (' + (gia === 1 ? '1 già scritta resta' : gia + ' già scritte restano') + ': non si rigenera)' : '') + '.');
           vai(3);
         } }, '✅ Approva il piano');
         anteprima.appendChild(h('div.chips', null, aggiungi, approva));
@@ -510,8 +533,8 @@ const CentroUI = (() => {
       } else {
         const lst = bersaglio.map(n => delPiano(n)).filter((x): x is SchedaCentro => !!x);
         const libri = (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi<LibroRec>(Centro.idLibro(r.nomeMateria, l.nome))).filter((x): x is LibroRec => !!x);
-        const pagine = Centro.paginePer(libri, lst.map(x => x.micro[0]).filter(Boolean));
-        for (const x of lst) { const tv = trovatePer.get(r.id + '|' + x.micro[0]); if (tv && tv.pagine && !pagine[x.micro[0]]) pagine[x.micro[0]] = tv.pagine; }   // blocco 2
+        const pagine: Record<string, PagineMicro> = {}, daFonte = Centro.paginePer(libri, lst.map(Centro.fonte));   // fase 14: pagine del microstep d'origine
+        for (const x of lst) { const f = Centro.fonte(x), tv = trovatePer.get(r.id + '|' + f), pg = daFonte[f] || (tv && tv.pagine); if (pg && !pagine[x.micro[0]]) pagine[x.micro[0]] = pg; }   // blocco 2
         const proprietario = Drive.eProprietario();
         const mix = mixPer.get(r.id) || ProfiliAI.mix(Dominio.archetipoMateria(r.materia), proprietario, PER());
         if (!proprietario) mixEl = campiMix(r, mix);   // Medicina: solo mcq, il prompt resta quello di v0.63
@@ -527,7 +550,7 @@ const CentroUI = (() => {
         }
         let materiale: PaginaTesto[] | null | undefined;
         if (!prof.file) {
-          const ms = lst.length ? lst[0].micro[0] : '', t = testiPer.get(r.id + '|' + ms);
+          const ms = lst.length ? Centro.fonte(lst[0]) : '', t = testiPer.get(r.id + '|' + ms);
           if (t === undefined && ms) {
             testiPer.set(r.id + '|' + ms, 'attesa');
             materialeDi(r, ms).catch(() => null).then(x => { testiPer.set(r.id + '|' + ms, x); if (passo === 3 && rec && rec.id === r.id) vai(3); });
@@ -540,11 +563,11 @@ const CentroUI = (() => {
           lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })), pagine);
         testoPrompt = res.testo;
         if (materiale !== undefined) {
-          const mt = res.materiale, ci = !!mt && mt.pagine.length > 0, t = testiPer.get(r.id + '|' + (lst.length ? lst[0].micro[0] : ''));
+          const mt = res.materiale, ci = !!mt && mt.pagine.length > 0, t = testiPer.get(r.id + '|' + (lst.length ? Centro.fonte(lst[0]) : ''));
           const disponibile = !!t && t !== 'attesa' && t.some(x => !x.vuota);
           const cas = h('input', { type: 'checkbox', checked: conTesto && disponibile || undefined, disabled: !disponibile || undefined }) as HTMLInputElement;
           cas.addEventListener('change', () => { conTesto = cas.checked; vai(3); });
-          const tv = trovatePer.get(r.id + '|' + (lst.length ? lst[0].micro[0] : ''));
+          const tv = trovatePer.get(r.id + '|' + (lst.length ? Centro.fonte(lst[0]) : ''));
           if (tv) zonaTrovate = h('p.piccolo', { role: 'status' }, Centro.descriviTrovate(tv));
           rigaTesto = h('label.riga-tra.piccolo', null,
             ci ? 'Includo ' + mt!.pagine.length + (mt!.pagine.length === 1 ? ' pagina, ' : ' pagine, ') + numero(mt!.caratteri) + ' caratteri del tuo PDF' + (mt!.escluse ? ' (tagliato: ' + mt!.escluse + ' pagine fuori)' : '')

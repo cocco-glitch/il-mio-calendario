@@ -914,6 +914,8 @@ details.personalizza > summary { cursor: pointer; padding: 10px 4px; font-weight
 .centro-nota { border-left: 3px solid var(--accento); padding: 4px 0 4px 10px; }
 .centro-nota p { margin: 2px 0; }
 .centro-schede li.centro-attiva { border-left: 3px solid var(--accento); padding-left: 8px; }
+.centro-schede li.centro-gruppo { border-top: 1px solid var(--linea); padding-top: 6px; margin-top: 4px; }
+.centro-schede li.centro-taglio { display: flex; justify-content: center; }
 .centro-albero, .centro-albero ul { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .centro-albero ul ul { padding-left: 22px; }
 .centro-albero label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 32px; }
