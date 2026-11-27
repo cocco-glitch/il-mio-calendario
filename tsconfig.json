@@ -7,7 +7,8 @@
     "outDir": "build-tmp",
     "rootDir": "src",
     "moduleDetection": "legacy",
-    "removeComments": true
+    "removeComments": true,
+    "newLine": "lf"
   },
   "include": ["src/*.ts", "src/su-richiesta/*.ts"]
 }

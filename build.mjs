@@ -16,14 +16,16 @@ let tsc = 'tsc';
 try { execSync('tsc -v', { stdio: 'ignore' }); } catch (_) { tsc = 'npx -y -p typescript@5.6.3 tsc'; }
 execSync(tsc + ' -p tsconfig.json', { stdio: 'inherit' });
 
+// 27/11: fine riga sempre LF (su Windows tsc e i checkout CRLF aggiungevano ~1 KB gzip: il PC misurava un app.js diverso da quello pubblicato)
+const lf = s => s.replace(/\r\n?/g, '\n');
 const js = readdirSync('build-tmp').filter(f => f.endsWith('.js')).sort()
-  .map(f => readFileSync('build-tmp/' + f, 'utf8')).join('\n');
+  .map(f => lf(readFileSync('build-tmp/' + f, 'utf8'))).join('\n');
 const app = '"use strict";\n' + js.replace(/^"use strict";\n/gm, '');
 // v0.59.2: src/su-richiesta/*.ts → strumenti-quiz.js, caricato solo al primo uso (conStrumentiQuiz); stessi controlli di tipo
 // Motore unificato (divisione del chunk): il percorso di studio (Studia ora, fine quiz, concetti, padronanza, IndicePagine, Copertura)
 // va in motore-studio.js e non usa nulla della creazione; strumenti-quiz.js (Centro, coda, prompt, validatore) lo richiede caricato prima.
 const MOTORE = ['07-componiquiz.js', '07-concetti.js', '07-copertura.js', '07-finequiz.js', '07-finequizui.js', '07-indicepagine.js', '07-motorestudio.js', '07-padronanzaui.js', '07-studiaoraui.js', '07-verificaconcetti.js'];
-const unisci = fs => '"use strict";\n' + fs.map(f => readFileSync('build-tmp/su-richiesta/' + f, 'utf8')).join('\n').replace(/^"use strict";\n/gm, '');
+const unisci = fs => '"use strict";\n' + fs.map(f => lf(readFileSync('build-tmp/su-richiesta/' + f, 'utf8'))).join('\n').replace(/^"use strict";\n/gm, '');
 const suRichiesta = readdirSync('build-tmp/su-richiesta').filter(f => f.endsWith('.js')).sort();
 for (const f of MOTORE) if (!suRichiesta.includes(f)) throw new Error('build: modulo del motore mancante ' + f);
 const motore = unisci(suRichiesta.filter(f => MOTORE.includes(f)));
