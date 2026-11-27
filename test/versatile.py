@@ -19,7 +19,7 @@ with sync_playwright() as p:
     pg.clock.install(time='2026-11-12T09:00:00+01:00')
     pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("Studio.pkStep().length >= 3")
     # --- corso proprio
-    pg.click('.tabbar >> text=Studio'); pg.click('.chip >> text=+ Nuovo corso')
+    pg.click('.tabbar >> text=Studio'); pg.click('.selettore-step'); pg.click('.tendina-menu >> text=+ Nuovo corso')
     pg.wait_for_timeout(150); pg.fill('.foglio .titolo-grande', 'Inglese B2')
     pg.fill('.foglio input[placeholder^="+ Materia"]', 'Grammatica'); pg.press('.foglio input[placeholder^="+ Materia"]', 'Enter')
     pg.fill('.foglio input[placeholder^="+ Materia"]', 'Ascolto'); pg.press('.foglio input[placeholder^="+ Materia"]', 'Enter')

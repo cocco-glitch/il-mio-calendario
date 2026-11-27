@@ -124,7 +124,13 @@ function minutiStudio(da: Date, a: Date, m?: string): number {
   return Stato.tutti<Sessione>('sessione').filter(s => s.data >= x && s.data <= y && (!m || s.m === m)).reduce((t, s) => t + s.minuti, 0);
 }
 function durata(min: number): string { return min >= 60 ? Math.floor(min / 60) + ' h ' + (min % 60 ? pad2(min % 60) + ' min' : '') : min + ' min'; }
+/** Redesign blocco 4: solo i minuti; i pulsanti ▶ per step stavano già in «Adesso» e in «Studio di oggi» (widgetTimerAvvii resta nel codice). */
 function widgetTimer(): HTMLElement {
+  const g = oggi();
+  return scheda('Tempo di studio', h('p.tempo-riga', null, 'Oggi ', h('b', null, durata(minutiStudio(g, g))), ', questa settimana ', h('b', null, durata(minutiStudio(lunedi(g), g)))),
+    h('div.tenue.piccolo', null, 'Sessioni da ' + Timer.durate().studio + ' min + pausa ' + Timer.durate().pausa + ' (si cambia in Altro → Studio).'));
+}
+function widgetTimerAvvii(): HTMLElement {
   const g = oggi(), oggiMin = minutiStudio(g, g), sett = minutiStudio(lunedi(g), g);
   const st = Studio.vociDelGiorno(g).filter(x => !x.v.speciale);
   return scheda('Timer e tempo di studio',
@@ -193,6 +199,20 @@ function vistaEsami(): HTMLElement {
       h('span.voce-corpo', null, h('span.voce-titolo', null, e.nome), h('span.voce-sotto', null, dataLunga(daYmd(e.data)) + (e.ora ? ' · ' + e.ora : '') + (e.materie && e.materie.length ? ' · ' + e.materie.map(nomeMateria).join(', ') : '')))); }))
       : vuoto('Nessun esame. Aggiungi le date degli appelli: compaiono nel calendario e in Oggi con il conto alla rovescia.'),
     h('button.btn', { onclick: () => editorEsame() }, '+ Aggiungi esame / appello'));
+}
+/** Redesign blocco 4: una riga per i 2 esami più vicini sotto la data di Oggi, con la Modalità esame; sostituisce banner e riquadri. */
+function rigaEsami(): HTMLElement | null {
+  const modo = modalitaEsame(), nascosti = (imp().widgetNascosti || []).includes('esami');
+  const prossimi = nascosti ? [] : esamiNoti().filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 2);
+  if (!prossimi.length && modo === null) return null;
+  const apri = () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); };
+  const quando = (d: number) => d === 0 ? 'oggi' : d === 1 ? 'domani' : 'tra ' + d + ' giorni';
+  return h('div.oggi-esami', null,
+    prossimi.map(e => { const d = giorniA(e.data); return lungo(h('button.oggi-esame', { onclick: apri },
+      h('b', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')),
+      h('span', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' }) + ', ' + quando(d))), () => MenuLungo.esame(), e.nome); }),
+    modo !== null ? h('div.oggi-modo', { role: 'status' }, h('span', null, modo <= 3 ? 'Modalità esame: solo ripasso.' : 'Modalità esame: solo l’essenziale.'),
+      h('button.btn-testo', { onclick: () => { const i = imp(); i.modoEsame = 'no'; Stato.salva(i); avviso('Modalità esame spenta: la riattivi da Altro › Aspetto.'); } }, 'Mostra tutto')) : null);
 }
 function widgetEsami(): HTMLElement | null {
   const prossimi = Stato.tutti<Esame>('esame').filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 2);

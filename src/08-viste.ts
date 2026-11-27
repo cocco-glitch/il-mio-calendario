@@ -149,9 +149,9 @@ function vistaOggi(): HTMLElement {
 
   return h('div.pagina', null,
     h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))),
+    rigaEsami(),   // redesign blocco 4: al posto del banner «Modalità esame» e dei riquadri degli esami (bannerModoEsame e widgetEsami restano nel codice)
     campoRapido(),
     senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null,
-    bannerModoEsame(),
     ordineWidget().map(w => {
       switch (w) {
         case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
@@ -164,7 +164,7 @@ function vistaOggi(): HTMLElement {
         case 'studiaora': return widgetStudiaOra();   // v0.58: card «Adesso» sempre in cima, anche senza pacchetti-step
         case 'ripassi': return widgetRipassa();   // v0.59: coda unica al posto di ripassi, carte e appunti
         case 'chiusura': return widgetChiusura();
-        case 'esami': return widgetEsami();
+        case 'esami': return null;   // redesign blocco 4: gli esami sono nella riga sotto la data (rigaEsami)
         case 'timer': return widgetTimer();
         case 'errori': return widgetErrori();
       }

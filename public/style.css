@@ -983,3 +983,20 @@ body::after { background-image: radial-gradient(circle, var(--accento) 1.6px, tr
 @keyframes sboccia { 0% { opacity: .85; --raggio: 24px; } 100% { opacity: 0; --raggio: 170px; } }
 @media (prefers-reduced-motion: reduce) { body::after { display: none; } }
 :root[data-animazioni="no"] body::after { display: none; }
+/* Redesign blocco 4 (27/11): Oggi con una sola card in risalto; esami in una riga sotto la data; ritardo in una riga con l'elenco a richiesta. */
+.oggi-esami { display: flex; flex-direction: column; gap: 2px; padding: 0 2px; margin-top: -8px; font-size: var(--t-2); }
+.oggi-esame { display: flex; gap: 8px; align-items: baseline; min-height: 32px; text-align: left; color: var(--testo); }
+.oggi-esame:first-child b { color: var(--accento-testo); }
+.oggi-esame span { color: var(--tenue); }
+.oggi-modo { font-size: var(--t-1); display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; color: var(--tenue); }
+.oggi-modo .btn-testo { min-height: 32px; }
+.adesso .bottoni { flex-wrap: nowrap; align-items: center; }
+.adesso .btn.studia-ora { flex: 1; min-width: 0; font-size: var(--t-3); }
+.adesso .btn-testo { flex: none; }
+.tempo-riga { margin: 0 0 4px; }
+.indicatore-riga .indicatore { flex: 0 1 auto; }
+.ritardo-quali { order: 3; flex-basis: 100%; font-size: var(--t-1); }
+.ritardo-quali summary { cursor: pointer; min-height: 32px; display: inline-flex; align-items: center; color: var(--accento-testo); font-weight: 600; }
+.ritardo-quali p { margin: 2px 0 4px; color: var(--tenue); line-height: 1.5; }
+.titolo-step { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tendina-btn.selettore-step { display: inline-flex; height: auto; min-height: 40px; padding: 0 14px; white-space: nowrap; font-weight: 700; font-size: inherit; }

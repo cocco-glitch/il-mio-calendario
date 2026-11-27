@@ -20,17 +20,16 @@ function widgetStudiaOra(): HTMLElement {
   }
   // v0.58: card «Adesso» — cosa fare ora in una riga, durata stimata e [Inizia] che avvia subito la sessione (2 tocchi da app chiusa)
   // Il riassunto (2 composizioni della sessione) si calcola dopo il disegno: Oggi resta nel budget dei tempi (prestazioni.py).
-  const e = prossimoEsame(), durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
+  const durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
   const inizia = () => conMotoreStudio(() => StudiaOraUI.studia());
   const btn = h('button.btn.studia-ora', { onclick: inizia }, '▶ Inizia');
   caricaMotoreStudio().then(() => setTimeout(() => {   // dopo il disegno: Oggi resta nel budget dei tempi
     if (!riassunto.isConnected) return;
     const a = StudiaOraUI.adesso(); riassunto.textContent = a.riassunto;
-    durata.textContent = a.minuti ? ' · ' + a.minuti + ' min' : ''; if (!a.minuti) btn.textContent = '▶ Studio libero con timer';
+    durata.textContent = a.minuti ? ' · ' + a.minuti + ' min' : ''; if (!a.minuti) btn.textContent = '▶ Studio libero';   // redesign blocco 4: su una riga a 375 px (il timer parte comunque)
   }, 0), (e: Error) => { riassunto.textContent = '⚠️ ' + e.message; });
   return h('section.card.adesso', null,
-    h('div.adesso-testa', null, h('b', null, 'Adesso'), durata,
-      e ? h('span.tenue.piccolo', null, ' · ' + (e.giorni === 0 ? 'esame oggi' : '−' + e.giorni + (e.giorni === 1 ? ' giorno' : ' giorni')) + ' a ' + e.nome + (e.stato ? ' · ' + e.stato : '')) : null),
+    h('div.adesso-testa', null, h('b', null, 'Adesso'), durata),   // redesign blocco 4: esame e ritardo stanno sotto la data e in «Studio di oggi»
     riassunto,
     h('div.bottoni', null, lungo(btn, () => [
       { t: 'Scegli quanto tempo hai', ic: 'cronometro', f: () => apriStudiaOra() },

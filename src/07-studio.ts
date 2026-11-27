@@ -492,9 +492,20 @@ function indicatoreStudio(): HTMLElement | null {
   if (!Studio.pkPiani().length) return null;
   const r = Studio.inRitardo();
   const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } },
-    h('span.pallino-stato'), r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
+    h('span.pallino-stato'), r.length ? 'In ritardo di ' + r.length + ' step' : 'In pari con il piano');
   // v0.10: ripianificazione in un tocco (solo piano principale) — v0.34: compatta, sulla stessa riga
-  return Ripianifica.inRitardo().length ? h('div.indicatore-riga', null, ind, h('button.btn-testo.ripianifica', { onclick: () => apriRipianifica() }, icona('ripeti', 16), 'Ripianifica')) : ind;
+  // redesign blocco 4: l'elenco degli step in ritardo si apre a richiesta («Quali»)
+  const quali = r.length ? h('details.ritardo-quali', null, h('summary', null, 'Quali'), h('p.piccolo', null, r.map(v => Studio.etichetta(v.k)).join(', '))) : null;
+  const rip = Ripianifica.inRitardo().length ? h('button.btn-testo.ripianifica', { onclick: () => apriRipianifica() }, icona('ripeti', 16), 'Ripianifica') : null;
+  return rip || quali ? h('div.indicatore-riga', null, ind, quali, rip) : ind;
+}
+
+/** Redesign blocco 4: un solo pulsante «Step ▾» al posto della fila di chip degli step; «+ Nuovo corso» sta nel suo menu. */
+function selettoreStep(pks: PkStep[], pk: PkStep): HTMLElement {
+  const nome = (p: PkStep) => (p.proprio ? '★ ' : '') + p.titolo;
+  const b = tendina(nome(pk) + ' ▾', () => [...pks.map(p => ({ testo: nome(p), attiva: p.id === pk.id, azione: () => { UI.studioStep = p.id; disegna(); } })),
+    { testo: '+ Nuovo corso', azione: () => editorCorso() }], 'Cambia step o corso, ora ' + nome(pk));
+  b.classList.add('chip', 'selettore-step'); return b;
 }
 
 // ---------- Vista STUDIO ----------
@@ -546,11 +557,9 @@ function vistaStudio(): HTMLElement {
 
   const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
   return h('div.pagina', null, seg, indicatoreStudio(),
-    h('div.chips', null, pks.map(p => h('button.chip' + (p.id === pk.id ? '.attivo' : ''), { onclick: () => { UI.studioStep = p.id; disegna(); } }, (p.proprio ? '★ ' : '') + p.titolo)),
-      h('button.chip', { onclick: () => editorCorso() }, '+ Nuovo corso')),
     pk.proprio ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => editorCorso(pk) }, 'Modifica corso'), h('button.btn.neutro', { onclick: () => editorSottostep(pk) }, '+ Aggiungi argomento')) : null,
     pk.descrizione ? h('div.tenue.piccolo', null, pk.descrizione) : null,
-    h('section.card', null, h('h2.card-titolo', null, pk.titolo + ' · totale'),
+    h('section.card', null, h('h2.card-titolo.titolo-step', null, selettoreStep(pks, pk), h('span.tenue', null, 'totale')),
       h('div.numeri', null, numero(T.Pf + '/' + T.P, 'prioritarie'), numero(T.Rf + '/' + T.R, 'raffinamento'), numero(T.pagLette.size + '/' + T.pagT.size, 'pagine lette')),
       barra(T.Pf, T.P)),
     pk.materie.map(m => {

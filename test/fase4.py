@@ -108,7 +108,7 @@ with sync_playwright() as p:
     pg.click('.tabbar >> text=Altro'); pg.click('.riga-gruppo >> text=Aspetto'); pg.click('.chip >> text=Studio intenso'); pg.wait_for_timeout(200)
     ok(pg.evaluate("[document.documentElement.dataset.tema, document.documentElement.dataset.densita, imp().accento]") == ['scuro', 'compatta', '#e9a23b'], 'preset Studio intenso applicato')
     pg.screenshot(path='test/31-impostazioni.png', full_page=True)
-    pg.click('.tabbar >> text=Oggi'); t = pg.locator('.card-titolo').all_inner_texts()
+    pg.click('.tabbar >> text=Oggi'); pg.wait_for_function("document.querySelector('main').dataset.scheda === 'oggi'"); t = pg.locator('.card-titolo').all_inner_texts()   # redesign blocco 2: il cambio dalla barra è una View Transition (asincrono)
     ok(t[0].upper().startswith('STUDIO'), 'Oggi: primo riquadro = Studio (%s)' % t[:3])
     pg.click('.tabbar >> text=Altro'); pg.click('.riga-gruppo >> text=Aspetto'); pg.click('.chip >> text=Minimal'); pg.wait_for_timeout(200)
     ok(pg.locator('.tabbar button', has_text='Note').count() == 0 and pg.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()") == '#ffffff', 'Minimal: sezione Note nascosta, sfondo bianco')

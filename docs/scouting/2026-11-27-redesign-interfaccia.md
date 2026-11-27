@@ -96,6 +96,20 @@ Come capiremo che funziona: (1) ogni azione principale in ≤ 2 tocchi da Oggi; 
 - Token nuovi: scala `--t-1…5`, durate `--dur-1…3`, curve, raggi `--r-s/m/l`; niente etichette in maiuscolo tracciato (13 tolte).
 - Test `aspetto` (contrasto ≥ 4,5:1 di 10 coppie × 9 accenti × 2 temi, font, SW, licenza). Cricchetti: colori fuori token 99, `font-size` distinti 24 (invariati con il conteggio del 27/11).
 
+## Blocco 2 — fatto (27/11)
+- View Transitions solo dai tocchi della barra (`transizione()` in 09-main.ts), onda dal punto toccato con un ascoltatore delegato, tolta la cascata sulle sezioni.
+
+## Blocco 3 — fatto (27/11)
+- Puntini a 22 px nei due temi (`--puntino`: testo all'11% chiaro, 9% scuro, 5% nelle viste di studio).
+- Vivo solo in Oggi, Calendario, Altro, Promemoria e Note (`data-sfondo` da `disegna()`): un tocco su uno spazio vuoto accende i puntini vicini nell'accento per 650 ms (maschera radiale animata con `@property --raggio`). Nessun movimento continuo, nessun rAF; spento con «riduci movimento» e Animazioni: no. JS +141 B gzip.
+
+## Blocco 4 — fatto (27/11), scelte dell'utente
+- Oggi: esami in una riga sotto la data (`rigaEsami`, anche gli esami dei piani generati) al posto del banner «Modalità esame» e dei 3 riquadri; card Adesso senza la riga di stato doppia, pulsante «▶ Studio libero» su una riga; «Tempo di studio» solo minuti (i ▶ erano doppioni). `bannerModoEsame`, `widgetEsami`, `widgetTimerAvvii` restano nel codice.
+- Ritardo: «In ritardo di N step» + «Quali» (elenco chiuso) + Ripianifica, in Oggi e in Studio.
+- Studio › Corsi: un selettore «Step ▾» (menu con gli step e «+ Nuovo corso») al posto della fila di chip: da 3 a 2 livelli prima del contenuto.
+- Test: `aspetto` +10 controlli; `versatile` (Nuovo corso dal selettore), `collaudo_filiera` F4 (conto alla rovescia sotto la data), `fase4` (attesa della vista dopo la View Transition).
+- Non fatto: la card «Drive non collegato» in Altro (doppione di Dati e backup) resta: è anche l'invito a collegare Drive; da decidere nel blocco 6.
+
 ## Fonti
 - Sundararajan & Adesope 2020 (WSU): https://news.wsu.edu/press-release/2020/03/19/seductive-details-inhibit-learning · meta-analisi 2026: https://link.springer.com/content/pdf/10.1007/s11251-023-09632-w.pdf · https://frontiersin.org/articles/10.3389/fpsyg.2024.1393113/full · Pink & Newton 2020: https://online.gcc.mass.edu/pluginfile.php/2178383/mod_page/content/39/advan.00102.2019.pdf
 - NN/g: https://www.nngroup.com/articles/mobile-tutorials/ · https://www.nngroup.com/articles/onboarding-tutorials/ · https://www.nngroup.com/articles/mobile-app-onboarding/ · https://nngroup.com/articles/animation-duration

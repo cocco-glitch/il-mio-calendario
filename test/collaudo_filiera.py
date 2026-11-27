@@ -148,7 +148,8 @@ with sync_playwright() as p:
     pg.wait_for_function("(() => { const c = document.querySelector('.card.adesso'); return !!c && !/…/.test(c.innerText); })()", timeout=8000)
     ad = pg.inner_text('.card.adesso'); print('        Adesso: ' + ad.replace('\n', ' | ')[:160])
     ok('Inizia' in ad, 'card «Adesso» pronta con [Inizia]')
-    ok('9 giorni' in ad, 'F4: «Adesso» conta i giorni all\'esame del piano generato (22/11 → 9 giorni)')
+    es = pg.inner_text('.oggi-esami') if pg.locator('.oggi-esami').count() else ''   # redesign blocco 4: il conto alla rovescia sta sotto la data di Oggi
+    ok('9 giorni' in es, 'F4: Oggi conta i giorni all\'esame del piano generato (22/11 → 9 giorni): %s' % es.replace('\n', ' | '))
     for minuti in (25, 50, 90):
         pr = pg.evaluate("StudiaOraUI && StudiaOra.proposta(%d)" % minuti) if False else pg.evaluate("(() => { const p = StudiaOra.proposta(%d); return { ob: p.obiettivo, v: p.voci.map(v => [v.tipo, v.min, v.titolo, v.motivo || '']), es: p.esclusi.length }; })()" % minuti)
         tot = sum(v[1] for v in pr['v'])
