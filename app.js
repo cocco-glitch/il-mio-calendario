@@ -2631,6 +2631,13 @@ const Privacy = (() => {
         catch (e) {
             console.warn('Privacy: cache PDF non cancellata', e);
         }
+        try {
+            if (typeof caches !== 'undefined')
+                await caches.delete('imc-testo-pdf');
+        }
+        catch (e) {
+            console.warn('Privacy: cache del testo PDF non cancellata', e);
+        }
     }
     async function svuotaAccount() {
         await Stato.svuotaLocale();
@@ -5109,8 +5116,14 @@ const Carte = (() => {
         Stato.salva({ id: idMem(v), type: 'memoria', updatedAt: 0, er: 'carta:' + v.c.id + (v.rev ? ':r' : ''), d: st.d, s: st.s, due: ymd(d), ultimo: oggiK,
             n: (m ? m.n : 0) + 1, lapsi: (m ? m.lapsi : 0) + (m && g === 1 ? 1 : 0), log: ((m && m.log) || []).concat([[oggiK, g, undefined, sec]]).slice(-50) }, true);
     }
-    function daErrori(lista) {
-        if (imp().carteDaErrori === false)
+    function mazzoErrori(schedaId) {
+        const t = schedaId.startsWith('sim:') ? null : trovaScheda(schedaId);
+        return 'mz-err-' + (t ? t.k : Stato.prendi(schedaId)?.type === 'qcreato' ? 'qc' : 'sim');
+    }
+    const idErrore = (idM, q, chiave) => 'cr-' + hash(idM + '|' + (chiave ? 'con|' + chiave : norm(q)));
+    function daErrori(lista, forza = false) {
+        const i = imp();
+        if (!forza && (i.carteAuto === 'mai' || (!i.carteAuto && i.carteDaErrori === false)))
             return [];
         const nuove = [];
         let radice = Stato.prendi('mz-errori');
@@ -5121,21 +5134,22 @@ const Carte = (() => {
                 radice = { id: 'mz-errori', type: 'mazzo', updatedAt: 0, nome: '⚠️ Errori dei quiz' };
                 Stato.salva(radice, true);
             }
-            const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId);
-            const idM = 'mz-err-' + (t ? t.k : 'sim');
+            const t = d.schedaId.startsWith('sim:') ? null : trovaScheda(d.schedaId), idM = mazzoErrori(d.schedaId);
             if (!Stato.prendi(idM) || Stato.prendi(idM).deleted)
-                Stato.salva({ id: idM, type: 'mazzo', updatedAt: 0, nome: t ? Studio.etichetta(t.k) + ' · errori' : 'Simulazioni · errori', padre: 'mz-errori', ...(t ? { sub: t.k, micro: t.micro } : {}) }, true);
-            const id = 'cr-' + hash(idM + '|' + norm(d.q));
+                Stato.salva({ id: idM, type: 'mazzo', updatedAt: 0, nome: t ? Studio.etichetta(t.k) + ' · errori' : idM === 'mz-err-qc' ? 'Quiz creati · errori' : 'Simulazioni · errori', padre: 'mz-errori', ...(t ? { sub: t.k, micro: t.micro } : {}) }, true);
+            const id = idErrore(idM, d.q, d.chiave);
             if (Stato.prendi(id) && !Stato.prendi(id).deleted)
                 continue;
-            Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f: d.q, r: d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), tipo: 'base', tag: 'errore' }, true);
+            const f = d.f || d.q, r = d.r || d.giusta + (d.spieg ? '\n\n' + d.spieg : ''), dom = d.qids && d.qids.length ? d.qids : d.qid ? [d.qid] : [];
+            Stato.salva({ id, type: 'carta', updatedAt: 0, mazzo: idM, f, r, tipo: 'base', tag: d.tag || 'errore', gen: hash(f + '\n' + r),
+                ...(d.concetto ? { concetto: d.concetto } : {}), ...(dom.length ? { origine: { domande: dom } } : {}) }, true);
             nuove.push(id);
         }
         if (nuove.length)
             Stato.notifica();
         return nuove;
     }
-    return { daErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
+    return { daErrori, idErrore, mazzoErrori, mazzi, carte, figli, albero, carteDi, leggi, daTesto, daMarkdown, daJson, collega, riempi, nuovoMazzo, importaFileDrive, importaCartellaDrive, aggiornaDaDrive, coda, conta, anteprima, valuta, mem, voci, isCloze, hash };
 })();
 const immaginiDrive = new Map();
 function htmlCarta(s, cloze = 'no') {
@@ -5489,21 +5503,31 @@ const Cattura = (() => {
         else
             salva(ctx.schedaId, d);
     }
-    function salva(id, d, ritiraRisposte) {
+    function salva(id, d, ritiraRisposte, muto) {
         const oggiK = ymd(new Date());
         const p0 = Studio.prog(id), primaProg = p0 ? JSON.parse(JSON.stringify(p0)) : null;
         const t = trovaScheda(id), idMem = t ? 'mem-sub-' + t.k : '';
         const m0 = idMem ? Stato.prendi(idMem) : undefined, primaMem = m0 ? JSON.parse(JSON.stringify(m0)) : null;
         const quanto = d.giuste != null && d.totale != null ? d.giuste + '/' + d.totale : d.pct + '%';
         const annullaDom = typeof Domande !== 'undefined' ? Domande.registra(id, t ? Studio.etichetta(t.k) + ' ' + t.micro + ' · ' + t.s.titolo : id, d) : () => { };
+        const dopo = [];
         let testo;
-        if (d.errori) {
+        if (d.verifica) {
+            const riga = 'Verifica concetti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
+            Studio.segna(id, { nota: ((p0 && p0.nota) ? p0.nota + '\n' : '') + riga });
+            if (d.dettagli)
+                caricaMotoreStudio().then(() => FineQuizUI.dopo(id, d, f => { dopo.push(f); }), e => console.warn('verifica concetti', e));
+            testo = '🧩 ' + riga + ' (padronanza aggiornata, il punteggio della scheda non cambia)';
+        }
+        else if (d.errori) {
             const riga = 'Errori rifatti ' + oggiK.slice(8, 10) + '/' + oggiK.slice(5, 7) + ': ' + quanto;
             Studio.segna(id, { nota: ((p0 && p0.nota) ? p0.nota + '\n' : '') + riga });
             testo = '📝 ' + riga + ' (annotato, il punteggio non cambia)';
         }
         else {
             Studio.segna(id, { fatta: true, data: oggiK, punteggio: d.pct, deboli: d.livelli && d.livelli.length ? d.livelli : undefined });
+            if (d.dettagli || (imp().carteAuto === 'auto' && d.sbagliate && d.sbagliate.length))
+                caricaMotoreStudio().then(() => FineQuizUI.dopo(id, d, f => { dopo.push(f); }), e => console.warn('fine quiz', e));
             testo = '✅ Salvato ' + d.pct + '% (' + quanto + ')' + (typeof Freddo !== 'undefined' ? Freddo.confronto(id, d.pct) : '') + (d.debole ? ' · punto debole: ' + d.debole : '');
         }
         let ritirato = false;
@@ -5513,6 +5537,8 @@ const Cattura = (() => {
             ritirato = true;
             ritiraRisposte?.();
             annullaDom();
+            for (const f of dopo)
+                f();
             if (primaProg)
                 Stato.salva(primaProg);
             else
@@ -5523,9 +5549,11 @@ const Cattura = (() => {
                 else if (Stato.prendi(idMem))
                     Stato.elimina(idMem);
             }
-            avviso('Annullato: risultato non salvato.');
+            if (!muto)
+                avviso('Annullato: risultato non salvato.');
         };
-        avviso(testo + ' · tocca per annullare', 8000, annulla);
+        if (!muto)
+            avviso(testo + ' · tocca per annullare', 8000, annulla);
         return annulla;
     }
     return { inietta, osserva, salva, SPIA };
@@ -5597,7 +5625,7 @@ function sezioneSonno() {
 }
 
 const CodaRipasso = (() => {
-    const ORDINE = ['step', 'carte', 'quiz', 'appunti', 'piano'];
+    const ORDINE = ['step', 'carte', 'quiz', 'appunti', 'piano', 'concetti'];
     const MIN = 10;
     const giornoData = (g) => new Date(g + 'T12:00');
     function step(g) {
@@ -5606,11 +5634,11 @@ const CodaRipasso = (() => {
             const sc = Ripassi.schedaDaProporre(x.k);
             if (!sc)
                 continue;
-            const t = trovaScheda(sc.id), sub = Studio.trovaSotto(x.k), pc = Math.round(x.r * 100) + '%';
+            const t = trovaScheda(sc.id), sub = Studio.trovaSotto(x.k), pc = x.esposto ? 'primo controllo' : 'ricordo ' + Math.round(x.r * 100) + '%';
             out.push({ sorgente: 'step', id: 'step:' + x.k, k: x.k, materia: materiaDi(x.k), n: 1, min: MIN, rischio: 1 - x.r, priorita: 0,
                 titolo: Studio.etichetta(x.k) + (sub ? ' · ' + sub.sub.titolo : ''),
-                sotto: 'Rifai: ' + (t ? t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ')' : sc.titolo) + ' · ricordo ' + pc,
-                voce: { tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ricordo ' + pc, min: MIN, k: x.k, id: sc.id },
+                sotto: 'Rifai: ' + (t ? t.micro + ' ' + t.s.titolo + ' (' + t.s.k + '/' + t.s.n + ')' : sc.titolo) + ' · ' + pc,
+                voce: { tipo: 'ripasso', titolo: '🧠 Ripasso ' + Studio.etichetta(x.k), sotto: 'Rifai: ' + sc.titolo + ' · ' + pc, min: MIN, k: x.k, id: sc.id },
                 apri: () => { const s = trovaScheda(sc.id); if (s)
                     apriScheda(s.pk, s.m, s.micro, s.s, true); } });
         }
@@ -5651,9 +5679,33 @@ const CodaRipasso = (() => {
                 apri: () => apriPianoDi(pid) };
         });
     }
-    const ADAPTER = { step, carte, quiz, appunti, piano };
+    function concetti(g) {
+        const per = new Map();
+        for (const m of Stato.tutti('memoria').filter(m => !m.deleted && String(m.er || '').startsWith('con:') && !m.ripiego && m.sk && m.etichetta && m.due <= g && m.ultimo)
+            .sort((a, b) => a.due < b.due ? -1 : a.due > b.due ? 1 : 0)) {
+            const x = per.get(m.sk) || { et: [], r: 1 };
+            if (x.et.length >= 3)
+                continue;
+            x.et.push(m.etichetta);
+            x.r = Math.min(x.r, Fsrs.recuperabilita(Math.max(0, (daDt(g).getTime() - daDt(m.ultimo).getTime()) / 864e5), m.s));
+            per.set(m.sk, x);
+        }
+        const out = [];
+        per.forEach((x, sk) => {
+            const t = trovaScheda(sk);
+            if (!t)
+                return;
+            const min = 3 * x.et.length, sotto = x.et.join(' · ') + ' · ricordo ' + Math.round(x.r * 100) + '%';
+            out.push({ sorgente: 'concetti', id: 'conc:' + sk, k: t.k, materia: materiaDi(t.k), n: x.et.length, min, rischio: 1 - x.r, priorita: 0,
+                titolo: '🧩 Verifica concetti · ' + Studio.etichetta(t.k), sotto,
+                voce: { tipo: 'concetti', titolo: '🧩 Verifica concetti · ' + Studio.etichetta(t.k), sotto, min, k: t.k, id: sk, con: x.et },
+                apri: () => conMotoreStudio(() => VerificaConcetti.avvia(sk, x.et)) });
+        });
+        return out;
+    }
+    const ADAPTER = { step, carte, quiz, appunti, piano, concetti };
     function vicinanza(materia, g) {
-        const es = Stato.tutti('esame').filter(e => !e.deleted && (!materia || !e.materie || !e.materie.length || e.materie.includes(materia)));
+        const es = esamiNoti().filter(e => !materia || !e.materie || !e.materie.length || e.materie.includes(materia));
         let d = Infinity;
         for (const e of es) {
             const x = Math.round((daDt(e.data).getTime() - daDt(g).getTime()) / 864e5);
@@ -5678,7 +5730,7 @@ function widgetRipassa() {
     if (!el.length)
         return r.fatti.length ? h('section.card.ripassa', null, h('h2.card-titolo', null, '🧠 Ripassa'), h('div.tenue.piccolo', null, '✓ Ripassi di oggi fatti (' + r.fatti.length + '). Ottimo: la fatica di ricordare è ciò che fissa la memoria.')) : null;
     const somma = (s) => el.filter(e => e.sorgente === s).reduce((t, e) => t + e.n, 0);
-    const nomi = [['step', 'sotto-step', 'sotto-step'], ['carte', 'carta', 'carte'], ['quiz', 'quiz', 'quiz'], ['appunti', 'appunto', 'appunti'], ['piano', 'dal piano', 'dal piano']];
+    const nomi = [['step', 'sotto-step', 'sotto-step'], ['carte', 'carta', 'carte'], ['quiz', 'quiz', 'quiz'], ['appunti', 'appunto', 'appunti'], ['piano', 'dal piano', 'dal piano'], ['concetti', 'concetto', 'concetti']];
     const pezzi = nomi.map(([s, uno, piu]) => { const n = somma(s); return n ? n + ' ' + (n === 1 ? uno : piu) : ''; }).filter(Boolean);
     const min = el.reduce((t, e) => t + e.min, 0), N = el.reduce((t, e) => t + e.n, 0), MAX = 5;
     return h('section.card.ripassa', null, h('h2.card-titolo', null, '🧠 Ripassa (' + N + ')'), h('div.tenue.piccolo', null, pezzi.join(' · ') + ' · circa ' + min + ' min, prima il più a rischio'), el.slice(0, MAX).map(e => h('button.voce-lista', { onclick: () => e.apri() }, h('span.voce-corpo', null, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, e.titolo), h('span.voce-sotto', null, e.sotto)), icona('dx', 18))), el.length > MAX ? h('div.tenue.piccolo', null, '+' + (el.length - MAX) + ' altri: li trovi in «Studia ora».') : null, r.coda.length ? h('div.tenue.piccolo', null, '+' + r.coda.length + ' sotto-step in coda per i prossimi giorni (tetto: ' + (imp().ripassoMinuti || 30) + ' min al giorno).') : null, h('div.bottoni', null, h('button.btn', { onclick: () => el[0].apri() }, '▶ Inizia')));
@@ -5727,16 +5779,15 @@ const CreaQuiz = (() => {
             budget = Math.round(budget * .65);
         try {
             if (f.mimeType === 'application/pdf') {
-                const L = await caricaPdfJs();
                 passo('Leggo «' + f.name + '»…');
-                const doc = await L.getDocument({ data: new Uint8Array(await (await Drive.scaricaBlob(f.id)).arrayBuffer()), isEvalSupported: false }).promise;
                 const grezze = [];
-                for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
-                    if (i % 25 === 0)
-                        passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);
-                    const tc = await (await doc.getPage(i)).getTextContent();
-                    grezze.push({ i, t: tc.items.map((x) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').trim() });
-                }
+                await TestoPdf.con(await Drive.scaricaBlob(f.id), async (doc) => {
+                    for (let i = 1; i <= Math.min(doc.numPages, 700); i++) {
+                        if (i % 25 === 0)
+                            passo('Leggo «' + f.name + '» · pagina ' + i + '/' + doc.numPages);
+                        grezze.push({ i, t: (await TestoPdf.pagina(doc, i, 'eol')).replace(/[ \t]+/g, ' ').trim() });
+                    }
+                });
                 const pulite = Locale.pulisciPagine(grezze.map(x => x.t)), rad = Locale.espandi(chiavi).map(Locale.radice);
                 const pag = [];
                 grezze.forEach((g0, k) => {
@@ -6205,8 +6256,7 @@ const CreaQuiz = (() => {
                 return false;
             occupato = true;
             try {
-                const lib = await caricaPdfJs();
-                const doc = await lib.getDocument({ data: new Uint8Array(await (await apri()).arrayBuffer()), isEvalSupported: false }).promise;
+                const doc = await TestoPdf.apri(await apri());
                 try {
                     const pagine = new Set();
                     for (const parte of intervalli.value.split(',')) {
@@ -6222,10 +6272,9 @@ const CreaQuiz = (() => {
                     const brani = [], lacune = [];
                     for (const i of pagine) {
                         stato.textContent = 'Lettura pagina ' + i;
-                        const pagina = await doc.getPage(i);
-                        const tc = await pagina.getTextContent();
-                        let t = tc.items.map((x) => x.str || '').join(' ').trim();
+                        let t = (await TestoPdf.pagina(doc, i, 'spazi')).trim();
                         if (t.replace(/\s/g, '').length < 25) {
+                            const pagina = await doc.getPage(i);
                             const Detector = window.TextDetector;
                             if (Detector) {
                                 const canvas = document.createElement('canvas');
@@ -6257,7 +6306,7 @@ const CreaQuiz = (() => {
                     return true;
                 }
                 finally {
-                    await doc.destroy();
+                    await TestoPdf.chiudi(doc);
                 }
             }
             catch (e) {
@@ -6692,7 +6741,6 @@ const Domande = (() => {
         h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
     const norm = (q) => q.replace(/\s+/g, ' ').trim().toLowerCase();
     const tutte = () => Stato.tutti('domanda');
-    const Domande_aperte = () => tutte().filter(x => x.esito === 'sbagliata');
     function registra(schedaId, titolo, d) {
         const oggiK = ymd(new Date()), sb = d.sbagliate || [];
         const mie = tutte().filter(x => x.schedaId === schedaId);
@@ -6718,11 +6766,9 @@ const Domande = (() => {
                     continue;
                 Stato.salva(Object.assign(r, { giuste: r.giuste + 1, ultima: oggiK, esito: 'giusta' }), true);
             }
-        const carteNuove = Carte.daErrori(Domande_aperte());
         Stato.notifica();
         return () => { for (const r of prima)
             Stato.salva(r, true); for (const id of nuove)
-            Stato.elimina(id); for (const id of carteNuove)
             Stato.elimina(id); };
     }
     const aperte = () => tutte().filter(x => x.esito === 'sbagliata');
@@ -6746,7 +6792,7 @@ function sezioneDomande() {
         const risp = h('div.dom-risposta', { hidden: true }, h('div', null, h('b', null, 'Risposta: '), x.giusta || '—'), x.spieg ? h('div.tenue.piccolo', null, x.spieg) : null, rigaAppuntoErrore(x), x.esito === 'sbagliata' ? h('div.bottoni', null, h('button.btn', { onclick: () => { Domande.segna(x.id, true); avviso('✓ Bene: esce dagli errori aperti.'); } }, '✓ La sapevo'), h('button.btn.neutro', { onclick: () => { Domande.segna(x.id, false); avviso('Resta tra gli errori: la rivedrai.'); } }, '✗ Non la sapevo')) : null);
         return h('div.dom-voce', null, h('div.tenue.piccolo', null, gruppoDomanda(x) + ' · ' + x.titolo + ' · sbagliata ' + x.volte + (x.volte === 1 ? ' volta' : ' volte') + (x.giuste ? ' · giusta ' + x.giuste : '')), h('div.dom-q', null, x.q), h('button.btn-testo', { onclick: (e) => { risp.hidden = !risp.hidden; e.target.textContent = risp.hidden ? 'Prima prova a rispondere, poi mostra la risposta' : 'Nascondi'; } }, 'Prima prova a rispondere, poi mostra la risposta'), risp);
     };
-    return h('section.card', null, h('h2.card-titolo', null, 'Domande sbagliate'), h('div.tenue.piccolo', null, 'Raccolte in automatico dai quiz fatti nell\'app (sezione «Da rivedere»). Ricorrenti = sbagliate almeno 2 volte: ripassale prima delle simulazioni.'), h('div.segmenti', null, h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR), h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA), h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)), nA ? h('button.btn.neutro', { onclick: () => { const n = Carte.daErrori(Domande.aperte()).length; if (n)
+    return h('section.card', null, h('h2.card-titolo', null, 'Domande sbagliate'), h('div.tenue.piccolo', null, 'Raccolte in automatico dai quiz fatti nell\'app (sezione «Da rivedere»). Ricorrenti = sbagliate almeno 2 volte: ripassale prima delle simulazioni.'), h('div.segmenti', null, h('button' + (filtro === 'ricorrenti' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'ricorrenti'; disegna(); } }, 'Ricorrenti ' + nR), h('button' + (filtro === 'aperte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'aperte'; disegna(); } }, 'Aperte ' + nA), h('button' + (filtro === 'risolte' ? '.attivo' : ''), { onclick: () => { UI.domFiltro = 'risolte'; disegna(); } }, 'Risolte ' + nG)), nA ? h('button.btn.neutro', { onclick: () => { const n = Carte.daErrori(Domande.aperte(), true).length; if (n)
             avviso(n + ' errori trasformati in flashcard.'); avviaCarte(['mz-errori'], 'Errori dei quiz'); } }, '🃏 Ripassa gli errori come flashcard') : null, elenco.length ? elenco.slice(0, quante).map(voce) : h('div.vuoto', null, filtro === 'ricorrenti' ? 'Nessuna domanda sbagliata due volte. 👍' : 'Niente qui per ora.'), elenco.length > quante && quante < 60 ? h('button.btn.neutro', { onclick: () => { UI.domTutte = true; disegna(); } }, 'Mostra altre ' + (Math.min(60, elenco.length) - quante)) : null);
 }
 
@@ -7150,23 +7196,11 @@ const Dominio = (() => {
         return { pk, capitoli: d.capitoli, avvisi: d.avvisi };
     }
     async function testoDaPdf(f) {
-        const L = await caricaPdfJs();
-        const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise, righe = [];
-        for (let p = 1; p <= Math.min(doc.numPages, 12); p++) {
-            const c = await (await doc.getPage(p)).getTextContent();
-            let y = null, r = '';
-            for (const it of c.items) {
-                const yy = Math.round(it.transform[5]);
-                if (y !== null && Math.abs(yy - y) > 2) {
-                    righe.push(r);
-                    r = '';
-                }
-                r += (r && !r.endsWith(' ') ? ' ' : '') + it.str;
-                y = yy;
-            }
-            if (r)
-                righe.push(r);
-        }
+        const righe = [];
+        await TestoPdf.con(f, async (doc) => {
+            for (let p = 1; p <= Math.min(doc.numPages, 12); p++)
+                righe.push(...TestoPdf.righe(await TestoPdf.elementi(doc, p)));
+        });
         return righe.join('\n');
     }
     const leggiImmagine = (f) => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => ko(new Error('immagine illeggibile')); r.readAsDataURL(f); });
@@ -7477,6 +7511,18 @@ function widgetTimer() {
     const st = Studio.vociDelGiorno(g).filter(x => !x.v.speciale);
     return scheda('Timer e tempo di studio', h('div.numeri', null, numero(durata(oggiMin), 'oggi'), numero(durata(sett), 'questa settimana')), h('div.chips', { style: { marginTop: '8px' } }, st.map(x => h('button.chip', { style: { borderLeft: '4px solid ' + coloreChiave(x.v.k) }, onclick: () => Timer.avvia({ m: materiaDi(x.v.k), k: x.v.k, titolo: Studio.etichetta(x.v.k) }) }, '▶ ' + Studio.etichetta(x.v.k))), h('button.chip', { onclick: () => Timer.avvia({ titolo: 'Studio libero' }) }, '▶ Studio libero')), h('div.tenue.piccolo', null, 'Sessioni da ' + Timer.durate().studio + ' min + pausa ' + Timer.durate().pausa + ' (si cambia in Altro → Studio).'));
 }
+function sezionePadronanza() {
+    const el = h('section.card.pad-sezione', { 'aria-live': 'polite' });
+    const ci = Stato.tutti('memoria').some(m => !m.deleted && String(m.er || '').startsWith('con:'));
+    if (!ci) {
+        el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, 'Nessun concetto verificato: fai il quiz di una scheda della banca. Lettura e appunti non contano.'));
+        return el;
+    }
+    el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, 'Carico…'));
+    caricaMotoreStudio().then(() => { if (el.isConnected || el.parentNode)
+        PadronanzaUI.riempi(el); }, (e) => { svuota(el); el.append(h('h2.card-titolo', null, '🧩 Padronanza per concetto'), h('p.tenue.piccolo', null, '⚠️ Non disponibile: ' + (e && e.message))); });
+    return el;
+}
 function vistaStatistiche() {
     const g = oggi(), schede = tutteLeSchede();
     const codici = Array.from(new Set([...schede.map(x => x.mat.m), ...Stato.tutti('sessione').map(s => s.m || '').filter(Boolean)]));
@@ -7495,7 +7541,7 @@ function vistaStatistiche() {
             o[s.m || '?'] = (o[s.m || '?'] || 0) + s.minuti; return o; });
     const max = Math.max(30, ...perGiorno.map(o => Object.values(o).reduce((a, b) => a + b, 0)));
     const peggiore = righe.filter(r => r.rit > 0).sort((a, b) => b.rit - a.rit)[0];
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('h2.card-titolo', null, 'Tempo di studio'), h('div.numeri', null, numero(durata(minutiStudio(g, g)), 'oggi'), numero(durata(minutiStudio(piuGiorni(g, -6), g)), 'ultimi 7 giorni'), numero(durata(minutiStudio(piuGiorni(g, -29), g)), 'ultimi 30')), h('div.grafico', { role: 'img', 'aria-label': 'Minuti di studio negli ultimi 14 giorni' }, perGiorno.map((o, i) => h('div.colonna', { title: dataBreve(giorni[i]) + ': ' + durata(Object.values(o).reduce((a, b) => a + b, 0)) }, h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))), h('span', null, String(giorni[i].getDate()))))), ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')), sezionePuntiDeboli(), sezioneSottostepDeboli(), sezioneSonno(), peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null, righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)), h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')), barra(r.fatte, r.tot, coloreMateria(r.m)), h('div.tenue.piccolo', null, durata(r.min7) + ' negli ultimi 7 giorni · ' + r.err + ' da rifare' + (r.rit ? ' · ' + r.rit + ' step in ritardo' : '')))));
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, h('section.card', null, h('h2.card-titolo', null, 'Tempo di studio'), h('div.numeri', null, numero(durata(minutiStudio(g, g)), 'oggi'), numero(durata(minutiStudio(piuGiorni(g, -6), g)), 'ultimi 7 giorni'), numero(durata(minutiStudio(piuGiorni(g, -29), g)), 'ultimi 30')), h('div.grafico', { role: 'img', 'aria-label': 'Minuti di studio negli ultimi 14 giorni' }, perGiorno.map((o, i) => h('div.colonna', { title: dataBreve(giorni[i]) + ': ' + durata(Object.values(o).reduce((a, b) => a + b, 0)) }, h('div.pila', null, Object.entries(o).map(([m, v]) => h('div', { style: { height: (v / max) * 100 + '%', background: m === '?' ? 'var(--tenue)' : coloreMateria(m) } }))), h('span', null, String(giorni[i].getDate()))))), ses.length ? null : h('div.tenue.piccolo', null, 'Usa il timer (▶) per registrare il tempo di studio.')), sezionePadronanza(), sezionePuntiDeboli(), sezioneSottostepDeboli(), sezioneSonno(), peggiore ? h('div.indicatore.ritardo', null, 'Materia più indietro: ' + nomeMateria(peggiore.m) + ' (' + peggiore.rit + ' step in ritardo)') : null, righe.map(r => h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(r.m) } }, nomeMateria(r.m)), h('div.numeri', null, numero(r.Pf + '/' + r.P, 'prioritarie'), numero(r.fatte + '/' + r.tot, 'schede fatte'), numero(r.media != null ? r.media + '%' : '—', 'media punteggi')), barra(r.fatte, r.tot, coloreMateria(r.m)), h('div.tenue.piccolo', null, durata(r.min7) + ' negli ultimi 7 giorni · ' + r.err + ' da rifare' + (r.rit ? ' · ' + r.rit + ' step in ritardo' : '')))));
 }
 function giorniA(data) { return Math.round((daYmd(data).getTime() - oggi().getTime()) / 86400000); }
 function testoCountdown(d) { return d === 0 ? 'oggi!' : d === 1 ? 'domani' : d < 0 ? 'passato' : 'tra ' + d + ' giorni'; }
@@ -7767,6 +7813,38 @@ function rigaFreddo(k) {
     return h('div.bottoni', null, h('button.btn.neutro', { onclick: () => avviaProvaAFreddo(k) }, '🧊 Prova a freddo (prima di studiare)'));
 }
 
+const Fsrs = (() => {
+    const W = [0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621];
+    const DECAY = -0.5, F = 19 / 81;
+    const lim = (x, a, b) => Math.min(b, Math.max(a, x));
+    function recuperabilita(t, s) { return Math.pow(1 + F * t / s, DECAY); }
+    function intervallo(s, r) { return lim(Math.round(s / F * (Math.pow(r, 1 / DECAY) - 1)), 1, 365); }
+    const d0 = (g) => lim(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10);
+    function passo(st, g, t) {
+        if (!st)
+            return { d: d0(g), s: W[g - 1] };
+        const { d, s } = st;
+        let s2;
+        if (t <= 0)
+            s2 = s * Math.exp(W[17] * (g - 3 + W[18]));
+        else {
+            const r = recuperabilita(t, s);
+            if (g === 1)
+                s2 = Math.min(s, W[11] * Math.pow(d, -W[12]) * (Math.pow(s + 1, W[13]) - 1) * Math.exp(W[14] * (1 - r)));
+            else
+                s2 = s * (Math.exp(W[8]) * (11 - d) * Math.pow(s, -W[9]) * (Math.exp(W[10] * (1 - r)) - 1) * (g === 2 ? W[15] : 1) * (g === 4 ? W[16] : 1) + 1);
+        }
+        const dd = d - W[6] * (g - 3) * (10 - d) / 9;
+        return { d: lim(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), s: lim(s2, 0.1, 36500) };
+    }
+    function daSm2(iv, ease) {
+        const e = ease > 0 ? ease : 2.5;
+        return { d: lim(5 + 4 * (2.5 - e) / 1.2, 1, 10), s: lim(iv > 0 ? iv : W[2], 0.1, 36500) };
+    }
+    function esposizione() { return { d: d0(3), s: 1 }; }
+    return { W, F, DECAY, recuperabilita, intervallo, passo, daSm2, esposizione, d0 };
+})();
+
 const Generatore = (() => {
     const piu = (k, n) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
     const tra = (a, b) => Math.round((daDt(b).getTime() - daDt(a).getTime()) / 86400000);
@@ -7829,19 +7907,31 @@ const Generatore = (() => {
         if (o.riposo && liberi.length && liberi[liberi.length - 1] === piu(o.esame, -1)) {
             metti(liberi.pop(), { k: 'RIPOSO', t: '😌 Riposo pre-esame', d: 'Niente teoria nuova: una passeggiata, formule a colpo d\'occhio, a letto presto.', speciale: true });
         }
-        for (let i = o.finale; i > 0 && liberi.length; i--)
-            metti(liberi.pop(), { k: 'FINALE-' + i, t: '📚 Ripasso finale ' + (o.finale - i + 1) + '/' + o.finale, d: 'Tabelle, formule ed errori ricorrenti. Ripassi e flashcard di oggi.', speciale: true });
-        const sim = [];
-        if (o.simulazioni > 0 && liberi.length > 4) {
+        const iniFin = Pianificatore.finestraFinale(o.esame, o.finale).inizio, fin = liberi.filter(d => d >= iniFin);
+        liberi = liberi.filter(d => d < iniFin);
+        const simF = [], revF = [];
+        for (const dm of [3, 6].slice(0, Math.min(2, o.simulazioni))) {
+            const d = fin.filter(x => x <= piu(o.esame, -dm) && !simF.includes(x) && !revF.includes(x)).pop(), r = d ? fin.find(x => x > d && !simF.includes(x)) : undefined;
+            if (d && r && !revF.includes(r)) {
+                simF.unshift(d);
+                revF.unshift(r);
+            }
+        }
+        const altri = fin.filter(d => !simF.includes(d) && !revF.includes(d));
+        altri.forEach((d, i) => metti(d, { k: 'FINALE-' + (altri.length - i), t: '📚 Settimana finale ' + (i + 1) + '/' + altri.length, d: 'Niente argomenti nuovi: quiz cumulativo, errori ricorrenti, tabelle e formule. Ripassi e flashcard di oggi.', speciale: true }));
+        const sim = [], nPre = o.simulazioni - simF.length;
+        if (nPre > 0 && liberi.length > 4) {
             const da = Math.floor(liberi.length * .6), span = liberi.length - da;
-            for (let i = 0; i < o.simulazioni; i++) {
-                const idx = da + Math.floor((i + 1) * span / (o.simulazioni + 1)) - 1;
+            for (let i = 0; i < nPre; i++) {
+                const idx = da + Math.floor((i + 1) * span / (nPre + 1)) - 1;
                 if (idx >= 0 && idx < liberi.length && !sim.includes(liberi[idx]))
                     sim.push(liberi[idx]);
             }
-            sim.forEach((d, i) => metti(d, { k: 'SIM-' + (i + 1), t: '⏱ Simulazione ' + (i + 1), d: 'A tempo, come all\'esame. Poi registra il punteggio.', speciale: true }));
             liberi = liberi.filter(d => !sim.includes(d));
         }
+        const nSim = sim.length;
+        sim.concat(simF).forEach((d, i) => metti(d, { k: 'SIM-' + (i + 1), t: '⏱ Simulazione ' + (i + 1) + (i >= nSim ? ' (D−' + tra(d, o.esame) + ')' : ''), d: 'A tempo, come all\'esame: si apre nell\'app (domande e minuti a scelta) o da Drive. Domani la revisione degli errori.', speciale: true }));
+        revF.forEach((d, i) => metti(d, { k: 'REV-' + (nSim + i + 1), t: '🔎 Revisione simulazione ' + (nSim + i + 1), d: 'Rifai le domande sbagliate della simulazione di ieri; poi ripassi e flashcard di oggi.', speciale: true }));
         if (o.riservaOgni > 1) {
             const ris = liberi.filter((_d, i) => (i + 1) % o.riservaOgni === 0);
             ris.forEach((d, i) => metti(d, { k: 'RISERVA-' + (i + 1), t: '🛟 Riserva', d: 'Recupera i ritardi; se sei in pari, ripassi e flashcard.', speciale: true }));
@@ -7892,8 +7982,10 @@ const Generatore = (() => {
             if (saltati)
                 avvisi.push(saltati + ' secondi giri non entrano: aggiungi ore o giorni.');
         }
+        const guadagno = o.finale > 3 ? fin.length - fin.filter(d => d >= Pianificatore.finestraFinale(o.esame, 3).inizio).length : 0;
         if (fuori.length)
-            avvisi.push(fuori.length + ' argomenti non entrano prima dell\'esame: aumenta le ore, riduci le riserve o i minuti per argomento.');
+            avvisi.push(fuori.length + ' argomenti non entrano prima dell\'esame: aumenta le ore, riduci le riserve o i minuti per argomento'
+                + (guadagno > 0 ? '; oppure accorcia la settimana finale (oggi ' + fin.length + ' giorni senza argomenti nuovi: con 3, l\'emergenza, guadagni ' + guadagno + (guadagno === 1 ? ' giorno' : ' giorni') + ' di studio)' : '') + '.');
         if (!tutti.length)
             avvisi.push('Nessun giorno disponibile tra inizio ed esame.');
         const lista = Array.from(giorni.values()).sort((a, b) => a.data < b.data ? -1 : 1);
@@ -7917,7 +8009,7 @@ function apriGeneratore(base, sostituisci) {
         esame: due ? esami[1].data : esami.length ? esami[0].data : ymd(new Date(Date.now() + 30 * 864e5)),
         inizio: due ? (() => { const d = daDt(esami[0].data); d.setDate(d.getDate() + 1); return ymd(d); })() : (() => { const d = new Date(); d.setDate(d.getDate() + 1); return ymd(d); })(),
         modo: due ? 'raffinamento' : 'teoria', argomenti: cat.map(x => x.k), deboliPrima: true,
-        giorniSett: [0, 1, 2, 3, 4, 5, 6], ore: 6, minArg: due ? 100 : 120, riservaOgni: 7, simulazioni: due ? 3 : 2, finale: 2, riposo: true, secondoGiro: true,
+        giorniSett: [0, 1, 2, 3, 4, 5, 6], ore: 6, minArg: due ? 100 : 120, riservaOgni: 7, simulazioni: due ? 3 : 2, finale: 7, riposo: true, secondoGiro: true,
         ...(base || {}),
     };
     const PASSI = ['Esame', 'Argomenti', 'Tempo', 'Struttura', 'Anteprima'];
@@ -7967,7 +8059,7 @@ function apriGeneratore(base, sostituisci) {
             aggiorna();
         }
         if (passo === 3) {
-            corpo.append(campo('Giorno di riserva ogni', h('div.segmenti', null, [0, 5, 6, 7].map(n => h('button' + (o.riservaOgni === n ? '.attivo' : ''), { onclick: () => { o.riservaOgni = n; disegnaPasso(); } }, n ? n + ' giorni' : 'mai'))), 'Un giorno vuoto che assorbe i ritardi: i piani senza margine saltano alla prima influenza.'), campo('Simulazioni a tempo', h('div.segmenti', null, [0, 1, 2, 3, 4].map(n => h('button' + (o.simulazioni === n ? '.attivo' : ''), { onclick: () => { o.simulazioni = n; disegnaPasso(); } }, String(n)))), 'Nell\'ultima parte del piano, ognuna seguita dalla revisione degli errori.'), campo('Giorni di ripasso finale', h('div.segmenti', null, [0, 1, 2, 3, 4].map(n => h('button' + (o.finale === n ? '.attivo' : ''), { onclick: () => { o.finale = n; disegnaPasso(); } }, String(n))))), h('label.widget-riga', null, h('span.nome', null, 'Vigilia di riposo', h('div.tenue.piccolo', null, 'Il sonno prima dell\'esame consolida più di un\'ultima nottata.')), interr(o.riposo, b => o.riposo = b)), h('label.widget-riga', null, h('span.nome', null, 'Secondo giro sui deboli', h('div.tenue.piccolo', null, 'Gli argomenti deboli tornano almeno 7 giorni dopo: ripetizione distanziata.')), interr(o.secondoGiro, b => o.secondoGiro = b)));
+            corpo.append(campo('Giorno di riserva ogni', h('div.segmenti', null, [0, 5, 6, 7].map(n => h('button' + (o.riservaOgni === n ? '.attivo' : ''), { onclick: () => { o.riservaOgni = n; disegnaPasso(); } }, n ? n + ' giorni' : 'mai'))), 'Un giorno vuoto che assorbe i ritardi: i piani senza margine saltano alla prima influenza.'), campo('Simulazioni a tempo', h('div.segmenti', null, [0, 1, 2, 3, 4].map(n => h('button' + (o.simulazioni === n ? '.attivo' : ''), { onclick: () => { o.simulazioni = n; disegnaPasso(); } }, String(n)))), 'Nell\'ultima parte del piano, ognuna seguita dalla revisione degli errori.'), campo('Settimana finale (giorni di calendario; 3 = emergenza)', h('div.segmenti', null, [0, 3, 7].map(n => h('button' + (o.finale === n ? '.attivo' : ''), { onclick: () => { o.finale = n; disegnaPasso(); } }, String(n))))), h('label.widget-riga', null, h('span.nome', null, 'Vigilia di riposo', h('div.tenue.piccolo', null, 'Il sonno prima dell\'esame consolida più di un\'ultima nottata.')), interr(o.riposo, b => o.riposo = b)), h('label.widget-riga', null, h('span.nome', null, 'Secondo giro sui deboli', h('div.tenue.piccolo', null, 'Gli argomenti deboli tornano almeno 7 giorni dopo: ripetizione distanziata.')), interr(o.secondoGiro, b => o.secondoGiro = b)));
         }
         if (passo === 4) {
             if (incolla) {
@@ -9539,6 +9631,8 @@ const ImportaDrive = (() => {
             d.subtopic = s(x.sottoStep);
         if (s(x.erroreTipico))
             d.erroreTipico = s(x.erroreTipico);
+        if (s(x.concetto))
+            d.concetto = s(x.concetto).slice(0, 60);
         return d;
     }
     function altroTipo(x, sk, k) {
@@ -9587,6 +9681,8 @@ const ImportaDrive = (() => {
             d.subtopic = s(x.sottoStep);
         if (s(x.erroreTipico))
             d.erroreTipico = s(x.erroreTipico);
+        if (s(x.concetto))
+            d.concetto = s(x.concetto).slice(0, 60);
         return d;
     }
     function falla(msg) { throw new Error(msg); }
@@ -11969,29 +12065,32 @@ function caricaPdfJs() {
     return pdfjsPronto;
 }
 async function pdfInImmagini(f, max = 20) {
-    const L = await caricaPdfJs();
-    const doc = await L.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise;
-    const n = Math.min(doc.numPages, max), pagine = [], testi = [];
-    for (let i = 1; i <= n; i++) {
-        const p = await doc.getPage(i), v0 = p.getViewport({ scale: 1 }), sc = 1000 / v0.width, v = p.getViewport({ scale: sc });
-        const c = document.createElement('canvas');
-        c.width = Math.round(v.width);
-        c.height = Math.round(v.height);
-        const cx = c.getContext('2d');
-        cx.fillStyle = '#fff';
-        cx.fillRect(0, 0, c.width, c.height);
-        await p.render({ canvasContext: cx, viewport: v }).promise;
-        pagine.push({ s: c.toDataURL('image/jpeg', .7), w: c.width, h: c.height });
-        try {
-            const tc = await p.getTextContent();
-            const t = tc.items.map((x) => x.str + (x.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
-            if (t)
-                testi.push('### Pagina ' + i + '\n' + t);
+    const pagine = [], testi = [];
+    const tot = await TestoPdf.con(f, async (doc) => {
+        const n = Math.min(doc.numPages, max);
+        for (let i = 1; i <= n; i++) {
+            const p = await doc.getPage(i), v0 = p.getViewport({ scale: 1 }), sc = 1000 / v0.width, v = p.getViewport({ scale: sc });
+            const c = document.createElement('canvas');
+            c.width = Math.round(v.width);
+            c.height = Math.round(v.height);
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#fff';
+            cx.fillRect(0, 0, c.width, c.height);
+            await p.render({ canvasContext: cx, viewport: v }).promise;
+            pagine.push({ s: c.toDataURL('image/jpeg', .7), w: c.width, h: c.height });
+            try {
+                const t = (await TestoPdf.pagina(doc, i, 'eol')).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+                if (t)
+                    testi.push('### Pagina ' + i + '\n' + t);
+            }
+            catch (e) {
+                console.warn('[appunto da PDF] pagina ' + i + ' senza testo (scansione?)', e);
+            }
         }
-        catch (_) { }
-    }
-    if (doc.numPages > max)
-        avviso('Inserite le prime ' + max + ' pagine su ' + doc.numPages + ' (per non appesantire l\'appunto).', 6000);
+        return doc.numPages;
+    });
+    if (tot > max)
+        avviso('Inserite le prime ' + max + ' pagine su ' + tot + ' (per non appesantire l\'appunto).', 6000);
     return { pagine, testo: testi.join('\n\n') };
 }
 function fotoInImmagine(f) {
@@ -12083,33 +12182,12 @@ const MediaStore = (() => {
 })();
 
 const Ripassi = (() => {
-    const W = [0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621];
-    const DECAY = -0.5, F = 19 / 81;
+    const { W, recuperabilita, intervallo, passo } = Fsrs;
     const MIN_SCHEDA = 10;
     const giorni = (a, b) => Math.round((inizioGiorno(daDt(b)).getTime() - inizioGiorno(daDt(a)).getTime()) / 86400000);
     const piu = (k, n) => { const d = daDt(k); d.setDate(d.getDate() + n); return ymd(d); };
     const lim = (x, a, b) => Math.min(b, Math.max(a, x));
-    function recuperabilita(t, s) { return Math.pow(1 + F * t / s, DECAY); }
-    function intervallo(s, r) { return lim(Math.round(s / F * (Math.pow(r, 1 / DECAY) - 1)), 1, 365); }
-    const d0 = (g) => lim(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10);
     function voto(punteggio) { return punteggio == null ? 3 : punteggio < 50 ? 1 : punteggio < 70 ? 2 : punteggio < 90 ? 3 : 4; }
-    function passo(st, g, t) {
-        if (!st)
-            return { d: d0(g), s: W[g - 1] };
-        const { d, s } = st;
-        let s2;
-        if (t <= 0)
-            s2 = s * Math.exp(W[17] * (g - 3 + W[18]));
-        else {
-            const r = recuperabilita(t, s);
-            if (g === 1)
-                s2 = Math.min(s, W[11] * Math.pow(d, -W[12]) * (Math.pow(s + 1, W[13]) - 1) * Math.exp(W[14] * (1 - r)));
-            else
-                s2 = s * (Math.exp(W[8]) * (11 - d) * Math.pow(s, -W[9]) * (Math.exp(W[10] * (1 - r)) - 1) * (g === 2 ? W[15] : 1) * (g === 4 ? W[16] : 1) + 1);
-        }
-        const dd = d - W[6] * (g - 3) * (10 - d) / 9;
-        return { d: lim(W[7] * d0(4) + (1 - W[7]) * dd, 1, 10), s: lim(s2, 0.1, 36500) };
-    }
     function ritenzione(giorno, minimo = 0) {
         const base = Math.max(imp().ritenzione || Dominio.ritenzioneProfilo(), minimo);
         const vicino = Stato.tutti('esame').some(e => { const g = giorni(giorno, e.data); return g >= 0 && g <= 14; });
@@ -12147,18 +12225,19 @@ const Ripassi = (() => {
     function votoMedio(k) {
         const t = Studio.trovaSotto(k);
         if (!t)
-            return 3;
+            return null;
         const pt = Studio.schedeDi(t.sub).filter(x => x.tipo === 'P').map(x => (Studio.prog(x.id) || {}).punteggio).filter(v => v != null);
-        return pt.length ? voto(pt.reduce((a, b) => a + b, 0) / pt.length) : 3;
+        return pt.length ? voto(pt.reduce((a, b) => a + b, 0) / pt.length) : null;
     }
     function salvaStato(k, base, g, giorno, log, scheda) {
-        const t = base && base.ultimo ? giorni(base.ultimo, giorno) : 0;
-        const st = passo(base && base.ultimo ? { d: base.d, s: base.s } : null, g, t);
+        const verificato = !!(base && base.ultimo && !base.esposto);
+        const t = verificato ? giorni(base.ultimo, giorno) : 0;
+        const st = passo(verificato ? { d: base.d, s: base.s } : null, g, t);
         const prec = (mem(k) || {}).schede;
         const m = {
             id: 'mem-sub-' + k, type: 'memoria', updatedAt: 0, er: 'sub:' + k, d: st.d, s: st.s,
             due: piu(giorno, intervallo(st.s, ritenzione(giorno))), ultimo: giorno,
-            n: (base ? base.n : 0) + 1, lapsi: (base ? base.lapsi : 0) + (base && base.ultimo && g === 1 ? 1 : 0),
+            n: (base ? base.n : 0) + 1, lapsi: (base ? base.lapsi : 0) + (verificato && g === 1 ? 1 : 0),
             log: log.slice(-50), prima: base || undefined,
             schede: scheda ? (prec || []).concat([scheda]).slice(-30) : prec,
         };
@@ -12169,7 +12248,17 @@ const Ripassi = (() => {
         const giorno = dataApprendimento(k);
         if (!giorno)
             return;
-        salvaStato(k, null, votoMedio(k), giorno, [[giorno, votoMedio(k)]]);
+        const g = votoMedio(k);
+        if (g != null) {
+            salvaStato(k, null, g, giorno, [[giorno, g]]);
+            return;
+        }
+        const st = Fsrs.esposizione(), mm = mem(k), prec = mm ? mm.schede : undefined;
+        const m = {
+            id: 'mem-sub-' + k, type: 'memoria', updatedAt: 0, er: 'sub:' + k, d: st.d, s: st.s,
+            due: piu(giorno, 1), ultimo: giorno, n: 1, lapsi: 0, log: [[giorno, 0]], esposto: true, schede: prec,
+        };
+        Stato.salva(m, true);
     }
     function registra(id, p) {
         const t = trovaScheda(id);
@@ -12198,7 +12287,7 @@ const Ripassi = (() => {
             salvaStato(k, m.prima || null, g, giorno, log.concat([[giorno, g]]), id);
             return;
         }
-        salvaStato(k, { d: m.d, s: m.s, due: m.due, ultimo: m.ultimo, n: m.n, lapsi: m.lapsi }, g, giorno, (m.log || []).concat([[giorno, g]]), id);
+        salvaStato(k, { d: m.d, s: m.s, due: m.due, ultimo: m.ultimo, n: m.n, lapsi: m.lapsi, esposto: m.esposto }, g, giorno, (m.log || []).concat([[giorno, g]]), id);
     }
     function inizializza() {
         let n = 0;
@@ -12213,7 +12302,7 @@ const Ripassi = (() => {
     }
     function ricordo(k, giorno = ymd(new Date())) {
         const m = mem(k);
-        if (!m || !m.ultimo)
+        if (!m || !m.ultimo || m.esposto)
             return null;
         return recuperabilita(Math.max(0, giorni(m.ultimo, giorno)), m.s);
     }
@@ -12235,7 +12324,7 @@ const Ripassi = (() => {
         const tutte = Stato.tutti('memoria').filter(m => m.er.startsWith('sub:'));
         const fatti = tutte.filter(m => m.ultimo === giorno && m.n > 1);
         const scadute = tutte.filter(m => m.due <= giorno && m.ultimo !== giorno && m.ultimo)
-            .map(m => ({ m, k: m.er.slice(4), r: recuperabilita(Math.max(0, giorni(m.ultimo, giorno)), m.s) }))
+            .map(m => ({ m, k: m.er.slice(4), r: recuperabilita(Math.max(0, giorni(m.ultimo, giorno)), m.s), esposto: !!m.esposto }))
             .sort((a, b) => a.r - b.r);
         const posti = Math.max(0, quanteAlGiorno() - fatti.length);
         return { oggi: scadute.slice(0, posti), coda: scadute.slice(posti), fatti, minuti: Math.min(posti, scadute.length) * MIN_SCHEDA };
@@ -12465,12 +12554,26 @@ const Neuro = (() => {
         return 'standard';
     }
     const piuGiorni = (oggi, n) => { const d = new Date(oggi + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-    function pianifica(prev, certezza, corretto, oggi) {
+    const giorniTra = (a, b) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 86400000);
+    function votoCaso(c, corretto) {
+        return !corretto ? 1 : c === 'lucky_guess' ? 2 : c === 'padronanza' ? 4 : 3;
+    }
+    function pianifica(prev, certezza, corretto, oggi, ritenzione = 0.9) {
         const p = prev && typeof prev === 'object' ? prev : null;
         const ease0 = p && p.ease > 0 ? p.ease : EASE0, iv0 = p && p.iv > 0 ? p.iv : 0, reps0 = p && p.reps > 0 ? p.reps : 0;
-        let iv = corretto ? (iv0 < 1 ? 1 : iv0 < 3 ? 3 : Math.round(iv0 * ease0)) : 1;
         let ease = corretto ? ease0 + 0.1 : Math.max(EASE_MIN, ease0 - 0.2);
-        const c = caso(certezza, corretto);
+        const c = caso(certezza, corretto), g = votoCaso(c, corretto);
+        let st = null, t = 0;
+        if (p && p.s > 0 && p.d > 0) {
+            st = { d: p.d, s: p.s };
+            t = p.ultimo ? Math.max(0, giorniTra(p.ultimo, oggi)) : 0;
+        }
+        else if (iv0 > 0) {
+            st = Fsrs.daSm2(iv0, ease0);
+            t = p.due ? Math.max(0, giorniTra(p.due, oggi) + Math.round(iv0)) : 0;
+        }
+        const nuovo = Fsrs.passo(st, g, t);
+        let iv = Fsrs.intervallo(nuovo.s, ritenzione);
         let tag = (p && p.tag ? p.tag.slice() : []).filter(t => t !== 'illusione_competenza' || !corretto);
         let daConsolidare = false, contrastivo = false, rimando = false;
         if (c === 'illusione_competenza') {
@@ -12485,13 +12588,12 @@ const Neuro = (() => {
             ease = ease0;
             daConsolidare = true;
         }
-        else if (c === 'padronanza')
-            iv = Math.round(iv * 1.25 * 10) / 10;
         else if (c === 'lacuna_nota') {
             iv = 1;
             rimando = true;
         }
-        const r = { iv, ease: Math.round(ease * 100) / 100, due: piuGiorni(oggi, iv < 1 ? 0 : Math.round(iv)), reps: corretto ? reps0 + 1 : 0, contrastivo, rimando, ultimoCaso: c };
+        const r = { iv, ease: Math.round(ease * 100) / 100, due: piuGiorni(oggi, iv < 1 ? 0 : Math.round(iv)), reps: corretto ? reps0 + 1 : 0, contrastivo, rimando, ultimoCaso: c,
+            d: Math.round(nuovo.d * 1000) / 1000, s: Math.round(nuovo.s * 1000) / 1000, ultimo: oggi };
         if (tag.length)
             r.tag = tag;
         if (daConsolidare)
@@ -12933,7 +13035,7 @@ const Neuro = (() => {
             programma: [{ codiceStep: 'export', titolo: o.titolo, sottostep: Object.keys(per).map(sk => ({ sk, titolo: sk })) }], domande: per, flashcard: [] };
     }
     return { TIPI_DISTR, MAX_LOG, BREAKER, MAX_PAROLE_MICRO, MAX_TOKEN_MICRO, TESTO_FATICA, NOMI_DISTR,
-        bloom, normalizza, aggiungiTentativo, stepDi, argomentoDi, tipoDistrattore, caso, pianifica, piuGiorni,
+        bloom, normalizza, aggiungiTentativo, stepDi, argomentoDi, tipoDistrattore, caso, votoCaso, pianifica, piuGiorni,
         interleave, filaMax, fatica, prontaL1, imbuto, promptMicro, parole, serveBreaker, promptGemini,
         calcola, espandiTemplate, haTemplate, varianti, cloze, riparaJson, parseTollerante, daAlias, importa,
         normTesto, hashTesto, deduplica, daEsportare, compatto, pacchetto, statoPipe, copertura, prossimoStato };
@@ -12973,29 +13075,12 @@ const PianiAI = (() => {
     }
     async function leggiFonte(id) {
         const blob = await Drive.scaricaBlob(id);
-        const lib = await caricaPdfJs();
-        const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
-        const n = Math.min(15, pdf.numPages), pagine = [];
-        for (let a = 1; a <= n; a += 4) {
-            const lotto = await Promise.all(Array.from({ length: Math.min(4, n - a + 1) }, async (_, i) => {
-                const pg = await pdf.getPage(a + i);
-                try {
-                    const t = await pg.getTextContent();
-                    return t.items.map((x) => x.str).join(' ');
-                }
-                finally {
-                    try {
-                        pg.cleanup();
-                    }
-                    catch (_) { }
-                }
-            }));
-            pagine.push(...lotto);
-        }
-        try {
-            pdf.destroy();
-        }
-        catch (_) { }
+        const pagine = [];
+        await TestoPdf.con(blob, async (pdf) => {
+            const n = Math.min(15, pdf.numPages);
+            for (let a = 1; a <= n; a += 4)
+                pagine.push(...await Promise.all(Array.from({ length: Math.min(4, n - a + 1) }, (_, i) => TestoPdf.pagina(pdf, a + i, 'spazi'))));
+        });
         return { fileId: id, nome: blob.name || id, pagine };
     }
     const idDaLink = (s) => { const m = /[-\w]{25,}/.exec(s); return m ? m[0] : ''; };
@@ -13085,13 +13170,14 @@ const PianiAI = (() => {
                     calibra.disabled = false;
                 }
             } }, '🎯 3 domande sulla materia');
+        let giorniFinale = null;
         const vincoli = () => {
             const m = materia.value;
             return {
                 materiaCodice: m, archetipo: Dominio.archetipoMateria(m), sorgentiDriveIds: fonti.value.split(/[,\s]+/).map(idDaLink).filter(Boolean),
                 dataTarget: data.value, livelloPartenza: partenza.value, livelloObiettivo: (+obiettivo.value || 4),
                 finestreSettimanali: giorni.filter(c => c.checked).map(c => ({ giornoSettimana: c._g, oraInizio: oraDa.value || '15:00', oraFine: oraA.value || '19:00' })),
-                maxOreGiorno: parseFloat(oreMax.value) || 3,
+                maxOreGiorno: parseFloat(oreMax.value) || 3, ...(giorniFinale != null ? { giorniFinale } : {}),
             };
         };
         const vincoliBP5 = () => {
@@ -13114,6 +13200,8 @@ const PianiAI = (() => {
                             oreMax.value = String(Math.min(10, (parseFloat(oreMax.value) || 3) + r.minutiExtra / 60));
                         if (r.nuovaData)
                             data.value = r.nuovaData;
+                        if (r.giorniFinale != null)
+                            giorniFinale = r.giorniFinale;
                         avviso('Rimedio applicato: premi di nuovo «Crea».');
                     } }, r.testo));
         };
@@ -13153,6 +13241,17 @@ const PianiAI = (() => {
                         indice.scrollIntoView({ block: 'center' });
                     }
                     return;
+                }
+                if (r.fonte === 'ai' && r.struttura) {
+                    try {
+                        await caricaMotoreStudio();
+                        const c = Copertura.analizza(r.piano.unita, r.struttura, { radice: Locale.radice, espandi: Locale.espandi });
+                        if (c.avvisi.length)
+                            r.piano.avvisiCopertura = c.avvisi;
+                    }
+                    catch (e) {
+                        console.warn('Copertura non calcolata:', e);
+                    }
                 }
                 salvaPiano(r.piano);
                 avviso('🧠 Piano creato (' + r.fatt.stato + ', fonte ' + (r.fonte === 'ai' ? 'AI · ' + r.chiamate + ' chiamata' : 'indice locale · 0 token') + ')' + (r.segnali.attiva ? ' · +20% per le ipercorrezioni' : '') + (r.errore ? ' · AI non disponibile: ' + r.errore : '')
@@ -13224,13 +13323,15 @@ const PianiAI = (() => {
             return null;
         const nas = Studio.nascosto(p.id);
         const dl = p.deload && p.deload.attivo ? p.deload : null;
-        return h('span', null, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
+        return h('span', null, p.livelloIntensita ? h('span.tenue.piccolo', { title: (p.avvisiBio || []).join(' ') }, dl ? ' 🛌 De-load fino al ' + dl.fino.slice(8, 10) + '/' + dl.fino.slice(5, 7) + ' (L' + dl.livelloRidotto + ' → L' + dl.livelloTarget + ') ' : ' L' + p.livelloIntensita + ' ') : null, p.avvisiCopertura && p.avvisiCopertura.length ? h('button.btn.neutro', { 'aria-label': 'Avvisi di copertura del piano', onclick: () => { chiedi('Copertura del piano', [{ testo: 'Ho capito', valore: 'ok' }], p.avvisiCopertura.join('\n')); } }, '🕳 ' + p.avvisiCopertura.length + ' avvisi') : null, h('button.btn.neutro', { onclick: () => { Studio.nascondiPiano(p.id, !nas); disegna(); } }, nas ? '▶ Riprendi' : '⏸ Pausa'), h('button.btn.neutro', { onclick: async () => {
                 const v = p.vincoliAI.livelloIntensita ? { ...p.vincoliAI, livelloIntensita: Pianificatore.livelloEffettivo(p, ymd(new Date())) } : p.vincoliAI;
                 const r = await Pianificatore.creaPiano(v, dipendenze({ usaAI: false, unita: p.unita, pid: p.id, titolo: p.titolo }));
                 if (r.piano && p.deload) {
                     r.piano.deload = p.deload;
                     r.piano.vincoliAI = p.vincoliAI;
                 }
+                if (r.piano && p.avvisiCopertura)
+                    r.piano.avvisiCopertura = p.avvisiCopertura;
                 if (!r.piano) {
                     avviso('⛔ Da oggi il piano è critico: ' + r.fatt.rimedi.map(x => x.testo).join(' · '), 9000);
                     return;
@@ -13349,6 +13450,11 @@ const Pianificatore = (() => {
         }
         return lib;
     }
+    function finestraFinale(esame, giorni = 7) {
+        const inizio = piu(esame, -clamp(Math.round(+giorni || 0), 0, 30));
+        return { inizio, fineNuovi: piu(inizio, -1) };
+    }
+    const giorniFin = (v) => v.giorniFinale == null ? 7 : v.giorniFinale;
     function capacita(v, oggi, occ, altri) {
         const out = [], fine = piu(v.dataTarget, -1), tetto = Math.max(0.5, +v.maxOreGiorno || 2) * 60;
         for (let d = oggi; d <= fine; d = piu(d, 1)) {
@@ -13364,10 +13470,10 @@ const Pianificatore = (() => {
         return arr1(base * (MOLT[v.livelloPartenza] || 1) * frazioneLivelli(obiettivo || v.livelloObiettivo) * (seg && seg.attiva ? 1.2 : 1));
     }
     function calcolaFattibilita(v, unita, ctx) {
-        const giorni = capacita(v, ctx.oggi, ctx.occupato || [], ctx.minutiAltriPiani);
-        const disp = arr1(giorni.reduce((s, g) => s + g.minuti, 0) / 60 * BUFFER_DISP), nec = oreNecessarie(unita, v, ctx.segnali);
+        const giorni = capacita(v, ctx.oggi, ctx.occupato || [], ctx.minutiAltriPiani), fin = finestraFinale(v.dataTarget, giorniFin(v));
+        const disp = arr1(giorni.filter(g => g.data <= fin.fineNuovi).reduce((s, g) => s + g.minuti, 0) / 60 * BUFFER_DISP), nec = oreNecessarie(unita, v, ctx.segnali);
         const rapporto = arr1(nec / Math.max(0.5, disp));
-        const vicina = v.dataTarget <= piu(ctx.oggi, 1);
+        const vicina = v.dataTarget <= piu(ctx.oggi, 1) || fin.fineNuovi < ctx.oggi;
         const stato = vicina ? 'critico' : rapporto <= 0.90 ? 'ottimale' : rapporto <= 1.15 ? 'serrato' : 'critico';
         const rimedi = [];
         if (stato === 'critico') {
@@ -13379,6 +13485,8 @@ const Pianificatore = (() => {
             const media = Math.max(0.25, disp / lavoro), giorniInPiu = Math.max(1, Math.ceil(mancano / media));
             const nuova = piu(vicina ? piu(ctx.oggi, 1) : v.dataTarget, giorniInPiu);
             rimedi.push({ tipo: 'sposta_data', nuovaData: nuova, testo: 'Sposta la data obiettivo al ' + nuova + ' (+' + giorniInPiu + ' giorni).' });
+            if (giorniFin(v) > 3 && v.dataTarget > piu(ctx.oggi, 3))
+                rimedi.push({ tipo: 'finale_breve', giorniFinale: 3, testo: 'Piano d\'emergenza: settimana finale di 3 giorni invece di ' + giorniFin(v) + ' (solo se confermi).' });
         }
         return { stato, rapporto, oreNecessarie: nec, oreDisponibili: disp, bufferPct: stato === 'serrato' ? 0.08 : stato === 'ottimale' ? 0.10 : 0, extraIper: !!(ctx.segnali && ctx.segnali.attiva), giorni, rimedi };
     }
@@ -13592,7 +13700,10 @@ const Pianificatore = (() => {
                 anal.set(g.data, (anal.get(g.data) || 0) + min);
             return true;
         }
+        const fin = finestraFinale(v.dataTarget, giorniFin(v));
         const pronto = (c, d) => {
+            if (c.liv <= 2 && d > fin.fineNuovi)
+                return false;
             if ((fattiLiv.get(c.u.uid) || 0) < c.liv - 1)
                 return false;
             if (c.parte > 1 && (fattiLiv.get(c.u.uid + '#' + c.liv) || 0) < c.parte - 1)
@@ -13656,6 +13767,13 @@ const Pianificatore = (() => {
                         ripassi.push({ data: d, voce: { k: cod + '~' + pidC + '~' + pref.u.uid + '~R' + (i + 1), t: '🔁 Ripasso ' + (i + 1) + ' · ' + pref.u.titolo, uid: pref.u.uid, livelloCognitivo: 1, isRipassoFSRS: true, min, sorgenteRef: ref(pref.u) } });
                     });
                 }
+            }
+            const restoFin = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
+            if (g.data >= fin.inizio && restoFin >= 30) {
+                const dm = diff(g.data, v.dataTarget), sim = dm === 6 || dm === 3, dopoSim = dm === 5 || dm === 2;
+                metti(g, { k: cod + '~' + pidC + '~FIN~' + g.data.replace(/-/g, ''), speciale: true,
+                    t: sim ? '📝 Simulazione d\'esame (D−' + dm + ')' : dopoSim ? '🔍 Revisione degli errori della simulazione' : '📚 Settimana finale: quiz cumulativo + ripassi',
+                    d: sim ? 'Tempo reale, senza fonti. Domani si rivedono gli errori.' : 'Ripassi in scadenza, concetti da consolidare, un quiz cumulativo per step a rotazione; niente argomenti nuovi.' }, Math.min(restoFin, sim ? 120 : 90));
             }
             const restoOff = Math.floor(g.minuti * (1 - f.bufferPct)) - (usato.get(g.data) || 0);
             if (bio && capRaggiunto && restoOff >= 30)
@@ -14134,7 +14252,7 @@ const Pianificatore = (() => {
         piano.fonteMappa = m.fonte;
         return { piano, fatt, segnali: seg, fonte: m.fonte, chiamate: m.chiamate, tokenStimati: m.tokenStimati, struttura, errore: m.errore };
     }
-    return { segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
+    return { finestraFinale, segnaliIper, materiaSk, occupatoDaEventi, finestreLibere, capacita, oreNecessarie, calcolaFattibilita, righeIndice, strutturaDaFonti, estraiStrutturaFonti,
         unitaDaStruttura, recuperaArrayParziale, normalizzaUnita, promptMappa, mappaCurriculumAI, stimaToken, ordineTopologico, sanitizzaPrereq, intervalliFsrs, s0,
         compilaTimelineNeuro, hookIpercorrezione, riassorbi, consumaBuffer, creaPiano, LIMITE_SERA, MAX_TOKEN_MAPPA, MAX_CHARS_STRUTTURA,
         MATRICE_LIVELLI, HARD_CAP_ANALITICO, DIP, MAX_TOKEN_CALIBRAZIONE, BUDGET_CALIBRAZIONE, DOMANDE_UNIVERSALI, configLivello, sessioniQuiz, normalizzaProfilo, applicaGuardRailBiologici,
@@ -14347,7 +14465,7 @@ const Banca = (() => {
             return { domande: applica(imc.map(d => ({ ...d })), s.id), immagini: {}, fonte: 'imcpack' };
         const B = await carica(parseInt(micro, 10), /^[CBF]-/.test(s.id) ? s.id[0] : undefined);
         if (B && B.schede[s.id])
-            return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca' };
+            return { domande: applica(B.domande.filter(d => d.sk === s.id), s.id), immagini: B.immagini, fonte: 'banca', focus: B.schede[s.id].focus };
         const K = 'imc-banca-' + s.id;
         try {
             const c = localStorage.getItem(K);
@@ -14409,10 +14527,10 @@ const QuizApp = (() => {
         if (v.cert) {
             const t = { ts: new Date().toISOString(), corretto: giusta, livelloCertezza: v.cert, tempoRispostaMs: Math.max(0, Math.round(v.ms || 0)) };
             r.confidenceLog = Neuro.aggiungiTentativo(r.confidenceLog, t);
-            const p = Neuro.pianifica(r.neuro, v.cert, giusta, r.ultima);
+            const p = Neuro.pianifica(r.neuro, v.cert, giusta, r.ultima, Ripassi.ritenzione(r.ultima));
             v.srs = p;
             v.caso = p.ultimoCaso;
-            r.neuro = { iv: p.iv, ease: p.ease, due: p.due, reps: p.reps, ultimoCaso: p.ultimoCaso };
+            r.neuro = { iv: p.iv, ease: p.ease, due: p.due, reps: p.reps, ultimoCaso: p.ultimoCaso, d: p.d, s: p.s, ultimo: p.ultimo };
             if (p.tag && p.tag.length)
                 r.neuro.tag = p.tag;
             if (p.daConsolidare)
@@ -14620,6 +14738,11 @@ const QuizApp = (() => {
         }
         const annulli = new Map();
         let registrato = false;
+        if (info && info.ferma)
+            info.ferma(() => { if (!finito) {
+                finito = true;
+                disegnaQ();
+            } });
         const nuovo = (idx, rip) => {
             P = idx.map(i => { const d = dati.domande[i]; return { d, ord: ordineIniziale(d), picked: null, ok: null, hid: [], sel: [], cert: null }; });
             annulli.clear();
@@ -14930,17 +15053,35 @@ const QuizApp = (() => {
             if (sb.length)
                 s2 += '<h3>Da rivedere (' + sb.length + ')</h3>' + sb.map(x => '<details class="qz-altre"><summary>' + fmt(x.d.q) + '</summary><p><b>Risposta corretta:</b> ' + fmt(x.d.t === 'mcq' ? x.d.o[0] : x.d.show) + '</p>' + passi(x.d.e) + (x.d.r ? '<p class="tenue piccolo">Ripassa: ' + esc(x.d.r) + '</p>' : '') + '</details>').join('');
             s2 += '<div class="chips qz-export"><span class="tenue piccolo">Esporta (appunti + .imcpack):</span><button type="button" class="chip" data-exp="errori">Errori</button><button type="button" class="chip" data-exp="illusione">Illusioni</button><button type="button" class="chip" data-exp="bloom3">Bloom ≥ 3</button></div>';
-            s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen && !prova ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
+            s2 += '<div class="qz-nav">' + (sb.length ? '<button type="button" class="btn" data-az="errori">Rifai solo gli errori</button>' : '') + '<button type="button" class="btn neutro" data-az="tutto">' + (gen && !prova && !(info && info.verifica) ? '🎲 Numeri nuovi' : 'Rifai tutto') + '</button></div>'
                 + (gen ? '' : '<div class="chips"><button type="button" class="chip" data-az="nuova">➕ Aggiungi una domanda</button>' + (Banca.nascoste(s.id).length ? '<button type="button" class="chip" data-az="ripristina">↩︎ Ripristina le domande nascoste (' + Banca.nascoste(s.id).length + ')</button>' : '') + '</div>') + '</section>';
             app.innerHTML = s2;
             v.corpo.scrollTop = 0;
             const r = { domandeSvolte: P.map(x => x.d.q), imc: 'quiz-risultato', pct, giuste: ok, totale: tot, livelli: liv, debole: deb ? deb[0] : null, errori: ripasso,
                 sbagliate: sb.map(x => [x.d.q, x.d.t === 'mcq' ? x.d.o[0] : String(x.d.show || ''), (Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e)]) };
+            r.titoloScheda = s.titolo;
+            if (dati.focus)
+                r.focus = dati.focus;
+            r.dettagli = P.filter(x => !x.d.gen && x.ok != null).map(x => {
+                const oi = !x.ok && x.d.t === 'mcq' && typeof x.picked === 'number' ? x.ord[x.picked] : 0;
+                return { id: x.d.id, q: x.d.q, giusta: x.d.t === 'mcq' ? x.d.o[0] : String(x.d.show || ''), spieg: Array.isArray(x.d.e) ? x.d.e.join(' ') : x.d.e, ok: !!x.ok, caso: x.caso,
+                    ...(x.d.concetto ? { concetto: x.d.concetto } : {}),
+                    ...(oi ? { scelta: x.d.o[oi], perche: ewDi(x.d)[oi - 1] || undefined } : {}) };
+            });
             if (registrato)
                 return;
             registrato = true;
             if (!gen && !prova)
                 Cattura.salva(s.id, r);
+            if (gen && !prova && info && info.verifica) {
+                r.verifica = true;
+                if (info.focus)
+                    r.focus = info.focus;
+                if (info.fine)
+                    info.fine(r);
+                else
+                    Cattura.salva(s.id, r);
+            }
             if (gen && !prova && Stato.prendi(s.id)?.type === 'qcreato') {
                 toastAnnulla?.remove();
                 const ritira = Array.from(annulli.values()).reverse();
@@ -15061,7 +15202,7 @@ const QuizApp = (() => {
                 nuovo(dati.domande.map((_, k) => k), false);
             }
             else if (az === 'modifica')
-                Editor.apri(x.d, s.id, nd => {
+                Editor.apri(x.d, x.d.sk || s.id, nd => {
                     const k = dati.domande.indexOf(x.d);
                     if (!nd) {
                         if (k >= 0)
@@ -15089,7 +15230,7 @@ const QuizApp = (() => {
                         x.ok = null;
                     }
                     disegnaQ();
-                });
+                }, false, dati.focus || '');
             else if (az === 'nuova')
                 Editor.apri(null, s.id, nd => { if (nd) {
                     dati.domande.push(nd);
@@ -15152,7 +15293,7 @@ const Editor = (() => {
     const LIV = ['Sbarramento', 'Applicativo', 'Trabocchetto', 'Problema', 'Completamento'];
     const area = (v, righe = 2, ph = '') => h('textarea', { rows: righe, value: v, placeholder: ph });
     const pulisci = (d) => { const c = { ...d }; delete c.id; delete c.sk; delete c.mod; delete c.nuova; return c; };
-    function apri(d0, sk, fatto, inBozza = false) {
+    function apri(d0, sk, fatto, inBozza = false, focus = '') {
         const nuova = !d0;
         const d = d0 ? JSON.parse(JSON.stringify(d0)) : { id: 'q-u-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), sk, t: 'mcq', lv: 'Applicativo', q: '', o: ['', '', '', '', ''], ew: ['', '', '', ''], e: '' };
         const recId = 'mq-' + d.id, r0 = Stato.prendi(recId);
@@ -15170,6 +15311,18 @@ const Editor = (() => {
         const passi = area((Array.isArray(d.e) ? d.e : [d.e]).join('\n'), 4, 'Correzione: un passaggio per riga (es. «Formula: …»)');
         const nota = h('div.tenue.piccolo');
         const blocco = h('div');
+        const conc = h('select', { 'aria-label': 'Concetto della domanda' }, h('option', { value: '' }, 'Automatico (lo sceglie l\'app)'));
+        const gConc = h('div.gruppo', { hidden: true }, h('div.gruppo-titolo', null, 'Concetto'), conc, h('div.tenue.piccolo', null, 'Conta per la padronanza di questo concetto nei prossimi quiz.'));
+        if (focus)
+            caricaMotoreStudio().then(() => {
+                const et = Concetti.etichette(focus);
+                if (et.length < 2)
+                    return;
+                const att = d.concetto && !et.some(e => Concetti.slug(e) === Concetti.slug(d.concetto)) ? [d.concetto] : [];
+                for (const e of att.concat(et))
+                    conc.appendChild(h('option', { value: e, selected: !!d.concetto && Concetti.slug(e) === Concetti.slug(d.concetto) }, e));
+                gConc.hidden = false;
+            }, (e) => console.warn('Editor: concetti non disponibili', e && e.message));
         const controlla = () => {
             if (tipo.value !== 'mcq') {
                 nota.textContent = '';
@@ -15192,6 +15345,12 @@ const Editor = (() => {
         disegnaTipo();
         const leggi = () => {
             const n = { ...d, t: tipo.value, lv: liv.value, q: testo.value.trim() };
+            if (!gConc.hidden) {
+                if (conc.value)
+                    n.concetto = conc.value;
+                else
+                    delete n.concetto;
+            }
             const righe = passi.value.split('\n').map(x => x.trim()).filter(Boolean);
             n.e = righe.length > 1 ? righe : (righe[0] || '');
             if (!n.q) {
@@ -15236,7 +15395,7 @@ const Editor = (() => {
         };
         const f = foglio({
             titolo: nuova ? 'Nuova domanda' : 'Modifica domanda',
-            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Tipo', tipo), riga('Livello', liv)), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Domanda'), testo), blocco, h('div.gruppo', null, h('div.gruppo-titolo', null, 'Correzione passo-passo'), passi), h('div.tenue.piccolo', null, 'Le modifiche si salvano con i tuoi dati su Drive; l\'originale resta e puoi ripristinarlo. Statistiche e spiegazioni AI della domanda restano collegate.'), nuova || inBozza ? null : h('div.bottoni', null, d0 && d0.mod && !d0.nuova ? h('button.btn.neutro', { onclick: () => { const orig = r0 && r0.originale; if (r0)
+            corpo: h('div.modulo', null, h('div.gruppo', null, riga('Tipo', tipo), riga('Livello', liv)), h('div.gruppo', null, h('div.gruppo-titolo', null, 'Domanda'), testo), blocco, h('div.gruppo', null, h('div.gruppo-titolo', null, 'Correzione passo-passo'), passi), gConc, h('div.tenue.piccolo', null, 'Le modifiche si salvano con i tuoi dati su Drive; l\'originale resta e puoi ripristinarlo. Statistiche e spiegazioni AI della domanda restano collegate.'), nuova || inBozza ? null : h('div.bottoni', null, d0 && d0.mod && !d0.nuova ? h('button.btn.neutro', { onclick: () => { const orig = r0 && r0.originale; if (r0)
                     Stato.elimina(recId); f.chiudi(); fatto({ ...(orig || {}), id: d.id, sk }); avviso('Ripristinato l\'originale.'); } }, '↩︎ Ripristina originale') : null, h('button.btn.pericolo', { onclick: async () => {
                     const x = await chiedi('Nascondere questa domanda?', [{ testo: 'Nascondi', valore: 'si', pericolo: true }, { testo: 'Annulla', valore: 'no' }], 'Non comparirà più nel quiz. Puoi ripristinarla dalla schermata del risultato.');
                     if (x !== 'si')
@@ -15820,22 +15979,27 @@ function sezioniSpiegazione(sp) {
         out.push({ etichetta: parti[i], testo: (parti[i + 1] || '').trim() });
     return out;
 }
-let strumentiQuizInArrivo = null;
-function caricaStrumentiQuiz() {
-    if (typeof StrumentiQuiz !== 'undefined')
+const chunkInArrivo = {};
+function caricaChunk(file, pronto) {
+    if (pronto())
         return Promise.resolve();
-    if (!strumentiQuizInArrivo)
-        strumentiQuizInArrivo = new Promise((ok, ko) => {
-            const s = document.createElement('script');
-            s.src = 'strumenti-quiz.js?v=' + encodeURIComponent(VERSIONE);
-            s.onload = () => ok();
-            s.onerror = () => { strumentiQuizInArrivo = null; s.remove(); ko(new Error('serve la connessione la prima volta')); };
-            document.head.appendChild(s);
-        });
-    return strumentiQuizInArrivo;
+    return chunkInArrivo[file] || (chunkInArrivo[file] = new Promise((ok, ko) => {
+        const s = document.createElement('script');
+        s.src = file + '?v=' + encodeURIComponent(VERSIONE);
+        s.onload = () => ok();
+        s.onerror = () => { delete chunkInArrivo[file]; s.remove(); ko(new Error('serve la connessione la prima volta')); };
+        document.head.appendChild(s);
+    }));
+}
+function caricaMotoreStudio() { return caricaChunk('motore-studio.js', () => typeof StudiaOraUI !== 'undefined'); }
+function caricaStrumentiQuiz() {
+    return caricaMotoreStudio().then(() => caricaChunk('strumenti-quiz.js', () => typeof StrumentiQuiz !== 'undefined'));
 }
 function conStrumentiQuiz(fn) {
     caricaStrumentiQuiz().then(fn, (e) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
+}
+function conMotoreStudio(fn) {
+    caricaMotoreStudio().then(fn, (e) => avviso('⚠️ Strumenti di studio non disponibili: ' + e.message, 6000));
 }
 
 const Simulazioni = (() => {
@@ -16220,171 +16384,27 @@ const Spiega = (() => {
     return { vede, inietta, sezione, genera, idDi, chat, materia, pronta, chiaveAI: () => chiave(), recuperaDaDrive, salvaSuDrive, get attiva() { return !!chiave(); } };
 })();
 
-const StudiaOra = (() => {
-    const CH = 'imc-studia-ora', MIN = 10;
-    const leggi = () => { try {
-        return JSON.parse(localStorage.getItem(CH) || 'null');
-    }
-    catch (_) {
-        return null;
-    } };
-    const scrivi = (s) => { try {
-        s ? localStorage.setItem(CH, JSON.stringify(s)) : localStorage.removeItem(CH);
-    }
-    catch (_) { } };
-    function componi(minuti, giorno = oggi()) {
-        const out = [];
-        let resto = minuti - 5;
-        const metti = (v) => { if (resto >= v.min) {
-            out.push(v);
-            resto -= v.min;
-            return true;
-        } return false; };
-        let tettoRip = Math.max(MIN, Math.round(minuti * 0.4)), nAp = 0;
-        for (const e of CodaRipasso.dovuti(ymd(giorno))) {
-            if (e.sorgente === 'step') {
-                if (tettoRip >= MIN && metti(e.voce))
-                    tettoRip -= MIN;
-            }
-            else if (e.sorgente === 'appunti') {
-                if (nAp < 3) {
-                    nAp++;
-                    metti(e.voce);
-                }
-            }
-            else
-                metti(e.voce);
-        }
-        for (const vg of Studio.vociDelGiorno(giorno)) {
-            if (vg.v.speciale || vg.p.modo === 'raffinamento')
-                continue;
-            const t = Studio.trovaSotto(vg.v.k);
-            if (!t)
-                continue;
-            if (Freddo.possibile(vg.v.k) && !Freddo.rec(vg.v.k))
-                metti({ tipo: 'freddo', titolo: '🧊 Prova a freddo ' + Studio.etichetta(vg.v.k), sotto: 'Prima di leggere: d\'istinto, non conta', min: MIN, k: vg.v.k });
-            for (const s of Studio.schedeDi(t.sub).filter(x => x.tipo === 'P' && !Studio.fatta(x.id)))
-                if (!metti({ tipo: 'scheda', titolo: '📖 ' + Studio.etichetta(vg.v.k) + ' · scheda ' + s.k + '/' + s.n, sotto: s.titolo + ' · pp. ' + Studio.intervalli(Studio.pagineSet(s.pagine)), min: MIN, k: vg.v.k, id: s.id }))
-                    break;
-        }
-        for (const x of tutteLeSchede().filter(x => daRifare(x.s.id)))
-            if (!metti({ tipo: 'errore', titolo: '✏️ Da rifare · ' + Studio.etichetta(x.sub.k), sotto: x.s.titolo, min: MIN, k: x.sub.k, id: x.s.id }))
-                break;
-        const conPause = [];
-        let acc = 0;
-        out.forEach((v, i) => { conPause.push(v); acc += v.min; if (acc >= 25 && i < out.length - 1 && minuti >= 50) {
-            conPause.push({ tipo: 'pausa', titolo: '☕ Pausa', sotto: 'Alzati, bevi, niente social: il cervello consolida', min: 5 });
-            acc = 0;
-        } });
-        conPause.push({ tipo: 'richiamo', titolo: '🔁 Richiamo finale', sotto: 'Senza guardare: scrivi i 3 concetti chiave di oggi e una domanda d\'esame che ti faresti', min: 5 });
-        return conPause;
-    }
-    function avvia(minuti) {
-        const s = { inizio: Date.now(), minuti, voci: componi(minuti) };
-        scrivi(s);
-        const prima = s.voci.find(v => v.k);
-        Timer.avvia({ m: prima && prima.k ? materiaDi(prima.k) : undefined, k: prima && prima.k, titolo: 'Studia ora · ' + minuti + ' min', durata: minuti });
-        return s;
-    }
-    function segnaFatto(i) { const s = leggi(); if (!s || !s.voci[i])
-        return; s.voci[i].fatto = !s.voci[i].fatto; scrivi(s); }
-    function chiudi() { scrivi(null); }
-    return { componi, avvia, leggi, segnaFatto, chiudi };
-})();
-function eseguiVoce(v) {
-    if (v.tipo === 'freddo' && v.k) {
-        avviaProvaAFreddo(v.k);
-        return;
-    }
-    if (v.tipo === 'carte') {
-        avviaCarte(undefined, 'Flashcard');
-        return;
-    }
-    if (v.tipo === 'quiz') {
-        QuizRifare.avvia();
-        return;
-    }
-    if (v.tipo === 'piano' && v.id) {
-        apriPianoDi(v.id);
-        return;
-    }
-    if (v.tipo === 'appunto' && v.id) {
-        const a = Stato.prendi(v.id);
-        if (a) {
-            apriCornell(a, true);
-            return;
-        }
-    }
-    if (v.id) {
-        const t = trovaScheda(v.id);
-        if (t) {
-            apriScheda(t.pk, t.m, t.micro, t.s, v.tipo === 'ripasso' || v.tipo === 'errore');
-            return;
-        }
-    }
-    avviso(v.sotto, 8000);
-}
-function apriStudiaOra() {
-    const s = StudiaOra.leggi();
-    if (s) {
-        apriSessione();
-        return;
-    }
-    let minuti = 50;
-    const corpo = h('div.modulo');
-    const disegnaS = () => {
-        svuota(corpo);
-        const voci = StudiaOra.componi(minuti);
-        [
-            h('div.gruppo-titolo', null, 'Quanto tempo hai?'),
-            h('div.chips', null, [25, 50, 90].map(m => h('button.chip' + (m === minuti ? '.attivo' : ''), { onclick: () => { minuti = m; disegnaS(); } }, m + ' min'))),
-            h('div.gruppo-titolo', null, 'La tua sessione'),
-            h('div.gruppo', null, voci.map(v => h('div.widget-riga', null, h('span.nome', null, v.titolo, h('div.tenue.piccolo', null, v.sotto)), h('span.tenue.piccolo', null, v.min + "'")))),
-            h('div.tenue.piccolo', null, 'Prima i ripassi più a rischio, poi lo step di oggi, poi gli errori; si chiude con un richiamo a memoria. Silenzia il telefono (Full immersion).'),
-        ].forEach(el => corpo.appendChild(el));
-    };
-    disegnaS();
-    foglio({ titolo: '▶ Studia ora', corpo, etichettaSalva: 'Inizia', salva: () => { StudiaOra.avvia(minuti); setTimeout(apriSessione, 50); } });
-}
-function apriSessione() {
-    const corpo = h('div.modulo');
-    const disegnaS = () => {
-        const s = StudiaOra.leggi();
-        svuota(corpo);
-        if (!s)
-            return;
-        const prossima = s.voci.findIndex(v => !v.fatto), fatte = s.voci.filter(v => v.fatto).length;
-        [
-            h('div.tenue.piccolo', null, fatte + ' di ' + s.voci.length + ' fatte · ' + s.minuti + ' minuti · iniziata alle ' + hm(new Date(s.inizio))),
-            barra(fatte, s.voci.length),
-            h('div.gruppo', null, s.voci.map((v, i) => h('div.voce-lista.task' + (v.fatto ? '.fatto' : '') + (i === prossima ? '.sessione-ora' : ''), null, h('button.spunta' + (v.fatto ? '.on' : ''), { 'aria-label': v.fatto ? 'Da fare' : 'Fatto', onclick: () => { StudiaOra.segnaFatto(i); disegnaS(); } }, v.fatto ? '✓' : ''), h('button.voce-corpo', { onclick: () => eseguiVoce(v) }, h('span.voce-titolo', { style: { whiteSpace: 'normal' } }, v.titolo), h('span.voce-sotto', null, v.sotto + ' · ' + v.min + "'"))))),
-            prossima >= 0 ? h('div.bottoni', null, h('button.btn', { onclick: () => eseguiVoce(s.voci[prossima]) }, '▶ ' + s.voci[prossima].titolo.replace(/^\S+\s/, ''))) : h('div.vuoto', null, '🎉 Sessione completata. Ora 5 minuti di pausa tranquilla, senza schermo.'),
-        ].forEach(el => corpo.appendChild(el));
-    };
-    disegnaS();
-    foglio({ titolo: 'Sessione in corso', corpo, etichettaSalva: 'Termina', salva: () => { StudiaOra.chiudi(); avviso('Sessione chiusa.'); } });
-}
+function sessioneAperta() { return Stato.tutti('sessioneora').filter(s => !s.chiusa).sort((a, b) => b.inizio - a.inizio)[0]; }
+function apriStudiaOra() { conMotoreStudio(() => StudiaOraUI.scegli()); }
+function apriSessione() { conMotoreStudio(() => StudiaOraUI.sessione()); }
 function widgetStudiaOra() {
-    const s = StudiaOra.leggi();
+    const s = sessioneAperta();
     if (s) {
         const prossima = s.voci.find(v => !v.fatto), fatte = s.voci.filter(v => v.fatto).length;
         return h('section.card', null, h('button.btn.studia-ora', { onclick: apriSessione }, '▶ Sessione in corso · ' + fatte + '/' + s.voci.length), prossima ? h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Prossima: ' + prossima.titolo) : null);
     }
     const e = prossimoEsame(), durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
-    const inizia = () => { const a = adesso(); if (!a.minuti) {
-        Timer.avvia({ titolo: 'Studio libero' });
-        return;
-    } StudiaOra.avvia(a.minuti); setTimeout(apriSessione, 50); };
+    const inizia = () => conMotoreStudio(() => StudiaOraUI.studia());
     const btn = h('button.btn.studia-ora', { onclick: inizia }, '▶ Inizia');
-    setTimeout(() => {
+    caricaMotoreStudio().then(() => setTimeout(() => {
         if (!riassunto.isConnected)
             return;
-        const a = adesso();
+        const a = StudiaOraUI.adesso();
         riassunto.textContent = a.riassunto;
         durata.textContent = a.minuti ? ' · ' + a.minuti + ' min' : '';
         if (!a.minuti)
             btn.textContent = '▶ Studio libero con timer';
-    }, 0);
+    }, 0), (e) => { riassunto.textContent = '⚠️ ' + e.message; });
     return h('section.card.adesso', null, h('div.adesso-testa', null, h('b', null, 'Adesso'), durata, e ? h('span.tenue.piccolo', null, ' · ' + (e.giorni === 0 ? 'esame oggi' : '−' + e.giorni + (e.giorni === 1 ? ' giorno' : ' giorni')) + ' a ' + e.nome + (e.stato ? ' · ' + e.stato : '')) : null), riassunto, h('div.bottoni', null, lungo(btn, () => [
         { t: 'Scegli quanto tempo hai', ic: 'cronometro', f: () => apriStudiaOra() },
         { t: 'Ripassa le flashcard', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } },
@@ -16393,40 +16413,24 @@ function widgetStudiaOra() {
         { t: 'Simulazione d\'esame', ic: 'quiz', f: () => apriSimulazioni() }
     ], 'Studia ora'), h('button.btn-testo', { onclick: apriStudiaOra }, 'Altra durata')));
 }
-function adesso(giorno = oggi()) {
-    const lavoro = (vv) => vv.filter(v => v.tipo !== 'pausa' && v.tipo !== 'richiamo');
-    const tutto = lavoro(StudiaOra.componi(90, giorno)), serve = tutto.reduce((s, v) => s + v.min, 0);
-    if (!tutto.length)
-        return { minuti: 0, riassunto: 'Niente in scadenza: buon momento per avanzare o per una pausa vera.' };
-    const minuti = [25, 50, 90].find(m => serve + 5 <= m) || 90, voci = lavoro(StudiaOra.componi(minuti, giorno));
-    const n = (tipo) => voci.filter(v => v.tipo === tipo).length, pezzi = [];
-    const nc = Carte.conta(), nq = QuizRifare.conta(ymd(giorno));
-    if (n('ripasso'))
-        pezzi.push(n('ripasso') + (n('ripasso') === 1 ? ' ripasso' : ' ripassi'));
-    if (n('carte'))
-        pezzi.push((nc.ripasso + nc.nuove) + ' carte');
-    if (n('quiz'))
-        pezzi.push(Math.min(nq, QuizRifare.MAX) + ' quiz da rifare');
-    if (n('appunto'))
-        pezzi.push(n('appunto') + (n('appunto') === 1 ? ' appunto' : ' appunti'));
-    if (n('piano'))
-        pezzi.push(n('piano') + (n('piano') === 1 ? ' ripasso del piano' : ' ripassi del piano'));
-    const st = voci.find(v => (v.tipo === 'scheda' || v.tipo === 'freddo') && v.k);
-    if (st && st.k)
-        pezzi.push(Studio.etichetta(st.k));
-    if (n('errore'))
-        pezzi.push(n('errore') + ' errori');
-    return { minuti, riassunto: pezzi.join(' + ') || voci[0].titolo };
+function esamiNoti() {
+    const es = Stato.tutti('esame').filter(x => !x.deleted).map(x => ({ nome: x.nome, data: x.data, materie: x.materie }));
+    for (const p of Studio.pianiAttivi()) {
+        const d = p.generato && p.generato.esame;
+        if (d && !es.some(e => e.data === d))
+            es.push({ nome: p.titolo || 'Esame del piano', data: d });
+    }
+    return es;
 }
 function modalitaEsame() {
     if ((imp() || {}).modoEsame === 'no')
         return null;
-    const gg = Stato.tutti('esame').map(x => giorniA(x.data)).filter(n => n >= 0);
+    const gg = esamiNoti().map(x => giorniA(x.data)).filter(n => n >= 0);
     const m = gg.length ? Math.min(...gg) : Infinity;
     return m <= 21 ? m : null;
 }
 function prossimoEsame() {
-    const e = Stato.tutti('esame').filter(x => !x.deleted && giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
+    const e = esamiNoti().filter(x => giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
     if (!e)
         return null;
     const r = Studio.pkPiani().length ? Studio.inRitardo().length : -1;
@@ -16900,12 +16904,10 @@ async function apriPdf(fileId, pagina, titolo) {
     const stato = h('div.vuoto.centro', null, 'Apro il PDF…');
     v.corpo.appendChild(stato);
     try {
-        await new Promise((ok, ko) => { if (typeof pdfjsLib !== 'undefined')
-            return ok(); const s = document.createElement('script'); s.src = PDFJS + 'pdf.min.js'; s.onload = () => ok(); s.onerror = () => ko(new Error('Impossibile caricare il lettore PDF (serve la rete).')); document.head.appendChild(s); });
-        pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
+        await caricaPdfJs();
         const dati = await PdfCache.prendi(fileId, (f, t) => { stato.textContent = 'Scarico il PDF… ' + (t ? Math.round(f / t * 100) + '%' : Math.round(f / 1048576) + ' MB') + ' (solo la prima volta)'; });
         stato.textContent = 'Apro il PDF…';
-        const doc = await pdfjsLib.getDocument({ data: dati, isEvalSupported: false }).promise;
+        const doc = await TestoPdf.apri(dati);
         let p = Math.min(Math.max(1, pagina), doc.numPages), zoom = 1, giro = 0;
         const tela = h('canvas.pdf-tela'), num = h('span.pdf-num');
         async function mostra() {
@@ -17004,9 +17006,9 @@ function barra(fatte, tot, colore) {
 }
 function rigaStudio(x) {
     const raff = x.p.modo === 'raffinamento', fatto = !x.v.speciale && Studio.stepFatto(x.v.k, x.p), t = Studio.trovaSotto(x.v.k.replace(/^G2-/, ''));
-    const sim = !!x.v.speciale && /^(SIM|VERIFICA)/.test(x.v.k);
+    const sim = !!x.v.speciale && (/^(SIM|VERIFICA|REV-)/.test(x.v.k) || /~FIN~/.test(x.v.k) && /^(📝|🔍)/.test(x.v.t));
     const riga = lungo(h('button.voce-lista', { onclick: () => { if (sim) {
-            apriSimulazioni();
+            conMotoreStudio(() => ComponiQuiz.daVoce(x.p, x.v));
             return;
         } if (t) {
             UI.studioSub = t.sub.k;
@@ -17506,6 +17508,113 @@ function vistaTabella(t) {
             i.setSelectionRange(i.value.length, i.value.length);
         } }, 300); } }), h('div.tab-scroll', null, h('table.tab', null, h('thead', null, h('tr', null, t.colonne.map(c => h('th', null, h('button', { onclick: () => ordina(c), title: 'Ordina' }, c.nome + freccia(c)), h('button.th-mod', { 'aria-label': 'Modifica colonna ' + c.nome, onclick: () => editorColonna(t, c) }, '⚙'))), h('th.th-piu', null, h('button', { onclick: () => editorColonna(t), 'aria-label': 'Aggiungi colonna' }, '+')))), h('tbody', null, righe.map(r => h('tr', null, t.colonne.map(c => h('td.td-' + c.tipo, null, cella(t, r, c))), h('td', null, h('button.btn-ico', { 'aria-label': 'Elimina riga', onclick: () => { t.righe = t.righe.filter(x => x.id !== r.id); Stato.salva(t); } }, icona('x', 16)))))))), h('div.tenue.piccolo', null, righe.length + ' di ' + t.righe.length + ' righe' + (UI.tabOrd ? ' · ordinate' : '') + '. Le righe con una data compaiono anche nel calendario.'), h('button.btn.neutro', { onclick: () => { t.righe.push({ id: uid(), c: {} }); Stato.salva(t); } }, '+ Aggiungi riga'));
 }
+
+const TestoPdf = (() => {
+    function righe(items) {
+        const out = [];
+        let y = null, r = '';
+        for (const it of items) {
+            const yy = Math.round(it.transform ? it.transform[5] : 0);
+            if (y !== null && Math.abs(yy - y) > 2) {
+                out.push(r);
+                r = '';
+            }
+            r += (r && !r.endsWith(' ') ? ' ' : '') + it.str;
+            y = yy;
+        }
+        if (r)
+            out.push(r);
+        return out;
+    }
+    function formatta(items, modo = 'spazi') {
+        if (modo === 'eol')
+            return items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
+        if (modo === 'righe')
+            return righe(items).join('\n');
+        return items.map(x => x.str || '').join(' ');
+    }
+    async function apri(dati) {
+        const L = await caricaPdfJs();
+        const data = dati instanceof Uint8Array ? dati : new Uint8Array(dati instanceof ArrayBuffer ? dati : await dati.arrayBuffer());
+        return L.getDocument({ data, isEvalSupported: false }).promise;
+    }
+    async function chiudi(doc) {
+        try {
+            if (doc && typeof doc.destroy === 'function')
+                await doc.destroy();
+        }
+        catch (e) {
+            console.warn('[TestoPdf] chiusura del PDF', e);
+        }
+    }
+    async function con(dati, fn) {
+        const doc = await apri(dati);
+        try {
+            return await fn(doc);
+        }
+        finally {
+            await chiudi(doc);
+        }
+    }
+    async function elementi(doc, n) {
+        const p = await doc.getPage(n);
+        try {
+            return (await p.getTextContent()).items;
+        }
+        finally {
+            try {
+                if (typeof p.cleanup === 'function')
+                    p.cleanup();
+            }
+            catch (e) {
+                console.warn('[TestoPdf] pulizia pagina ' + n, e);
+            }
+        }
+    }
+    async function pagina(doc, n, modo = 'spazi') {
+        return formatta(await elementi(doc, n), modo);
+    }
+    const CACHE = 'imc-testo-pdf';
+    const url = (chiave, modo) => location.origin + '/__testo-pdf/' + encodeURIComponent(chiave) + '/' + modo;
+    async function daCache(chiave, modo) {
+        try {
+            const r = await (await caches.open(CACHE)).match(url(chiave, modo));
+            return r ? await r.json() : null;
+        }
+        catch (e) {
+            console.warn('[TestoPdf] cache non leggibile', e);
+            return null;
+        }
+    }
+    async function inCache(chiave, modo, pagine) {
+        try {
+            await (await caches.open(CACHE)).put(url(chiave, modo), new Response(JSON.stringify(pagine), { headers: { 'content-type': 'application/json' } }));
+        }
+        catch (e) {
+            console.warn('[TestoPdf] cache non scritta (spazio?)', e);
+        }
+    }
+    async function tutte(dati, chiave, modo = 'eol', avanza) {
+        if (chiave) {
+            const c = await daCache(chiave, modo);
+            if (c)
+                return c;
+        }
+        const pagine = await con(typeof dati === 'function' ? await dati() : dati, async (doc) => {
+            const out = [];
+            for (let n = 1; n <= doc.numPages; n++) {
+                out.push(await pagina(doc, n, modo));
+                if (avanza && n % 20 === 0)
+                    avanza(n, doc.numPages);
+            }
+            return out;
+        });
+        if (chiave)
+            await inCache(chiave, modo, pagine);
+        return pagine;
+    }
+    return { apri, chiudi, con, elementi, pagina, formatta, righe, tutte, CACHE };
+})();
 
 let lungoAppena = -1e9;
 document.addEventListener('click', e => { if (performance.now() - lungoAppena < 500) {
@@ -18236,7 +18345,7 @@ function sezioneNotifiche(salva) {
 function sezioneStudio(salva) {
     const i = imp();
     const num = (k, def, min, max) => h('input', { type: 'number', min: String(min), max: String(max), inputMode: 'numeric', value: String(i[k] || def), onchange: (e) => salva({ [k]: Math.max(min, Math.min(max, parseInt(e.target.value, 10) || def)) }) });
-    return scheda('Studio', riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')), riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')), riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')), riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')), h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassa) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
+    return scheda('Studio', riga('Sessione di studio', num('pomodoro', 25, 5, 180), h('span.dopo', null, 'min')), riga('Pausa', num('pausa', 5, 1, 60), h('span.dopo', null, 'min')), riga('Soglia "da rifare"', num('sogliaErrori', 70, 0, 100), h('span.dopo', null, '%')), riga('Ripassi al giorno', num('ripassoMinuti', 30, 10, 240), h('span.dopo', null, 'min')), riga('Metodi di studio', h('button.btn-testo', { onclick: () => conMotoreStudio(() => StudiaOraUI.preferenze()) }, 'Scegli')), h('div.tenue.piccolo', null, 'I ripassi (Oggi → Ripassa) riprogrammano le schede fatte con la ripetizione spaziata (FSRS): tornano quando stai per dimenticarle, prima se il punteggio era basso. Circa ' + Ripassi.MIN_SCHEDA + ' min a scheda.'));
 }
 const PASSO = 15;
 function trascinabile(el, o, nGiorni) {
@@ -18337,7 +18446,7 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.64.5';
+const VERSIONE = '0.68.0';
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
@@ -18589,19 +18698,8 @@ function scorciatoiaAvvio() {
     }
     if (az === 'condividi')
         conStrumentiQuiz(() => CentroUI.apri(condiviso));
-    else if (az === 'studia') {
-        if (StudiaOra.leggi()) {
-            apriSessione();
-            return;
-        }
-        const a = adesso();
-        if (a.minuti) {
-            StudiaOra.avvia(a.minuti);
-            setTimeout(apriSessione, 50);
-        }
-        else
-            apriStudiaOra();
-    }
+    else if (az === 'studia')
+        conMotoreStudio(() => StudiaOraUI.studia(true));
     else if (az === 'aggiungi')
         apriNuovo();
     else if (az === 'ripassa')

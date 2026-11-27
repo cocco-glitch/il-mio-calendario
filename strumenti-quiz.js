@@ -41,6 +41,90 @@ const Centro = (() => {
         const cod = codiceDi(o);
         return p.schede.map(x => ({ n: x.n, sigla: 'S' + due(x.n), id: cod + '-' + x.micro[0] + '-' + x.n, micro: x.micro.slice(), categoria: x.categoria, blocco: x.blocco }));
     }
+    const fonte = (x) => x.fonte || x.micro[0];
+    function gruppi(p) {
+        const m = new Map();
+        for (const x of p.schede) {
+            const l = m.get(x.micro[0]) || [];
+            l.push(x);
+            m.set(x.micro[0], l);
+        }
+        return [...m.entries()].map(([micro, schede]) => ({ micro, schede }));
+    }
+    const copia = (p) => JSON.parse(JSON.stringify(p));
+    function nuovoCodice(p, ms) {
+        const padre = ms.slice(0, ms.lastIndexOf('.')), usati = p.schede.flatMap(x => [...x.micro, fonte(x)]);
+        let max = 0;
+        for (const m of usati) {
+            const r = m.slice(padre.length + 1);
+            if (m.startsWith(padre + '.') && /^\d+$/.test(r))
+                max = Math.max(max, +r);
+        }
+        return padre + '.' + (max + 1);
+    }
+    function unisci(p, a, b) {
+        const q = copia(p);
+        if (a === b)
+            return q;
+        const finto = (q.nuovi || []).includes(b);
+        for (const x of q.schede)
+            if (x.micro[0] === b) {
+                x.fonte = fonte(x);
+                x.micro = [...new Set([a, ...x.micro.filter(m => !(finto && m === b))])];
+                if (x.fonte === b && finto)
+                    delete x.fonte;
+                if (x.fonte === x.micro[0])
+                    delete x.fonte;
+            }
+        if (finto)
+            q.nuovi = q.nuovi.filter(m => m !== b);
+        if (q.nuovi && !q.nuovi.length)
+            delete q.nuovi;
+        return q;
+    }
+    function dividi(p, ms, dopo) {
+        const q = copia(p), g = q.schede.filter(x => x.micro[0] === ms), i = g.findIndex(x => x.n === dopo);
+        if (i < 0 || i >= g.length - 1)
+            return null;
+        const cod = nuovoCodice(q, ms);
+        for (const x of g.slice(i + 1)) {
+            x.fonte = fonte(x);
+            x.micro = [cod, ...x.micro.slice(1).filter(m => m !== cod)];
+        }
+        q.nuovi = [...(q.nuovi || []), cod];
+        return q;
+    }
+    function minutiMicro(p, minB = 50) {
+        const g = gruppi(p), m = ripartisci(Math.max(1, p.blocchi.length) * minB, g.map(x => x.schede.length)), out = {};
+        g.forEach((x, i) => { out[x.micro] = m[i]; });
+        return out;
+    }
+    const MAX_CONCETTI = 4;
+    function proposte(p, sg, lingua) {
+        const out = [], g = gruppi(p), minB = sg.minBlocco || 50, sess = sg.minSessione || minB, min = minutiMicro(p, minB);
+        const concetti = (ms) => [...new Set((sg.concetti && sg.concetti[ms] || []).map(c => String(c || '').trim().toLowerCase()).filter(Boolean))];
+        for (const x of g) {
+            if (x.schede.length < 2)
+                continue;
+            const nc = concetti(x.micro).length, perche = nc > MAX_CONCETTI ? nc + ' concetti nuovi (più di ' + MAX_CONCETTI + ')' : min[x.micro] > sess ? '~' + min[x.micro] + ' min (più di una sessione da ' + sess + ')' : '';
+            if (perche)
+                out.push({ tipo: 'dividi', micro: x.micro, dopo: x.schede[Math.ceil(x.schede.length / 2) - 1].n, motivo: 'Dividi ' + x.micro + '? ' + perche });
+        }
+        const unita = g.map(x => {
+            const f = fonte(x.schede[0]), pg = sg.pagine && sg.pagine[f], cc = concetti(x.micro);
+            return { uid: x.micro, titolo: [...new Set(x.schede.map(y => y.blocco))].join(' · ') || x.micro, concettiChiave: cc.length >= 2 ? cc : undefined, pagine: pg, fileId: pg ? 'libro' : undefined };
+        });
+        for (const d of Copertura.coppie(unita, lingua).duplicati)
+            out.push({ tipo: 'unisci', micro: d.a, con: d.b, motivo: 'Unisci ' + d.b + ' a ' + d.a + '? Stessi concetti e pagine sovrapposte al ' + Math.round(d.sovrapp * 100) + '%' });
+        return out;
+    }
+    function riallinea(vecchio, flusso, nuovo) {
+        const ok = !!vecchio && !!flusso && !nuovo.azzera;
+        return nuovo.schede.map(x => {
+            const v = ok ? vecchio.schede.find(y => y.n === x.n) : undefined, f = v ? flusso.find(y => y.n === x.n) : undefined;
+            return f && fonte(v) === fonte(x) && v.categoria === x.categoria ? { ...f } : { n: x.n, stato: 'da-fare' };
+        });
+    }
     const dataBreve = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s(d)); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; };
     function ripartisci(tot, pesi) {
         const somma = pesi.reduce((a, b) => a + b, 0) || 1;
@@ -291,6 +375,54 @@ const Centro = (() => {
             }
         return out;
     }
+    const MAX_PAGINE = 40;
+    function terminiMicro(indice, ms, altri) {
+        const v = (indice || []).find(x => codiceVoce(x) === s(ms));
+        return [v ? s(v.capitolo).replace(/^\s*\d+(?:\.\d+)*\s*/, '') : '', ...altri.map(x => s(x))].filter((x, i, a) => x && a.indexOf(x) === i);
+    }
+    function trattoMigliore(c) {
+        const forte = c.riscontri.find(r => r.classe === 'trattazione' || r.classe === 'approfondimento' || r.classe === 'applicazione');
+        const tr = c.tratti.slice().sort((a, b) => a.da - b.da), i = forte ? tr.findIndex(t => forte.n >= t.da && forte.n <= t.a) : -1;
+        if (i < 0)
+            return null;
+        let da = tr[i].da, a = tr[i].a, sx = i - 1, dx = i + 1;
+        for (;;) {
+            const L = sx >= 0 && da - tr[sx].a <= 3 && a - tr[sx].da + 1 <= MAX_PAGINE ? tr[sx] : null, R = dx < tr.length && tr[dx].da - a <= 3 && tr[dx].a - da + 1 <= MAX_PAGINE ? tr[dx] : null;
+            if (L) {
+                da = L.da;
+                sx--;
+            }
+            else if (R) {
+                a = R.a;
+                dx++;
+            }
+            else
+                break;
+        }
+        return [da, Math.min(a, da + MAX_PAGINE - 1)];
+    }
+    function pagineTrovate(l, testi, ms, termini, lingua, verificate = []) {
+        const m = l.mappa && l.mappa.tratti.length && l.mappa.fonte !== 'nessuna' ? l.mappa : null;
+        const daIndice = l.indice && l.indice.length ? pagineMicrostep(l.indice, l.mappa, ms) : null;
+        const iv = daIndice && daIndice.pdfDa !== null ? [daIndice.pdfDa, daIndice.pdfA !== null ? daIndice.pdfA : daIndice.pdfDa + 19] : undefined;
+        const corr = (l.pagineMano || {})[s(ms)] || {};
+        const copertura = IndicePagine.copertura(IndicePagine.costruisci(l.nome, testi, lingua), termini, { intervallo: iv, verificate, incluse: corr.incluse, escluse: corr.escluse });
+        if (iv && daIndice)
+            return { pagine: daIndice, copertura, fonte: 'indice' };
+        const t = trattoMigliore(copertura);
+        if (!t)
+            return { pagine: null, copertura, fonte: 'testo' };
+        const st = (n) => { const x = m ? MappaPagine.aStampata(m, n) : null; return x !== null ? x : n; };
+        return { pagine: { stampDa: st(t[0]), stampA: st(t[1]), pdfDa: t[0], pdfA: t[1], affidabilita: m ? m.affidabilita : 'nessuna' }, copertura, fonte: 'testo' };
+    }
+    function descriviTrovate(x) {
+        const st = x.copertura.stato === 'coperto' ? '🟢 trattato' : x.copertura.stato === 'da_verificare' ? '🟡 da verificare' : '🔴 non trovato';
+        if (!x.pagine)
+            return st + ' nel libro: nessuna pagina tratta il microstep (controlla il programma o indica le pagine a mano)';
+        const p = x.pagine, pdf = p.pdfDa === p.pdfA ? 'PDF ' + p.pdfDa : 'PDF ' + p.pdfDa + '–' + p.pdfA;
+        return st + ' · ' + (x.fonte === 'indice' ? 'pagine dall’indice' : 'pagine trovate nel testo') + ': p. ' + p.stampDa + (p.stampA !== null && p.stampA !== p.stampDa ? '–' + p.stampA : '') + ' (' + pdf + ')'
+            + (x.copertura.stato === 'da_verificare' ? ' — un solo segnale: verifica le citazioni dopo l’import' : '');
+    }
     const VUOTE = new Set(['quale', 'quali', 'della', 'delle', 'degli', 'dello', 'nella', 'nelle', 'negli', 'nello', 'dalla', 'dalle', 'dagli', 'dallo',
         'sulla', 'sulle', 'sugli', 'sullo', 'questo', 'questa', 'questi', 'queste', 'quello', 'quella', 'quelli', 'quelle', 'viene', 'vengono', 'essere',
         'tramite', 'attraverso', 'durante', 'mentre', 'anche', 'ancora', 'sempre', 'perché', 'quando', 'quanto', 'quanti', 'seguenti', 'seguente',
@@ -320,7 +452,9 @@ const Centro = (() => {
     }
     const cambiaPagina = (t, da, a) => t.replace(new RegExp('(\\bpp?\\.\\s*)' + String(da) + '\\b', 'i'), '$1' + String(a));
     function verificaCitazioni(qs, m, testoPagina) {
-        const out = { qs: [...qs], registro: [], problemi: [], ok: 0, dubbi: [] };
+        const out = { qs: [...qs], registro: [], problemi: [], ok: 0, dubbi: [], verificate: [] };
+        const segna = (p) => { const n = p !== null ? MappaPagine.aPdf(m, p) : null; if (n !== null && !out.verificate.includes(n))
+            out.verificate.push(n); };
         if (!verificabile(m))
             return out;
         qs.forEach((q, i) => {
@@ -328,8 +462,10 @@ const Centro = (() => {
                 return;
             const id = String(q.id), v = MappaPagine.verifica(m, q.fonte, testoPagina, paroleChiave(q));
             const vecchia = (/\bpp?\.\s*(\d{1,5}|[ivxlcdm]+)\b/i.exec(q.fonte) || [])[1];
-            if (v.esito === '✅')
+            if (v.esito === '✅') {
                 out.ok++;
+                segna(v.pagina);
+            }
             else if (v.esito === '❓')
                 out.dubbi.push(id);
             else if (v.esito === '↔' && vecchia && v.pagina !== null) {
@@ -339,11 +475,13 @@ const Centro = (() => {
                 if (typeof q.spiegazione === 'string')
                     n.spiegazione = q.spiegazione.replace(/\[\[[^\]]*\]\]/g, c => cambiaPagina(c, vecchia, v.pagina));
                 out.qs[i] = n;
+                segna(v.pagina);
                 out.registro.push(id + ': p. ' + vecchia + ' → p. ' + v.pagina + ' (i concetti sono sulla pagina accanto)');
             }
             else
                 out.problemi.push({ sev: 'err', id, msg: 'citazione p. ' + (vecchia || v.pagina) + ': ' + (v.esito === '⚠' ? 'sulla pagina solo parte dei concetti della domanda' : 'la pagina non contiene i concetti della domanda') });
         });
+        out.verificate.sort((a, b) => a - b);
         return out;
     }
     const posizione = (q) => { const m = /-(\d+)$/.exec(String(q.id || '')); return m ? Number(m[1]) : 0; };
@@ -359,7 +497,8 @@ const Centro = (() => {
             if (!ci.has(k))
                 return false; return true; });
     }
-    return { prefisso, nomeParte, unisciDomande, partiIncollate, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni };
+    return { prefisso, nomeParte, unisciDomande, partiIncollate, daPiano, schede, chiusura, passoDi, prossimaScheda, albero, filtra, pagineMicrostep, mappaAuto, descriviMappa, idLibro, libroDa, unisciSegmenti, indiceDa, conAncore, conFonte, conProva, descriviLibro, paginePer, paroleChiave, pagineDaLeggere, verificaCitazioni, terminiMicro, pagineTrovate, descriviTrovate,
+        fonte, gruppi, unisci, dividi, nuovoCodice, minutiMicro, proposte, riallinea, MAX_CONCETTI };
 })();
 
 const CentroUI = (() => {
@@ -462,25 +601,18 @@ const CentroUI = (() => {
     async function testiPagine(l, pagine, avanza, versioni) {
         const testi = new Map();
         const seg = l.pdf.map(f => ({ nome: f.nome, base: f.segmentoDa ? f.segmentoDa - 1 : 0 })).sort((a, b) => a.base - b.base);
-        const L = await caricaPdfJs();
         for (const [k, sg] of seg.entries()) {
             const fine = k + 1 < seg.length ? seg[k + 1].base : Infinity, mie = pagine.filter(p => p > sg.base && p <= fine);
             if (!mie.length)
                 continue;
             avanza('Apro «' + sg.nome + '»…');
-            const doc = await L.getDocument({ data: await datiPdf(l, sg.nome, versioni), isEvalSupported: false }).promise;
-            try {
+            await TestoPdf.con(await datiPdf(l, sg.nome, versioni), async (doc) => {
                 for (const p of mie) {
                     if (p - sg.base > doc.numPages)
                         continue;
-                    const tc = await (await doc.getPage(p - sg.base)).getTextContent();
-                    testi.set(p, tc.items.map(x => x.str || '').join(' '));
+                    testi.set(p, await TestoPdf.pagina(doc, p - sg.base, 'spazi'));
                 }
-            }
-            finally {
-                if (typeof doc.destroy === 'function')
-                    await doc.destroy();
-            }
+            });
         }
         return testi;
     }
@@ -538,13 +670,54 @@ const CentroUI = (() => {
         }
         return null;
     }
+    async function testoLibro(l) {
+        const out = [];
+        const seg = l.pdf.map(f => ({ nome: f.nome, base: f.segmentoDa ? f.segmentoDa - 1 : 0 })).sort((a, b) => a.base - b.base);
+        for (const sg of seg) {
+            const loc = pdfScelti.get(chiavePdf(l, sg.nome));
+            let chiave, dati;
+            if (loc) {
+                chiave = 'loc:' + l.id + ':' + sg.nome + ':' + loc.versione;
+                dati = async () => loc.file;
+            }
+            else {
+                const f = await pdfDrive(sg.nome);
+                chiave = 'drv:' + f.id + '@' + f.modificato;
+                dati = async () => new Blob([await PdfCache.prendi(f.id, undefined, f.modificato)]);
+            }
+            (await TestoPdf.tutte(dati, chiave, 'eol')).forEach((testo, i) => out.push({ n: sg.base + i + 1, testo }));
+        }
+        return out;
+    }
+    const trovatePer = new Map();
+    async function trovaPagine(r, ms) {
+        for (const lf of r.fonti ? r.fonti.libri : []) {
+            const l = Stato.prendi(Centro.idLibro(r.nomeMateria, lf.nome));
+            if (!l || l.deleted || !l.pdf.length)
+                continue;
+            const testi = await testoLibro(l);
+            const sc = r.piano ? r.piano.schede.find(x => Centro.fonte(x) === ms) : undefined;
+            const termini = Centro.terminiMicro(l.indice, ms, [sc ? sc.blocco : undefined]);
+            const verificate = r.citazioni && r.citazioni.libro === l.nome ? r.citazioni.verificate || [] : [];
+            const trovate = Centro.pagineTrovate(l, testi, ms, termini.length ? termini : [r.titolo || r.step], { radice: Locale.radice, espandi: Locale.espandi }, verificate);
+            trovatePer.set(r.id + '|' + ms, trovate);
+            return { trovate, testi };
+        }
+        return null;
+    }
     async function materialeDi(r, ms) {
         const x = libroPer(r, ms);
-        if (!x || x.p.pdfDa === null)
+        if (x && x.p.pdfDa !== null) {
+            const da = x.p.pdfDa, a = Math.min(x.p.pdfA !== null ? x.p.pdfA : da + 19, da + 39);
+            const testi = await testiPagine(x.libro, Array.from({ length: a - da + 1 }, (_, i) => da + i), () => { });
+            return ProfiliAI.pagine(testi, da, a);
+        }
+        const t = await trovaPagine(r, ms).catch(e => { console.warn('[centro] IndicePagine', e); return null; });
+        const p = t && t.trovate.pagine;
+        if (!t || !p || p.pdfDa === null || p.pdfA === null)
             return null;
-        const da = x.p.pdfDa, a = Math.min(x.p.pdfA !== null ? x.p.pdfA : da + 19, da + 39);
-        const testi = await testiPagine(x.libro, Array.from({ length: a - da + 1 }, (_, i) => da + i), () => { });
-        return ProfiliAI.pagine(testi, da, a);
+        const da = p.pdfDa, a = p.pdfA;
+        return ProfiliAI.pagine(new Map(t.testi.filter(x => x.n >= da && x.n <= a).map(x => [x.n, x.testo])), da, a);
     }
     const elencoProblemi = (problemi, etichetta, max = 40) => problemi.length
         ? h('ul.piccolo.centro-avvisi', { 'aria-label': etichetta }, ...problemi.slice(0, max).map(p => h('li', null, SEGNO[p.sev] + ' ' + p.id + ' — ' + p.msg)), problemi.length > max ? h('li.tenue', null, '…e altri ' + (problemi.length - max)) : null)
@@ -735,7 +908,7 @@ const CentroUI = (() => {
                     esito.appendChild(h('p.piccolo', null, '⛔ Non trovo un piano. ' + (l.errori[0] || 'Serve il blocco piano-v1 (o le righe @B / COPRE).')));
                     return;
                 }
-                piano = Centro.daPiano(Contratto.aPiano(l), r.step);
+                piano = { ...Centro.daPiano(Contratto.aPiano(l), r.step), azzera: true };
                 disegna();
             }
             function disegna() {
@@ -747,28 +920,51 @@ const CentroUI = (() => {
                 if (p.avvisi.length)
                     anteprima.appendChild(h('ul.piccolo.centro-avvisi', { 'aria-label': 'Avvisi sul piano' }, ...p.avvisi.map(a => h('li', null, '⚠️ ' + a))));
                 anteprima.appendChild(h('p.piccolo', null, h('b', null, p.schede.length + ' schede'), ' · ' + p.blocchi.length + ' blocchi: correggi microstep e categoria se serve.'));
-                const lista = h('ol.centro-schede', { 'aria-label': 'Schede del piano' });
-                p.schede.forEach((x, i) => {
-                    const micro = h('input', { type: 'text', value: x.micro.join(', '), 'aria-label': 'Microstep della scheda S' + x.n, size: 8 });
-                    micro.addEventListener('change', () => {
-                        const v = micro.value.split(/[,;\s]+/).map(m => m.trim()).filter(Boolean), ok = v.filter(m => RE_STEP.test(m) && m.startsWith(p.step + '.'));
-                        if (!ok.length) {
-                            avviso('Microstep dello step ' + p.step + ', es. ' + p.step + '.1');
-                            micro.value = x.micro.join(', ');
-                            return;
-                        }
-                        x.micro = ok;
-                        micro.value = ok.join(', ');
+                const cambia = (q) => { if (!q)
+                    return; piano = q; disegna(); };
+                const conc = {}, pag = {};
+                for (const x of p.schede) {
+                    const f = (r.schede || []).find(y => y.n === x.n), pt = f && f.stato !== 'da-fare' ? parteDi(r, x.n) : null;
+                    if (pt)
+                        (conc[x.micro[0]] = conc[x.micro[0]] || []).push(...pt.quiz.map(q => String(q.concetto || '')).filter(Boolean));
+                    const fo = Centro.fonte(x), lp = libroPer(r, fo), tv = trovatePer.get(r.id + '|' + fo), pg = lp ? lp.p : tv && tv.pagine;
+                    if (pg && pg.pdfDa !== null && !pag[fo])
+                        pag[fo] = [pg.pdfDa, pg.pdfA !== null ? pg.pdfA : pg.pdfDa];
+                }
+                const prop = Centro.proposte(p, { pagine: pag, concetti: conc }, { radice: Locale.radice, espandi: Locale.espandi });
+                if (prop.length)
+                    anteprima.appendChild(h('ul.piccolo.centro-avvisi', { 'aria-label': 'Proposte sui microstep' }, ...prop.map(x => h('li.riga-tra', null, '💡 ' + x.motivo, h('button.chip', { type: 'button', 'aria-label': x.motivo, onclick: () => cambia(x.tipo === 'unisci' ? Centro.unisci(p, x.micro, x.con) : Centro.dividi(p, x.micro, x.dopo)) }, x.tipo === 'unisci' ? '⤵ Unisci' : '✂ Dividi')))));
+                const lista = h('ol.centro-schede', { 'aria-label': 'Schede del piano' }), gg = Centro.gruppi(p), min = Centro.minutiMicro(p);
+                gg.forEach((g, gi) => {
+                    const dopo = gg[gi + 1];
+                    lista.appendChild(h('li.riga-tra.centro-gruppo', null, h('span.piccolo', null, h('b', null, 'Microstep ' + g.micro), ' · ' + g.schede.length + (g.schede.length === 1 ? ' scheda' : ' schede') + ' · ~' + min[g.micro] + ' min'), dopo ? h('button.chip', { type: 'button', 'aria-label': 'Unisci il microstep ' + dopo.micro + ' a ' + g.micro, onclick: () => cambia(Centro.unisci(p, g.micro, dopo.micro)) }, '⤵ Unisci al successivo') : null));
+                    g.schede.forEach((x, k) => {
+                        const i = p.schede.indexOf(x);
+                        const micro = h('input', { type: 'text', value: x.micro.join(', '), 'aria-label': 'Microstep della scheda S' + x.n, size: 8 });
+                        micro.addEventListener('change', () => {
+                            const v = micro.value.split(/[,;\s]+/).map(m => m.trim()).filter(Boolean), ok = v.filter(m => RE_STEP.test(m) && m.startsWith(p.step + '.'));
+                            if (!ok.length) {
+                                avviso('Microstep dello step ' + p.step + ', es. ' + p.step + '.1');
+                                micro.value = x.micro.join(', ');
+                                return;
+                            }
+                            x.micro = ok;
+                            delete x.fonte;
+                            disegna();
+                        });
+                        const cat = selettore([['prioritaria', 'Prioritaria'], ['raffinamento', 'Raffinamento']], x.categoria, function () { x.categoria = this.value; });
+                        cat.setAttribute('aria-label', 'Categoria della scheda S' + x.n);
+                        const togli = h('button.btn-ico', { type: 'button', 'aria-label': 'Togli la scheda S' + x.n, onclick: () => { p.schede.splice(i, 1); rinumera(); p.azzera = true; disegna(); } }, '✕');
+                        lista.appendChild(h('li.riga-tra', null, h('span', null, h('b', null, 'S' + String(x.n).padStart(2, '0')), h('span.piccolo.tenue', null, ' ' + x.blocco)), h('span.chips', null, micro, cat, togli)));
+                        if (k < g.schede.length - 1)
+                            lista.appendChild(h('li.centro-taglio', null, h('button.chip', { type: 'button', 'aria-label': 'Dividi il microstep ' + g.micro + ' dopo la scheda S' + x.n,
+                                onclick: () => cambia(Centro.dividi(p, g.micro, x.n)) }, '✂ Dividi qui')));
                     });
-                    const cat = selettore([['prioritaria', 'Prioritaria'], ['raffinamento', 'Raffinamento']], x.categoria, function () { x.categoria = this.value; });
-                    cat.setAttribute('aria-label', 'Categoria della scheda S' + x.n);
-                    const togli = h('button.btn-ico', { type: 'button', 'aria-label': 'Togli la scheda S' + x.n, onclick: () => { p.schede.splice(i, 1); rinumera(); disegna(); } }, '✕');
-                    lista.appendChild(h('li.riga-tra', null, h('span', null, h('b', null, 'S' + String(x.n).padStart(2, '0')), h('span.piccolo.tenue', null, ' ' + x.blocco)), h('span.chips', null, micro, cat, togli)));
                 });
                 anteprima.appendChild(lista);
                 const aggiungi = h('button.chip', { type: 'button', onclick: () => {
                         const ult = p.schede[p.schede.length - 1];
-                        p.schede.push({ n: p.schede.length + 1, micro: ult ? ult.micro.slice() : [p.step + '.1'], categoria: 'prioritaria', blocco: ult ? ult.blocco : (p.blocchi[0] || p.step) });
+                        p.schede.push({ n: p.schede.length + 1, micro: ult ? ult.micro.slice() : [p.step + '.1'], categoria: 'prioritaria', blocco: ult ? ult.blocco : (p.blocchi[0] || p.step), ...(ult && ult.fonte ? { fonte: ult.fonte } : {}) });
                         disegna();
                     } }, '＋ Aggiungi scheda');
                 const approva = h('button.btn', { type: 'button', onclick: () => {
@@ -776,8 +972,10 @@ const CentroUI = (() => {
                             avviso('Il piano non ha schede.');
                             return;
                         }
-                        salva({ ...r, piano: p, schede: p.schede.map(x => ({ n: x.n, stato: 'da-fare' })), esiti: {} });
-                        avviso('Piano salvato: ' + p.schede.length + ' schede.');
+                        const sc = Centro.riallinea(r.piano, r.schede, p), gia = sc.filter(x => x.stato !== 'da-fare').length;
+                        delete p.azzera;
+                        salva({ ...r, piano: p, schede: sc, esiti: {} });
+                        avviso('Piano salvato: ' + p.schede.length + ' schede' + (gia ? ' (' + (gia === 1 ? '1 già scritta resta' : gia + ' già scritte restano') + ': non si rigenera)' : '') + '.');
                         vai(3);
                     } }, '✅ Approva il piano');
                 anteprima.appendChild(h('div.chips', null, aggiungi, approva));
@@ -832,7 +1030,7 @@ const CentroUI = (() => {
                 return h('div.centro-passo-corpo', null, testa, lista, h('p.piccolo', null, 'Tutte le schede sono arrivate: ora l\'app le controlla.'), h('button.btn', { type: 'button', onclick: () => vai(4) }, 'Avanti: Controllo →'));
             const casella = h('input', { type: 'checkbox', checked: coppia || undefined });
             casella.addEventListener('change', () => { coppia = casella.checked; vai(3); });
-            let testoPrompt, rigaTesto = null, bloccoParti = null, mixEl = null, parte;
+            let testoPrompt, zonaTrovate = null, rigaTesto = null, bloccoParti = null, mixEl = null, parte;
             if (continua) {
                 const gia = (parteDi(r, n0) || { quiz: [] }).quiz, ult = gia[gia.length - 1];
                 const ultimo = ult ? String(ult.domanda || ult.id || '').slice(0, 160) : undefined;
@@ -842,7 +1040,12 @@ const CentroUI = (() => {
             else {
                 const lst = bersaglio.map(n => delPiano(n)).filter((x) => !!x);
                 const libri = (r.fonti ? r.fonti.libri : []).map(l => Stato.prendi(Centro.idLibro(r.nomeMateria, l.nome))).filter((x) => !!x);
-                const pagine = Centro.paginePer(libri, lst.map(x => x.micro[0]).filter(Boolean));
+                const pagine = {}, daFonte = Centro.paginePer(libri, lst.map(Centro.fonte));
+                for (const x of lst) {
+                    const f = Centro.fonte(x), tv = trovatePer.get(r.id + '|' + f), pg = daFonte[f] || (tv && tv.pagine);
+                    if (pg && !pagine[x.micro[0]])
+                        pagine[x.micro[0]] = pg;
+                }
                 const proprietario = Drive.eProprietario();
                 const mix = mixPer.get(r.id) || ProfiliAI.mix(Dominio.archetipoMateria(r.materia), proprietario, PER());
                 if (!proprietario)
@@ -857,7 +1060,7 @@ const CentroUI = (() => {
                 }
                 let materiale;
                 if (!prof.file) {
-                    const ms = lst.length ? lst[0].micro[0] : '', t = testiPer.get(r.id + '|' + ms);
+                    const ms = lst.length ? Centro.fonte(lst[0]) : '', t = testiPer.get(r.id + '|' + ms);
                     if (t === undefined && ms) {
                         testiPer.set(r.id + '|' + ms, 'attesa');
                         materialeDi(r, ms).catch(() => null).then(x => { testiPer.set(r.id + '|' + ms, x); if (passo === 3 && rec && rec.id === r.id)
@@ -870,10 +1073,13 @@ const CentroUI = (() => {
                 const res = MasterPrompt.promptSchede({ ...opzioniMP(r).opz, mix, parteAI: parte, materiale, maxCaratteri: prof.file ? undefined : prof.maxCaratteri }, lst.map(x => ({ n: x.n, sigla: sig(x.n), micro: x.micro, categoria: x.categoria, blocco: x.blocco })), pagine);
                 testoPrompt = res.testo;
                 if (materiale !== undefined) {
-                    const mt = res.materiale, ci = !!mt && mt.pagine.length > 0, t = testiPer.get(r.id + '|' + (lst.length ? lst[0].micro[0] : ''));
+                    const mt = res.materiale, ci = !!mt && mt.pagine.length > 0, t = testiPer.get(r.id + '|' + (lst.length ? Centro.fonte(lst[0]) : ''));
                     const disponibile = !!t && t !== 'attesa' && t.some(x => !x.vuota);
                     const cas = h('input', { type: 'checkbox', checked: conTesto && disponibile || undefined, disabled: !disponibile || undefined });
                     cas.addEventListener('change', () => { conTesto = cas.checked; vai(3); });
+                    const tv = trovatePer.get(r.id + '|' + (lst.length ? Centro.fonte(lst[0]) : ''));
+                    if (tv)
+                        zonaTrovate = h('p.piccolo', { role: 'status' }, Centro.descriviTrovate(tv));
                     rigaTesto = h('label.riga-tra.piccolo', null, ci ? 'Includo ' + mt.pagine.length + (mt.pagine.length === 1 ? ' pagina, ' : ' pagine, ') + numero(mt.caratteri) + ' caratteri del tuo PDF' + (mt.escluse ? ' (tagliato: ' + mt.escluse + ' pagine fuori)' : '')
                         : disponibile ? 'Testo del PDF tolto dal prompt' : 'Testo del PDF non disponibile: il prompt dice «materiale non incluso»', cas);
                 }
@@ -881,7 +1087,7 @@ const CentroUI = (() => {
             const titolo = (continua ? 'Continua ' : 'Prompt per ') + bersaglio.map(sig).join(' e ') + (parte ? ' · parte ' + parte.k + ' di ' + parte.N : '');
             return h('div.centro-passo-corpo', null, testa, lista, bloccoParti, mixEl, h('h3.centro-sotto', null, titolo), continua ? h('p.piccolo.tenue', null, 'Incolla questo prompt nella stessa chat: l\'AI scrive solo le domande che mancano.')
                 : aParti ? h('p.piccolo.tenue', null, descriviProfilo(prof))
-                    : h('label.riga-tra.piccolo', null, '2 schede per messaggio (36 domande)', casella), rigaTesto, ...copiabile(testoPrompt, 'Prompt da copiare nell\'AI per ' + bersaglio.map(sig).join(' e '), continua ? '📋 Copia «continua da qui»' : '📋 Copia il prompt'), h('h3.centro-sotto', null, 'Risposta dell\'AI'), rispostaAI('Risposta dell\'AI con le schede ' + bersaglio.map(sig).join(' e '), 'Incolla qui la risposta (anche la chat intera)…', '📥 Leggi la risposta', t => leggiSchede(r, t, bersaglio, continua)));
+                    : h('label.riga-tra.piccolo', null, '2 schede per messaggio (36 domande)', casella), zonaTrovate, rigaTesto, ...copiabile(testoPrompt, 'Prompt da copiare nell\'AI per ' + bersaglio.map(sig).join(' e '), continua ? '📋 Copia «continua da qui»' : '📋 Copia il prompt'), h('h3.centro-sotto', null, 'Risposta dell\'AI'), rispostaAI('Risposta dell\'AI con le schede ' + bersaglio.map(sig).join(' e '), 'Incolla qui la risposta (anche la chat intera)…', '📥 Leggi la risposta', t => leggiSchede(r, t, bersaglio, continua)));
         }
         function leggiSchede(r, testo, bersaglio, continua) {
             const l = Contratto.leggi(testo), piano = r.piano;
@@ -965,6 +1171,7 @@ const CentroUI = (() => {
                 for (const f of Array.from(scegli.files || []))
                     pdfScelti.set(chiavePdf(l, f.name), { file: f, versione: f.size + ':' + f.lastModified });
                 testiPer.clear();
+                trovatePer.clear();
                 nota = notaDi([(scegli.files || []).length + ' PDF scelti: ora verifica.']);
                 vai(4);
             });
@@ -983,7 +1190,7 @@ const CentroUI = (() => {
                         salvaDomande(r, res.qs, daScheda);
                     const fonteDi = (id) => String((res.qs.find(q => String(q.id) === id) || {}).fonte || '');
                     const nuovo = { ...r, citazioni: { quando: ymd(new Date()), libro: l.nome, firma: firmaCitazioni(l, res.qs),
-                            drive: Array.from(versioni.values()), ok: res.ok, dubbi: res.dubbi, registro: res.registro,
+                            drive: Array.from(versioni.values()), ok: res.ok, dubbi: res.dubbi, registro: res.registro, verificate: res.verificate,
                             problemi: res.problemi.map(p => ({ ...p, fonte: fonteDi(p.id) })) } };
                     validitaDrive.set(chiaveValidita(nuovo), 'valida');
                     salva(nuovo);
@@ -1795,18 +2002,11 @@ const CodaQuizRunner = (() => {
     async function estraiPdf(file) {
         if (!file || !/\.pdf$/i.test(file.name || ''))
             throw new Error('scegli un PDF');
-        const L = await caricaPdfJs(), doc = await L.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
         const pagine = [];
-        try {
-            for (let n = 1; n <= doc.numPages; n++) {
-                const tc = await (await doc.getPage(n)).getTextContent();
-                pagine.push({ n, testo: tc.items.map(x => x.str || '').join(' ') });
-            }
-        }
-        finally {
-            if (typeof doc.destroy === 'function')
-                await doc.destroy();
-        }
+        await TestoPdf.con(file, async (doc) => {
+            for (let n = 1; n <= doc.numPages; n++)
+                pagine.push({ n, testo: await TestoPdf.pagina(doc, n, 'spazi') });
+        });
         return { id: file.name, nome: file.name, versione: 'sha256:' + sha256Hex(pagine.map(p => p.testo).join('\n')), pagine };
     }
     async function creaDaPdf(account, file, o) {
@@ -3381,7 +3581,7 @@ const MasterPrompt = (() => {
     }
     const RANGE_SCHEDE = { leggera: [10, 14], standard: [18, 25], intensa: [24, 30] };
     const SEQUENZA_LIVELLI = [1, 1, 2, 1, 2, 2, 3, 1, 2, 3, 2, 4, 1, 3, 2, 4, 3, 4];
-    const CHIAVI_V3 = ['livello', 'gemella', 'tipoItem', 'erroreTipico', 'domanda', 'opzioni', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte'];
+    const CHIAVI_V3 = ['livello', 'gemella', 'tipoItem', 'erroreTipico', 'concetto', 'domanda', 'opzioni', 'spiegazione', 'spiegazioneDistrattori', 'distractorTypes', 'fonte'];
     function regolaArchetipo(arch, materia) {
         const m = slug(materia);
         if (arch === 'stem_calcolo')
@@ -3490,6 +3690,7 @@ const MasterPrompt = (() => {
             ' - 1 richiamo attivo · 2 applicazione · 3 trabocchetto (illusione di competenza) · 4 sintesi trasversale / caso.',
             ' - Coppie gemelle: due domande su concetti speculari, in schede diverse, con la stessa etichetta `"gemella": "G1"` (poi G2, G3…); circa 1 coppia ogni 3 schede.',
             ' - `erroreTipico` sempre valorizzato: l\'errore di ragionamento dietro il distrattore principale.',
+            ' - `concetto`: 2–5 parole, il concetto che la domanda verifica; da 3 a 6 concetti per scheda, scritti SEMPRE uguali per le domande sullo stesso concetto (l\'app ne misura la padronanza).',
             '', 'REGOLE DI QUALITÀ (il controllo automatico le verifica)',
             ' Q-A. La risposta corretta va SEMPRE in `opzioni[0]`: la posizione la sceglie l\'app.',
             ' Q-B. La corretta NON deve essere la più lunga: scrivila breve e allunga i distrattori.',
@@ -3503,7 +3704,7 @@ const MasterPrompt = (() => {
             ' Scrivi le lettere come se la corretta fosse A (cioè `opzioni[0]`): l\'app le riscrive dopo aver mescolato. La citazione [[…]] è uguale a `fonte`.',
             ' VIETATO «p. da verificare» o pagine inventate: se non hai letto la pagina, «BLOCCO: …» e non consegnare quella scheda.'];
     }
-    const ESEMPIO = '{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …",' +
+    const ESEMPIO = '{"scheda":"S01","categoria":"prioritaria","livello":1,"tipoItem":"richiamo_attivo_…","erroreTipico":"Scambiare … con …","concetto":"…",' +
         '"domanda":"…?","opzioni":["risposta corretta, non la più lunga","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato","distrattore plausibile e dettagliato"],' +
         '"spiegazione":"COSA CHIEDE: … CONCETTO E MECCANISMO: … RISPOSTA ESATTA: A) «…». PERCHÉ GLI ALTRI NO: B) … C) … D) … IN SINTESI: … [[Manuale, p. X]]",' +
         '"spiegazioneDistrattori":["perché B è sbagliata …","perché C è sbagliata …","perché D è sbagliata …"],"distractorTypes":["confusione_…","inversione_…","caso_limite_…"],"fonte":"[[Manuale, p. X]]"}';
@@ -4105,9 +4306,7 @@ const StrumentiQuiz = (() => {
             controlla();
     }
     async function misuraPdf(dati, avanza) {
-        const L = await caricaPdfJs();
-        const doc = await L.getDocument({ data: new Uint8Array(await dati.arrayBuffer()), isEvalSupported: false }).promise;
-        try {
+        return TestoPdf.con(dati, async (doc) => {
             const tot = doc.numPages, campione = new Set(MasterPrompt.pagineCampione(tot));
             let et = null;
             try {
@@ -4123,18 +4322,13 @@ const StrumentiQuiz = (() => {
                     continue;
                 if (avanza && !conEtichette && i % 20 === 0)
                     avanza('Leggo i numeri di pagina: ' + i + '/' + tot + '…');
-                const tc = await (await doc.getPage(i)).getTextContent();
-                const t = tc.items.map(x => (x.str || '') + (x.hasEOL ? '\n' : ' ')).join('');
+                const t = await TestoPdf.pagina(doc, i, 'eol');
                 if (campione.has(i))
                     testi.push(t);
                 numeri[i - 1] = conEtichette ? [] : MasterPrompt.numeroStampato(t);
             }
             return { lettura: MasterPrompt.indiceLettura(testi), mappa: Centro.mappaAuto(et, numeri), pagine: tot };
-        }
-        finally {
-            if (typeof doc.destroy === 'function')
-                await doc.destroy();
-        }
+        });
     }
     async function misura(g, avanza) {
         let lettura = null;
@@ -4380,8 +4574,7 @@ const StrumentiQuiz = (() => {
                     b = await Drive.scaricaBlob(x.f.id);
                     blobLibro.set(x.f.id, b);
                 }
-                const L = await caricaPdfJs();
-                const doc = await L.getDocument({ data: new Uint8Array(await b.arrayBuffer()), isEvalSupported: false }).promise;
+                const doc = await TestoPdf.apri(b);
                 try {
                     const n = pdf - x.base;
                     if (n > doc.numPages) {
@@ -4400,8 +4593,7 @@ const StrumentiQuiz = (() => {
                     nota.textContent = 'Pagina ' + pdf + ' del PDF: quale numero è stampato (in alto o in basso)?';
                 }
                 finally {
-                    if (typeof doc.destroy === 'function')
-                        await doc.destroy();
+                    await TestoPdf.chiudi(doc);
                 }
             }
             catch (e) {
@@ -4797,8 +4989,10 @@ const Validatore = (() => {
                 if (!(k in q))
                     add('err', id, 'chiave mancante: ' + k);
             for (const k of Object.keys(q))
-                if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k))
+                if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k) && !FACOLTATIVE.includes(k))
                     add('warn', id, 'chiave in più: ' + k);
+            if ('concetto' in q && (typeof q.concetto !== 'string' || !q.concetto.trim() || q.concetto.length > 60))
+                add('warn', id, 'concetto: 2–5 parole (al massimo 60 caratteri); senza, l\'app lo assegna da sola');
             if (testo(q.id)) {
                 if (visti.has(id))
                     add('err', id, 'ID duplicato');
@@ -4969,6 +5163,7 @@ const Validatore = (() => {
         const analisi = analizza(qs, P), globale = (p) => /^(scheda |insieme|gemella )/.test(p.id);
         return { bloccanti: blocchi, qualita: analisi.problemi.filter(p => !globale(p)), insieme: analisi.problemi.filter(globale), pronte, analisi };
     }
+    const FACOLTATIVE = ['concetto'];
     const CHIAVI_V4 = ['tipo', 'risposte', 'elementi', 'rubrica', 'rispostaModello', 'linguaggio'];
     const CHIAVI_BASE_V4 = ['id', 'stepId', 'scheda', 'categoria', 'livelloCognitivo', 'livello', 'domanda', 'fonte', 'sourceRef'];
     const BUCHI = /\[\s*(?:\.\.\.|…)?\s*\]|_{4,}|…|\.{3}/g;
@@ -4980,7 +5175,7 @@ const Validatore = (() => {
                 return q0;
             const q = { ...q0 }, id = testo(q.id) || '?';
             for (const k of Object.keys(q))
-                if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k)) {
+                if (!CHIAVI_QUIZ.includes(k) && !CHIAVI_V4.includes(k) && !FACOLTATIVE.includes(k)) {
                     log.push(id + ': rimossa la chiave in più «' + k + '»');
                     delete q[k];
                 }
