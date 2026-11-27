@@ -968,3 +968,18 @@ details.personalizza > summary { cursor: pointer; padding: 10px 4px; font-weight
 .pad-scheda { border-top: 1px solid var(--linea); padding: 6px 0; }
 .pad-scheda > summary { cursor: pointer; min-height: 36px; line-height: 1.4; }
 .pad-concetti { margin: 6px 0; padding-left: 4px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+/* Redesign blocco 3 (27/11): sfondo a puntini. Fermo dove si studia; fuori dallo studio i puntini vicini al tocco si accendono
+   nell'accento e svaniscono (nessun movimento continuo, nessun rAF). --sx/--sy dal pointerdown, data-sfondo da disegna(). */
+@property --raggio { syntax: '<length>'; inherits: false; initial-value: 0px; }
+:root { --puntino: color-mix(in srgb, var(--testo) 11%, transparent); }
+:root[data-tema="scuro"] { --puntino: color-mix(in srgb, var(--testo) 9%, transparent); }
+:root[data-sfondo="fermo"] { --puntino: color-mix(in srgb, var(--testo) 5%, transparent); }
+body::before, body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(circle, var(--puntino) 1px, transparent 1.5px) 0 0 / 22px 22px; }
+body::after { background-image: radial-gradient(circle, var(--accento) 1.6px, transparent 2.1px); opacity: 0;
+  -webkit-mask: radial-gradient(circle at var(--sx, 50%) var(--sy, 50%), black calc(var(--raggio) * .55), transparent var(--raggio));
+  mask: radial-gradient(circle at var(--sx, 50%) var(--sy, 50%), black calc(var(--raggio) * .55), transparent var(--raggio)); }
+:root[data-sfondo="vivo"].tocco body::after { animation: sboccia 650ms var(--curva, ease-out); }
+@keyframes sboccia { 0% { opacity: .85; --raggio: 24px; } 100% { opacity: 0; --raggio: 170px; } }
+@media (prefers-reduced-motion: reduce) { body::after { display: none; } }
+:root[data-animazioni="no"] body::after { display: none; }

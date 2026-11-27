@@ -73,10 +73,18 @@ document.addEventListener('pointerdown', e => {
   b.style.setProperty('--ox', (e.clientX - q.left) + 'px'); b.style.setProperty('--oy', (e.clientY - q.top) + 'px');
   b.classList.remove('onda'); void b.offsetWidth; b.classList.add('onda');
 }, { passive: true });
+/** Redesign 27/11 (blocco 3): tocco su uno spazio vuoto fuori dallo studio → i puntini dello sfondo si accendono intorno al dito. */
+document.addEventListener('pointerdown', e => {
+  const r = document.documentElement, t = e.target as Element;
+  if (r.dataset.sfondo !== 'vivo' || !t.closest || t.closest('button, a, input, select, textarea, label, [contenteditable], [role="button"], .visore, .foglio-sfondo, dialog')) return;
+  r.style.setProperty('--sx', e.clientX + 'px'); r.style.setProperty('--sy', e.clientY + 'px');
+  r.classList.remove('tocco'); void r.offsetWidth; r.classList.add('tocco');
+}, { passive: true });
 
 /** Ricostruisce l'intera schermata (le viste sono leggere: va benissimo così). */
 function disegna(): void {
   const app = document.getElementById('app')!;
+  document.documentElement.dataset.sfondo = ['oggi', 'cal', 'altro', 'task', 'note'].includes(UI.scheda) ? 'vivo' : 'fermo';   // redesign blocco 3
   // ricordo lo scorrimento della griglia oraria per non "saltare" a ogni salvataggio
   const vecchiaGriglia = app.querySelector('.gr-scroll');
   const scrollGriglia = vecchiaGriglia ? vecchiaGriglia.scrollTop : -1;

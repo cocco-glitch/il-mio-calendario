@@ -64,6 +64,22 @@ with sync_playwright() as p:
     pg.emulate_media(reduced_motion='reduce'); pg.evaluate("vai('oggi')")
     pg.locator('.tabbar button', has_text='Studio').click(); pg.wait_for_timeout(300)
     ok(pg.evaluate("window._vt") == 2, 'riduci movimento: nessuna transizione')
+    # blocco 3: sfondo a puntini, vivo al tocco solo fuori dallo studio
+    pg.emulate_media(reduced_motion='no-preference'); pg.evaluate("vai('oggi')"); pg.wait_for_timeout(100)
+    R = "document.documentElement"
+    ok(pg.evaluate(R + ".dataset.sfondo") == 'vivo' and 'radial-gradient' in pg.evaluate("getComputedStyle(document.body, '::before').backgroundImage"), 'Oggi: sfondo a puntini vivo')
+    vuoto = pg.locator('main .pagina').first.bounding_box()
+    pg.evaluate(R + ".classList.remove('tocco')"); pg.mouse.click(4, vuoto['y'] + 200)
+    ok(pg.evaluate(R + ".classList.contains('tocco')") and pg.evaluate("getComputedStyle(document.body, '::after').animationName") == 'sboccia'
+       and pg.evaluate(R + ".style.getPropertyValue('--sx')") == '4px', 'tocco su uno spazio vuoto: i puntini si accendono dal punto toccato')
+    pg.evaluate(R + ".classList.remove('tocco')"); pg.locator('.tabbar button', has_text='Calendario').dispatch_event('pointerdown')
+    ok(not pg.evaluate(R + ".classList.contains('tocco')"), 'tocco su un pulsante: lo sfondo non reagisce')
+    pg.evaluate("vai('studio')")
+    ok(pg.evaluate(R + ".dataset.sfondo") == 'fermo', 'Studio: sfondo fermo')
+    pg.mouse.click(vuoto['x'] + 3, vuoto['y'] + 5)
+    ok(not pg.evaluate(R + ".classList.contains('tocco')"), 'Studio: il tocco non accende lo sfondo (niente dettagli seducenti)')
+    pg.emulate_media(reduced_motion='reduce'); pg.evaluate("vai('oggi')")
+    ok(pg.evaluate("getComputedStyle(document.body, '::after').display") == 'none', 'riduci movimento: niente accensione dello sfondo')
 
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)
