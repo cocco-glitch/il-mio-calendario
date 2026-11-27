@@ -34,6 +34,10 @@ function caricaStrumentiQuiz(): Promise<void> {
 function conStrumentiQuiz(fn: () => void): void {
   caricaStrumentiQuiz().then(fn, (e: Error) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
 }
+/** Redesign blocco 5: aiuti contestuali nel chunk aiuti.js; `zitto` = senza avviso se manca la rete (caricamento automatico). */
+function conAiuti(fn: () => void, zitto = false): void {
+  caricaChunk('aiuti.js', () => typeof Aiuti !== 'undefined').then(fn, (e: Error) => { if (zitto) console.warn('aiuti non caricati:', e.message); else avviso('⚠️ Suggerimenti non disponibili: ' + e.message); });
+}
 function conMotoreStudio(fn: () => void): void {
   caricaMotoreStudio().then(fn, (e: Error) => avviso('⚠️ Strumenti di studio non disponibili: ' + e.message, 6000));
 }

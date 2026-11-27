@@ -123,6 +123,7 @@ function disegna(): void {
       h('div.testata-tit', null, indietro, h('h1', null, titoli[UI.scheda])),
       h('div.testata-azioni', null,
         Drive.stato.sync === 'spento' ? null : h('button.sync-ind', { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa') Drive.login(); else vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)),
+        UI.scheda === 'oggi' || UI.scheda === 'studio' ? h('button.btn-ico.aiuti-btn', { 'aria-label': 'Suggerimenti di questa schermata', onclick: () => conAiuti(() => Aiuti.mostra()) }, '?') : null,   // redesign blocco 5
         h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')),
         h('button.btn-ico' + (UI.scheda === 'oggi' ? '.piu-testa' : '.solo-pc'), { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
     nav, main,
@@ -136,6 +137,7 @@ function disegna(): void {
   }
   if (stessaScheda) main.scrollTop = scrollMain;
   else Tocco.conta(main);
+  if (UI.scheda === 'oggi' || UI.scheda === 'studio') { const s = UI.scheda, nuova = !stessaScheda; setTimeout(() => conAiuti(() => Aiuti.dopo(s, nuova), true), 400); }   // redesign blocco 5: dopo il disegno, fuori dal budget dei tempi
   if (inAltro || (UI.scheda === 'altro' && UI.altroSez)) attivaIndietroSwipe(main);
   else attivaScorriSezioni(main, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(x => x[0]));
 }

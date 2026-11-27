@@ -57,6 +57,7 @@ interface Categoria extends Rec {
 }
 interface Impostazioni extends Rec {
   type: 'impostazioni';
+  aiutiVisti?: string[];   // redesign blocco 5: aiuti contestuali già chiusi (sincronizzati con l'account)
   tema: 'auto' | 'chiaro' | 'scuro';
   accento: string;
   vistaIniziale: 'oggi' | 'giorno' | 'settimana' | 'mese' | 'agenda';

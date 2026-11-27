@@ -110,6 +110,13 @@ Come capiremo che funziona: (1) ogni azione principale in ≤ 2 tocchi da Oggi; 
 - Test: `aspetto` +10 controlli; `versatile` (Nuovo corso dal selettore), `collaudo_filiera` F4 (conto alla rovescia sotto la data), `fase4` (attesa della vista dopo la View Transition).
 - Non fatto: la card «Drive non collegato» in Altro (doppione di Dati e backup) resta: è anche l'invito a collegare Drive; da decidere nel blocco 6.
 
+## Blocco 5 — fatto (27/11), scelte dell'utente
+- Chunk `aiuti.js` (1,9 KB gzip, tetto 5 KB), caricato 400 ms dopo il disegno di Oggi e Studio e messo nella cache offline; in app.js solo il «?» e l'aggancio (+157 B).
+- 6 aiuti al primo uso: tocco lungo su Adesso, tocco lungo sulla barra, «Mostra tutto» della Modalità esame, Ripianifica, selettore dello step, Centro di creazione (la fila scorre fino a mostrarlo). Uno per visita della schermata; si chiude con «Ho capito», Esc o usando il pulsante indicato.
+- «?» nella testata di Oggi e Studio: tutti gli aiuti della schermata in fila («Avanti», «1 di N»).
+- Visti in `imp().aiutiVisti`: record delle impostazioni dell'account, sincronizzato su Drive (scelta dell'utente); salvataggio silenzioso per non ridisegnare.
+- Fumetto: dialogo non modale, testo 16:1 nel tema scuro, freccia verso il centro del pulsante. Nei test automatici non si apre da solo (navigator.webdriver), così non copre i pulsanti degli altri E2E; `test/aiuti.py` lo accende con `window.__aiutiAuto`.
+
 ## Fonti
 - Sundararajan & Adesope 2020 (WSU): https://news.wsu.edu/press-release/2020/03/19/seductive-details-inhibit-learning · meta-analisi 2026: https://link.springer.com/content/pdf/10.1007/s11251-023-09632-w.pdf · https://frontiersin.org/articles/10.3389/fpsyg.2024.1393113/full · Pink & Newton 2020: https://online.gcc.mass.edu/pluginfile.php/2178383/mod_page/content/39/advan.00102.2019.pdf
 - NN/g: https://www.nngroup.com/articles/mobile-tutorials/ · https://www.nngroup.com/articles/onboarding-tutorials/ · https://www.nngroup.com/articles/mobile-app-onboarding/ · https://nngroup.com/articles/animation-duration

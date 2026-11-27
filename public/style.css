@@ -1000,3 +1000,14 @@ body::after { background-image: radial-gradient(circle, var(--accento) 1.6px, tr
 .ritardo-quali p { margin: 2px 0 4px; color: var(--tenue); line-height: 1.5; }
 .titolo-step { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tendina-btn.selettore-step { display: inline-flex; height: auto; min-height: 40px; padding: 0 14px; white-space: nowrap; font-weight: 700; font-size: inherit; }
+/* Redesign blocco 5 (27/11): fumetto degli aiuti, ancorato al pulsante (--freccia = punta verso il centro dell'àncora). */
+.aiuti-btn { font-weight: 700; font-size: var(--t-3); color: var(--accento-testo); }
+.aiuto { position: fixed; z-index: 40; width: min(300px, calc(100vw - 16px)); padding: 12px 14px; border-radius: var(--r-m);
+  background: var(--testo); color: var(--bg); box-shadow: 0 10px 30px -10px rgba(0, 0, 0, .45); animation: aiuto-entra var(--dur-2) var(--curva); }
+.aiuto p { margin: 0 0 8px; font-size: var(--t-2); line-height: 1.4; }
+.aiuto::before { content: ""; position: absolute; left: calc(var(--freccia, 50%) - 7px); width: 14px; height: 14px; background: inherit; transform: rotate(45deg); border-radius: 2px; }
+.aiuto.sotto::before { top: -6px; } .aiuto.sopra::before { bottom: -6px; }
+.aiuto-piede { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.aiuto-piede .tenue { color: inherit; opacity: .75; margin-right: auto; }
+.aiuto .btn { background: var(--accento); color: var(--su-accento); }
+@keyframes aiuto-entra { from { opacity: 0; transform: translateY(4px); } }

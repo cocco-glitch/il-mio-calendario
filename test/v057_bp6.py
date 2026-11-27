@@ -129,6 +129,8 @@ with sync_playwright() as p:
 
     # --- chiedi() come <dialog>: Esc, focus, ripristino del focus ---
     pg.evaluate("vai('oggi')"); pg.wait_for_timeout(100)
+    # l'avvio salva i pacchetti e ridisegna (#app sostituito): il focus va messo a app ferma da 300 ms (gara vista il 27/11, max 3 s)
+    pg.evaluate("new Promise(ok => { let t = setTimeout(ok, 300); const m = new MutationObserver(() => { clearTimeout(t); t = setTimeout(ok, 300); }); m.observe(document.getElementById('app'), { childList: true }); setTimeout(ok, 3000); })")
     pg.evaluate("document.querySelector('nav.tabbar button').focus(); window.__esito = 'attesa'; void chiedi('Prova', [{ testo: 'Uno', valore: '1' }, { testo: 'Due', valore: '2' }]).then(v => window.__esito = v)")
     pg.wait_for_selector('dialog.dialogo-sfondo[open]')
     ok(pg.evaluate("document.querySelector('dialog.dialogo-sfondo').matches(':modal')"), 'chiedi(): <dialog> modale (showModal)')

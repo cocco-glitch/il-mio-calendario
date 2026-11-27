@@ -27,13 +27,16 @@ const unisci = fs => '"use strict";\n' + fs.map(f => readFileSync('build-tmp/su-
 const suRichiesta = readdirSync('build-tmp/su-richiesta').filter(f => f.endsWith('.js')).sort();
 for (const f of MOTORE) if (!suRichiesta.includes(f)) throw new Error('build: modulo del motore mancante ' + f);
 const motore = unisci(suRichiesta.filter(f => MOTORE.includes(f)));
-const extra = unisci(suRichiesta.filter(f => !MOTORE.includes(f)));
+const AIUTI = ['07-aiuti.js'];   // redesign blocco 5: aiuti contestuali, caricati dopo il disegno di Oggi e Studio
+const aiuti = unisci(suRichiesta.filter(f => AIUTI.includes(f)));
+const extra = unisci(suRichiesta.filter(f => !MOTORE.includes(f) && !AIUTI.includes(f)));
 
 mkdirSync('dist');
 cpSync('public', 'dist', { recursive: true });
 writeFileSync('dist/app.js', app);
 writeFileSync('dist/motore-studio.js', motore);
 writeFileSync('dist/strumenti-quiz.js', extra);
+writeFileSync('dist/aiuti.js', aiuti);
 const versione = Date.now().toString(36);
 writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replaceAll('__VERSIONE__', versione));   // v0.56.2: tutte le occorrenze (prima restava il segnaposto)
 writeFileSync('dist/.nojekyll', '');
@@ -57,7 +60,7 @@ for (const f of readdirSync('studio/banca').filter(f => /^banca-step-\d+\.json$/
 const html = readFileSync('public/index.html', 'utf8')
   .replace(/<!--PWA-->[\s\S]*?<!--\/PWA-->\n/, '')
   .replace('<link rel="stylesheet" href="style.css">', () => '<style>\n' + readFileSync('public/style.css', 'utf8') + '</style>')
-  .replace('<script src="app.js"></script>', () => '<script>\n' + (app + '\n' + motore + '\n' + extra).replace(/<\/script/g, '<\\/script') + '</script>');
+  .replace('<script src="app.js"></script>', () => '<script>\n' + (app + '\n' + motore + '\n' + extra + '\n' + aiuti).replace(/<\/script/g, '<\\/script') + '</script>');
 writeFileSync('dist/anteprima.html', html);
 rmSync('build-tmp', { recursive: true, force: true });
 console.log('OK: dist/ pronta (cache ' + versione + ', app.js ' + Math.round(app.length / 1024) + ' kB)');
