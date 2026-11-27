@@ -466,7 +466,7 @@ async function importaAppunti(): Promise<void> {
   const s = await chiedi('Importa appunti da Drive', [{ testo: '📄 File .md / .txt', valore: 'file' }, { testo: '📁 Cartella (anche sottocartelle)', valore: 'cart' }],
     'Ogni file diventa un appunto (titolo = prima riga «# …» o nome del file). Reimportare aggiorna lo stesso appunto. Un numero di step nel nome o nella cartella lo collega.');
   if (!s || serveGoogle()) return;
-  const sc = await scegliFileDrive(s === 'cart' ? { titolo: 'Cartella di appunti', mime: 'application/vnd.google-apps.folder' } : { titolo: 'File di appunti', multi: true });
+  const sc = await scegliFileDrive(s === 'cart' ? { titolo: 'Cartelle di appunti', mime: 'application/vnd.google-apps.folder', multi: true } : { titolo: 'File di appunti', multi: true });
   if (!sc.length) return;
   avviso('Importo…', 5000);
   try { const n = await Appunti.importaDrive(sc); avviso(n ? n + ' appunti importati o aggiornati.' : 'Già aggiornati.'); } catch (e: any) { avviso('Import non riuscito: ' + (e.message || e), 8000); }

@@ -441,7 +441,7 @@ const CreaQuiz = (() => {
   function paginePdf(testo: HTMLTextAreaElement) {
     const intervalli = h('input.campo', { value: '1', placeholder: '2-4, 8' }) as HTMLInputElement;
     const offset = h('input.campo', { type: 'number', value: 0 }) as HTMLInputElement;
-    const file = h('input', { type: 'file', accept: '.pdf,application/pdf' }) as HTMLInputElement;
+    const file = h('input', { type: 'file', multiple: true, accept: '.pdf,application/pdf' }) as HTMLInputElement;   // regola utente 27/11: mai un solo file
     const stato = h('p.piccolo', { role: 'status' }), stima = h('p.piccolo');
     const aggiorna = () => { stima.textContent = testo.value.length + ' caratteri · circa ' + Math.ceil(testo.value.length / 4) + ' token di fonte'; };
     testo.addEventListener('input', aggiorna); aggiorna();
@@ -453,7 +453,7 @@ const CreaQuiz = (() => {
         const doc = await TestoPdf.apri(await apri());
         try {
           const pagine = new Set<number>();
-          for (const parte of intervalli.value.split(',')) {
+          for (const parte of /^\s*tutte\s*$/i.test(intervalli.value) ? ['1-' + doc.numPages] : intervalli.value.split(',')) {
             const m = /^\s*(\d+)\s*(?:-\s*(\d+))?\s*$/.exec(parte);
             const a = Number(m?.[1]), b = Number(m?.[2] || a);
             if (!m || a < 1 || b < a || b > doc.numPages) throw new Error('Scegli pagine PDF tra 1 e ' + doc.numPages + '.');
@@ -491,10 +491,11 @@ const CreaQuiz = (() => {
       finally { occupato = false; }
     };
     const drive = (id: string, nome: string) => estrai(nome, () => Drive.scaricaBlob(id));
-    const el = h('fieldset', null, h('legend', null, 'Estratti PDF'), h('label', null, 'Pagine PDF da leggere', intervalli),
-      h('label', null, 'Scarto pagina libro meno pagina PDF', offset), h('label', null, 'Aggiungi un PDF locale', file),
-      h('button.chip', { onclick: () => { const f = file.files?.[0]; if (f) void estrai(f.name, async () => f); else avviso('Scegli prima un PDF.'); } }, 'Estrai pagine locali'),
-      h('button.chip', { onclick: async () => { try { const [f] = await scegliFileDrive({ mime: 'application/pdf' }); if (f) await drive(f.id, f.name); } catch { stato.textContent = 'Impossibile aprire Drive.'; } } }, 'Estrai pagine da Drive'), stato, stima);
+    const tanti = async (fs: { n: string; b: () => Promise<Blob> }[]) => { let ok = 0; for (const f of fs) if (await estrai(f.n, f.b)) ok++; if (fs.length > 1) stato.textContent = 'PDF letti: ' + ok + ' di ' + fs.length + (ok < fs.length ? ' (gli altri: pagine fuori dal file o illeggibili)' : ''); };
+    const el = h('fieldset', null, h('legend', null, 'Estratti PDF'), h('label', null, 'Pagine PDF da leggere (per ogni PDF; «tutte» = l’intero file)', intervalli),
+      h('label', null, 'Scarto pagina libro meno pagina PDF', offset), h('label', null, 'Aggiungi uno o più PDF locali', file),
+      h('button.chip', { onclick: () => { const fs = Array.from(file.files || []); if (fs.length) void tanti(fs.map(f => ({ n: f.name, b: async () => f }))); else avviso('Scegli prima uno o più PDF.'); } }, 'Estrai pagine locali'),
+      h('button.chip', { onclick: async () => { try { await tanti((await scegliFileDrive({ mime: 'application/pdf', multi: true, titolo: 'PDF da cui estrarre le pagine' })).map(f => ({ n: f.name, b: () => Drive.scaricaBlob(f.id) }))); } catch { stato.textContent = 'Impossibile aprire Drive.'; } } }, 'Estrai pagine da Drive'), stato, stima);
     return { el, drive, occupato: () => occupato };
   }
 
@@ -643,10 +644,10 @@ const CreaQuiz = (() => {
     disegna();
     return box;
   }
-  function leggiFile(accetta: string): Promise<string | null> {
+  function leggiFile(accetta: string): Promise<string[]> {
     return new Promise(ok => {
-      const i = h('input', { type: 'file', accept: accetta, style: { display: 'none' } }) as HTMLInputElement;
-      i.onchange = () => { const f = i.files && i.files[0]; i.remove(); if (!f) { ok(null); return; } f.text().then(ok, () => ok(null)); };
+      const i = h('input', { type: 'file', multiple: true, accept: accetta, style: { display: 'none' } }) as HTMLInputElement;
+      i.onchange = () => { const fs = Array.from(i.files || []); i.remove(); Promise.all(fs.map(f => f.text().catch(() => ''))).then(ok); };
       document.body.appendChild(i); i.click();
     });
   }
@@ -740,8 +741,8 @@ const CreaQuiz = (() => {
       testo,
       h('div.chips', null,
         h('button.chip', { type: 'button', onclick: () => daTesto(testo.value) }, '📥 Leggi JSON'),
-        h('button.chip', { type: 'button', onclick: async () => { const t = await leggiFile('.json,.imcpack,application/json'); if (t != null) daTesto(t); } }, '📂 Carica .json / .imcpack'),
-        h('button.chip', { onclick: async () => { try { const [f] = await scegliFileDrive({ titolo: 'Scegli un quiz JSON o .imcpack' }); if (f) daTesto(await Drive.scaricaTesto(f.id)); } catch { avviso('Impossibile leggere il quiz da Drive.'); } } }, 'Importa quiz da Drive'),
+        h('button.chip', { type: 'button', onclick: async () => { for (const t of await leggiFile('.json,.imcpack,application/json')) if (t) daTesto(t); } }, '📂 Carica .json / .imcpack'),
+        h('button.chip', { onclick: async () => { try { for (const f of await scegliFileDrive({ titolo: 'Scegli uno o più quiz JSON o .imcpack', multi: true })) daTesto(await Drive.scaricaTesto(f.id)); } catch { avviso('Impossibile leggere il quiz da Drive.'); } } }, 'Importa quiz da Drive'),
         h('button.chip', { type: 'button', onclick: () => daCloze(testo.value) }, '✂️ Completamenti dal testo')),
       h('div.chips', null, selApp, h('button.chip', { type: 'button', onclick: () => { const a = app.find(x => x.id === selApp.value); if (!a) { avviso('Scegli un appunto.'); return; } if (!step.value.trim() && (a.micro || a.sub)) { step.value = String(a.micro || a.sub); aggiornaPipe(); } daCloze(a.testo); } }, '✂️ Dai punti chiave')),
       h('button.chip', { onclick: () => Editor.apri(null, idQuiz, d => { if (d) mostra([d], ['Domanda scritta a mano']); }, true) }, 'Scrivi una domanda'),

@@ -366,6 +366,20 @@ t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { con
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
 t('versione app 0.69.0 (redesign dell\'interfaccia, blocchi 1–6)', () => vero(/const VERSIONE = '0.69.0'/.test(leggi('09-main.ts'))));
+t('regola utente 27/11: ogni selettore di file è multiplo (eccezioni elencate col motivo)', () => {
+  // un solo file per natura: la lezione audio (una revisione per registrazione, da progettare), il file collegato a UNA scheda,
+  // tabelle (un CSV / un Google Sheet / un link = una tabella), backup e .ics (ripristino e calendario, non creazione da fonti)
+  const ECCEZIONI = { '07-audio.ts': 1, '07-extra.ts': 1, '07-tabelle.ts': 3, '08-viste.ts': 2 };
+  const singoli = {};
+  for (const dir of ['', 'su-richiesta/']) for (const f of fs.readdirSync(path.join(SRC, dir)).filter(x => x.endsWith('.ts'))) {
+    const s = leggi(dir + f);
+    const n = (s.match(/type: 'file'(?![^)]*multiple: true)[^)]*\)/g) || []).filter(x => !/multiple: true/.test(x)).length
+      + (s.match(/scegliFileDrive\(\{[^}]*\}\)/g) || []).filter(x => !/multi: true/.test(x)).length;
+    if (n) singoli[dir + f] = n;
+  }
+  for (const [f, n] of Object.entries(singoli)) vero(ECCEZIONI[f] === n, f + ': ' + n + ' selettori singoli (eccezioni ammesse: ' + (ECCEZIONI[f] || 0) + ')');
+  for (const f of Object.keys(ECCEZIONI)) vero(singoli[f] === ECCEZIONI[f], 'eccezione non più necessaria o cambiata: ' + f + ' (' + (singoli[f] || 0) + ')');
+});
 t('v0.58.4: build senza commenti (peso app.js)', () => vero(/"removeComments": *true/.test(fs.readFileSync(new URL('tsconfig.json', import.meta.url), 'utf8'))));
 t('v0.58.5: niente banner fisso di aggiornamento, avvisi al massimo 2', () => vero(!/avviso\('Nuova versione/.test(leggi('09-main.ts')) && /zona\.children\.length >= 2/.test(leggi('04-componenti.ts'))));
 t('v0.58.6: nessun vicolo cieco (materia al volo, Annulla nel toast, guida su Oggi)', () => vero(/function campoMateria/.test(leggi('07-extra.ts')) && /testo: 'Annulla'/.test(leggi('07-rapido.ts')) && /function iniziaIn3Passi/.test(leggi('08-viste.ts')) && /Ho una data d’esame/.test(leggi('07-generatore.ts'))));

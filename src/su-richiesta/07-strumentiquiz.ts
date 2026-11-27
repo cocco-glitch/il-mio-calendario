@@ -50,8 +50,8 @@ const StrumentiQuiz = (() => {
     let qs: unknown[] = [], parte = '', analisi: AnalisiQ | null = null, autoSospese = 0;
     const ta = area('JSON dei quiz da controllare (anche la chat intera)', 8);
     if (testoIniziale) ta.value = testoIniziale;
-    const file = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Carica un file .json di quiz' }) as HTMLInputElement;
-    file.addEventListener('change', async () => { const f = file.files && file.files[0]; if (!f) return; ta.value = await f.text(); controlla(); });
+    const file = h('input', { type: 'file', multiple: true, accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Carica uno o più file .json di quiz' }) as HTMLInputElement;
+    file.addEventListener('change', async () => { if (!file.files || !file.files.length) return; ta.value = await testiDaFile(file.files); controlla(); });
     const rapporto = h('div', { role: 'status', 'aria-live': 'polite' });
     const registro = h('ul.piccolo.tenue');
 

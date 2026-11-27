@@ -21,6 +21,14 @@ interface ProfiloAIRec extends Rec { type: 'profiloai'; profilo: ProfiloAI; }
 /** Una scheda arrivata (o interrotta): la «parte» com'è nel file di Drive, una per scheda (prq-<materia>-<step>-s<n>). */
 interface ParteQRec extends Rec { type: 'parteq'; cre: string; parte: string; scheda: number; quiz: DomAI[]; }
 
+/** Regola utente 27/11: si scelgono sempre più file. Un file → il suo testo; più file → ogni file in un blocco ```json (se non ne ha già),
+ *  così Contratto.leggi li unisce come le parti k/N incollate dalla chat. Ordine per nome (parte 1, 2, …, 10). */
+async function testiDaFile(fl: FileList | null): Promise<string> {
+  const fs = Array.from(fl || []).sort((a, b) => a.name.localeCompare(b.name, 'it', { numeric: true }));
+  const t = await Promise.all(fs.map(f => f.text()));
+  return t.length === 1 ? t[0] : t.map(x => /```/.test(x) ? x : '```json\n' + x.trim() + '\n```').join('\n\n');
+}
+
 const CentroUI = (() => {
   const PASSI = ['Obiettivo', 'Piano', 'Quiz', 'Controllo', 'Correggi', 'Prova', 'Importa'];
   const RE_STEP = /^\d+(\.\d+)*$/;
@@ -350,8 +358,8 @@ const CentroUI = (() => {
     /** Riquadro «incolla la risposta» con apertura da file: chiama `leggi` col testo. */
     function rispostaAI(etichetta: string, segnaposto: string, bottone: string, leggi: (t: string) => void): HTMLElement {
       const ta = h('textarea', { rows: 6, placeholder: segnaposto, 'aria-label': etichetta, spellcheck: 'false' }) as HTMLTextAreaElement;
-      const daFile = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': etichetta + ' da un file' }) as HTMLInputElement;
-      daFile.addEventListener('change', async () => { const f = daFile.files && daFile.files[0]; if (f) { ta.value = await f.text(); leggi(ta.value); } daFile.value = ''; });
+      const daFile = h('input', { type: 'file', multiple: true, accept: '.json,.txt,application/json,text/plain', 'aria-label': etichetta + ' da uno o più file' }) as HTMLInputElement;
+      daFile.addEventListener('change', async () => { if (daFile.files && daFile.files.length) { ta.value = await testiDaFile(daFile.files); leggi(ta.value); } daFile.value = ''; });
       return h('div.centro-passo-corpo', null, ta, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => leggi(ta.value) }, bottone), daFile));
     }
     const notaDi = (righe: string[]) => h('div.centro-nota', { role: 'status' }, ...righe.map(t => h('p.piccolo', null, t)));
@@ -394,8 +402,8 @@ const CentroUI = (() => {
       out.value = testoPrompt;
       const copia = h('button.btn', { type: 'button', onclick: () => { StrumentiQuiz.copia(testoPrompt, out); } }, '📋 Copia il prompt del piano');
       const incolla = h('textarea', { rows: 6, placeholder: 'Incolla qui la risposta dell\'AI (il piano)…', 'aria-label': 'Risposta dell\'AI con il piano' }) as HTMLTextAreaElement;
-      const daFile = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Apri la risposta dell\'AI da un file' }) as HTMLInputElement;
-      daFile.addEventListener('change', async () => { const f = daFile.files && daFile.files[0]; if (f) { incolla.value = await f.text(); leggi(); } daFile.value = ''; });
+      const daFile = h('input', { type: 'file', multiple: true, accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Apri la risposta dell\'AI da uno o più file' }) as HTMLInputElement;
+      daFile.addEventListener('change', async () => { if (daFile.files && daFile.files.length) { incolla.value = await testiDaFile(daFile.files); leggi(); } daFile.value = ''; });
       const esito = h('div', { role: 'status', 'aria-live': 'polite' });
       const anteprima = h('div.centro-anteprima');
       let piano: PianoCentro | null = r.piano ? JSON.parse(JSON.stringify(r.piano)) as PianoCentro : null;

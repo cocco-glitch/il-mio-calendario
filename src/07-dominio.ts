@@ -292,16 +292,15 @@ const Dominio = (() => {
   function domandeDi(sk: string): DomB[] | null { const r = Stato.prendi<BancaImcRec>('bq-' + sk); return r && Array.isArray(r.domande) && r.domande.length ? r.domande : null; }
   const haDomande = (sk: string) => !!domandeDi(sk);
 
-  function scegliFile(accetta: string): Promise<File | null> {
+  function scegliFile(accetta: string): Promise<File[]> {
     return new Promise(ok => {
-      const i = h('input', { type: 'file', accept: accetta, style: { display: 'none' } }) as HTMLInputElement;
-      i.onchange = () => { ok(i.files && i.files[0] ? i.files[0] : null); i.remove(); };
+      const i = h('input', { type: 'file', multiple: true, accept: accetta, style: { display: 'none' } }) as HTMLInputElement;
+      i.onchange = () => { ok(Array.from(i.files || []).sort((a, b) => a.name.localeCompare(b.name, 'it', { numeric: true }))); i.remove(); };   // in ordine di nome: IMG_2 prima di IMG_10
       document.body.appendChild(i); i.click();
     });
   }
   async function importaDaFile(): Promise<void> {
-    const f = await scegliFile('.json,.imcpack,application/json'); if (!f) return;
-    try {
+    for (const f of await scegliFile('.json,.imcpack,application/json')) try {   // regola utente 27/11: più pacchetti in una volta
       const r = importa(JsonAI.leggiFile(await f.text()));
       avviso('📦 «' + r.pk.titolo + '» importato: ' + r.domande + ' domande' + (r.carte ? ', ' + r.carte + ' flashcard' : '') + (r.scartate ? ' (' + r.scartate + ' scartate perché incomplete)' : '') + '. Lo trovi in Studio.', 7000);
     } catch (e: any) { avviso('Pacchetto: ' + (e.message || e), 6000); }
@@ -397,15 +396,19 @@ const Dominio = (() => {
     const aggiorna = () => { const c = estraiCapitoli(indice.value); anteprima.textContent = c.length ? c.length + ' argomenti trovati · circa ' + c.reduce((s, x) => s + x.ore, 0) + ' h di studio' : 'Nessun capitolo riconosciuto per ora.'; };
     indice.addEventListener('input', aggiorna);
     const daPdf = h('button.btn.neutro', { onclick: async () => {
-      const f = await scegliFile('application/pdf'); if (!f) return;
-      try { indice.value = await testoDaPdf(f); aggiorna(); } catch (e: any) { avviso('PDF: ' + (e.message || e), 6000); }
-    } }, '📄 Indice da PDF');
+      const fs = await scegliFile('application/pdf'), parti: string[] = [];   // regola utente 27/11: l'indice sta su più file
+      for (const f of fs) try { parti.push(await testoDaPdf(f)); } catch (e: any) { avviso('PDF «' + f.name + '»: ' + (e.message || e), 6000); }
+      if (parti.length) { indice.value = parti.join('\n'); aggiorna(); }
+    } }, '📄 Indice da PDF (anche più file)');
     const daFoto = senzaAI() ? null : h('button.btn.neutro', { onclick: async () => {
-      const f = await scegliFile('image/*'); if (!f) return;
-      avviso('Leggo la foto dell\'indice…');
-      try { indice.value = await Spiega.vede('Trascrivi l\'indice del libro in questa foto: una riga per voce, nel formato «numero titolo pagina». Solo il testo, niente commenti.', await leggiImmagine(f)); aggiorna(); }
-      catch (e: any) { avviso('Foto: ' + (e.message || e), 6000); }
-    } }, '📷 Indice da foto (AI)');
+      const fs = await scegliFile('image/*'), parti: string[] = [];   // una foto per pagina dell'indice
+      for (const [k, f] of fs.entries()) {
+        avviso('Leggo la foto dell\'indice' + (fs.length > 1 ? ' ' + (k + 1) + ' di ' + fs.length : '') + '…');
+        try { parti.push(await Spiega.vede('Trascrivi l\'indice del libro in questa foto: una riga per voce, nel formato «numero titolo pagina». Solo il testo, niente commenti.', await leggiImmagine(f))); }
+        catch (e: any) { avviso('Foto «' + f.name + '»: ' + (e.message || e), 6000); }
+      }
+      if (parti.length) { indice.value = parti.join('\n'); aggiorna(); }
+    } }, '📷 Indice da foto (AI, anche più foto)');
     foglio({ titolo: '🗓 Crea piano dal libro', etichettaSalva: 'Crea',
       corpo: h('div.modulo', null,
         h('div.gruppo', null, riga('Materia', nome), riga('Tipo', arch), riga('Data esame', esame), riga('Ore al giorno', ore)),

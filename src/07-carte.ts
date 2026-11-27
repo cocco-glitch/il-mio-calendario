@@ -375,7 +375,7 @@ function editorCarta(idMazzo: string, c?: Carta): void {
 }
 
 async function importaCarte(padre?: string): Promise<void> {
-  const fileLocale = h('input', { type: 'file', accept: '.txt,.csv,.tsv,.md,.markdown,.json,text/*,application/json', style: { display: 'none' }, onchange: async () => {
+  const fileLocale = h('input', { type: 'file', multiple: true, accept: '.txt,.csv,.tsv,.md,.markdown,.json,text/*,application/json', style: { display: 'none' }, onchange: async () => {
     const fl = (fileLocale as HTMLInputElement).files; if (!fl || !fl.length) return;
     let n = 0;
     for (const file of Array.from(fl)) { const d = Carte.leggi(file.name, await file.text()); const m = Carte.nuovoMazzo(d.nome || file.name.replace(/\.[^.]+$/, ''), padre, d.micro ? Carte.collega(d.micro) : {}); n += Carte.riempi(m.id, d.carte); }
@@ -388,8 +388,8 @@ async function importaCarte(padre?: string): Promise<void> {
       h('button.voce-lista', { onclick: async () => { if (serveGoogle()) return; const sc = await scegliFileDrive({ titolo: 'File di flashcard su Drive', multi: true }); if (!sc.length) return; fs.chiudi(); avviso('Importo…');
         let n = 0; for (const x of sc) n += await Carte.importaFileDrive(x.id, x.name, padre); avviso('Importate ' + n + ' carte da ' + sc.length + ' file.'); disegna(); } },
         h('span.voce-corpo', null, h('span.voce-titolo', null, '📄 File su Drive'), h('span.voce-sotto', null, 'restano collegati: «Aggiorna da Drive» rilegge le modifiche'))),
-      h('button.voce-lista', { onclick: async () => { if (serveGoogle()) return; const sc = await scegliFileDrive({ titolo: 'Cartella di flashcard su Drive', mime: 'application/vnd.google-apps.folder' }); if (!sc.length) return; fs.chiudi(); avviso('Importo la cartella…', 4000);
-        try { const r = await Carte.importaCartellaDrive(sc[0].id, sc[0].name, padre); avviso('Importati ' + r.mazzi + ' mazzi, ' + r.carte + ' carte.'); } catch (e: any) { avviso('Import non riuscito: ' + (e.message || e), 8000); } disegna(); } },
+      h('button.voce-lista', { onclick: async () => { if (serveGoogle()) return; const sc = await scegliFileDrive({ titolo: 'Cartelle di flashcard su Drive', mime: 'application/vnd.google-apps.folder', multi: true }); if (!sc.length) return; fs.chiudi(); avviso('Importo…', 4000);
+        try { let m = 0, c = 0; for (const x of sc) { const r = await Carte.importaCartellaDrive(x.id, x.name, padre); m += r.mazzi; c += r.carte; } avviso('Importati ' + m + ' mazzi, ' + c + ' carte.'); } catch (e: any) { avviso('Import non riuscito: ' + (e.message || e), 8000); } disegna(); } },
         h('span.voce-corpo', null, h('span.voce-titolo', null, '📁 Cartella su Drive'), h('span.voce-sotto', null, 'cartella = mazzo, sottocartelle = sotto-mazzi; le immagini della cartella si usano con ![](nome.png)')))),
     fileLocale) });
 }

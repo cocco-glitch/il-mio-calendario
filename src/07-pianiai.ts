@@ -193,7 +193,7 @@ const PianiAI = (() => {
             riga('Leggi Google Calendar', h('label', null, primary, ' impegni di «primary» (solo lettura)'))),
           h('div.gruppo', null, h('div.tenue.piccolo', null, 'Questionario facoltativo: affina intensità e pesi.'), ...campiBio.map(x => riga(x.d.testo, x.s))),
           h('div.gruppo', null, calibra, boxB),
-          indice, fonti,
+          indice, h('div.bottoni', null, fonti, h('button.btn.neutro', { type: 'button', onclick: async () => { if (serveGoogle()) return; const sc = await scegliFileDrive({ mime: 'application/pdf', multi: true, titolo: 'PDF delle fonti (anche più file)' }); if (sc.length) fonti.value = [fonti.value.trim(), ...sc.map(x => x.id)].filter(Boolean).join(', '); } }, 'Scegli da Drive')),   // regola utente 27/11
           h('label', null, usaAI, ' Mappa gli argomenti con l\'AI'), stima),
         esito,
         h('div.tenue.piccolo', null, 'Prima si calcola la fattibilità senza AI; se il piano è critico ti propongo 3 rimedi e non spendo token.')),
