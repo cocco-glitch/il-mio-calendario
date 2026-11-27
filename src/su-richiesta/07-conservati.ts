@@ -36,3 +36,17 @@ function bannerModoEsame(): HTMLElement | null {
   return h('div.modo-esame', { role: 'status' }, '🎯 Modalità esame · ' + (n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' giorni') + (n <= 3 ? ' · solo ripasso' : ''),
     h('button.btn-testo', { onclick: () => { const i = imp(); i.modoEsame = 'no'; Stato.salva(i); avviso('Modalità esame spenta: la riattivi da Altro › Aspetto.'); } }, 'Mostra tutto'));
 }
+
+// da 07-studiaora.ts (blocco 4): esame più vicino e stato del piano per la riga di «Adesso» (ora la riga è rigaEsami)
+function prossimoEsame(): { nome: string; giorni: number; stato: string } | null {
+  const e = esamiNoti().filter(x => giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
+  if (!e) return null;
+  const r = Studio.pkPiani().length ? Studio.inRitardo().length : -1;
+  return { nome: e.nome.replace(/ semestre filtro$/i, ''), giorni: giorniA(e.data), stato: r < 0 ? '' : r ? 'indietro di ' + r + ' step' : 'in pari ✓' };
+}
+
+// da 07-extra.ts: testo del conto alla rovescia (non più usato)
+function testoCountdown(d: number): string { return d === 0 ? 'oggi!' : d === 1 ? 'domani' : d < 0 ? 'passato' : 'tra ' + d + ' giorni'; }
+
+// da 03-modello.ts: scadenza di un promemoria come Date (non più usata)
+function scadenzaTask(t: Task): Date | null { return t.scadenza ? daDt(t.scadenza) : null; }

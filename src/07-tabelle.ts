@@ -44,7 +44,8 @@ function csvRighe(testo: string): string[][] {
   return out;
 }
 function csvDa(t: Tabella): string {
-  const q = (v: any) => { const s = v == null ? '' : typeof v === 'boolean' ? (v ? 'sì' : 'no') : String(v); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const link = (x: any): string => x && typeof x === 'object' ? x.url || x.nome || '' : String(x);   // prima un link usciva «[object Object]»
+  const q = (v: any) => { const s = v == null ? '' : typeof v === 'boolean' ? (v ? 'sì' : 'no') : Array.isArray(v) ? v.map(link).join(' ') : typeof v === 'object' ? link(v) : String(v); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   return [t.colonne.map(c => q(c.nome)).join(','), ...t.righe.map(r => t.colonne.map(c => q(r.c[c.id])).join(','))].join('\n');
 }
 /** Aggiunge righe da una tabella di testo (CSV o Google Sheet). Prima riga = intestazioni: crea le colonne mancanti. */
@@ -102,12 +103,12 @@ function apriNuovaTabella(): void {
 async function collegaSheet(t: Tabella, importa: boolean): Promise<void> {
   if (serveGoogle()) return;
   try {
-    const [d] = await scegliFileDrive({ mime: 'application/vnd.google-apps.spreadsheet', titolo: 'Scegli un Google Sheet' });
-    if (!d) return;
+    const sc = await scegliFileDrive({ mime: 'application/vnd.google-apps.spreadsheet', titolo: 'Scegli uno o più Google Sheet', multi: true }), d = sc[0];
+    if (!d) return;   // il primo resta collegato alla tabella; le righe si importano da tutti
     t.sheet = { id: d.id, nome: d.name, url: d.url || 'https://docs.google.com/spreadsheets/d/' + d.id };
     if (importa || (await chiedi('Importare le righe?', [{ testo: 'Sì, importa le righe', valore: 'si' }, { testo: 'No, solo collegamento', valore: 'no' }], d.name)) === 'si') {
-      const n = importaRighe(t, csvRighe(await Drive.esportaCsv(d.id)));
-      avviso('Importate ' + n + ' righe dal foglio (primo foglio).');
+      let n = 0; for (const x of sc) n += importaRighe(t, csvRighe(await Drive.esportaCsv(x.id)));
+      avviso('Importate ' + n + ' righe da ' + (sc.length > 1 ? sc.length + ' fogli' : 'il foglio') + ' (primo foglio di ciascuno).');
     }
     if (!t.nome || t.nome === 'Nuova tabella') t.nome = d.name;
     Stato.salva(t);
@@ -142,12 +143,12 @@ function cella(t: Tabella, r: Riga, col: Colonna): HTMLElement {
     case 'selezione': return selettore([['', '—'] as [string, string]].concat((col.opzioni || []).map(o => [o, o] as [string, string])), v || '', function (this: HTMLSelectElement) { salva(this.value); });
     case 'link': {
       const box = h('span.cella-link');
-      const url = v && typeof v === 'object' ? v.url : v;
-      if (url) box.appendChild(h('a', { href: url, target: '_blank', rel: 'noopener' }, v.nome || 'Apri'));
+      const lista: any[] = Array.isArray(v) ? v : v ? [v] : [], url = lista.length > 0;   // regola utente 27/11: una cella può collegare più file
+      for (const x of lista) { const u = typeof x === 'object' ? x.url : x; if (u) box.appendChild(h('a', { href: u, target: '_blank', rel: 'noopener' }, (typeof x === 'object' && x.nome) || 'Apri')); }
       box.appendChild(h('button.btn-testo', { onclick: async () => {
         const s = await chiedi(col.nome, [{ testo: 'Scegli file dal Drive', valore: 'drive' }, { testo: 'Incolla un link web', valore: 'web' }].concat(url ? [{ testo: 'Togli il link', valore: 'via' }] : []));
         if (s === 'via') { salva(''); Stato.notifica(); }
-        else if (s === 'drive') { if (serveGoogle()) return; try { const [d] = await scegliFileDrive({}); if (d) { salva({ nome: d.name, url: d.url, driveId: d.id }); Stato.notifica(); } } catch (e: any) { avviso(String(e.message || e)); } }
+        else if (s === 'drive') { if (serveGoogle()) return; try { const sc = (await scegliFileDrive({ multi: true, titolo: 'Uno o più file' })).map(d => ({ nome: d.name, url: d.url, driveId: d.id })); if (sc.length) { salva(sc.length === 1 ? sc[0] : sc); Stato.notifica(); } } catch (e: any) { avviso(String(e.message || e)); } }
         else if (s === 'web') {
           const inp = h('input', { type: 'url', placeholder: 'https://…', value: typeof v === 'string' ? v : '' }) as HTMLInputElement;
           foglio({ titolo: 'Link', corpo: h('div.modulo', null, h('div.gruppo', null, riga('Indirizzo', inp))), salva: () => { const u = inp.value.trim(); salva(u ? (/^https?:\/\//.test(u) ? u : 'https://' + u) : ''); Stato.notifica(); } });
@@ -161,7 +162,7 @@ function cella(t: Tabella, r: Riga, col: Colonna): HTMLElement {
 
 function vistaTabella(t: Tabella): HTMLElement {
   const q = norm(UI.tabQ);
-  const testoCella = (v: any) => v == null ? '' : typeof v === 'object' ? (v.nome || v.url || '') : String(v);
+  const testoCella = (v: any): string => v == null ? '' : Array.isArray(v) ? v.map(testoCella).join(', ') : typeof v === 'object' ? (v.nome || v.url || '') : String(v);
   let righe = t.righe.filter(r => !q || t.colonne.some(c => norm(testoCella(r.c[c.id])).includes(q)));
   if (UI.tabOrd) {
     const [cid, dir] = UI.tabOrd.split(':'), col = t.colonne.find(c => c.id === cid);
@@ -174,9 +175,9 @@ function vistaTabella(t: Tabella): HTMLElement {
   }
   const ordina = (c: Colonna) => { UI.tabOrd = UI.tabOrd === c.id + ':a' ? c.id + ':d' : UI.tabOrd === c.id + ':d' ? '' : c.id + ':a'; disegna(); };
   const freccia = (c: Colonna) => UI.tabOrd === c.id + ':a' ? ' ▲' : UI.tabOrd === c.id + ':d' ? ' ▼' : '';
-  const fileCsv = h('input', { type: 'file', accept: '.csv,text/csv,text/plain', style: { display: 'none' }, onchange: () => {
-    const f = fileCsv.files && fileCsv.files[0]; if (!f) return;
-    f.text().then(txt => { const n = importaRighe(t, csvRighe(txt)); Stato.salva(t); avviso('Importate ' + n + ' righe.'); });
+  const fileCsv = h('input', { type: 'file', multiple: true, accept: '.csv,text/csv,text/plain', style: { display: 'none' }, onchange: () => {
+    const fs = Array.from(fileCsv.files || []); if (!fs.length) return;
+    Promise.all(fs.map(f => f.text())).then(tt => { let n = 0; for (const txt of tt) n += importaRighe(t, csvRighe(txt)); Stato.salva(t); avviso('Importate ' + n + ' righe' + (fs.length > 1 ? ' da ' + fs.length + ' file.' : '.')); });
   } }) as HTMLInputElement;
   const esporta = () => {
     const a = h('a', { href: URL.createObjectURL(new Blob(['﻿' + csvDa(t)], { type: 'text/csv' })), download: t.nome.replace(/[\\/:*?"<>|]/g, '_') + '.csv' }) as HTMLAnchorElement;

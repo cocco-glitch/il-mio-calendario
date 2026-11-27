@@ -10,7 +10,7 @@
 // ============================================================
 
 interface FileS { id?: string; nome: string; mime?: string; url?: string; }
-interface SchedaS { id: string; k: number; n: number; titolo: string; tipo: 'P' | 'R'; problemi: boolean; pagine: string; slide?: string; quizFile: string; quizFileId?: string; file?: FileS;
+interface SchedaS { id: string; k: number; n: number; titolo: string; tipo: 'P' | 'R'; problemi: boolean; pagine: string; slide?: string; quizFile: string; quizFileId?: string; file?: FileS; /** regola utente 27/11: file collegati oltre al primo */ altri?: FileS[];
   /** v0.55 (BP4): facoltativi, solo nei contenuti del pianificatore neuro-AI. */
   livelloCognitivo?: 1 | 2 | 3 | 4; sorgenteRef?: SorgenteRef; isRipassoFSRS?: boolean; isBuffer?: boolean; }
 interface MicroS { n: string; schede: SchedaS[]; innesto?: boolean; }
@@ -296,7 +296,11 @@ function serveGoogle(): boolean {
 }
 /** Apre una mini-app quiz HTML dentro l'app, in un iframe isolato (sandbox). Il file su Drive non viene modificato. */
 async function apriQuiz(pk: PkStep, m: string, micro: string, s: SchedaS, cb?: (d: RisultatoQuiz) => void): Promise<void> {
-  // Schede dei corsi propri: file qualsiasi (PDF → visore, HTML → iframe, altro → link)
+  // Schede dei corsi propri: file qualsiasi (PDF → visore, HTML → iframe, altro → link); con più file collegati si sceglie quale
+  if (s.file && s.altri && s.altri.length) {
+    const tutti = [s.file, ...s.altri], k = await chiedi('Quale file apri?', tutti.map((x, i) => ({ testo: x.nome, valore: String(i) })), s.titolo);
+    if (k === null) return; s = { ...s, file: tutti[+k], altri: undefined };
+  }
   if (s.file && !(s.file.mime || '').includes('html') && !/\.html?$/i.test(s.file.nome)) {
     if (s.file.id && /pdf/i.test(s.file.mime || s.file.nome)) { if (serveGoogle()) return; apriPdf(s.file.id, 1, s.file.nome); return; }
     if (s.file.url) { window.open(s.file.url, '_blank', 'noopener'); return; }

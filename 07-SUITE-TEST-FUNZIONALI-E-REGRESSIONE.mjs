@@ -367,9 +367,8 @@ t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { co
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
 t('versione app 0.69.0 (redesign dell\'interfaccia, blocchi 1–6)', () => vero(/const VERSIONE = '0.69.0'/.test(leggi('09-main.ts'))));
 t('regola utente 27/11: ogni selettore di file è multiplo (eccezioni elencate col motivo)', () => {
-  // un solo file per natura: la lezione audio (una revisione per registrazione, da progettare), il file collegato a UNA scheda,
-  // tabelle (un CSV / un Google Sheet / un link = una tabella), backup e .ics (ripristino e calendario, non creazione da fonti)
-  const ECCEZIONI = { '07-audio.ts': 1, '07-extra.ts': 1, '07-tabelle.ts': 3, '08-viste.ts': 2 };
+  // unica eccezione decisa dall'utente (27/11): la lezione audio (una revisione per registrazione)
+  const ECCEZIONI = { 'su-richiesta/07-audio.ts': 1 };
   const singoli = {};
   for (const dir of ['', 'su-richiesta/']) for (const f of fs.readdirSync(path.join(SRC, dir)).filter(x => x.endsWith('.ts'))) {
     const s = leggi(dir + f);

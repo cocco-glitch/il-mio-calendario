@@ -56,9 +56,3 @@ function modalitaEsame(): number | null {
   const m = gg.length ? Math.min(...gg) : Infinity;
   return m <= 21 ? m : null;
 }
-function prossimoEsame(): { nome: string; giorni: number; stato: string } | null {
-  const e = esamiNoti().filter(x => giorniA(x.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1)[0];
-  if (!e) return null;
-  const r = Studio.pkPiani().length ? Studio.inRitardo().length : -1;
-  return { nome: e.nome.replace(/ semestre filtro$/i, ''), giorni: giorniA(e.data), stato: r < 0 ? '' : r ? 'indietro di ' + r + ' step' : 'in pari ✓' };
-}

@@ -30,9 +30,11 @@ const suRichiesta = readdirSync('build-tmp/su-richiesta').filter(f => f.endsWith
 for (const f of MOTORE) if (!suRichiesta.includes(f)) throw new Error('build: modulo del motore mancante ' + f);
 const motore = unisci(suRichiesta.filter(f => MOTORE.includes(f)));
 const AIUTI = ['07-aiuti.js'];
-const CONSERVATI = ['07-conservati.js'];   // codice tolto dall'interfaccia: controllato da tsc, mai pubblicato   // redesign blocco 5: aiuti contestuali, caricati dopo il disegno di Oggi e Studio
+const CONSERVATI = ['07-conservati.js'];
+const AUDIO = ['07-audio.js'];   // 27/11: lezione audio, caricata al primo uso (lezioneAudio)
+const audio = unisci(suRichiesta.filter(f => AUDIO.includes(f)));   // codice tolto dall'interfaccia: controllato da tsc, mai pubblicato   // redesign blocco 5: aiuti contestuali, caricati dopo il disegno di Oggi e Studio
 const aiuti = unisci(suRichiesta.filter(f => AIUTI.includes(f)));
-const extra = unisci(suRichiesta.filter(f => !MOTORE.includes(f) && !AIUTI.includes(f) && !CONSERVATI.includes(f)));
+const extra = unisci(suRichiesta.filter(f => !MOTORE.includes(f) && !AIUTI.includes(f) && !CONSERVATI.includes(f) && !AUDIO.includes(f)));
 
 mkdirSync('dist');
 cpSync('public', 'dist', { recursive: true });
@@ -40,6 +42,7 @@ writeFileSync('dist/app.js', app);
 writeFileSync('dist/motore-studio.js', motore);
 writeFileSync('dist/strumenti-quiz.js', extra);
 writeFileSync('dist/aiuti.js', aiuti);
+writeFileSync('dist/lezioni-audio.js', audio);
 const versione = Date.now().toString(36);
 writeFileSync('dist/sw.js', readFileSync('public/sw.js', 'utf8').replaceAll('__VERSIONE__', versione));   // v0.56.2: tutte le occorrenze (prima restava il segnaposto)
 writeFileSync('dist/.nojekyll', '');
@@ -63,7 +66,7 @@ for (const f of readdirSync('studio/banca').filter(f => /^banca-step-\d+\.json$/
 const html = readFileSync('public/index.html', 'utf8')
   .replace(/<!--PWA-->[\s\S]*?<!--\/PWA-->\n/, '')
   .replace('<link rel="stylesheet" href="style.css">', () => '<style>\n' + readFileSync('public/style.css', 'utf8') + '</style>')
-  .replace('<script src="app.js"></script>', () => '<script>\n' + (app + '\n' + motore + '\n' + extra + '\n' + aiuti).replace(/<\/script/g, '<\\/script') + '</script>');
+  .replace('<script src="app.js"></script>', () => '<script>\n' + (app + '\n' + motore + '\n' + extra + '\n' + aiuti + '\n' + audio).replace(/<\/script/g, '<\\/script') + '</script>');
 writeFileSync('dist/anteprima.html', html);
 rmSync('build-tmp', { recursive: true, force: true });
 console.log('OK: dist/ pronta (cache ' + versione + ', app.js ' + Math.round(app.length / 1024) + ' kB)');

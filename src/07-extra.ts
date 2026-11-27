@@ -179,7 +179,6 @@ function vistaStatistiche(): HTMLElement {
 
 // ---------- Esami ----------
 function giorniA(data: string): number { return Math.round((daYmd(data).getTime() - oggi().getTime()) / 86400000); }
-function testoCountdown(d: number): string { return d === 0 ? 'oggi!' : d === 1 ? 'domani' : d < 0 ? 'passato' : 'tra ' + d + ' giorni'; }
 function vistaEsami(): HTMLElement {
   const esami = Stato.tutti<Esame>('esame').sort((a, b) => a.data < b.data ? -1 : 1);
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
@@ -330,18 +329,19 @@ function editorSchedaPropria(pk0: PkStep, mat0: MateriaS, sub0: SottoS, s0?: Sch
   const titolo = h('input.titolo-grande', { type: 'text', placeholder: 'Es. Quiz cuore 1, Esercizi cap. 3, Flashcard…', value: s0 ? s0.titolo : '' }) as HTMLInputElement;
   const tipo = selettore([['P', 'Prioritaria (da fare subito)'], ['R', 'Raffinamento (dopo)']], s0 ? s0.tipo : 'P');
   const pagine = h('input', { type: 'text', placeholder: 'es. 12-18, 25', value: s0 ? s0.pagine : '' }) as HTMLInputElement;
-  let file: FileS | undefined = s0 && s0.file ? { ...s0.file } : undefined;
-  const nomeFile = h('span.tenue', null, file ? file.nome : 'nessuno');
+  let file: FileS | undefined = s0 && s0.file ? { ...s0.file } : undefined, altri: FileS[] = s0 && s0.altri ? s0.altri.map(x => ({ ...x })) : [];
+  const nomi = () => file ? [file, ...altri].map(x => x.nome).join(', ') : 'nessuno';
+  const nomeFile = h('span.tenue', null, nomi());
   const f = foglio({ titolo: s0 ? 'Scheda' : 'Nuova scheda', corpo: h('div.modulo', null, titolo,
       h('div.gruppo', null, riga('Tipo', tipo), riga('Pagine', pagine)),
-      h('div.gruppo', null, h('div.gruppo-titolo', null, 'File collegato (quiz HTML, PDF, documento…)'), h('div', { style: { padding: '4px 0' } }, nomeFile),
+      h('div.gruppo', null, h('div.gruppo-titolo', null, 'File collegati (quiz HTML, PDF, documenti…)'), h('div', { style: { padding: '4px 0' } }, nomeFile),
         h('div.bottoni', { style: { marginBottom: '10px' } },
-          h('button.btn.neutro', { type: 'button', onclick: async () => { if (serveGoogle()) return; const [d] = await scegliFileDrive({ titolo: 'File della scheda' }); if (d) { file = { id: d.id, nome: d.name, mime: d.mimeType, url: d.url }; nomeFile.textContent = d.name; } } }, 'Dal Drive'),
-          h('button.btn.neutro', { type: 'button', onclick: () => { file = undefined; nomeFile.textContent = 'nessuno'; } }, 'Togli')))),
+          h('button.btn.neutro', { type: 'button', onclick: async () => { if (serveGoogle()) return; const sc = await scegliFileDrive({ titolo: 'File della scheda (anche più file)', multi: true }); if (sc.length) { [file, ...altri] = sc.map(d => ({ id: d.id, nome: d.name, mime: d.mimeType, url: d.url })); nomeFile.textContent = nomi(); } } }, 'Dal Drive'),
+          h('button.btn.neutro', { type: 'button', onclick: () => { file = undefined; altri = []; nomeFile.textContent = 'nessuno'; } }, 'Togli')))),
     salva: () => {
       if (!titolo.value.trim()) { avviso('Scrivi un titolo'); return false; }
-      if (s0) { const s = mi.schede.find(x => x.id === s0.id)!; Object.assign(s, { titolo: titolo.value.trim(), tipo: tipo.value, pagine: pagine.value.trim(), file }); }
-      else { const k = mi.schede.length + 1; mi.schede.push({ id: mat0.m + '-' + uid().slice(0, 8), k, n: k, titolo: titolo.value.trim(), tipo: tipo.value as 'P' | 'R', problemi: false, pagine: pagine.value.trim(), quizFile: '', file }); }
+      if (s0) { const s = mi.schede.find(x => x.id === s0.id)!; Object.assign(s, { titolo: titolo.value.trim(), tipo: tipo.value, pagine: pagine.value.trim(), file, altri: altri.length ? altri : undefined }); }
+      else { const k = mi.schede.length + 1; mi.schede.push({ id: mat0.m + '-' + uid().slice(0, 8), k, n: k, titolo: titolo.value.trim(), tipo: tipo.value as 'P' | 'R', problemi: false, pagine: pagine.value.trim(), quizFile: '', file, altri: altri.length ? altri : undefined }); }
       mi.schede.forEach(x => x.n = mi.schede.length);
       salvaPacchetto(pk);
     },

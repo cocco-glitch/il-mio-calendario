@@ -1,3 +1,4 @@
+// 27/11/2026: nel chunk lezioni-audio.js (caricato al primo tocco di «Lezione audio» tramite lezioneAudio in 07-sezionispiegazione.ts).
 // 07-audio.ts — v0.41: lezioni audio (registra o carica) trascritte dall'AI con autocorrezione.
 // Scouting: Groq offre Whisper (large-v3-turbo e large-v3) gratis con la stessa chiave: 25 MB a file,
 // ~8 ore di audio al giorno. Notability/GoodNotes legano l'audio agli appunti; Otter evidenzia le parti incerte.
@@ -105,7 +106,7 @@ const Lezioni = (() => {
 })();
 
 /** Interfaccia: registra o carica, trascrivi, rivedi le correzioni con ▶, aggiungi all'appunto. */
-async function lezioneAudio(contesto: { titolo: string; step: string; testo: string }, aggiungi: (md: string) => void): Promise<void> {
+async function lezioneAudioUI(contesto: { titolo: string; step: string; testo: string }, aggiungi: (md: string) => void): Promise<void> {
   if (!await Spiega.pronta()) { avviso('Serve la chiave Groq (gratuita): Altro → Spiegazioni AI.', 6000); return; }
   const s = await chiedi('🎙 Lezione audio', [{ testo: '🎙 Registra ora', valore: 'reg' }, { testo: '📁 Carica un file audio', valore: 'file' }], 'Trascrizione con autocorrezione (gratis con Groq: fino a ~8 ore al giorno).');
   if (s === 'file') {

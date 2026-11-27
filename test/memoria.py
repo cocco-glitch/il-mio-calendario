@@ -37,6 +37,7 @@ with sync_playwright() as p:
       window.fetch = async (u, o) => { if (String(u).includes('transcriptions')) { prompts.push(o.body.get('prompt')); return new Response(JSON.stringify({ segments: [{ start: 0, end: 5, text: 'Oggi parliamo di in talpa di reazione.', avg_logprob: -0.2 }], duration: 5 })); }
         chat++; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ dubbi: [], termini: [] }) } }] })); };
       MemoriaIA.nota('audio', 'termine', 'entalpia');
+      await caricaChunk('lezioni-audio.js', () => typeof Lezioni !== 'undefined');   // 27/11: la lezione audio è in un chunk
       const r = await Lezioni.processa(new Blob([new Uint8Array(2000)], { type: 'audio/mp4' }), { titolo: 'Termochimica', step: '', testo: '' }, () => {});
       return { p: prompts[0], t: r.seg[0].t, nota: r.corr[0] && r.corr[0].nota, chat }; }''')
     ok('entalpia' in a['p'], 'Whisper riceve i termini imparati nel prompt')

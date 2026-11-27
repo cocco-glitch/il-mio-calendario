@@ -373,7 +373,6 @@ function testoRicorrenza(rr?: Ricorrenza): string {
 }
 
 // ---------- Promemoria/Task ----------
-function scadenzaTask(t: Task): Date | null { return t.scadenza ? daDt(t.scadenza) : null; }
 function taskScaduto(t: Task): boolean {
   if (t.fatto || !t.scadenza) return false;
   const d = daDt(t.scadenza);

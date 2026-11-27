@@ -106,7 +106,7 @@ with sync_playwright() as p:
     pg.screenshot(path='test/27-tabella.png', full_page=True)
     # collegare un Google Sheet dal selettore interno (senza Picker / chiave API)
     pg.evaluate("void collegaSheet(Stato.tutti('tabella')[0], false)"); pg.wait_for_selector('.lista-file .voce-lista'); pg.screenshot(path='test/28-scegli-sheet.png')
-    pg.click('.lista-file .voce-lista'); pg.click('.dialogo >> text=No, solo collegamento'); pg.wait_for_timeout(300)
+    pg.click('.lista-file .voce-lista'); pg.click('.foglio-testa >> text=Aggiungi'); pg.click('.dialogo >> text=No, solo collegamento')   # 27/11: selezione multipla (tocchi i fogli, poi «Aggiungi»); pg.wait_for_timeout(300)
     ok(pg.evaluate("Stato.tutti('tabella')[0].sheet && Stato.tutti('tabella')[0].sheet.id") == 'S1', 'Google Sheet collegato senza chiave API')
     # cache PDF: la seconda apertura non riscarica
     r = pg.evaluate("""(async () => { let n = 0; const f = window.fetch; window.fetch = (u, o) => { if (String(u).includes('PDFX')) n++; return f(u, o); };

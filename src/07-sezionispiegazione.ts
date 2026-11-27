@@ -38,6 +38,10 @@ function conStrumentiQuiz(fn: () => void): void {
 function conAiuti(fn: () => void, zitto = false): void {
   caricaChunk('aiuti.js', () => typeof Aiuti !== 'undefined').then(fn, (e: Error) => { if (zitto) console.warn('aiuti non caricati:', e.message); else avviso('⚠️ Suggerimenti non disponibili: ' + e.message); });
 }
+/** 27/11: la lezione audio sta nel chunk lezioni-audio.js (~6 KB fuori da app.js), caricato al primo uso. */
+function lezioneAudio(contesto: { titolo: string; step: string; testo: string }, aggiungi: (md: string) => void): void {
+  caricaChunk('lezioni-audio.js', () => typeof Lezioni !== 'undefined').then(() => lezioneAudioUI(contesto, aggiungi), (e: Error) => avviso('⚠️ Lezione audio non disponibile: ' + e.message));
+}
 function conMotoreStudio(fn: () => void): void {
   caricaMotoreStudio().then(fn, (e: Error) => avviso('⚠️ Strumenti di studio non disponibili: ' + e.message, 6000));
 }

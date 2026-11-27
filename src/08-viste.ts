@@ -468,16 +468,14 @@ function vistaAltro(): HTMLElement {
     }
   } }) as HTMLInputElement;
 
-  const fileImport = h('input', { type: 'file', accept: '.json,application/json', style: { display: 'none' }, onchange: () => {
-    const f = fileImport.files && fileImport.files[0];
-    if (!f) return;
-    f.text().then(txt => {
-      try {
-        const dati = JSON.parse(txt);
-        const n = Stato.unisci(Array.isArray(dati) ? dati : dati.records || []);
-        applicaTema();
-        avviso('Importazione completata: ' + n + ' elementi aggiornati.');
-      } catch (_) { avviso('File non valido.'); }
+  const fileImport = h('input', { type: 'file', multiple: true, accept: '.json,application/json', style: { display: 'none' }, onchange: () => {
+    const fs = Array.from(fileImport.files || []);
+    if (!fs.length) return;
+    Promise.all(fs.map(f => f.text())).then(tt => {   // più backup: si uniscono uno dopo l'altro (vince sempre il dato più recente)
+      let n = 0, rotti = 0;
+      for (const txt of tt) try { const dati = JSON.parse(txt); n += Stato.unisci(Array.isArray(dati) ? dati : dati.records || []); } catch (_) { rotti++; }
+      applicaTema();
+      if (rotti === tt.length) avviso('File non valido.'); else avviso('Importazione completata: ' + n + ' elementi aggiornati' + (rotti ? ' (' + rotti + ' file non validi)' : '') + '.');
     });
   } }) as HTMLInputElement;
   const anteprima = !document.querySelector('link[rel="manifest"]'); // versione di prova a file unico
@@ -638,13 +636,14 @@ function valoriAttuali(): Partial<Impostazioni> { const i = imp(), v: any = {}; 
 
 function sezioneCalendari(salva: SalvaImp): HTMLElement {
   const i = imp(), cats = new Set(i.gcalCategorie || []);
-  const fileIcs = h('input', { type: 'file', accept: '.ics,text/calendar', style: { display: 'none' }, onchange: () => {
-    const f = fileIcs.files && fileIcs.files[0]; if (!f) return;
-    f.text().then(async txt => {
+  const fileIcs = h('input', { type: 'file', multiple: true, accept: '.ics,text/calendar', style: { display: 'none' }, onchange: () => {
+    const fs = Array.from(fileIcs.files || []); if (!fs.length) return;
+    Promise.all(fs.map(f => f.text())).then(async tt => {
       const opz = [{ testo: 'Nessuna categoria', valore: '' }].concat(categorie().map(c => ({ testo: c.nome, valore: c.id })));
-      const cat = await chiedi('In quale categoria?', opz, f.name);
+      const cat = await chiedi('In quale categoria?', opz, fs.map(f => f.name).join(', '));   // una sola domanda per tutti i file
       if (cat === null) return;
-      const n = importaIcs(txt, cat || undefined); avviso(n ? 'Importati ' + n + ' eventi da ' + f.name : 'Nessun evento trovato nel file.');
+      let n = 0; for (const txt of tt) n += importaIcs(txt, cat || undefined);
+      avviso(n ? 'Importati ' + n + ' eventi da ' + (fs.length > 1 ? fs.length + ' file' : fs[0].name) : 'Nessun evento trovato.');
     });
   } }) as HTMLInputElement;
   const esporta = () => {
