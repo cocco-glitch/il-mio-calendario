@@ -1,20 +1,33 @@
 /* Il mio calendario — stile. Mobile-first (iPhone verticale), poi PC.
-   I colori sono variabili: la Fase 4 (editor tema) le cambierà da Impostazioni. */
+   I colori sono variabili: la Fase 4 (editor tema) le cambierà da Impostazioni.
+   Redesign 27/11/2026 (blocco 1, docs/scouting/2026-11-27-redesign-interfaccia.md): direzione «neutra e moderna» scelta
+   dall'utente — grigi neutri, un solo accento (verde petrolio, modificabile in Aspetto), Atkinson Hyperlegible Next locale,
+   scala tipografica 1,25 (13·16·20·25·31), durate 100–300 ms (NN/g), raggio per gerarchia. */
+@font-face { font-family: "Atkinson Next"; font-style: normal; font-weight: 400; font-display: swap; src: url(font/atkinson-hyperlegible-next-latin-400-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Atkinson Next"; font-style: normal; font-weight: 700; font-display: swap; src: url(font/atkinson-hyperlegible-next-latin-700-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 :root {
-  --accento: #6c8cff;
+  --accento: #0f6e78;
+  --su-accento: #fff;                /* redesign: testo sopra l'accento, ≥ 4,5:1 (lo calcola applicaTema) */
+  --font-base: "Atkinson Next", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --t-1: 13px; --t-2: 16px; --t-3: 20px; --t-4: 25px; --t-5: 31px;     /* scala 1,25 */
+  --dur-1: 100ms; --dur-2: 200ms; --dur-3: 300ms;                        /* feedback · cambio stato · cambio schermata */
+  --curva: cubic-bezier(.2, .8, .2, 1); --curva-esce: cubic-bezier(.4, 0, 1, 1);
+  --r-s: 8px; --r-m: 12px; --r-l: 20px;                                   /* controlli · campi · contenitori */
   --accento-testo: var(--accento);   /* v0.56.2: lo calcola applicaTema() per il contrasto AA */
   --raggio: 14px;
   /* v0.57 (BP6): scala tipografica (token). --fs-xs/--fw-xs = coppia già usata in Oggi: il Mese non crea istanze di font nuove (−65 ms al primo disegno) */
   --fs-xs: 10px; --fw-xs: 600; --fs-s: 12px; --fs-m: 13px; --fs-l: 16px;
-  --bg: #f4f5f8; --sup: #ffffff; --sup2: #eceef3; --linea: #dde0e8;
-  --testo: #171a21; --tenue: #636b7a; --rosso: #d43c5c;
-  --ombra: 0 1px 2px rgba(20, 24, 40, .06), 0 4px 16px rgba(20, 24, 40, .06);
+  --bg: #f5f5f4; --sup: #ffffff; --sup2: #ededeb; --linea: #dededa;
+  --testo: #18191c; --tenue: #5c6069; --rosso: #c4302b;
+  --ombra: 0 1px 2px rgba(24, 25, 28, .05), 0 6px 20px -8px rgba(24, 25, 28, .10);
   --tab-h: 58px;
   color-scheme: light;
 }
 :root[data-tema="scuro"] {
-  --bg: #0e1014; --sup: #171a21; --sup2: #20242d; --linea: #2b303b;
-  --testo: #e9ebf0; --tenue: #949bab; --rosso: #ff6b88;
+  --bg: #111214; --sup: #1a1b1e; --sup2: #24262a; --linea: #2f3136;
+  --testo: #ecedef; --tenue: #a3a7ae; --rosso: #ff7b72;
   --ombra: 0 1px 2px rgba(0, 0, 0, .3);
   color-scheme: dark;
 }
@@ -22,7 +35,7 @@
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--testo);
-  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font: 16px/1.45 var(--font-base);
   -webkit-text-size-adjust: 100%; overscroll-behavior: none;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -41,7 +54,7 @@ button { background: none; border: 0; padding: 0; cursor: pointer; text-align: i
   grid-area: testa; display: flex; align-items: center; justify-content: space-between;
   padding: calc(env(safe-area-inset-top) + 10px) 16px 6px;
 }
-.testata h1 { font-size: 28px; font-weight: 750; letter-spacing: -.02em; margin: 0; }
+.testata h1 { font-size: var(--t-5); font-weight: 700; letter-spacing: -.01em; margin: 0; }
 .testata-azioni { display: flex; gap: 4px; }
 main { grid-area: main; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 0; }
 .pagina { padding: 6px 14px 96px; max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
@@ -60,14 +73,14 @@ main { grid-area: main; overflow-y: auto; -webkit-overflow-scrolling: touch; min
 
 .fab {
   position: fixed; right: 16px; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 14px); z-index: 5;
-  width: 56px; height: 56px; border-radius: 50%; background: var(--accento); color: #fff;
+  width: 56px; height: 56px; border-radius: 50%; background: var(--accento); color: var(--su-accento);
   display: grid; place-items: center; box-shadow: 0 6px 20px rgba(0, 0, 0, .28);
 }
 .fab:active { transform: scale(.94); }
 
 /* ---------- Elementi base ---------- */
 .card { background: var(--sup); border-radius: var(--raggio); padding: 12px 14px; box-shadow: var(--ombra); display: flex; flex-direction: column; gap: 2px; }
-.card-titolo { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--tenue); margin: 0 0 4px; }
+.card-titolo { font-size: var(--fs-m); font-weight: 700; color: var(--tenue); margin: 0 0 4px; }
 .card-titolo.scaduto, .scaduto { color: var(--rosso); }
 .riga-tra { display: flex; justify-content: space-between; align-items: center; text-transform: none; letter-spacing: 0; font-size: 15px; color: var(--testo); }
 .vuoto { color: var(--tenue); padding: 10px 0; font-size: 15px; }
@@ -75,7 +88,7 @@ main { grid-area: main; overflow-y: auto; -webkit-overflow-scrolling: touch; min
 .btn-ico:active { background: var(--sup2); }
 .btn-testo { color: var(--accento-testo); font-weight: 600; padding: 10px 6px; min-height: 44px; }
 .btn-testo.forte { font-weight: 750; }
-.btn { background: var(--accento); color: #fff; font-weight: 650; border-radius: 12px; padding: 12px 16px; min-height: 46px; text-align: center; }
+.btn { background: var(--accento); color: var(--su-accento); font-weight: 700; border-radius: var(--r-m); padding: 12px 16px; min-height: 46px; text-align: center; }
 .btn.neutro { background: var(--sup2); color: var(--testo); }
 .btn.pericolo { background: transparent; color: var(--rosso); border: 1px solid color-mix(in srgb, var(--rosso) 45%, transparent); }
 .bottoni { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; } .bottoni .btn { flex: 1; }
@@ -124,7 +137,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .cal-nav { display: flex; align-items: center; }
 .cal-titolo { flex: 1; text-align: center; font-size: 18px; font-weight: 700; min-height: 44px; }
 .mese { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--linea); border-radius: var(--raggio); overflow: hidden; border: 1px solid var(--linea); }
-.mese-eti { background: var(--sup); text-align: center; font-size: var(--fs-xs); font-weight: var(--fw-xs); text-transform: uppercase; color: var(--tenue); padding: 6px 0; }
+.mese-eti { background: var(--sup); text-align: center; font-size: var(--fs-xs); font-weight: var(--fw-xs); color: var(--tenue); padding: 6px 0; }
 .mese-cella { background: var(--sup); min-height: 74px; padding: 3px 2px; display: flex; flex-direction: column; gap: 2px; align-items: stretch; position: relative; overflow: hidden; }
 .mese-cella.fuori { background: color-mix(in srgb, var(--sup) 55%, var(--bg)); } .mese-cella.fuori .mese-num { color: var(--tenue); }
 .mese-cella.sel { box-shadow: inset 0 0 0 2px var(--accento); }
@@ -140,7 +153,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .gr-testa, .gr-fascia, .gr-corpo { display: grid; }
 .gr-testa { border-bottom: 1px solid var(--linea); }
 .gr-giorno { display: flex; flex-direction: column; align-items: center; padding: 6px 0; min-height: 52px; }
-.gr-sett { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--tenue); }
+.gr-sett { font-size: 11px; font-weight: 700; color: var(--tenue); }
 .gr-num { width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; font-weight: 700; }
 .gr-giorno.oggi .gr-num { background: var(--accento); color: #fff; }
 .gr-fascia { border-bottom: 1px solid var(--linea); min-height: 26px; }
@@ -171,7 +184,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .agenda-giorno { display: flex; gap: 12px; background: var(--sup); border-radius: var(--raggio); padding: 10px 12px; box-shadow: var(--ombra); }
 .agenda-data { width: 54px; flex: none; display: flex; flex-direction: column; align-items: center; align-self: flex-start; }
 .agenda-num { font-size: 24px; font-weight: 800; line-height: 1.1; } .agenda-giorno.oggi .agenda-num { color: var(--accento-testo); }
-.agenda-sett { font-size: 11px; color: var(--tenue); text-transform: uppercase; font-weight: 700; white-space: nowrap; }
+.agenda-sett { font-size: 11px; color: var(--tenue); font-weight: 700; white-space: nowrap; }
 .agenda-voci { flex: 1; min-width: 0; }
 .giorno-sel { margin: 12px 0 96px; }
 
@@ -192,7 +205,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accento); 
 .titolo-grande { font-size: 20px; font-weight: 700; width: 100%; background: var(--sup) !important; padding: 13px 14px !important; }
 .gruppo { background: var(--sup); border-radius: var(--raggio); padding: 6px 14px; display: flex; flex-direction: column; }
 .gruppo.tenue { padding: 12px 14px; font-size: 14px; }
-.gruppo-titolo { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--tenue); padding: 6px 0 4px; display: flex; justify-content: space-between; align-items: center; }
+.gruppo-titolo { font-size: 13px; font-weight: 700;  color: var(--tenue); padding: 6px 0 4px; display: flex; justify-content: space-between; align-items: center; }
 .gruppo > textarea, .gruppo > select, .gruppo > input, .gruppo > .chips { margin: 4px 0 8px; }
 .gruppo > select, .gruppo > input[type=text] { width: 100%; }
 .riga { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; border-top: 1px solid var(--linea); }
@@ -297,7 +310,7 @@ body:has(.visore) #avvisi, body:has(.foglio-sfondo) #avvisi { bottom: calc(env(s
 .voce-lista.scelto .voce-titolo::before { content: '✓ '; color: var(--accento-testo); }
 
 /* ---------- Fase 4: personalizzazione ---------- */
-body { font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif); }
+body { font-family: var(--font, var(--font-base)); }
 #app { zoom: var(--scala, 1); height: calc(100dvh / var(--scala, 1)); }
 :root[data-densita="compatta"] .voce-lista { min-height: 38px; padding: 4px 0; }
 :root[data-densita="compatta"] .card { padding: 8px 12px; } :root[data-densita="compatta"] .pagina { gap: 8px; }
@@ -332,7 +345,7 @@ body:has(#timer-barra) .pagina:not(.cal) { padding-bottom: 160px; }
 .grafico .pila { flex: 1; width: 100%; display: flex; flex-direction: column-reverse; background: var(--sup2); border-radius: 4px; overflow: hidden; }
 .grafico span { font-size: var(--fs-xs); color: var(--tenue); font-variant-numeric: tabular-nums; }
 .esame-giorni { width: 52px; flex: none; text-align: center; font-size: 24px; font-weight: 800; color: var(--accento-testo); line-height: 1; display: flex; flex-direction: column; }
-.esame-giorni small { font-size: var(--fs-xs); color: var(--tenue); font-weight: 700; text-transform: uppercase; }
+.esame-giorni small { font-size: var(--fs-xs); color: var(--tenue); font-weight: 700; }
 .voce-lista.passato { opacity: .55; }
 
 .gr-ev { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
@@ -502,14 +515,14 @@ main.entra .card:nth-child(2) { animation-delay: .03s; } main.entra .card:nth-ch
 /* v0.22 Quiz nativo (Quiz Studio) */
 .qz { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 16px 60px; }
 .qz-testa, .qz-app { max-width: 680px; margin: 0 auto; }
-.qz-occhiello { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--accento-testo); font-weight: 650; }
+.qz-occhiello { font-size: 12px; letter-spacing: .06em; color: var(--accento-testo); font-weight: 650; }
 .qz-h1 { font-size: 24px; line-height: 1.15; margin: 4px 0 12px; }
 .qz-metro { display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: 3px; }
 .qz-metro span { height: 8px; border-radius: 2px; background: var(--linea); }
 .qz-metro .ora { background: var(--accento); } .qz-metro .ok { background: #2fa866; } .qz-metro .ko { background: var(--rosso); }
 .qz-stat { display: flex; justify-content: space-between; font-size: 13px; color: var(--tenue); margin: 8px 0; font-variant-numeric: tabular-nums; }
 .qz-carta { background: var(--sup); border: 1px solid var(--linea); border-radius: var(--raggio); padding: 16px; display: grid; gap: 14px; box-shadow: var(--ombra); }
-.qz-qtesta { display: flex; gap: 10px; align-items: center; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--tenue); }
+.qz-qtesta { display: flex; gap: 10px; align-items: center; font-size: 12px;  color: var(--tenue); }
 .qz-liv { padding: 4px 9px; border-radius: 99px; border: 1px solid var(--linea); color: var(--testo); }
 .qz-liv.lv-Applicativo { border-color: var(--accento); color: var(--accento-testo); } .qz-liv.lv-Trabocchetto { border-color: #d9921a; color: #d9921a; }
 .qz-liv.lv-Problema { border-color: #2fa866; color: #2fa866; } .qz-liv.lv-Completamento { background: var(--accento); border-color: var(--accento); color: #fff; }
@@ -521,13 +534,13 @@ main.entra .card:nth-child(2) { animation-delay: .03s; } main.entra .card:nth-ch
 .qz-opz-b.ok { border-color: #2fa866; background: color-mix(in srgb, #2fa866 16%, var(--sup)); } .qz-opz-b.ok .qz-lett { background: #2fa866; color: #fff; border-color: #2fa866; }
 .qz-opz-b.ko { border-color: var(--rosso); background: color-mix(in srgb, var(--rosso) 14%, var(--sup)); } .qz-opz-b.ko .qz-lett { background: var(--rosso); color: #fff; border-color: var(--rosso); }
 .qz-opz-b.spento { opacity: .6; } .qz-opz-b.escluso { opacity: .35; text-decoration: line-through; }
-.qz-tag { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-top: 3px; }
+.qz-tag { display: block; font-size: 11px; font-weight: 700;  margin-top: 3px; }
 .qz-fill { display: grid; gap: 8px; } .qz-fill input { font-size: 17px; padding: 12px; }
 .qz-fill input.ok { border-color: #2fa866; } .qz-fill input.ko { border-color: var(--rosso); }
 .qz-box { background: var(--sup2); border-radius: 11px; padding: 12px 14px; display: grid; gap: 8px; }
 .qz-box p, .qz-box blockquote { margin: 0; overflow-wrap: anywhere; } .qz-box blockquote { border-left: 3px solid var(--accento); padding-left: 10px; font-style: italic; }
 .qz-chi { display: block; font-style: normal; font-size: 12px; color: var(--tenue); margin-top: 4px; }
-.qz-etich { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); }
+.qz-etich { font-size: 12px; font-weight: 700;  color: var(--tenue); }
 .qz-verdetto { font-weight: 700; } .qz-verdetto.ok { color: #2fa866; } .qz-verdetto.ko { color: var(--rosso); }
 .qz-passi { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 .qz-perche { border-top: 1px solid var(--linea); padding-top: 8px; }
@@ -541,8 +554,8 @@ details.qz-altre { background: var(--sup2); border-radius: 11px; padding: 10px 1
 .qz-punti { font-size: 60px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; } .qz-punti small { font-size: .45em; color: var(--tenue); }
 .qz-livelli { display: grid; gap: 8px; } .qz-lvriga { display: grid; grid-template-columns: 110px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; }
 .qz-barra { height: 8px; border-radius: 4px; background: var(--linea); overflow: hidden; } .qz-barra span { display: block; height: 100%; background: var(--accento); }
-.qz h3 { margin: 6px 0 0; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); }
-.qz-mod { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #d9921a; align-self: center; }
+.qz h3 { margin: 6px 0 0; font-size: 14px;  color: var(--tenue); }
+.qz-mod { font-size: 11px; font-weight: 700;  color: #d9921a; align-self: center; }
 .ed-opz { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--linea); }
 .ed-giusta input { border-color: #2fa866; box-shadow: inset 3px 0 0 #2fa866; }
 body:has(.visore) .foglio-sfondo { z-index: 27; }
@@ -621,29 +634,30 @@ a.ap-link { color: var(--accento-testo); font-weight: 600; text-decoration: unde
 /* ==========================================================
    v0.34 — REBRANDING «Mix» (A impaginazione · B aggiungi in alto · C dati in tessere)
    Palette: blu clinico, grigi bluastri, materie Bio verde · Chi ambra · Fis viola.
+   Redesign 27/11/2026 (blocco 1): grigi neutri e accento verde petrolio; le materie restano (sono informazione).
    ========================================================== */
 :root {
-  --bg: #f5f7fa; --sup: #ffffff; --sup2: #eef1f5; --linea: #e3e8ef;
-  --testo: #0f1b2d; --tenue: #4a5668; --rosso: #c2410c;
-  --ombra: 0 1px 2px rgba(15, 27, 45, .05), 0 6px 20px rgba(15, 27, 45, .05);
-  --ombra-forte: 0 1px 2px rgba(15, 27, 45, .06), 0 12px 32px rgba(15, 27, 45, .08);
+  --bg: #f5f5f4; --sup: #ffffff; --sup2: #ededeb; --linea: #dededa;
+  --testo: #18191c; --tenue: #5c6069; --rosso: #c4302b;
+  --ombra: 0 1px 2px rgba(24, 25, 28, .05), 0 6px 20px -8px rgba(24, 25, 28, .10);
+  --ombra-forte: 0 1px 2px rgba(24, 25, 28, .06), 0 14px 34px -10px rgba(24, 25, 28, .16);
   --bio: #0e9f6e; --chi: #d97706; --fis: #6d5bd0;
   --premi: cubic-bezier(.2, .8, .2, 1);
 }
 :root[data-tema="scuro"] {
-  --bg: #0b0d12; --sup: #151821; --sup2: #1e222d; --linea: #272c38;
-  --testo: #eceef2; --tenue: #9aa1ae; --rosso: #fb923c;
+  --bg: #111214; --sup: #1a1b1e; --sup2: #24262a; --linea: #2f3136;
+  --testo: #ecedef; --tenue: #a3a7ae; --rosso: #ff7b72;
   --ombra: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 1px 2px rgba(0, 0, 0, .4);
   --ombra-forte: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 10px 30px rgba(0, 0, 0, .45);
   --bio: #34d399; --chi: #fbbf24; --fis: #a78bfa;
 }
-body { font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, sans-serif); }
-.testata h1 { font-size: 30px; font-weight: 720; letter-spacing: -.025em; }
+body { font-family: var(--font, var(--font-base)); }
+.testata h1 { font-size: var(--t-5); font-weight: 700; letter-spacing: -.015em; }
 .testata-tit { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
 .indietro { display: inline-flex; align-items: center; gap: 2px; color: var(--accento-testo); font-weight: 600; font-size: 15px; min-height: 32px; margin-left: -6px; }
 .card { border-radius: max(var(--raggio), 18px); padding: 16px; box-shadow: var(--ombra); }
 .card-titolo { font-size: 15px; font-weight: 700; text-transform: none; letter-spacing: -.01em; color: var(--testo); margin-bottom: 6px; }
-.oggi-testa { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); padding: 0 2px; margin-top: -6px; }
+.oggi-testa { font-size: 13px; font-weight: 650;  color: var(--tenue); padding: 0 2px; margin-top: -6px; }
 .rapido { border-radius: 14px; min-height: 48px; border: 1px solid var(--linea); box-shadow: none; }
 .btn { border-radius: 14px; font-weight: 620; letter-spacing: -.005em; }
 .chip { border-radius: 999px; }
@@ -673,7 +687,7 @@ body { font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text"
 .tessera-altro.viola .tessera-ico { background: color-mix(in srgb, var(--fis) 16%, transparent); color: var(--fis); }
 .tessera-tit { font-size: 16px; font-weight: 650; }
 .drive-mini { flex-direction: row; align-items: center; gap: 12px; text-align: left; }
-.gruppo-titolo.fuori { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); margin: 6px 4px -4px; }
+.gruppo-titolo.fuori { font-size: 12px; font-weight: 650;  color: var(--tenue); margin: 6px 4px -4px; }
 .lista-gruppi { padding: 0 0 0 16px; gap: 0; }
 .riga-gruppo { display: flex; align-items: center; gap: 12px; padding: 12px 16px 12px 0; min-height: 60px; border-top: 1px solid var(--linea); text-align: left; color: var(--testo); }
 .riga-gruppo:first-child { border-top: 0; }
@@ -708,15 +722,35 @@ main.entra > .pagina.sotto { animation: spinta .34s var(--dolce, var(--premi)); 
 @keyframes da-dx { from { opacity: 0; transform: translateX(28px); } }
 @keyframes da-sx { from { opacity: 0; transform: translateX(-28px); } }
 @keyframes spinta { from { opacity: .4; transform: translateX(60px); } }
-/* le schede di una pagina arrivano in cascata */
-main.entra > .pagina > * { animation: cascata .38s var(--dolce, var(--premi)) both; }
-main.entra > .pagina > *:nth-child(2) { animation-delay: .03s; } main.entra > .pagina > *:nth-child(3) { animation-delay: .06s; }
-main.entra > .pagina > *:nth-child(4) { animation-delay: .09s; } main.entra > .pagina > *:nth-child(5) { animation-delay: .12s; }
-main.entra > .pagina > *:nth-child(n+6) { animation-delay: .15s; }
-@keyframes cascata { from { opacity: 0; transform: translateY(8px); } }
+/* Redesign 27/11 (blocco 2): tolta la «cascata» su ogni sezione (effetto generico, ritardava il contenuto fino a 150 ms).
+   Cambio di sezione: View Transitions native, solo la pagina si muove (barra e testata ferme), 200 ms in uscita e 300 ms in entrata. */
+@keyframes cascata { from { opacity: 0; transform: translateY(8px); } }   /* resta per il menu lungo */
+main { view-transition-name: pagina; }
+:root[data-vt] main.entra > .pagina { animation: none; }
+.tabbar { view-transition-name: barra; }
+::view-transition-old(pagina) { animation: vt-esce var(--dur-2) var(--curva-esce) both; }
+::view-transition-new(pagina) { animation: vt-entra var(--dur-3) var(--curva) both; }
+:root[data-verso="indietro"]::view-transition-old(pagina) { animation-name: vt-esce-indietro; }
+:root[data-verso="indietro"]::view-transition-new(pagina) { animation-name: vt-entra-indietro; }
+@keyframes vt-esce { to { opacity: 0; transform: translateX(-24px); } }
+@keyframes vt-entra { from { opacity: 0; transform: translateX(24px); } }
+@keyframes vt-esce-indietro { to { opacity: 0; transform: translateX(24px); } }
+@keyframes vt-entra-indietro { from { opacity: 0; transform: translateX(-24px); } }
+/* onda dal punto toccato (posizione da --ox/--oy, impostate al pointerdown) */
+.btn, .chip, .piu-testa, .tabbar button, .btn-testo { position: relative; isolation: isolate; }
+.btn, .chip, .piu-testa, .fab { overflow: hidden; }
+.onda::after { content: ""; position: absolute; left: var(--ox, 50%); top: var(--oy, 50%); width: 14px; height: 14px; margin: -7px; border-radius: 50%;
+  background: currentColor; opacity: .22; pointer-events: none; z-index: -1; animation: onda var(--dur-3) var(--curva) forwards; }
+.tabbar button.onda::after { opacity: .12; }
+@keyframes onda { to { transform: scale(26); opacity: 0; } }
+@media (hover: hover) {
+  .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--accento) 55%, transparent); }
+  .chip:hover { background: color-mix(in srgb, var(--accento) 12%, var(--sup2)); }
+}
+@media (prefers-reduced-motion: reduce) { ::view-transition-old(pagina), ::view-transition-new(pagina) { animation: none; } .onda::after { display: none; } }
 :root[data-animazioni="no"] *, :root[data-animazioni="no"] *::before { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { button:active, .tessera:active { transform: none !important; } }
-.piu-testa { background: var(--accento); color: #fff; border-radius: 50%; width: 40px; height: 40px; margin-left: 4px; box-shadow: 0 4px 12px color-mix(in srgb, var(--accento) 35%, transparent); }
+.piu-testa { background: var(--accento); color: var(--su-accento); border-radius: 50%; width: 40px; height: 40px; margin-left: 4px; box-shadow: 0 4px 12px color-mix(in srgb, var(--accento) 35%, transparent); }
 
 /* v0.35: note a mano — zoom e barra fluttuante in basso (come Note di iOS) */
 .mano-foglio { overflow: auto hidden; touch-action: pan-x pan-y; overscroll-behavior-x: contain; }
@@ -735,7 +769,7 @@ main.entra > .pagina > *:nth-child(n+6) { animation-delay: .15s; }
 .lungo-sfondo.esce { opacity: 0; transition: opacity .15s; }
 .lungo-menu { position: fixed; background: color-mix(in srgb, var(--sup) 92%, transparent); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-radius: 16px; box-shadow: 0 16px 48px rgba(10, 14, 24, .28), 0 0 0 1px color-mix(in srgb, var(--linea) 70%, transparent); overflow: hidden; animation: lungo-apre .26s var(--molla, cubic-bezier(.2, .9, .3, 1.12)); }
 @keyframes lungo-apre { from { transform: scale(.7); opacity: 0; } }
-.lungo-tit { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--tenue); padding: 10px 14px 6px; }
+.lungo-tit { font-size: var(--fs-m); font-weight: 700; color: var(--tenue); padding: 10px 14px 6px; }
 .lungo-voce { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 14px; min-height: 46px; border-top: 1px solid var(--linea); text-align: left; animation: cascata .22s both; }
 .lungo-voce:first-of-type { border-top: 0; } .lungo-tit + .lungo-voce { border-top: 1px solid var(--linea); }
 .lungo-voce:active { background: var(--sup2); transform: none; }
@@ -934,3 +968,53 @@ details.personalizza > summary { cursor: pointer; padding: 10px 4px; font-weight
 .pad-scheda { border-top: 1px solid var(--linea); padding: 6px 0; }
 .pad-scheda > summary { cursor: pointer; min-height: 36px; line-height: 1.4; }
 .pad-concetti { margin: 6px 0; padding-left: 4px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+/* Redesign blocco 3 (27/11): sfondo a puntini. Fermo dove si studia; fuori dallo studio i puntini vicini al tocco si accendono
+   nell'accento e svaniscono (nessun movimento continuo, nessun rAF). --sx/--sy dal pointerdown, data-sfondo da disegna(). */
+@property --raggio { syntax: '<length>'; inherits: false; initial-value: 0px; }
+:root { --puntino: color-mix(in srgb, var(--testo) 11%, transparent); }
+:root[data-tema="scuro"] { --puntino: color-mix(in srgb, var(--testo) 9%, transparent); }
+:root[data-sfondo="fermo"] { --puntino: color-mix(in srgb, var(--testo) 5%, transparent); }
+body::before, body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(circle, var(--puntino) 1px, transparent 1.5px) 0 0 / 22px 22px; }
+body::after { background-image: radial-gradient(circle, var(--accento) 1.6px, transparent 2.1px); opacity: 0;
+  -webkit-mask: radial-gradient(circle at var(--sx, 50%) var(--sy, 50%), black calc(var(--raggio) * .55), transparent var(--raggio));
+  mask: radial-gradient(circle at var(--sx, 50%) var(--sy, 50%), black calc(var(--raggio) * .55), transparent var(--raggio)); }
+:root[data-sfondo="vivo"].tocco body::after { animation: sboccia 650ms var(--curva, ease-out); }
+@keyframes sboccia { 0% { opacity: .85; --raggio: 24px; } 100% { opacity: 0; --raggio: 170px; } }
+@media (prefers-reduced-motion: reduce) { body::after { display: none; } }
+:root[data-animazioni="no"] body::after { display: none; }
+/* Redesign blocco 4 (27/11): Oggi con una sola card in risalto; esami in una riga sotto la data; ritardo in una riga con l'elenco a richiesta. */
+.oggi-esami { display: flex; flex-direction: column; gap: 2px; padding: 0 2px; margin-top: -8px; font-size: var(--t-2); }
+.oggi-esame { display: flex; gap: 8px; align-items: baseline; min-height: 32px; text-align: left; color: var(--testo); }
+.oggi-esame:first-child b { color: var(--accento-testo); }
+.oggi-esame span { color: var(--tenue); }
+.oggi-modo { font-size: var(--t-1); display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; color: var(--tenue); }
+.oggi-modo .btn-testo { min-height: 32px; }
+.adesso .bottoni { flex-wrap: nowrap; align-items: center; }
+.adesso .btn.studia-ora { flex: 1; min-width: 0; font-size: var(--t-3); }
+.adesso .btn-testo { flex: none; }
+.tempo-riga { margin: 0 0 4px; }
+.indicatore-riga .indicatore { flex: 0 1 auto; }
+.ritardo-quali { order: 3; flex-basis: 100%; font-size: var(--t-1); }
+.ritardo-quali summary { cursor: pointer; min-height: 32px; display: inline-flex; align-items: center; color: var(--accento-testo); font-weight: 600; }
+.ritardo-quali p { margin: 2px 0 4px; color: var(--tenue); line-height: 1.5; }
+.titolo-step { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tendina-btn.selettore-step { display: inline-flex; height: auto; min-height: 40px; padding: 0 14px; white-space: nowrap; font-weight: 700; font-size: inherit; }
+/* Redesign blocco 5 (27/11): fumetto degli aiuti, ancorato al pulsante (--freccia = punta verso il centro dell'àncora). */
+.aiuti-btn { font-weight: 700; font-size: var(--t-3); color: var(--accento-testo); }
+.aiuto { position: fixed; z-index: 40; width: min(300px, calc(100vw - 16px)); padding: 12px 14px; border-radius: var(--r-m);
+  background: var(--testo); color: var(--bg); box-shadow: 0 10px 30px -10px rgba(0, 0, 0, .45); animation: aiuto-entra var(--dur-2) var(--curva); }
+.aiuto p { margin: 0 0 8px; font-size: var(--t-2); line-height: 1.4; }
+.aiuto::before { content: ""; position: absolute; left: calc(var(--freccia, 50%) - 7px); width: 14px; height: 14px; background: inherit; transform: rotate(45deg); border-radius: 2px; }
+.aiuto.sotto::before { top: -6px; } .aiuto.sopra::before { bottom: -6px; }
+.aiuto-piede { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.aiuto-piede .tenue { color: inherit; opacity: .75; margin-right: auto; }
+.aiuto .btn { background: var(--accento); color: var(--su-accento); }
+@keyframes aiuto-entra { from { opacity: 0; transform: translateY(4px); } }
+/* Redesign blocco 6 (27/11): rifinitura. Icone di Altro nel tono dell'accento; «Quali» accanto alla pillola; aree di tocco da 44 px. */
+.gruppo-ico { background: color-mix(in srgb, var(--accento) 14%, var(--sup2)); color: var(--accento-testo); }
+.voce-sotto .sync-pallino { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.ritardo-quali { order: 0; flex-basis: auto; }
+.ritardo-quali[open] { order: 3; flex-basis: 100%; }
+.ritardo-quali summary, .indicatore-riga .ripianifica, .oggi-modo .btn-testo { min-height: 44px; }
+.cq-studio .ico { vertical-align: -3px; margin-right: 4px; }

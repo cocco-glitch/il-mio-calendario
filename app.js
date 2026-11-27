@@ -7507,9 +7507,8 @@ function minutiStudio(da, a, m) {
 }
 function durata(min) { return min >= 60 ? Math.floor(min / 60) + ' h ' + (min % 60 ? pad2(min % 60) + ' min' : '') : min + ' min'; }
 function widgetTimer() {
-    const g = oggi(), oggiMin = minutiStudio(g, g), sett = minutiStudio(lunedi(g), g);
-    const st = Studio.vociDelGiorno(g).filter(x => !x.v.speciale);
-    return scheda('Timer e tempo di studio', h('div.numeri', null, numero(durata(oggiMin), 'oggi'), numero(durata(sett), 'questa settimana')), h('div.chips', { style: { marginTop: '8px' } }, st.map(x => h('button.chip', { style: { borderLeft: '4px solid ' + coloreChiave(x.v.k) }, onclick: () => Timer.avvia({ m: materiaDi(x.v.k), k: x.v.k, titolo: Studio.etichetta(x.v.k) }) }, '▶ ' + Studio.etichetta(x.v.k))), h('button.chip', { onclick: () => Timer.avvia({ titolo: 'Studio libero' }) }, '▶ Studio libero')), h('div.tenue.piccolo', null, 'Sessioni da ' + Timer.durate().studio + ' min + pausa ' + Timer.durate().pausa + ' (si cambia in Altro → Studio).'));
+    const g = oggi();
+    return scheda('Tempo di studio', h('p.tempo-riga', null, 'Oggi ', h('b', null, durata(minutiStudio(g, g))), ', questa settimana ', h('b', null, durata(minutiStudio(lunedi(g), g)))), h('div.tenue.piccolo', null, 'Sessioni da ' + Timer.durate().studio + ' min + pausa ' + Timer.durate().pausa + ' (si cambia in Altro → Studio).'));
 }
 function sezionePadronanza() {
     const el = h('section.card.pad-sezione', { 'aria-live': 'polite' });
@@ -7553,16 +7552,17 @@ function vistaEsami() {
     }))
         : vuoto('Nessun esame. Aggiungi le date degli appelli: compaiono nel calendario e in Oggi con il conto alla rovescia.'), h('button.btn', { onclick: () => editorEsame() }, '+ Aggiungi esame / appello'));
 }
-function widgetEsami() {
-    const prossimi = Stato.tutti('esame').filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 2);
-    if (!prossimi.length)
+function rigaEsami() {
+    const modo = modalitaEsame(), nascosti = (imp().widgetNascosti || []).includes('esami');
+    const prossimi = nascosti ? [] : esamiNoti().filter(e => giorniA(e.data) >= 0).sort((a, b) => a.data < b.data ? -1 : 1).slice(0, 2);
+    if (!prossimi.length && modo === null)
         return null;
     const apri = () => { UI.studioVista = 'esami'; UI.studioSub = null; vai('studio'); };
-    const rit = Studio.pkPiani().length ? Studio.inRitardo().length : 0;
-    return h('div.tessere', { 'aria-label': 'Prossimi esami' }, prossimi.map((e, i) => {
+    const quando = (d) => d === 0 ? 'oggi' : d === 1 ? 'domani' : 'tra ' + d + ' giorni';
+    return h('div.oggi-esami', null, prossimi.map(e => {
         const d = giorniA(e.data);
-        return lungo(h('button.tessera' + (i === 0 ? '.primo' : ''), { onclick: apri, title: e.nome + ' · ' + dataLunga(daYmd(e.data)) }, h('span.tessera-num', null, h('span.conta', null, String(d)), h('small', null, d === 1 ? ' giorno' : ' giorni')), h('span.tessera-eti', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')), h('span.tessera-sotto', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' }))), () => MenuLungo.esame(), e.nome);
-    }), rit ? h('button.tessera.ritardo', { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, h('span.tessera-num', null, h('span.conta', null, String(rit))), h('span.tessera-eti', null, rit === 1 ? 'step indietro' : 'step indietro'), h('span.tessera-sotto', null, 'Vedi il piano')) : null);
+        return lungo(h('button.oggi-esame', { onclick: apri }, h('b', null, e.nome.replace(/ semestre filtro$/i, '').replace(/^primo /i, '1° ').replace(/^secondo /i, '2° ').replace(/^terzo /i, '3° ')), h('span', null, fmt(daYmd(e.data), { weekday: 'short', day: 'numeric', month: 'short' }) + ', ' + quando(d))), () => MenuLungo.esame(), e.nome);
+    }), modo !== null ? h('div.oggi-modo', { role: 'status' }, h('span', null, modo <= 3 ? 'Modalità esame: solo ripasso.' : 'Modalità esame: solo l’essenziale.'), h('button.btn-testo', { onclick: () => { const i = imp(); i.modoEsame = 'no'; Stato.salva(i); avviso('Modalità esame spenta: la riattivi da Altro › Aspetto.'); } }, 'Mostra tutto')) : null);
 }
 function editorEsame(es) {
     const e = es ? JSON.parse(JSON.stringify(es)) : { id: 'esame-' + uid(), type: 'esame', updatedAt: 0, nome: '', data: ymd(piuGiorni(oggi(), 30)) };
@@ -15998,6 +15998,12 @@ function caricaStrumentiQuiz() {
 function conStrumentiQuiz(fn) {
     caricaStrumentiQuiz().then(fn, (e) => avviso('⚠️ Strumenti quiz non disponibili: ' + e.message, 6000));
 }
+function conAiuti(fn, zitto = false) {
+    caricaChunk('aiuti.js', () => typeof Aiuti !== 'undefined').then(fn, (e) => { if (zitto)
+        console.warn('aiuti non caricati:', e.message);
+    else
+        avviso('⚠️ Suggerimenti non disponibili: ' + e.message); });
+}
 function conMotoreStudio(fn) {
     caricaMotoreStudio().then(fn, (e) => avviso('⚠️ Strumenti di studio non disponibili: ' + e.message, 6000));
 }
@@ -16393,7 +16399,7 @@ function widgetStudiaOra() {
         const prossima = s.voci.find(v => !v.fatto), fatte = s.voci.filter(v => v.fatto).length;
         return h('section.card', null, h('button.btn.studia-ora', { onclick: apriSessione }, '▶ Sessione in corso · ' + fatte + '/' + s.voci.length), prossima ? h('div.tenue.piccolo', { style: { marginTop: '6px' } }, 'Prossima: ' + prossima.titolo) : null);
     }
-    const e = prossimoEsame(), durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
+    const durata = h('span'), riassunto = h('div.tenue.piccolo', { style: { margin: '2px 0 8px' } }, '…');
     const inizia = () => conMotoreStudio(() => StudiaOraUI.studia());
     const btn = h('button.btn.studia-ora', { onclick: inizia }, '▶ Inizia');
     caricaMotoreStudio().then(() => setTimeout(() => {
@@ -16403,9 +16409,9 @@ function widgetStudiaOra() {
         riassunto.textContent = a.riassunto;
         durata.textContent = a.minuti ? ' · ' + a.minuti + ' min' : '';
         if (!a.minuti)
-            btn.textContent = '▶ Studio libero con timer';
+            btn.textContent = '▶ Studio libero';
     }, 0), (e) => { riassunto.textContent = '⚠️ ' + e.message; });
-    return h('section.card.adesso', null, h('div.adesso-testa', null, h('b', null, 'Adesso'), durata, e ? h('span.tenue.piccolo', null, ' · ' + (e.giorni === 0 ? 'esame oggi' : '−' + e.giorni + (e.giorni === 1 ? ' giorno' : ' giorni')) + ' a ' + e.nome + (e.stato ? ' · ' + e.stato : '')) : null), riassunto, h('div.bottoni', null, lungo(btn, () => [
+    return h('section.card.adesso', null, h('div.adesso-testa', null, h('b', null, 'Adesso'), durata), riassunto, h('div.bottoni', null, lungo(btn, () => [
         { t: 'Scegli quanto tempo hai', ic: 'cronometro', f: () => apriStudiaOra() },
         { t: 'Ripassa le flashcard', ic: 'carte', f: () => { UI.studioVista = 'carte'; UI.studioSub = null; vai('studio'); } },
         { t: 'Rivedi gli errori', ic: 'avvertenza', f: () => { UI.studioVista = 'errori'; UI.studioSub = null; vai('studio'); } },
@@ -17053,8 +17059,17 @@ function indicatoreStudio() {
     if (!Studio.pkPiani().length)
         return null;
     const r = Studio.inRitardo();
-    const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, h('span.pallino-stato'), r.length ? 'In ritardo di ' + r.length + ' step: ' + r.map(v => Studio.etichetta(v.k)).join(', ') : 'In pari con il piano');
-    return Ripianifica.inRitardo().length ? h('div.indicatore-riga', null, ind, h('button.btn-testo.ripianifica', { onclick: () => apriRipianifica() }, icona('ripeti', 16), 'Ripianifica')) : ind;
+    const ind = h('button.indicatore.' + (r.length ? 'ritardo' : 'pari'), { onclick: () => { UI.studioVista = 'piano'; vai('studio'); } }, h('span.pallino-stato'), r.length ? 'In ritardo di ' + r.length + ' step' : 'In pari con il piano');
+    const quali = r.length ? h('details.ritardo-quali', null, h('summary', null, 'Quali'), h('p.piccolo', null, r.map(v => Studio.etichetta(v.k)).join(', '))) : null;
+    const rip = Ripianifica.inRitardo().length ? h('button.btn-testo.ripianifica', { onclick: () => apriRipianifica() }, icona('ripeti', 16), 'Ripianifica') : null;
+    return rip || quali ? h('div.indicatore-riga', null, ind, quali, rip) : ind;
+}
+function selettoreStep(pks, pk) {
+    const nome = (p) => (p.proprio ? '★ ' : '') + p.titolo;
+    const b = tendina(nome(pk) + ' ▾', () => [...pks.map(p => ({ testo: nome(p), attiva: p.id === pk.id, azione: () => { UI.studioStep = p.id; disegna(); } })),
+        { testo: '+ Nuovo corso', azione: () => editorCorso() }], 'Cambia step o corso, ora ' + nome(pk));
+    b.classList.add('chip', 'selettore-step');
+    return b;
 }
 function vistaStudio() {
     const pks = Studio.pkStep(), piano = Studio.pkPiano();
@@ -17068,7 +17083,7 @@ function vistaStudio() {
     const gruppi = [['Ripassa', ['carte'], ['Flashcard']], ['Piano', ['piano'], ['Piano']], ['Corsi', ['schede', 'syllabus', 'tabelle', 'esami'], ['Schede', 'Syllabus', 'Tabelle', 'Esami']], ['Progressi', ['statistiche', 'errori'], ['Statistiche', 'Errori']]];
     const vai = (v) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
     const gr = gruppi.find(([, vv]) => vv.includes(UI.studioVista)) || gruppi[2];
-    const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, '🏗️ Centro di creazione'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CodaQuizUI.apri()), title: 'Genera quiz in micro-batch persistenti con il router AI' }, '⚙️ Genera quiz in app'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'), tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
+    const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])), h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, icona('ai', 16), 'Quiz'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, icona('tassello', 16), 'Centro di creazione'), h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CodaQuizUI.apri()), title: 'Genera quiz in micro-batch persistenti con il router AI' }, icona('ingranaggio', 16), 'Genera quiz in app'), h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, icona('carica', 16), 'Importa quiz da Drive'), tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
         { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
         { testo: '🏗️ Centro di creazione', azione: () => conStrumentiQuiz(() => CentroUI.apri()) },
         { testo: '⚙️ Genera quiz in app', azione: () => conStrumentiQuiz(() => CodaQuizUI.apri()) },
@@ -17103,7 +17118,7 @@ function vistaStudio() {
     if (!pk)
         return h('div.pagina', null, seg, primiPassi());
     const tutte = pk.materie.flatMap(m => m.sottostep.flatMap(Studio.schedeDi)), T = Studio.numeri(tutte);
-    return h('div.pagina', null, seg, indicatoreStudio(), h('div.chips', null, pks.map(p => h('button.chip' + (p.id === pk.id ? '.attivo' : ''), { onclick: () => { UI.studioStep = p.id; disegna(); } }, (p.proprio ? '★ ' : '') + p.titolo)), h('button.chip', { onclick: () => editorCorso() }, '+ Nuovo corso')), pk.proprio ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => editorCorso(pk) }, 'Modifica corso'), h('button.btn.neutro', { onclick: () => editorSottostep(pk) }, '+ Aggiungi argomento')) : null, pk.descrizione ? h('div.tenue.piccolo', null, pk.descrizione) : null, h('section.card', null, h('h2.card-titolo', null, pk.titolo + ' · totale'), h('div.numeri', null, numero(T.Pf + '/' + T.P, 'prioritarie'), numero(T.Rf + '/' + T.R, 'raffinamento'), numero(T.pagLette.size + '/' + T.pagT.size, 'pagine lette')), barra(T.Pf, T.P)), pk.materie.map(m => {
+    return h('div.pagina', null, seg, indicatoreStudio(), pk.proprio ? h('div.bottoni', null, h('button.btn.neutro', { onclick: () => editorCorso(pk) }, 'Modifica corso'), h('button.btn.neutro', { onclick: () => editorSottostep(pk) }, '+ Aggiungi argomento')) : null, pk.descrizione ? h('div.tenue.piccolo', null, pk.descrizione) : null, h('section.card', null, h('h2.card-titolo.titolo-step', null, selettoreStep(pks, pk), h('span.tenue', null, 'totale')), h('div.numeri', null, numero(T.Pf + '/' + T.P, 'prioritarie'), numero(T.Rf + '/' + T.R, 'raffinamento'), numero(T.pagLette.size + '/' + T.pagT.size, 'pagine lette')), barra(T.Pf, T.P)), pk.materie.map(m => {
         const N = Studio.numeri(m.sottostep.flatMap(Studio.schedeDi));
         return h('section.card', null, h('h2.card-titolo', { style: { color: coloreMateria(m.m) } }, formaMateria(m.m) + ' ' + m.nome + (m.libro ? ' · ' + m.libro : '')), m.sottostep.map(s => {
             const n = Studio.numeri(Studio.schedeDi(s));
@@ -17807,12 +17822,6 @@ function ordineWidget() {
     return ord.filter(w => !(i.widgetNascosti || []).includes(w) && (!esame || !SUPERFLUI_ESAME.includes(w)));
 }
 const SUPERFLUI_ESAME = ['nota', 'tabelle', 'domani'];
-function bannerModoEsame() {
-    const n = modalitaEsame();
-    if (n === null)
-        return null;
-    return h('div.modo-esame', { role: 'status' }, '🎯 Modalità esame · ' + (n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' giorni') + (n <= 3 ? ' · solo ripasso' : ''), h('button.btn-testo', { onclick: () => { const i = imp(); i.modoEsame = 'no'; Stato.salva(i); avviso('Modalità esame spenta: la riattivi da Altro › Aspetto.'); } }, 'Mostra tutto'));
-}
 let timerNotaGiorno = 0;
 function vistaOggi() {
     const g = oggi();
@@ -17840,7 +17849,7 @@ function vistaOggi() {
         && !['evento', 'task', 'nota', 'appunto', 'mazzo'].some(t => Stato.tutti(t).some(r => !r.deleted));
     if (vuotoTotale)
         return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), iniziaIn3Passi(), occ.length ? scheda('Impegni di oggi', occ.map(o => rigaOcc(o, g))) : null, tasks.length ? scheda('Promemoria', tasks.map(rigaTask)) : null, occDomani.length ? scheda('Domani', occDomani.map(o => rigaOcc(o, domani))) : null);
-    return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), campoRapido(), senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null, bannerModoEsame(), ordineWidget().map(w => {
+    return h('div.pagina', null, h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))), rigaEsami(), campoRapido(), senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null, ordineWidget().map(w => {
         switch (w) {
             case 'impegni': return scheda('Impegni di oggi', occ.length ? occ.map(o => rigaOcc(o, g)) : vuoto('Nessun impegno. Scrivi sopra o tocca +.'));
             case 'promemoria': return scheda('Promemoria', tasks.length ? tasks.map(rigaTask) : vuoto('Niente in scadenza.'), rapido);
@@ -17857,7 +17866,7 @@ function vistaOggi() {
             case 'studiaora': return widgetStudiaOra();
             case 'ripassi': return widgetRipassa();
             case 'chiusura': return widgetChiusura();
-            case 'esami': return widgetEsami();
+            case 'esami': return null;
             case 'timer': return widgetTimer();
             case 'errori': return widgetErrori();
         }
@@ -18188,7 +18197,7 @@ function vistaAltro() {
     const nTask = Stato.tutti('task').filter(t => !t.fatto).length;
     const nNote = Stato.tutti('nota').filter(n => !Appunti.notaMigrata(n)).length;
     const tessera = (sch, ic, tit, sotto, cls) => h('button.tessera-altro.' + cls, { onclick: () => vai(sch) }, h('span.tessera-ico', null, icona(ic, 20)), h('span.tessera-tit', null, tit), h('span.tenue.piccolo', null, sotto));
-    return h('div.pagina', null, Aggiornamento.riga(), h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nessuna nota', 'viola')), h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } }, h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')), icona('dx', 18)), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)), icona('dx', 18)))), versione);
+    return h('div.pagina', null, Aggiornamento.riga(), h('div.tessere-altro', null, tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'), tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nessuna nota', 'viola')), h('div.gruppo-titolo.fuori', null, 'Impostazioni'), h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) => h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } }, h('span.gruppo-ico', { 'data-col': col }, icona(ic, 18)), h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, k === 'dati' && !Drive.collegato ? h('span.sync-pallino.' + ds.cls) : null, k === 'dati' && !Drive.collegato ? 'Google Drive non collegato' : sotto)), icona('dx', 18)))), versione);
 }
 const GRUPPI_ALTRO = [
     ['aspetto', 'Aspetto', 'Tema, colori, carattere, suoni e animazioni, layout', 'ingranaggio', '#0B5FD9'],
@@ -18208,7 +18217,7 @@ function sezioneSuoni(salva) {
         Tocco.clic(); })), riga('Volume', h('input', { type: 'range', min: '0.05', max: '1', step: '0.05', value: String(typeof i.volumeTap === 'number' ? i.volumeTap : 0.35), 'aria-label': 'Volume del tap',
         onchange: (e) => { salva({ volumeTap: +e.target.value }); Tocco.clic(); } })), riga('Animazioni', selettore([['si', 'Attive'], ['no', 'Ridotte']], i.animazioni === 'no' ? 'no' : 'si', function () { salva({ animazioni: this.value }); })), h('div.tenue.piccolo', null, 'Su iPhone il suono parte dopo il primo tocco. Con «Riduci movimento» attivo nelle impostazioni dell\'iPhone le animazioni si spengono da sole.'));
 }
-const ACCENTI = ['#2f6bea', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
+const ACCENTI = ['#0f6e78', '#2f6bea', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
 const CAMPI_ASPETTO = ['tema', 'accento', 'sfondo', 'font', 'scala', 'densita', 'raggio', 'widget', 'widgetNascosti', 'tabNascoste', 'nav', 'vistaIniziale'];
 function sezioneAspetto(salva) {
     const i = imp(), sel = (o, v, k, num = false) => selettore(o, v, function () { salva({ [k]: num ? +this.value : this.value, preset: '' }); });
@@ -18446,14 +18455,22 @@ async function spostaOccorrenza(o, deltaInizio, deltaFine) {
     }
 }
 
-const VERSIONE = '0.68.0';
+const VERSIONE = '0.69.0';
+function suAccento(hex) {
+    const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    if (!m)
+        return '#fff';
+    const l = [0, 2, 4].map(i => { const x = parseInt(m[1].slice(i, i + 2), 16) / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+    const L = 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2];
+    return 1.05 / (L + 0.05) >= (L + 0.05) / 0.0599 ? '#fff' : '#18191c';
+}
 function accentoTesto(hex, scuro) {
     const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
     if (!m)
         return hex;
     const rgb = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
     const lum = (c) => { const v = c.map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
-    const fondo = lum(scuro ? [0x20, 0x24, 0x2d] : [0xec, 0xee, 0xf3]), verso = scuro ? 255 : 0;
+    const fondo = lum(scuro ? [0x24, 0x26, 0x2a] : [0xed, 0xed, 0xeb]), verso = scuro ? 255 : 0;
     const contrasto = (c) => { const a = lum(c); return (Math.max(a, fondo) + 0.05) / (Math.min(a, fondo) + 0.05); };
     let c = rgb;
     for (let p = 0.05; contrasto(c) < 4.5 && p <= 1.0001; p += 0.05)
@@ -18465,8 +18482,9 @@ function applicaTema() {
     const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
     const r = document.documentElement, st = r.style;
-    const accento = !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento;
+    const accento = !i.accento || i.accento === '#6c8cff' || i.accento === '#2f6bea' ? '#0f6e78' : i.accento;
     st.setProperty('--accento', accento);
+    st.setProperty('--su-accento', suAccento(accento));
     st.setProperty('--accento-testo', accentoTesto(accento, scuro));
     r.dataset.animazioni = i.animazioni === 'no' ? 'no' : 'si';
     if (i.sfondo)
@@ -18485,10 +18503,48 @@ function applicaTema() {
     r.dataset.vetro = i.vetro === false || i.vetro === 'no' ? 'no' : 'si';
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta)
-        meta.setAttribute('content', i.sfondo || (scuro ? '#0b0d12' : '#f5f7fa'));
+        meta.setAttribute('content', i.sfondo || (scuro ? '#111214' : '#f5f5f4'));
 }
+function transizione(verso, fai) {
+    const d = document, r = document.documentElement;
+    const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro'];
+    if (!d.startViewTransition || r.dataset.animazioni === 'no' || matchMedia('(prefers-reduced-motion: reduce)').matches || verso === UI.scheda) {
+        fai();
+        return;
+    }
+    r.dataset.verso = ordine.indexOf(verso) >= ordine.indexOf(UI.scheda) ? 'avanti' : 'indietro';
+    r.dataset.vt = '1';
+    const t = d.startViewTransition(fai);
+    const via = () => { delete r.dataset.vt; };
+    if (t && t.finished)
+        t.finished.then(via, via);
+    else
+        via();
+}
+document.addEventListener('pointerdown', e => {
+    const b = e.target.closest && e.target.closest('.btn, .chip, .fab, .piu-testa, .tabbar button, .btn-testo');
+    if (!b || b.disabled)
+        return;
+    const q = b.getBoundingClientRect();
+    b.style.setProperty('--ox', (e.clientX - q.left) + 'px');
+    b.style.setProperty('--oy', (e.clientY - q.top) + 'px');
+    b.classList.remove('onda');
+    void b.offsetWidth;
+    b.classList.add('onda');
+}, { passive: true });
+document.addEventListener('pointerdown', e => {
+    const r = document.documentElement, t = e.target;
+    if (r.dataset.sfondo !== 'vivo' || !t.closest || t.closest('button, a, input, select, textarea, label, [contenteditable], [role="button"], .visore, .foglio-sfondo, dialog'))
+        return;
+    r.style.setProperty('--sx', e.clientX + 'px');
+    r.style.setProperty('--sy', e.clientY + 'px');
+    r.classList.remove('tocco');
+    void r.offsetWidth;
+    r.classList.add('tocco');
+}, { passive: true });
 function disegna() {
     const app = document.getElementById('app');
+    document.documentElement.dataset.sfondo = ['oggi', 'cal', 'altro', 'task', 'note'].includes(UI.scheda) ? 'vivo' : 'fermo';
     const vecchiaGriglia = app.querySelector('.gr-scroll');
     const scrollGriglia = vecchiaGriglia ? vecchiaGriglia.scrollTop : -1;
     const vecchioMain = app.querySelector('main');
@@ -18503,9 +18559,9 @@ function disegna() {
     const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
     const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => {
         const att = UI.scheda === s || (s === 'altro' && inAltro);
-        return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio')
+        return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => transizione(s, () => { if (s === 'studio')
                 UI.studioSub = null; if (s === 'altro')
-                UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null, 'aria-label': s === 'altro' && Aggiornamento.pronto() ? 'Altro · aggiornamento pronto' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : s === 'altro' && Aggiornamento.pronto() ? h('span.punto-agg', { title: 'Aggiornamento pronto' }) : null), h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
+                UI.altroSez = null; vai(s); }), 'aria-current': att ? 'page' : null, 'aria-label': s === 'altro' && Aggiornamento.pronto() ? 'Altro · aggiornamento pronto' : null }, h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : s === 'altro' && Aggiornamento.pronto() ? h('span.punto-agg', { title: 'Aggiornamento pronto' }) : null), h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
     }));
     const ordine = ['oggi', 'cal', 'studio', 'appunti', 'altro', 'task', 'note', 'cerca'];
     const prima = vecchioMain ? ordine.indexOf((vecchioMain.dataset.scheda || '').replace(/(giorno|settimana|mese|agenda)$/, '')) : -1;
@@ -18521,7 +18577,7 @@ function disegna() {
         h('header.testata', null, h('div.testata-tit', null, indietro, h('h1', null, titoli[UI.scheda])), h('div.testata-azioni', null, Drive.stato.sync === 'spento' ? null : h('button.sync-ind', { 'aria-label': descrSync().testo, title: descrSync().testo, onclick: () => { if (Drive.stato.sync === 'errore' || Drive.stato.sync === 'attesa')
                 Drive.login();
             else
-                vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)), h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')), h('button.btn-ico' + (UI.scheda === 'oggi' ? '.piu-testa' : '.solo-pc'), { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
+                vai('altro'); } }, h('span.sync-pallino.' + descrSync().cls)), UI.scheda === 'oggi' || UI.scheda === 'studio' ? h('button.btn-ico.aiuti-btn', { 'aria-label': 'Suggerimenti di questa schermata', onclick: () => conAiuti(() => Aiuti.mostra()) }, '?') : null, h('button.btn-ico', { 'aria-label': 'Cerca', onclick: () => vai('cerca') }, icona('cerca')), h('button.btn-ico' + (UI.scheda === 'oggi' ? '.piu-testa' : '.solo-pc'), { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu')))),
         nav, main,
         UI.scheda === 'altro' || UI.scheda === 'cerca' || UI.scheda === 'studio' || UI.scheda === 'oggi' ? null : h('button.fab', { 'aria-label': 'Nuovo', onclick: nuovo }, icona('piu', 26)),
     ]);
@@ -18536,6 +18592,10 @@ function disegna() {
         main.scrollTop = scrollMain;
     else
         Tocco.conta(main);
+    if ((UI.scheda === 'oggi' || UI.scheda === 'studio') && (!navigator.webdriver || window.__aiutiAuto)) {
+        const s = UI.scheda, nuova = !stessaScheda;
+        setTimeout(() => conAiuti(() => Aiuti.dopo(s, nuova), true), 400);
+    }
     if (inAltro || (UI.scheda === 'altro' && UI.altroSez))
         attivaIndietroSwipe(main);
     else
