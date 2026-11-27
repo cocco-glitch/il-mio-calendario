@@ -61,7 +61,7 @@ const Concetti = (() => {
       }
       if (!ind) { out.set(d.id, rip); continue; }
       const q = new Map<string, number>();
-      for (const w of IndicePagine.parole([d.q, d.giusta || '', d.spieg || ''].join(' '))) { const r = lingua.radice(w); q.set(r, 1); }
+      for (const w of IndicePagine.parole([d.q, d.giusta || '', d.spieg || ''].join(' '))) { const r = IndicePagine.rad(lingua, w); q.set(r, 1); }
       const sc = ind.pagine.map(p => ({ n: p.n, s: punteggio(ind, p, q) })).sort((a, b) => b.s - a.s || a.n - b.n);
       const [a, b] = sc;
       if (a && a.s > 0 && a.s >= MARGINE * (b ? b.s : 0)) { const e = lista[a.n - 1]; out.set(d.id, { chiave: chiave(sk, e), etichetta: e, ripiego: false }); }

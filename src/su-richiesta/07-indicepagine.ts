@@ -29,7 +29,33 @@ const IndicePagine = (() => {
   const K1 = 1.2, B = 0.75, PESO_SINONIMO = 0.5, ALFA = 0.55, VICINI = 2;
   const STOP = new Set('alla alle agli dalla dalle degli delle della dello nella nelle negli nello sulla sulle come anche sono essere viene vengono questo questa questi queste quello quella perche quando dove mentre oppure ogni tutti tutte loro ciascun'.split(' '));
   const n2 = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const parole = (s: string) => n2(s).split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !STOP.has(w));
+  // Fase 3 del brief (27/11): formule e sigle. Δ → «delta», apici e pedici → cifre e segni; poi, oltre alle parole ≥ 3 lettere,
+  // token di simbolo marcati «§» (mai ridotti alla radice): sigle con minuscola+maiuscola (pH, ΔG → deltaG, pKa), sigle brevi con cifra
+  // (O2), ioni (H+, Ca2+, Cl-), sigle di 2 maiuscole (UV, PV) e uguaglianze intere (F = m·a → §f=m*a). Regole sulla forma, valgono per ogni materia.
+  const GRECO: Record<string, string> = { 'Δ': 'delta', '∆': 'delta', 'δ': 'delta', 'α': 'alfa', 'β': 'beta', 'γ': 'gamma', 'λ': 'lambda', 'μ': 'mu', 'µ': 'mu', 'π': 'pi',
+    'ρ': 'rho', 'σ': 'sigma', 'ω': 'omega', 'Ω': 'omega', 'θ': 'theta', 'ε': 'epsilon', 'ν': 'nu', 'τ': 'tau', 'φ': 'phi', 'η': 'eta' };
+  const APICI = '⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉⁺⁻₊₋', SEGNI = '01234567890123456789+-+-';
+  const NO_SIGLA = new Set('IL LO LA LE UN DI DA IN SU MA SE NE SI CI VI AL AI ED AD HA HO NO OK'.split(' '));
+  const apici = (s: string) => String(s || '').replace(/[⁰-⁹₀-₉¹²³⁺⁻₊₋]/g, c => SEGNI[APICI.indexOf(c)] || '').replace(/[−–]/g, '-');
+  const forma = (s: string) => apici(s).replace(/[Δ∆δαβγλμµπρσωΩθενηφτ]/g, c => GRECO[c] || '');
+  function simboli(t: string): string[] {
+    const out: string[] = [];
+    for (const m of t.matchAll(/(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{0,8})\s*=\s*([A-Za-z0-9()]+(?:\s*[·×*/+^-]\s*[A-Za-z0-9()]+)*)/g))
+      out.push(('§' + m[1] + '=' + m[2].replace(/\s+/g, '').replace(/[·×]/g, '*')).toLowerCase().slice(0, 25));
+    for (const m of t.matchAll(/(?<![A-Za-z0-9])([A-Za-z0-9]+)(\+|-(?![A-Za-z0-9]))?/g)) {
+      const w = m[1], car = m[2] || '';
+      const ione = !!car && w.length <= 4 && /^[A-Z]/.test(w), misto = /[a-z][A-Z]/.test(w), cifra = w.length <= 2 && /[A-Za-z]/.test(w) && /\d/.test(w);
+      const sigla = w.length === 2 && /^[A-Z]{2}$/.test(w) && !NO_SIGLA.has(w) && !/^[IVXLC]+$/.test(w);   // II, IV: numeri romani
+      // una sigla di ≥ 3 caratteri senza carica (mRNA, pKa) è già una parola normale: contarla due volte sposterebbe i punteggi
+      if ((ione || misto || cifra || sigla) && (ione || w.length < 3 || /^(delta|alfa|beta|gamma|lambda|mu|pi|rho|sigma|omega|theta|epsilon|nu|tau|phi|eta)[a-z0-9]/i.test(w) && /[A-Z0-9]/.test(w.slice(1))))
+        out.push('§' + w.toLowerCase() + (ione ? car : ''));
+    }
+    return out;
+  }
+  // le parole normali vedono il testo SENZA lettere greche (come prima): «delta» comune a ΔG, ΔH, ΔS sarebbe solo rumore
+  const parole = (s: string) => n2(apici(s).replace(/[Δ∆δαβγλμµπρσωΩθενηφτ]/g, ' ')).split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !STOP.has(w)).concat(simboli(forma(s)));
+  /** Radice di un token: i simboli («§…») restano interi, altrimenti ΔG e ΔH finirebbero entrambi in «delta». */
+  const rad = (l: LinguaIndice, w: string) => w.charAt(0) === '§' ? w : l.radice(w);
   const RE_ESERCIZIO = /\b(esempio|esercizio|esercizi|problema|problemi|esercitazione|soluzione)\b/i;
   const RE_FORMULA = /\d+(?:[.,]\d+)?\s*(?:[=×x·*/+−-]\s*\d|(?:m|s|kg|mol|j|n|pa|k|l|g|v|a|w)\b)/i;
 
@@ -46,8 +72,8 @@ const IndicePagine = (() => {
     for (const p of pagine.slice().sort((a, b) => a.n - b.n)) {
       const f = firma(p.testo), prima = f ? visti.get(f) : undefined;
       const tf = new Map<string, number>(), titoli = new Set<string>();
-      for (const w of parole(p.testo)) { const r = lingua.radice(w); tf.set(r, (tf.get(r) || 0) + 1); }
-      for (const t of titoliDa(p.testo)) for (const w of parole(t)) titoli.add(lingua.radice(w));
+      for (const w of parole(p.testo)) { const r = rad(lingua, w); tf.set(r, (tf.get(r) || 0) + 1); }
+      for (const t of titoliDa(p.testo)) for (const w of parole(t)) titoli.add(rad(lingua, w));
       const len = Array.from(tf.values()).reduce((a, b) => a + b, 0);
       const pi: PaginaIdx = { n: p.n, tf, len, titoli, testo: p.testo, esercizio: RE_ESERCIZIO.test(p.testo) || RE_FORMULA.test(p.testo) };
       if (prima !== undefined) pi.dup = prima;                                   // stessa pagina in due PDF: indicizzata una volta
@@ -61,8 +87,8 @@ const IndicePagine = (() => {
   /** Radici della query con il loro peso: termini 1, sinonimi 0,5 (mai sotto il peso già dato al termine). */
   function query(ind: IndiceLibro, termini: string[]): Map<string, number> {
     const q = new Map<string, number>(), base = termini.flatMap(parole);
-    for (const w of base) q.set(ind.lingua.radice(w), 1);
-    for (const w of ind.lingua.espandi(base).flatMap(parole)) { const r = ind.lingua.radice(w); if (!q.has(r)) q.set(r, PESO_SINONIMO); }
+    for (const w of base) q.set(rad(ind.lingua, w), 1);
+    for (const w of ind.lingua.espandi(base).flatMap(parole)) { const r = rad(ind.lingua, w); if (!q.has(r)) q.set(r, PESO_SINONIMO); }
     return q;
   }
   function bm25(ind: IndiceLibro, p: PaginaIdx, q: Map<string, number>): { s: number; occ: number; inTitolo: boolean } {
@@ -139,5 +165,5 @@ const IndicePagine = (() => {
       return r;
     }
   }
-  return { costruisci, copertura, soglia, titoliDa, parole };
+  return { costruisci, copertura, soglia, titoliDa, parole, rad, simboli: (s: string) => simboli(forma(s)) };
 })();

@@ -129,6 +129,31 @@ t('microstep = concetto più debole; un concetto non verificato impedisce «cons
   eq(C.insieme([st('non_verificato')]).stato, 'non_verificato');
 });
 
+// ---------- fase 3 (27/11): formule e sigle nell'indice ----------
+{
+  const I = sb.IndicePagine;
+  t('simboli: ΔG ≠ ΔH, pH, O₂, ioni, uguaglianze intere; niente sigle finte (Il, II, IV, tras-) né doppioni di mRNA/pKa', () => {
+    eq(I.parole('ΔG = ΔH − TΔS'), ['§deltag=deltah-tdeltas', '§deltag', '§deltah']);
+    eq(I.parole('pH e pKa'), ['pka', '§ph']);
+    eq(I.parole('O₂ e CO₂'), ['co2', '§o2']);
+    eq(I.parole('ioni H⁺, Ca²⁺, Cl- e Na+'), ['ioni', 'ca2', '§h+', '§ca2+', '§cl-', '§na+']);
+    eq(I.parole('F = m · a e PV = nRT'), ['nrt', '§f=m*a', '§pv=nrt', '§pv']);
+    eq(I.parole('Il complesso II e i complessi I-IV, mRNA, tras-\nporto'), ['complesso', 'complessi', 'mrna', 'tras', 'porto']);
+    eq(I.rad(L, '§deltag'), '§deltag', 'i simboli non passano dalla radice'); eq(I.rad(L, 'deltag'), L.radice('deltag'));
+  });
+  t('simboli: una domanda su ΔG va all\'etichetta di ΔG, non a quella di ΔH (prima: ripiego, Δ spariva)', () => {
+    const et = ['ΔH = qp', 'ΔG = ΔH - TΔS', 'segno di ΔS'];
+    const m = C.assegna('C-1', 'Termodinamica', [{ id: 'a', q: 'Quanto vale ΔG se ΔH = −10 kJ e TΔS = +5 kJ?' }, { id: 'b', q: 'A pressione costante il calore scambiato è:', giusta: 'ΔH = qp' }, { id: 'c', q: 'Quanto vale ΔH se ΔG = 0?' }], et, L);
+    eq([m.get('a').etichetta, m.get('b').etichetta, m.get('c').etichetta], ['ΔG = ΔH - TΔS', 'ΔH = qp', 'ΔG = ΔH - TΔS'], 'c cita ΔH e ΔG: vince l\'etichetta che li ha entrambi');
+  });
+  t('simboli: generalità su una materia mai vista (economia: ΔY, PIL, «Y = C + I + G») e pagine trovate per «pH» in un libro sintetico', () => {
+    eq(I.parole('Il moltiplicatore: ΔY = ΔG / (1 − c), PIL e Y = C + I + G'), ['moltiplicatore', 'pil', '§deltay=deltag/(1-c)', '§y=c+i+g', '§deltay', '§deltag']);
+    const ind = I.costruisci('Sintetico', [{ n: 1, testo: 'Introduzione alla chimica delle soluzioni acquose' }, { n: 2, testo: 'Il pH misura l\'acidità: pH = −log[H⁺]' }, { n: 3, testo: 'Soluzioni tampone e pOH' }], L);
+    const c = I.copertura(ind, ['pH']);
+    vero(c.riscontri.some(r => r.n === 2) && !c.riscontri.some(r => r.n === 1), JSON.stringify(c.riscontri.map(r => r.n)));
+  });
+}
+
 // ---------- banca reale (pilota): copertura dell'assegnazione ----------
 t('pilota: sulla banca BIO/CHI/FIS almeno il 60% delle domande riceve un concetto (soglia di utilità dell\'audit)', () => {
   let tot = 0, ass = 0;

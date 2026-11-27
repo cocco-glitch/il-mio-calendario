@@ -18,7 +18,7 @@ const Copertura = (() => {
   const r2 = (x: number) => Math.round(x * 100) / 100;
   function radici(testi: string[], lingua: LinguaIndice): Set<string> {
     const s = new Set<string>();
-    for (const t of testi) for (const w of IndicePagine.parole(t)) { const r = lingua.radice(w); if (r.length >= 3) s.add(r); }
+    for (const t of testi) for (const w of IndicePagine.parole(t)) { const r = IndicePagine.rad(lingua, w); if (r.length >= 3) s.add(r); }
     return s;
   }
   function jaccard(a: Set<string>, b: Set<string>): number {

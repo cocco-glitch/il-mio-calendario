@@ -57,6 +57,15 @@ Criterio: i concetti di Fisica (oggi 25/33 corretti, il più debole) salgono sul
 3. Punto 5: **5A con cancello di misura** (consigliato) o 5A + 5B subito?
 4. Ordine: **prima 5 poi 3** (consigliato: la matrice mostrerà assegnazioni migliori) o prima 3?
 
+**Decise dall'utente (27/11):** 3A (matrice solo in Padronanza) · buco = meno di 3 domande (MIN_AFFIDABILE) · 5A con cancello di misura · prima 5, poi 3.
+
+## Misura del punto 5 (27/11, dopo l'implementazione)
+Il campione di 33 domande di Fisica di S8 non è nel repository (era nella scratchpad di quel container), quindi il cancello «Fisica > 25/33 sullo stesso campione» non si può rifare. Al suo posto un **confronto appaiato**: stessa banca (3.906 domande), assegnazione prima e dopo, e giudizio a mano solo delle domande che cambiano (le coppie discordanti sono le uniche che informano sulla differenza, come nel test di McNemar).
+- Prima versione: 391 cambi; campione di 45 → saldo ~nullo (le assegnazioni corrette perse ≈ quelle guadagnate). Cause trovate su casi reali: «delta» comune a ΔG/ΔH/ΔS, sigle contate due volte (mRNA, pKa), numeri romani (II, IV) presi per sigle. Corrette tutte e tre.
+- Versione finale: copertura 67,3% → **69,2%** (2.627 → 2.702); 287 cambi (159 ripiego → concetto, 84 concetto → ripiego, 44 concetto → altro concetto). Campione casuale stratificato di 45 (seme 2711): nuove assegnazioni corrette 12/15; perse che erano corrette 13/15; cambi di concetto migliori 11/15, peggiori 0/15.
+- Estrapolato: ≈ **+86 assegnazioni corrette, −11 sbagliate**; corrette sul totale delle domande ≈ 55,8% → 58,0% (con la precisione 83% di S8 come base). Fisica: ≈ +32 corrette, −3 sbagliate.
+- Limiti: 15 per strato (IC ampi, ±20 punti); giudice = Claude, non cieco alla versione; il richiamo delle pagine sul pilota (`test/pilota-pagine.mjs`) va rifatto sul PC dell'utente (τ invariato, i test del Centro e di IndicePagine passano).
+
 ## Fonti
 - AMBOSS: https://blog.amboss.com/us/knowledge-profile · https://blog.amboss.com/us/study-with-personal-analysis · https://support.amboss.com/hc/en-us/articles/42885439769233
 - Khan Academy: https://support.khanacademy.org/hc/en-us/articles/47078681852045 · https://support.khanacademy.org/hc/en-us/articles/48411237993357-How-is-my-mastery-percentage-calculated · https://support.khanacademy.org/hc/en-us/articles/115002552631
