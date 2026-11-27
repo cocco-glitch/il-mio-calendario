@@ -1,7 +1,7 @@
 // Service worker: tiene in cache i file dell'app per aprirla offline.
 // __VERSIONE__ viene sostituita da build.mjs: a ogni build la cache si rinnova.
 const CACHE = 'imc-__VERSIONE__';
-const FILE = ['./', 'index.html', 'style.css', 'app.js', 'motore-studio.js', 'strumenti-quiz.js', 'manifest.webmanifest', 'icone/icona-180.png', 'icone/icona-192.png', 'icone/icona-512.png'];
+const FILE = ['./', 'index.html', 'style.css', 'app.js', 'motore-studio.js', 'strumenti-quiz.js', 'manifest.webmanifest', 'icone/icona-180.png', 'icone/icona-192.png', 'icone/icona-512.png', 'font/atkinson-hyperlegible-next-latin-400-normal.woff2', 'font/atkinson-hyperlegible-next-latin-700-normal.woff2'];
 
 const PDFJS = ['pdf.min.js', 'pdf.worker.min.js'].map(f => 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/' + f);
 self.addEventListener('install', e => {

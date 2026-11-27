@@ -7,12 +7,19 @@ const VERSIONE = '0.68.0';
 // ACCENTO-TESTO-INIZIO (la suite Node estrae questa funzione)
 /** v0.56.2: colore del testo in accento: schiarito (scuro) o scurito (chiaro) a passi del 5 % finché il contrasto
  *  con la superficie più critica del tema (--sup2) è ≥ 4,5:1. Un colore non esadecimale resta com'è. */
+/** Redesign 27/11: colore del testo sopra un fondo pieno `hex` (bianco o inchiostro #18191c, il più contrastato). */
+function suAccento(hex: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim()); if (!m) return '#fff';
+  const l = [0, 2, 4].map(i => { const x = parseInt(m[1].slice(i, i + 2), 16) / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+  const L = 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2];
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.0599 ? '#fff' : '#18191c';
+}
 function accentoTesto(hex: string, scuro: boolean): string {
   const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
   if (!m) return hex;
   const rgb = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
   const lum = (c: number[]) => { const v = c.map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
-  const fondo = lum(scuro ? [0x20, 0x24, 0x2d] : [0xec, 0xee, 0xf3]), verso = scuro ? 255 : 0;
+  const fondo = lum(scuro ? [0x24, 0x26, 0x2a] : [0xed, 0xed, 0xeb]), verso = scuro ? 255 : 0;   // redesign 27/11: = --sup2 dei due temi
   const contrasto = (c: number[]) => { const a = lum(c); return (Math.max(a, fondo) + 0.05) / (Math.min(a, fondo) + 0.05); };
   let c = rgb;
   for (let p = 0.05; contrasto(c) < 4.5 && p <= 1.0001; p += 0.05) c = rgb.map(x => Math.round(x + (verso - x) * p));
@@ -25,9 +32,10 @@ function applicaTema(): void {
   const scuro = i.tema === 'scuro' || (i.tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.tema = scuro ? 'scuro' : 'chiaro';
   const r = document.documentElement, st = r.style;
-  // v0.34: il vecchio blu predefinito passa al nuovo blu del rebranding
-  const accento = !i.accento || i.accento === '#6c8cff' ? '#2f6bea' : i.accento;
+  // v0.34: il vecchio blu predefinito passa al nuovo blu del rebranding; redesign 27/11: i due blu predefiniti → verde petrolio
+  const accento = !i.accento || i.accento === '#6c8cff' || i.accento === '#2f6bea' ? '#0f6e78' : i.accento;
   st.setProperty('--accento', accento);
+  st.setProperty('--su-accento', suAccento(accento));   // testo sui pulsanti pieni: bianco o inchiostro, quello col contrasto maggiore
   st.setProperty('--accento-testo', accentoTesto(accento, scuro));   // v0.56.2: testo accento ≥ 4,5:1 (WCAG AA) nei due temi
   r.dataset.animazioni = (i as any).animazioni === 'no' ? 'no' : 'si';
   if (i.sfondo) st.setProperty('--bg', i.sfondo); else st.removeProperty('--bg');
@@ -39,8 +47,32 @@ function applicaTema(): void {
   r.dataset.nav = i.nav || 'auto';
   r.dataset.vetro = (i as any).vetro === false || (i as any).vetro === 'no' ? 'no' : 'si';   // v0.20: vetro leggero (disattivabile)
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', i.sfondo || (scuro ? '#0b0d12' : '#f5f7fa'));
+  if (meta) meta.setAttribute('content', i.sfondo || (scuro ? '#111214' : '#f5f5f4'));
 }
+
+/**
+ * Redesign 27/11 (blocco 2): cambio di sezione con le View Transitions native (Chrome, Safari 18, Firefox 144), nella direzione
+ * della barra; solo dai tocchi dell'utente (le chiamate a vai() dal codice restano sincrone). Senza supporto, con «Animazioni: no»
+ * o «riduci movimento» il cambio è quello di sempre.
+ */
+function transizione(verso: Scheda, fai: () => void): void {
+  const d = document as Document & { startViewTransition?: (f: () => void) => unknown }, r = document.documentElement;
+  const ordine: string[] = ['oggi', 'cal', 'studio', 'appunti', 'altro'];
+  if (!d.startViewTransition || r.dataset.animazioni === 'no' || matchMedia('(prefers-reduced-motion: reduce)').matches || verso === UI.scheda) { fai(); return; }
+  r.dataset.verso = ordine.indexOf(verso) >= ordine.indexOf(UI.scheda) ? 'avanti' : 'indietro';
+  r.dataset.vt = '1';   // la vecchia animazione .entra non si somma alla transizione
+  const t = d.startViewTransition(fai) as { finished?: Promise<unknown> };
+  const via = () => { delete r.dataset.vt; };
+  if (t && t.finished) t.finished.then(via, via); else via();
+}
+/** Redesign 27/11 (blocco 2): onda dal punto toccato sui pulsanti (un solo ascoltatore per tutta l'app). */
+document.addEventListener('pointerdown', e => {
+  const b = (e.target as Element).closest && (e.target as Element).closest('.btn, .chip, .fab, .piu-testa, .tabbar button, .btn-testo') as HTMLElement | null;
+  if (!b || (b as HTMLButtonElement).disabled) return;
+  const q = b.getBoundingClientRect();
+  b.style.setProperty('--ox', (e.clientX - q.left) + 'px'); b.style.setProperty('--oy', (e.clientY - q.top) + 'px');
+  b.classList.remove('onda'); void b.offsetWidth; b.classList.add('onda');
+}, { passive: true });
 
 /** Ricostruisce l'intera schermata (le viste sono leggere: va benissimo così). */
 function disegna(): void {
@@ -63,7 +95,7 @@ function disegna(): void {
   const inAltro = UI.scheda === 'task' || UI.scheda === 'note';
   const nav = h('nav.tabbar', { 'aria-label': 'Sezioni' }, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(([s, t, ic]) => {
     const att = UI.scheda === s || (s === 'altro' && inAltro);
-    return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => { if (s === 'studio') UI.studioSub = null; if (s === 'altro') UI.altroSez = null; vai(s); }, 'aria-current': att ? 'page' : null, 'aria-label': s === 'altro' && Aggiornamento.pronto() ? 'Altro · aggiornamento pronto' : null },
+    return lungo(h('button' + (att ? '.attivo' : ''), { onclick: () => transizione(s, () => { if (s === 'studio') UI.studioSub = null; if (s === 'altro') UI.altroSez = null; vai(s); }), 'aria-current': att ? 'page' : null, 'aria-label': s === 'altro' && Aggiornamento.pronto() ? 'Altro · aggiornamento pronto' : null },
       h('span.tab-ico', null, icona(ic), s === 'altro' && daFare ? h('span.badge', null, String(daFare)) : s === 'altro' && Aggiornamento.pronto() ? h('span.punto-agg', { title: 'Aggiornamento pronto' }) : null),
       h('span.tab-eti', null, t)), () => MenuLungo.sezione(s), t);
   }));

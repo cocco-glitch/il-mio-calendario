@@ -571,7 +571,7 @@ function sezioneSuoni(salva: SalvaImp): HTMLElement {
 
 // ---------- Impostazioni: aspetto, layout, preset, calendari esterni ----------
 type SalvaImp = (mod: Partial<Impostazioni>) => void;
-const ACCENTI = ['#2f6bea', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
+const ACCENTI = ['#0f6e78', '#2f6bea', '#2fbf8f', '#e9a23b', '#f0708a', '#a78bfa', '#38bdf8', '#f97316', '#64748b'];
 const CAMPI_ASPETTO: (keyof Impostazioni)[] = ['tema', 'accento', 'sfondo', 'font', 'scala', 'densita', 'raggio', 'widget', 'widgetNascosti', 'tabNascoste', 'nav', 'vistaIniziale'];
 
 function sezioneAspetto(salva: SalvaImp): HTMLElement {
