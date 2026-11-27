@@ -365,7 +365,7 @@ t('QuizApp usa matrice, interleaving, imbuto e fatica', () => { const q = leggi(
 t('Simulazione Esame senza certezza, Allenamento Neuro predefinito', () => { const q = leggi('07-quizapp.ts'); vero(q.includes("'imc-quiz-modo'") && /esame/.test(q) && /neuro/.test(q)); });
 t('Creaquiz Leggero esposto e collegato a deduplica/importa/breaker', () => { const c = leggi('07-creaquiz.ts'); for (const k of ['function leggero', 'leggero }', 'Neuro.deduplica', 'Neuro.importa', 'Neuro.serveBreaker', 'Copia Prompt Ottimizzato per Gemini', 'Neuro.copertura']) vero(c.includes(k), 'manca ' + k); });
 t('Neuro concatenato prima dei moduli che lo usano', () => { const f = fs.readdirSync(SRC).filter(x => x.endsWith('.ts')).sort(); vero(f.indexOf('07-neuro.ts') >= 0 && f.indexOf('07-neuro.ts') < f.indexOf('07-quizapp.ts')); });
-t('versione app 0.69.0 (redesign dell\'interfaccia, blocchi 1–6)', () => vero(/const VERSIONE = '0.69.0'/.test(leggi('09-main.ts'))));
+t('versione app 0.70.0 (selettori di file multipli; lezione audio in un chunk)', () => vero(/const VERSIONE = '0.70.0'/.test(leggi('09-main.ts'))));
 t('regola utente 27/11: ogni selettore di file è multiplo (eccezioni elencate col motivo)', () => {
   // unica eccezione decisa dall'utente (27/11): la lezione audio (una revisione per registrazione)
   const ECCEZIONI = { 'su-richiesta/07-audio.ts': 1 };
