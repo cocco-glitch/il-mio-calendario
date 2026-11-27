@@ -21,6 +21,9 @@ interface MemoriaCon extends Memoria {
   /** verifiche per giorno: [giorno, giuste, domande, illusioni], ultime 20 */ ver: [string, number, number, number][];
   prima?: { d: number; s: number; ultimo?: string; n: number; lapsi: number; due: string } | null;
 }
+/** Fase 5 (27/11): una riga della matrice obiettivo → concetto → pagine → domande → risultato. buco = cosa manca, nell'ordine in cui va risolto. */
+type BucoCon = 'senza_domande' | 'poche_domande' | 'debole' | 'non_verificato' | 'senza_pagine';
+interface RigaMatrice { etichetta: string; ripiego: boolean; domande: number; pagine: string[]; p: PadronanzaCon; buco: BucoCon | null; }
 interface PadronanzaCon { stato: StatoConcetto; giorni: number; ultimaAcc: number | null; r: number | null; s: number; ripiego: boolean; motivo: string; }
 
 const Concetti = (() => {
@@ -149,5 +152,34 @@ const Concetti = (() => {
     }
     return out.sort((a, b) => ORDINE.indexOf(a.insieme) - ORDINE.indexOf(b.insieme) || a.sk.localeCompare(b.sk));
   }
-  return { etichette, assegna, aggiorna, stato, insieme, riepilogo, voto, chiave, slug, NOMI, ORDINE, MARGINE, MIN_AFFIDABILE };
+  /** «Fasano, cap. 3, Glicolisi, p. 133» → «Fasano», 133; «Slide UD3.1 Reazioni (…), slide 3» → slide 3 (null senza numero). */
+  function paginaDa(f: string): { libro: string; p: number; slide: boolean } | null {
+    const m = /\b(pp?\.|slides?|diapositiv[ae])\s*(\d+)/i.exec(String(f || '')); if (!m) return null;
+    return { libro: una(String(f).split(/[,(]/)[0]).slice(0, 40) || '?', p: +m[2], slide: !/^p/i.test(m[1]) };
+  }
+  /**
+   * Fase 5: la matrice di una scheda. Le etichette del focus (più i concetti espliciti delle domande e quelli già verificati) con:
+   * domande assegnate, pagine citate da quelle domande (`cit`), stato di padronanza e il buco più urgente. Meno di MIN_AFFIDABILE
+   * domande = il concetto non si può verificare. Le domande senza concetto distinto stanno in una riga di ripiego.
+   */
+  function matrice(sk: string, titolo: string, focus: string, domande: { id: string; q: string; giusta?: string; spieg?: string; concetto?: string; cit?: { f: string }[] }[],
+    mem: MemoriaCon[], giorno: string, lingua: LinguaIndice): RigaMatrice[] {
+    const lista = etichette(focus), ass = assegna(sk, titolo, domande, lista, lingua), per = new Map<string, { etichetta: string; ripiego: boolean; ids: typeof domande }>();
+    const riga = (e: string, rip: boolean) => { const k = chiave(sk, rip ? null : e); if (!per.has(k)) per.set(k, { etichetta: rip ? 'Domande senza concetto distinto' : e, ripiego: rip, ids: [] }); return per.get(k)!; };
+    for (const e of lista) riga(e, false);
+    for (const m of mem) if (m && !m.deleted && m.sk === sk && !m.ripiego && String(m.er || '').startsWith('con:')) riga(m.etichetta, false);
+    for (const d of domande) { const a = ass.get(d.id); if (a) riga(a.etichetta, a.ripiego).ids.push(d); }
+    const memo = new Map(mem.filter(m => m && !m.deleted && m.sk === sk).map(m => [String(m.er).slice(4), m] as [string, MemoriaCon]));
+    return [...per.entries()].sort((a, b) => +a[1].ripiego - +b[1].ripiego).map(([k, x]) => {
+      const libri = new Map<string, Set<number>>();
+      for (const d of x.ids) for (const c of d.cit || []) { const pg = paginaDa(c.f); if (pg) { const k = pg.libro + (pg.slide ? '\u0001' : ''), l = libri.get(k) || new Set<number>(); l.add(pg.p); libri.set(k, l); } }
+      const pagine = [...libri].map(([k, ps]) => { const v = [...ps].sort((a, b) => a - b), sl = k.endsWith('\u0001');
+        return k.replace('\u0001', '') + (sl ? ' slide ' : v.length > 1 ? ' pp. ' : ' p. ') + v.join(', '); });
+      const p = stato(memo.get(k), giorno), n = x.ids.length;
+      const buco: BucoCon | null = x.ripiego ? null : !n ? 'senza_domande' : n < MIN_AFFIDABILE ? 'poche_domande' : p.stato === 'da_studiare' || p.stato === 'da_consolidare' ? 'debole'
+        : p.stato === 'non_verificato' ? 'non_verificato' : !pagine.length ? 'senza_pagine' : null;
+      return { etichetta: x.etichetta, ripiego: x.ripiego, domande: n, pagine, p, buco };
+    });
+  }
+  return { etichette, assegna, aggiorna, stato, insieme, riepilogo, voto, chiave, slug, matrice, paginaDa, NOMI, ORDINE, MARGINE, MIN_AFFIDABILE };
 })();

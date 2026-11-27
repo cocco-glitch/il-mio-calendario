@@ -23,6 +23,29 @@ const PadronanzaUI = (() => {
     const t = trovaScheda(sk); if (!t) { avviso('Scheda non trovata nei corsi caricati.'); return; }
     void QuizApp.apri(t.pk, t.m, t.micro, t.s);
   }
+  const BUCO: Record<BucoCon, string> = { senza_domande: 'nessuna domanda: non si può verificare', poche_domande: 'meno di ' + Concetti.MIN_AFFIDABILE + ' domande: non si può verificare',
+    debole: 'debole: verificalo', non_verificato: 'mai verificato', senza_pagine: 'nessuna pagina o slide citata dalle domande' };
+  /** Fase 5: obiettivo → concetto → pagine → domande → risultato, con l'azione per il buco. Sola lettura. */
+  async function matrice(det: HTMLDetailsElement, t: NonNullable<ReturnType<typeof trovaScheda>>, giorno: string): Promise<void> {
+    const ul = det.querySelector('ul.pad-concetti'); if (!ul) return;
+    const stato = h('p.tenue.piccolo', { role: 'status' }, '⏳ Carico le domande della scheda…'); ul.before(stato);
+    let b: Awaited<ReturnType<typeof Banca.scheda>>;
+    try { b = await Banca.scheda(t.pk, t.m, t.micro, t.s); } catch (e) { console.warn('Padronanza: banca', e); stato.textContent = 'Domande non disponibili: resta l\'elenco dei concetti verificati.'; return; }
+    const righe = Concetti.matrice(t.s.id, t.s.titolo, b.focus || '', b.domande.map(d => ({ id: d.id, q: d.q, giusta: d.t === 'mcq' && d.o ? d.o[0] : String(d.show || ''),
+      spieg: Array.isArray(d.e) ? d.e.join(' ') : String(d.e || ''), concetto: (d as DomB & { concetto?: string }).concetto, cit: d.cit })), Stato.tutti<MemoriaCon>('memoria'), giorno, Locale);
+    const buchi = righe.filter(x => x.buco && x.buco !== 'senza_pagine').length, ai = !t.pk.proprio && !Dominio.senzaAI();
+    stato.textContent = buchi ? '⚠️ ' + buchi + (buchi === 1 ? ' concetto da sistemare' : ' concetti da sistemare') + ' su ' + righe.filter(x => !x.ripiego).length : '✔ Ogni concetto ha domande sufficienti ed è verificato';
+    // poche domande: prima crearne altre (AI, se c'è) ma la verifica resta possibile con quelle che ci sono; nessun buco senza azione se ci sono domande
+    const azione = (x: RigaMatrice) => h('span.chips', null,
+      (x.buco === 'senza_domande' || x.buco === 'poche_domande') && ai ? h('button.btn.neutro', { 'aria-label': 'Domande AI per ' + x.etichetta, onclick: () => AIGen.avvia(t.pk, t.m, t.micro, t.s) }, '🤖 Domande AI') : null,
+      x.domande && x.buco !== 'senza_pagine' && x.p.stato !== 'consolidato' ? h('button.btn.neutro', { 'aria-label': 'Verifica ' + x.etichetta, onclick: () => void VerificaConcetti.avvia(t.s.id, [x.etichetta]) }, '🧩 Verifica') : null);
+    ul.replaceWith(h('ul.pad-concetti.pad-matrice', { 'aria-label': 'Matrice dei concetti di ' + t.s.titolo }, righe.map(x => h('li', null,
+      h('span', { style: { color: x.p.stato === 'non_verificato' ? 'var(--tenue)' : COL[x.p.stato] }, 'aria-hidden': 'true' }, ICO[x.p.stato] + ' '),
+      h(x.ripiego ? 'span.tenue' : 'strong', null, x.etichetta),
+      h('div.tenue.piccolo', null, 'Pagine: ' + (x.pagine.length ? x.pagine.join(' · ') : 'nessuna') + ' · Domande: ' + x.domande
+        + ' · ' + Concetti.NOMI[x.p.stato] + (x.p.stato !== 'non_verificato' ? ' (' + x.p.motivo + ')' : '')),
+      x.buco ? h('div.riga-tra.piccolo', null, h('span', null, '⚠️ ' + BUCO[x.buco]), azione(x)) : null))));
+  }
   /** Riempie la sezione (il guscio lo crea vistaStatistiche nel bundle principale). */
   function riempi(el: HTMLElement): void {
     const g = ymd(new Date()), righe = Concetti.riepilogo(Stato.tutti<MemoriaCon>('memoria'), g);
@@ -49,14 +72,17 @@ const PadronanzaUI = (() => {
         l.map(r => {
           const t = trovaScheda(r.sk), tit = t ? t.micro + ' · ' + t.s.titolo : r.sk;
           const ver = r.totale - r.nonVerificati;
-          return h('details.pad-scheda', null,
+          const det = h('details.pad-scheda', null,
             h('summary', null, ICO[r.insieme] + ' ' + tit, h('span.tenue.piccolo', null, ' — ' + Concetti.NOMI[r.insieme] + ' (' + ver + '/' + r.totale + ' verificati)')),
             h('ul.pad-concetti', null,
               r.concetti.map(c => h('li', null, h('span', { style: { color: c.p.stato === 'non_verificato' ? 'var(--tenue)' : COL[c.p.stato] }, 'aria-hidden': 'true' }, ICO[c.p.stato] + ' '),
                 h('strong', null, c.etichetta), h('span.tenue.piccolo', null, ' — ' + Concetti.NOMI[c.p.stato] + ': ' + c.p.motivo))),
               r.totale > r.concetti.length ? h('li.tenue.piccolo', null, '○ ' + (r.totale - r.concetti.length) + ' concetti non ancora verificati') : null,
               r.ripiego ? h('li.tenue.piccolo', null, 'Domande senza concetto distinto: ' + Concetti.NOMI[r.ripiego.stato] + ' (' + r.ripiego.motivo + '). Correggile da «Modifica domanda» › Concetto.') : null),
-            t ? h('button.btn.neutro', { onclick: () => apriQuiz(r.sk) }, '🧩 Rifai il quiz') : null);
+            t ? h('button.btn.neutro', { onclick: () => apriQuiz(r.sk) }, '🧩 Rifai il quiz') : null) as HTMLDetailsElement;
+          // fase 5: alla prima apertura la lista diventa la matrice (servono le domande della scheda: niente all'avvio di Statistiche)
+          if (t) det.addEventListener('toggle', () => { if (det.open && !det.dataset.matrice) { det.dataset.matrice = '1'; void matrice(det, t, g); } });
+          return det;
         })));
     }
   }

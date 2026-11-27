@@ -154,6 +154,39 @@ t('microstep = concetto più debole; un concetto non verificato impedisce «cons
   });
 }
 
+// ---------- fase 5 (27/11): matrice obiettivo → concetto → pagine → domande → risultato ----------
+{
+  const D = (id, q, f, concetto) => ({ id, q, cit: f ? [{ f }] : [], ...(concetto ? { concetto } : {}) });
+  const domande = [
+    D('g1', 'Quanti ATP netti dà la glicolisi?', 'Fasano, cap. 3, Glicolisi, p. 133'), D('g2', 'La glicolisi avviene nel citosol?', 'Fasano, cap. 3, Glicolisi, p. 134'),
+    D('g3', 'Il prodotto finale della glicolisi è il piruvato?', 'Campbell, p. 160'), D('k1', 'Quanti giri del ciclo di Krebs per glucosio?', 'Fasano, p. 137'),
+    D('x1', 'Domanda generica sul metabolismo cellulare', ''), D('f1', 'Dove avviene la fermentazione?', '', 'fermentazione lattica'),
+  ];
+  const kreb = C.aggiorna(undefined, { id: 'm1', chiave: C.chiave('B-1', 'ciclo di Krebs'), sk: 'B-1', etichetta: 'ciclo di Krebs', ripiego: false }, S(3), '2026-11-20');
+  const glic = C.aggiorna(undefined, { id: 'm2', chiave: C.chiave('B-1', 'glicolisi'), sk: 'B-1', etichetta: 'glicolisi', ripiego: false }, G(3), '2026-11-20');
+  const vecchio = C.aggiorna(undefined, { id: 'm3', chiave: C.chiave('B-1', 'beta-ossidazione'), sk: 'B-1', etichetta: 'beta-ossidazione', ripiego: false }, G(3), '2026-11-20');
+  const M = C.matrice('B-1', 'Metabolismo', 'glicolisi, ciclo di Krebs, catena respiratoria', domande, [kreb, glic, vecchio, { ...glic, id: 'z', sk: 'C-9' }], '2026-11-21', L);
+  const r = e => M.find(x => x.etichetta === e);
+  t('matrice: una riga per concetto del focus + concetti espliciti delle domande + concetti già verificati; ripiego a parte', () => {
+    eq(M.map(x => x.etichetta), ['glicolisi', 'ciclo di Krebs', 'catena respiratoria', 'beta-ossidazione', 'fermentazione lattica', 'Domande senza concetto distinto']);
+    eq(M.map(x => x.domande), [3, 1, 0, 0, 1, 1]);
+  });
+  t('matrice: pagine citate per libro, ordinate; senza numero di pagina nessuna pagina', () => {
+    eq(r('glicolisi').pagine, ['Fasano pp. 133, 134', 'Campbell p. 160']);
+    eq(r('ciclo di Krebs').pagine, ['Fasano p. 137']); eq(r('fermentazione lattica').pagine, []);
+    eq(C.paginaDa('Fasano, cap. 3, ATP sintasi, p. '), null);
+    eq(C.paginaDa('Slide UD3.1 Reazioni chimiche (Trasformazione fisica o reazione chimica?), slide 3'), { libro: 'Slide UD3.1 Reazioni chimiche', p: 3, slide: true });
+    const sl = C.matrice('C-1', 'R', 'reazione chimica, trasformazione fisica', [D('s1', 'reazione chimica', 'Slide UD3.1, slide 3'), D('s2', 'reazione chimica 2', 'Slide UD3.1, slide 5')], [], '2026-11-21', L);
+    eq(sl[0].pagine, ['Slide UD3.1 slide 3, 5']);
+  });
+  t('matrice: buco più urgente — senza domande, poche (< 3 = MIN_AFFIDABILE), debole, non verificato; il ripiego non è un buco', () => {
+    eq(M.map(x => x.buco), ['debole', 'poche_domande', 'senza_domande', 'senza_domande', 'poche_domande', null]);
+    eq(r('glicolisi').p.stato, 'da_consolidare', 'verificato in un solo giorno');
+    const tre = C.matrice('B-1', 'M', 'ciclo di Krebs, glicolisi', ['a', 'b', 'c'].map(i => D(i, 'ciclo di Krebs ' + i, 'Fasano, p. 1')).concat(['d', 'e', 'f'].map(i => D(i, 'glicolisi ' + i, ''))), [kreb], '2026-11-21', L);
+    eq(tre.map(x => [x.etichetta, x.buco]), [['ciclo di Krebs', 'debole'], ['glicolisi', 'non_verificato']]);
+  });
+}
+
 // ---------- banca reale (pilota): copertura dell'assegnazione ----------
 t('pilota: sulla banca BIO/CHI/FIS almeno il 60% delle domande riceve un concetto (soglia di utilità dell\'audit)', () => {
   let tot = 0, ass = 0;
