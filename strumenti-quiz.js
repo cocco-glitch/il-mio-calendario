@@ -501,6 +501,11 @@ const Centro = (() => {
         fonte, gruppi, unisci, dividi, nuovoCodice, minutiMicro, proposte, riallinea, MAX_CONCETTI };
 })();
 
+async function testiDaFile(fl) {
+    const fs = Array.from(fl || []).sort((a, b) => a.name.localeCompare(b.name, 'it', { numeric: true }));
+    const t = await Promise.all(fs.map(f => f.text()));
+    return t.length === 1 ? t[0] : t.map(x => /```/.test(x) ? x : '```json\n' + x.trim() + '\n```').join('\n\n');
+}
 const CentroUI = (() => {
     const PASSI = ['Obiettivo', 'Piano', 'Quiz', 'Controllo', 'Correggi', 'Prova', 'Importa'];
     const RE_STEP = /^\d+(\.\d+)*$/;
@@ -860,9 +865,9 @@ const CentroUI = (() => {
         }
         function rispostaAI(etichetta, segnaposto, bottone, leggi) {
             const ta = h('textarea', { rows: 6, placeholder: segnaposto, 'aria-label': etichetta, spellcheck: 'false' });
-            const daFile = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': etichetta + ' da un file' });
-            daFile.addEventListener('change', async () => { const f = daFile.files && daFile.files[0]; if (f) {
-                ta.value = await f.text();
+            const daFile = h('input', { type: 'file', multiple: true, accept: '.json,.txt,application/json,text/plain', 'aria-label': etichetta + ' da uno o più file' });
+            daFile.addEventListener('change', async () => { if (daFile.files && daFile.files.length) {
+                ta.value = await testiDaFile(daFile.files);
                 leggi(ta.value);
             } daFile.value = ''; });
             return h('div.centro-passo-corpo', null, ta, h('div.chips', null, h('button.chip', { type: 'button', onclick: () => leggi(ta.value) }, bottone), daFile));
@@ -893,9 +898,9 @@ const CentroUI = (() => {
             out.value = testoPrompt;
             const copia = h('button.btn', { type: 'button', onclick: () => { StrumentiQuiz.copia(testoPrompt, out); } }, '📋 Copia il prompt del piano');
             const incolla = h('textarea', { rows: 6, placeholder: 'Incolla qui la risposta dell\'AI (il piano)…', 'aria-label': 'Risposta dell\'AI con il piano' });
-            const daFile = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Apri la risposta dell\'AI da un file' });
-            daFile.addEventListener('change', async () => { const f = daFile.files && daFile.files[0]; if (f) {
-                incolla.value = await f.text();
+            const daFile = h('input', { type: 'file', multiple: true, accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Apri la risposta dell\'AI da uno o più file' });
+            daFile.addEventListener('change', async () => { if (daFile.files && daFile.files.length) {
+                incolla.value = await testiDaFile(daFile.files);
                 leggi();
             } daFile.value = ''; });
             const esito = h('div', { role: 'status', 'aria-live': 'polite' });
@@ -4187,9 +4192,9 @@ const StrumentiQuiz = (() => {
         const ta = area('JSON dei quiz da controllare (anche la chat intera)', 8);
         if (testoIniziale)
             ta.value = testoIniziale;
-        const file = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Carica un file .json di quiz' });
-        file.addEventListener('change', async () => { const f = file.files && file.files[0]; if (!f)
-            return; ta.value = await f.text(); controlla(); });
+        const file = h('input', { type: 'file', multiple: true, accept: '.json,.txt,application/json,text/plain', 'aria-label': 'Carica uno o più file .json di quiz' });
+        file.addEventListener('change', async () => { if (!file.files || !file.files.length)
+            return; ta.value = await testiDaFile(file.files); controlla(); });
         const rapporto = h('div', { role: 'status', 'aria-live': 'polite' });
         const registro = h('ul.piccolo.tenue');
         const correzione = h('div');
