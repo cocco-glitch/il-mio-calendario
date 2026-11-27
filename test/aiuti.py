@@ -19,8 +19,10 @@ with sync_playwright() as p:
     br = p.chromium.launch()
     # 1) senza __aiutiAuto (come negli altri E2E): nessun fumetto da solo, il «?» c'è
     pg = br.new_context(viewport={'width': 375, 'height': 760}, bypass_csp=True).new_page(); pg.on('pageerror', lambda e: err.append('pageerror: ' + str(e)))
-    pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_function("typeof Aiuti !== 'undefined'"); pg.wait_for_timeout(300)
-    ok(pg.locator('.aiuto').count() == 0, 'test automatici: nessun fumetto da solo (non copre i pulsanti degli altri E2E)')
+    pg.goto(URL); pg.wait_for_selector('.tabbar'); pg.wait_for_timeout(900)
+    ok(pg.locator('.aiuto').count() == 0 and pg.evaluate("typeof Aiuti") == 'undefined', 'test automatici: chunk non scaricato da solo, nessun fumetto (non tocca gli altri E2E)')
+    pg.locator('.aiuti-btn').click(); pg.wait_for_selector('.aiuto')
+    ok(pg.evaluate("typeof Aiuti") == 'object', '«?» carica il chunk e mostra gli aiuti anche nei test'); pg.keyboard.press('Escape')
     ok(pg.locator('.testata .aiuti-btn').count() == 1, '«?» nella testata di Oggi')
     app_js, chunk = (open(os.path.join(RADICE, f), encoding='utf-8').read() for f in ('app.js', 'aiuti.js'))
     ok('const Aiuti' not in app_js and 'const Aiuti' in chunk and "'aiuti.js'" in open(os.path.join(RADICE, 'sw.js'), encoding='utf-8').read(), 'il modulo sta nel chunk aiuti.js (in cache offline), non in app.js')

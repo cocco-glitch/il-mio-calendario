@@ -117,6 +117,11 @@ Come capiremo che funziona: (1) ogni azione principale in ≤ 2 tocchi da Oggi; 
 - Visti in `imp().aiutiVisti`: record delle impostazioni dell'account, sincronizzato su Drive (scelta dell'utente); salvataggio silenzioso per non ridisegnare.
 - Fumetto: dialogo non modale, testo 16:1 nel tema scuro, freccia verso il centro del pulsante. Nei test automatici non si apre da solo (navigator.webdriver), così non copre i pulsanti degli altri E2E; `test/aiuti.py` lo accende con `window.__aiutiAuto`.
 
+## Blocco 6 — fatto (27/11)
+- Critica sugli screenshot a 375 px nei due temi (nessun difetto critico). Corretti: «Quali» accanto alla pillola del ritardo (prima isolato su una riga), icone di Altro nel tono dell'accento (4 colori saturi rompevano la palette neutra), emoji della fila di Studio sostituite da icone SVG, card «Drive non collegato» diventata il sottotitolo di «Dati e backup» con il pallino di stato (scelta dell'utente).
+- Accessibilità: 0 controlli senza nome su 134; tutti i bersagli ≥ 24×24 px (WCAG 2.2 AA). 44 px è AAA: «Quali», «Mostra tutto» e «Ripianifica» ci arrivano; restano sotto le righe degli esami (32 px) e le schede/chip (36 px), per non allungare Oggi.
+- Test: `aspetto` +10 controlli (nomi e bersagli sulle 4 schermate, niente emoji nella fila, Drive come riga); `importadrive` cerca il pulsante senza emoji.
+
 ## Fonti
 - Sundararajan & Adesope 2020 (WSU): https://news.wsu.edu/press-release/2020/03/19/seductive-details-inhibit-learning · meta-analisi 2026: https://link.springer.com/content/pdf/10.1007/s11251-023-09632-w.pdf · https://frontiersin.org/articles/10.3389/fpsyg.2024.1393113/full · Pink & Newton 2020: https://online.gcc.mass.edu/pluginfile.php/2178383/mod_page/content/39/advan.00102.2019.pdf
 - NN/g: https://www.nngroup.com/articles/mobile-tutorials/ · https://www.nngroup.com/articles/onboarding-tutorials/ · https://www.nngroup.com/articles/mobile-app-onboarding/ · https://nngroup.com/articles/animation-duration

@@ -2,8 +2,8 @@
 // Scouting: niente tour iniziale (NN/g: chi legge il tutorial non ha più successo); un fumetto al primo uso, ancorato al pulsante,
 // al massimo uno per visita di una schermata, e «?» nella testata per rivederli. I visti stanno in imp().aiutiVisti: le impostazioni
 // sono un record dell'account sincronizzato su Drive, quindi un aiuto chiuso sul telefono non torna sul PC.
-// Nei test automatici (navigator.webdriver) i fumetti non si aprono da soli, così non coprono i pulsanti degli altri E2E;
-// test/aiuti.py li accende con window.__aiutiAuto. Il «?» funziona sempre.
+// Nei test automatici (navigator.webdriver) app.js non carica il chunk da solo, così i fumetti non coprono i pulsanti degli altri E2E
+// e il download non sposta i loro tempi; test/aiuti.py lo accende con window.__aiutiAuto. Il «?» lo carica sempre.
 
 interface Aiuto { id: string; dove: Scheda[]; sel: string; testo: string; scorri?: boolean }
 
@@ -61,7 +61,6 @@ const Aiuti = (() => {
     dopo(s: Scheda, nuova: boolean): void {
       if (nuova) giaMostrato = false;
       if (s !== UI.scheda || giaMostrato || document.querySelector('.aiuto, .foglio, .lungo-sfondo')) return;
-      if (navigator.webdriver && !(window as unknown as { __aiutiAuto?: boolean }).__aiutiAuto) return;
       const v = visti();
       for (const a of ELENCO) if (a.dove.includes(s) && !v.includes(a.id)) { const el = ancora(a); if (el) { giaMostrato = true; apri([[a, el]], 0); return; } }
     },

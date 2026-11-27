@@ -87,8 +87,12 @@ with sync_playwright() as p:
 
     # Simulazione vicina: il 19/11 la SIM3 (22/11) è tra 3 giorni
     pg2, inv2 = apri(p, '2026-11-19T07:00:00+01:00')
+    pg2.wait_for_function("Studio.pkPiani().length > 0")   # le simulazioni vengono dal piano, caricato con una richiesta vera: prima di attivare le notifiche
     pg2.evaluate("(() => { const i = imp(); i.ntfy = true; i.ntfyTopic = 'imc-test'; Stato.salva(i); })()")
     avanza(pg2)
+    for _ in range(10):   # fino a ~3 s reali per l'invio (gara vista il 27/11: 1 corsa su ~8 partiva dopo i 300 ms di avanza)
+        if any('Domani: Simulazione 3' in m.get('title', '') for m in inv2): break
+        pg2.wait_for_timeout(300)
     ok(any('Tra 3 giorni: Simulazione 3' in m.get('title', '') and m.get('delay') == str(int(ts('2026-11-19T08:00')) + 60) for m in inv2), 'simulazione 3 giorni prima')
     ok(any('Domani: Simulazione 3' in m.get('title', '') for m in inv2), 'simulazione il giorno prima')
 

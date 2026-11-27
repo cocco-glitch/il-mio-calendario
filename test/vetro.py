@@ -23,6 +23,8 @@ with sync_playwright() as p:
     ok(st[0] == 'fixed' and 'blur' in st[1] and st[2] == '26px', 'barra galleggiante di vetro: %s' % st)
     ok(pg.locator('.voce-lista .forma-mat').count() >= 2, 'forme delle materie nelle voci di studio')
     ok(pg.evaluate("formaMateria('C') + formaMateria('B') + formaMateria('F')") == '◆●▲', 'forme base Chi/Bio/Fis')
+    # l'avvio salva i pacchetti e ridisegna la stessa scheda (senza .entra): si cambia scheda a app ferma da 300 ms (gara vista il 27/11, max 3 s)
+    pg.evaluate("new Promise(ok => { let t = setTimeout(ok, 300); const m = new MutationObserver(() => { clearTimeout(t); t = setTimeout(ok, 300); }); m.observe(document.getElementById('app'), { childList: true }); setTimeout(ok, 3000); })")
     pg.evaluate("vai('studio')"); pg.wait_for_timeout(50)
     ok(pg.evaluate("document.querySelector('main').classList.contains('entra')"), 'animazione di ingresso al cambio scheda')
     pg.evaluate("Stato.salva(Object.assign({}, imp()), true); disegna()"); pg.wait_for_timeout(100)

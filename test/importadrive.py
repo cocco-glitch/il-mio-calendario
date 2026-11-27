@@ -55,7 +55,7 @@ with sync_playwright() as p:
     prima = pg.evaluate(CONTA, 'B3.3')
     ok(prima['corsi'] == [] and prima['voci'] == ['piano@2026-11-18'], 'prima: B3.3 previsto nel piano il 18/11, nessun corso lo contiene: %s' % prima)
     pg.evaluate("vai('studio')"); pg.wait_for_timeout(200)
-    pg.get_by_role('button', name='📥 Importa quiz da Drive').first.click()
+    pg.get_by_role('button', name='Importa quiz da Drive').first.click()   # redesign blocco 6: icona SVG al posto dell'emoji
     pg.wait_for_selector('.foglio >> text=pacchetti trovati', timeout=5000)
     testo = pg.inner_text('.foglio')
     ok(all(n in testo for n in NOMI.values()) and 'note.txt' not in testo, 'elenco dei 5 pacchetti _v058, solo .json')

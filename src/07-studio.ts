@@ -519,10 +519,10 @@ function vistaStudio(): HTMLElement {
   const vai = (v: VS) => { UI.studioVista = v; UI.pianoScorso = false; disegna(); };
   const gr = gruppi.find(([, vv]) => vv.includes(UI.studioVista)) || gruppi[2];
   const seg = h('div', null, h('div.segmenti.scorre', { role: 'tablist', 'aria-label': 'Sezioni di Studio' }, gruppi.map(g => h('button' + (g === gr ? '.attivo' : ''), { role: 'tab', 'aria-selected': String(g === gr), onclick: () => vai(g[1][0]) }, g[0])),
-    h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, '✨ Quiz'),   // v0.58 (Q5)
-    h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, '🏗️ Centro di creazione'),   // v0.63
-    h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CodaQuizUI.apri()), title: 'Genera quiz in micro-batch persistenti con il router AI' }, '⚙️ Genera quiz in app'),
-    h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, '📥 Importa quiz da Drive'),   // v0.58.1
+    h('button.cq-studio', { onclick: () => CreaQuiz.elenco(), title: 'Quiz creati in app e Creaquiz Leggero' }, icona('ai', 16), 'Quiz'),   // v0.58 (Q5)
+    h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CentroUI.apri()), title: 'Crea i quiz di uno step con l’AI, passo per passo' }, icona('tassello', 16), 'Centro di creazione'),   // v0.63
+    h('button.cq-studio', { onclick: () => conStrumentiQuiz(() => CodaQuizUI.apri()), title: 'Genera quiz in micro-batch persistenti con il router AI' }, icona('ingranaggio', 16), 'Genera quiz in app'),
+    h('button.cq-studio', { onclick: () => ImportaDrive.apri(), title: 'Importa i quiz *_quiz_e_calendario.json dalle cartelle «… quiz» di Drive' }, icona('carica', 16), 'Importa quiz da Drive'),   // v0.58.1
     tendina('⋯', () => [{ testo: '✨ Quiz creati in app', azione: () => CreaQuiz.elenco() }, { testo: '📥 Importa quiz da Drive', azione: () => ImportaDrive.apri() },
       { testo: '🧭 Sposta quiz importati', azione: () => ImportaDrive.gestisci() },
       { testo: '🏗️ Centro di creazione', azione: () => conStrumentiQuiz(() => CentroUI.apri()) },

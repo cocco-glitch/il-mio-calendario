@@ -98,6 +98,21 @@ with sync_playwright() as p:
     ok(voci[-1] == '+ Nuovo corso' and len(voci) == pg.evaluate("Studio.pkStep().length") + 1, 'menu del selettore: gli step e «+ Nuovo corso» (%s)' % voci)
     pg.locator('.tendina-menu [role=menuitem]').first.click(); pg.wait_for_timeout(100)
     ok(pg.evaluate("UI.studioStep") == pg.evaluate("Studio.pkStep()[0].id"), 'dal menu si cambia step')
+    # blocco 6: accessibilità delle 4 schermate principali (nome accessibile, bersagli ≥ 24 px = WCAG 2.2 AA 2.5.8), niente emoji nella fila di Studio
+    CONTROLLI = """() => [...document.querySelectorAll('button, a[href], input, select, summary, [role=button], [role=tab]')].filter(e => e.offsetParent).map(e => {
+      const r = e.getBoundingClientRect(), n = (e.getAttribute('aria-label') || e.textContent || e.placeholder || e.title || '').trim();
+      return { n: n.slice(0, 30), w: Math.round(r.width), h: Math.round(r.height) }; })"""
+    for v in ['oggi', 'cal', 'studio', 'altro']:
+        pg.evaluate("v => vai(v)", v); pg.wait_for_timeout(250)
+        c = pg.evaluate(CONTROLLI)
+        ok(c and all(x['n'] for x in c), '%s: tutti i %d controlli hanno un nome accessibile' % (v, len(c)))
+        piccoli = [x for x in c if x['w'] < 24 or x['h'] < 24]
+        ok(not piccoli, '%s: bersagli ≥ 24×24 px %s' % (v, piccoli[:3]))
+    pg.evaluate("vai('studio')")
+    eti = pg.locator('.segmenti .cq-studio').all_inner_texts()
+    ok(eti and not any(any(ord(ch) > 0x2700 for ch in t) for t in eti), 'Studio: etichette della fila senza emoji (icone SVG) %s' % eti)
+    pg.evaluate("vai('altro')")
+    ok(pg.locator('.drive-mini').count() == 0 and pg.locator('.riga-gruppo', has_text='Dati e backup').count() == 1, 'Altro: lo stato di Drive è una riga di «Dati e backup», non una card doppia')
 
 print('\n' + ('TUTTO OK' if not err else '%d ERRORI' % len(err)))
 raise SystemExit(1 if err else 0)

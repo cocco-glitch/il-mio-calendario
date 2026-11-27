@@ -1011,3 +1011,10 @@ body::after { background-image: radial-gradient(circle, var(--accento) 1.6px, tr
 .aiuto-piede .tenue { color: inherit; opacity: .75; margin-right: auto; }
 .aiuto .btn { background: var(--accento); color: var(--su-accento); }
 @keyframes aiuto-entra { from { opacity: 0; transform: translateY(4px); } }
+/* Redesign blocco 6 (27/11): rifinitura. Icone di Altro nel tono dell'accento; «Quali» accanto alla pillola; aree di tocco da 44 px. */
+.gruppo-ico { background: color-mix(in srgb, var(--accento) 14%, var(--sup2)); color: var(--accento-testo); }
+.voce-sotto .sync-pallino { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.ritardo-quali { order: 0; flex-basis: auto; }
+.ritardo-quali[open] { order: 3; flex-basis: 100%; }
+.ritardo-quali summary, .indicatore-riga .ripianifica, .oggi-modo .btn-testo { min-height: 44px; }
+.cq-studio .ico { vertical-align: -3px; margin-right: 4px; }

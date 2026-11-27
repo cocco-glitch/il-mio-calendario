@@ -137,7 +137,8 @@ function disegna(): void {
   }
   if (stessaScheda) main.scrollTop = scrollMain;
   else Tocco.conta(main);
-  if (UI.scheda === 'oggi' || UI.scheda === 'studio') { const s = UI.scheda, nuova = !stessaScheda; setTimeout(() => conAiuti(() => Aiuti.dopo(s, nuova), true), 400); }   // redesign blocco 5: dopo il disegno, fuori dal budget dei tempi
+  // nei test automatici (navigator.webdriver) il chunk non si scarica da solo: non tocca i tempi degli altri E2E (f1 con l'orologio finto)
+  if ((UI.scheda === 'oggi' || UI.scheda === 'studio') && (!navigator.webdriver || (window as unknown as { __aiutiAuto?: boolean }).__aiutiAuto)) { const s = UI.scheda, nuova = !stessaScheda; setTimeout(() => conAiuti(() => Aiuti.dopo(s, nuova), true), 400); }   // redesign blocco 5: dopo il disegno, fuori dal budget dei tempi
   if (inAltro || (UI.scheda === 'altro' && UI.altroSez)) attivaIndietroSwipe(main);
   else attivaScorriSezioni(main, schede.filter(([s]) => s === 'oggi' || s === 'altro' || !nascoste.includes(s)).map(x => x[0]));
 }

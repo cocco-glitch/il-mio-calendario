@@ -531,14 +531,12 @@ function vistaAltro(): HTMLElement {
     h('div.tessere-altro', null,
       tessera('task', 'task', 'Promemoria', nTask ? nTask + ' da fare' : 'Niente da fare', 'arancio'),
       tessera('note', 'note', 'Note', nNote ? nNote + (nNote === 1 ? ' nota' : ' note') : 'Nessuna nota', 'viola')),
-    h('button.card.drive-mini', { onclick: () => { UI.altroSez = 'dati'; disegna(); } },
-      h('span.sync-pallino.' + ds.cls), h('span.voce-corpo', null, h('span.voce-titolo', null, ds.testo), h('span.voce-sotto', null, Drive.collegato ? 'Cartella «Calendario personale»' : 'Tocca per collegare Google Drive')),
-      icona('dx', 18)),
     h('div.gruppo-titolo.fuori', null, 'Impostazioni'),
     h('div.card.lista-gruppi', null, GRUPPI_ALTRO.map(([k, tit, sotto, ic, col]) =>
       h('button.riga-gruppo', { onclick: () => { UI.altroSez = k; disegna(); } },
-        h('span.gruppo-ico', { style: { background: col } }, icona(ic, 18)),
-        h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, sotto)),
+        h('span.gruppo-ico', { 'data-col': col }, icona(ic, 18)),   // redesign blocco 6: icone nel tono dell'accento (il colore resta nei dati)
+        // redesign blocco 6: lo stato di Drive è una riga di «Dati e backup» (prima una card a sé, doppione); collegato, lo mostra la testata
+        h('span.voce-corpo', null, h('span.voce-titolo', null, tit), h('span.voce-sotto', null, k === 'dati' && !Drive.collegato ? h('span.sync-pallino.' + ds.cls) : null, k === 'dati' && !Drive.collegato ? 'Google Drive non collegato' : sotto)),
         icona('dx', 18)))),
     versione,
   );
