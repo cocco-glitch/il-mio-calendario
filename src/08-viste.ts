@@ -101,11 +101,6 @@ function ordineWidget(): string[] {
   return ord.filter(w => !(i.widgetNascosti || []).includes(w) && (!esame || !SUPERFLUI_ESAME.includes(w)));
 }
 const SUPERFLUI_ESAME = ['nota', 'tabelle', 'domani'];
-function bannerModoEsame(): HTMLElement | null {
-  const n = modalitaEsame(); if (n === null) return null;
-  return h('div.modo-esame', { role: 'status' }, '🎯 Modalità esame · ' + (n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' giorni') + (n <= 3 ? ' · solo ripasso' : ''),
-    h('button.btn-testo', { onclick: () => { const i = imp(); i.modoEsame = 'no'; Stato.salva(i); avviso('Modalità esame spenta: la riattivi da Altro › Aspetto.'); } }, 'Mostra tutto'));
-}
 let timerNotaGiorno = 0;
 function vistaOggi(): HTMLElement {
   const g = oggi();
@@ -149,7 +144,7 @@ function vistaOggi(): HTMLElement {
 
   return h('div.pagina', null,
     h('div.oggi-testa', null, maiuscola(fmt(g, { weekday: 'long', day: 'numeric', month: 'long' }))),
-    rigaEsami(),   // redesign blocco 4: al posto del banner «Modalità esame» e dei riquadri degli esami (bannerModoEsame e widgetEsami restano nel codice)
+    rigaEsami(),   // redesign blocco 4: al posto del banner «Modalità esame» e dei riquadri degli esami (bannerModoEsame e widgetEsami sono in su-richiesta/07-conservati.ts)
     campoRapido(),
     senzaCorsi && !guidaNascosta() ? iniziaIn3Passi(true) : null,
     ordineWidget().map(w => {

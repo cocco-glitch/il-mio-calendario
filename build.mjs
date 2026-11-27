@@ -29,9 +29,10 @@ const unisci = fs => '"use strict";\n' + fs.map(f => lf(readFileSync('build-tmp/
 const suRichiesta = readdirSync('build-tmp/su-richiesta').filter(f => f.endsWith('.js')).sort();
 for (const f of MOTORE) if (!suRichiesta.includes(f)) throw new Error('build: modulo del motore mancante ' + f);
 const motore = unisci(suRichiesta.filter(f => MOTORE.includes(f)));
-const AIUTI = ['07-aiuti.js'];   // redesign blocco 5: aiuti contestuali, caricati dopo il disegno di Oggi e Studio
+const AIUTI = ['07-aiuti.js'];
+const CONSERVATI = ['07-conservati.js'];   // codice tolto dall'interfaccia: controllato da tsc, mai pubblicato   // redesign blocco 5: aiuti contestuali, caricati dopo il disegno di Oggi e Studio
 const aiuti = unisci(suRichiesta.filter(f => AIUTI.includes(f)));
-const extra = unisci(suRichiesta.filter(f => !MOTORE.includes(f) && !AIUTI.includes(f)));
+const extra = unisci(suRichiesta.filter(f => !MOTORE.includes(f) && !AIUTI.includes(f) && !CONSERVATI.includes(f)));
 
 mkdirSync('dist');
 cpSync('public', 'dist', { recursive: true });
